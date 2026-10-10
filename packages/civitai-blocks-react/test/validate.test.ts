@@ -414,6 +414,20 @@ describe('isValidImageUploadResult', () => {
     expect(isValidImageUploadResult({ requestId: 'r' })).toBe(true);
     expect(isValidImageUploadResult({})).toBe(true);
   });
+  // civitai/civitai#5639: a refused `bytes` upload replies `{ requestId, error }`.
+  // Dropping it would leave `useUploadImageBytes()` waiting out its timeout.
+  it('accepts a bytes-upload refusal (`error`, no `selected`), including an empty string', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', error: 'Too many image uploads — slow down.' })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+  it.each([
+    ['error a number', { requestId: 'r', error: 42 }],
+    ['error an object', { requestId: 'r', error: { message: 'busy' } }],
+    ['error null', { requestId: 'r', error: null }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
   it('accepts every content-rating ladder value', () => {
     for (const cr of ['g', 'pg', 'pg13', 'r', 'x']) {
       expect(isValidImageUploadResult({ selected: { ...selected, contentRating: cr } })).toBe(true);

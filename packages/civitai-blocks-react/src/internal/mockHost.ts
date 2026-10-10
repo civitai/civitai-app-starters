@@ -103,6 +103,12 @@ import {
   prepareSaveBytes,
   saveImageRequestKind,
 } from './saveBytes.js';
+import {
+  UPLOAD_BYTES_INVALID_ERROR,
+  admitUploadBytes,
+  resolveUploadBytesRequest,
+  type UploadBytesWindowEntry,
+} from './uploadBytes.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
@@ -1027,6 +1033,47 @@ export interface MockHostOptions {
    */
   onSaveBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
   /**
+   * The moderated image an ACCEPTED `OPEN_IMAGE_UPLOAD { bytes }` replies with
+   * (what `useUploadImageBytes().upload()` resolves with). Absent →
+   * {@link DEFAULT_IMAGE_BYTES_UPLOAD}, whose `imageId` differs from
+   * {@link DEFAULT_IMAGE_UPLOAD}'s so a block that confuses a picked upload
+   * with an uploaded one is visible. The mock's `CREATE_POST_FROM_APP` accepts
+   * it in a `{ kind: 'published', imageIds }` source, as the real host does for
+   * the app that uploaded it. Live-tunable via {@link MockHost.setScenario}.
+   *
+   * The `bytes` variant runs the host's admission rules
+   * (civitai/civitai#5639, `imageUploadBytes.ts`) in the host's order: not a
+   * non-empty `ArrayBuffer`, or `purpose: 'generationSource'` →
+   * `invalid image-upload request`; over 40 MiB →
+   * `file exceeds the maximum upload size` (checked FIRST); a full rolling
+   * window (3 uploads or 80 MiB per 60 s, per install) → `busy`; not PNG /
+   * WebP / JPEG by magic bytes → `file type is not allowed`; then
+   * {@link uploadImageBytesError}, standing in for the server persist and the
+   * scan. 🔴 What the mock cannot model: that the variant is PAGE-ONLY, the
+   * `posts:write:self` scope check (force `block lacks posts:write:self scope`
+   * with {@link uploadImageBytesError}), the real scan, the no-reply for a
+   * `requestId` reused while in flight (the mock replies at once), and that a
+   * host OLDER than the variant opens its picker instead.
+   */
+  uploadImageBytesResult?: BlockUploadedImageInfo;
+  /**
+   * Force an `OPEN_IMAGE_UPLOAD { bytes }` that passed the admission rules
+   * above to reply with this `error`: a server refusal the real host forwards
+   * (`block lacks posts:write:self scope`,
+   * `Rate limit exceeded, please retry shortly.`, a scan refusal, …), or
+   * `busy` / `no block token`. The upload still counts against the window, as
+   * on the host. Absent → it succeeds. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  uploadImageBytesError?: string;
+  /**
+   * Called with each `bytes` upload the mock ACCEPTS: the sniffed `mimeType`
+   * (`image/png`, `image/webp` or `image/jpeg`), the `filename` as the host
+   * stores it (the `useSaveImage()` bytes cleaning, the sniffed extension, at
+   * most 255 characters), and a copy of the `bytes`.
+   */
+  onUploadImageBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -1227,6 +1274,8 @@ export type MockHostScenarioPatch = Pick<
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
   | 'saveImageError'
+  | 'uploadImageBytesResult'
+  | 'uploadImageBytesError'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -1317,6 +1366,18 @@ const DEFAULT_IMAGE_UPLOAD: BlockUploadedImageInfo = {
  * — no imageId/nsfwLevel). `null` simulates a user-dismissed modal. The url is a
  * Civitai-hosted image so a dev can feed it straight into a `sourceImage` body.
  */
+/**
+ * The moderated image the mock host returns from an accepted
+ * `OPEN_IMAGE_UPLOAD { bytes }` when {@link MockHostOptions.uploadImageBytesResult}
+ * is omitted. Its `imageId` deliberately differs from {@link DEFAULT_IMAGE_UPLOAD}'s.
+ */
+const DEFAULT_IMAGE_BYTES_UPLOAD: BlockUploadedImageInfo = {
+  imageId: 12345701,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/mock/original=true/dev-bytes-upload.png',
+};
+
 const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
   url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
   width: 1024,
@@ -1920,6 +1981,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let runTrainingError: string | undefined = options.runTrainingError;
   // SAVE_IMAGE: a forced-refusal knob (see `saveImageError`).
   let saveImageError: string | undefined = options.saveImageError;
+  // OPEN_IMAGE_UPLOAD { bytes }: the canned result, a forced-refusal knob, and
+  // the host's rolling window (per install, like the host's per mount).
+  let uploadImageBytesResult: BlockUploadedImageInfo =
+    options.uploadImageBytesResult ?? DEFAULT_IMAGE_BYTES_UPLOAD;
+  let uploadImageBytesError: string | undefined = options.uploadImageBytesError;
+  let uploadBytesWindow: UploadBytesWindowEntry[] = [];
   let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
@@ -3205,6 +3272,28 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             //   • 'generationSource' → the UNSCANNED source { url, width, height }
             //   • 'display' (default / absent) → the MODERATED image
             // `null` → dismissed (no `selected`), so the hook resolves to null.
+            // The `bytes` variant (civitai/civitai#5639): no picker, the host's
+            // admission rules in the host's order (./uploadBytes.ts), then the
+            // forced refusal standing in for the server persist + scan.
+            const bytesReq = resolveUploadBytesRequest(typed.payload ?? {});
+            if (bytesReq.kind !== 'none') {
+              if (!isRoutableRequestId(requestId)) return;
+              const reply = (p: { selected: BlockUploadedImageInfo } | { error: string }) =>
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, ...p } });
+              if (bytesReq.kind === 'invalid') return reply({ error: UPLOAD_BYTES_INVALID_ERROR });
+              const admitted = admitUploadBytes(bytesReq, uploadBytesWindow, Date.now());
+              uploadBytesWindow = admitted.recent;
+              if (!admitted.result.ok) return reply({ error: admitted.result.error });
+              if (uploadImageBytesError !== undefined) return reply({ error: uploadImageBytesError });
+              // A COPY, as production's structured-clone `postMessage` delivers it.
+              options.onUploadImageBytes?.({
+                bytes: bytesReq.bytes.slice(0),
+                mimeType: admitted.result.type,
+                filename: admitted.result.filename,
+              });
+              return reply({ selected: { ...uploadImageBytesResult } });
+            }
+
             const isGenerationSource = typed.payload?.purpose === 'generationSource';
 
             // NON-BLOCKING display path (asyncScan:true): early-resolve with a
@@ -3881,6 +3970,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
     if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
     if ('saveImageError' in patch) saveImageError = patch.saveImageError;
+    if (patch.uploadImageBytesResult !== undefined) {
+      uploadImageBytesResult = patch.uploadImageBytesResult;
+    }
+    if ('uploadImageBytesError' in patch) uploadImageBytesError = patch.uploadImageBytesError;
     if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {

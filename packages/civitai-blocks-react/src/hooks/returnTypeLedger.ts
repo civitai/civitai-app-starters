@@ -86,6 +86,7 @@ import type {
   useSharedStorage,
   useTip,
   useTipAllowance,
+  useUploadImageBytes,
   useViewer,
   useWildcardPack,
   UseAppStorage,
@@ -128,6 +129,7 @@ import type {
   UseSharedStorage,
   UseTip,
   UseTipAllowance,
+  UseUploadImageBytes,
   UseViewer,
   UseWildcardPack,
 } from '../index.js';
@@ -211,6 +213,9 @@ type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>
 type _useSharedStorage = Assert<Exact<ReturnType<typeof useSharedStorage>, UseSharedStorage>>;
 type _useTip = Assert<Exact<ReturnType<typeof useTip>, UseTip>>;
 type _useTipAllowance = Assert<Exact<ReturnType<typeof useTipAllowance>, UseTipAllowance>>;
+type _useUploadImageBytes = Assert<
+  Exact<ReturnType<typeof useUploadImageBytes>, UseUploadImageBytes>
+>;
 type _useViewer = Assert<Exact<ReturnType<typeof useViewer>, UseViewer>>;
 type _useWildcardPack = Assert<Exact<ReturnType<typeof useWildcardPack>, UseWildcardPack>>;
 

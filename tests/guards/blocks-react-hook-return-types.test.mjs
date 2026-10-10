@@ -99,6 +99,7 @@ const HOOK_FILES = [
   'useSharedStorage',
   'useTip',
   'useTipAllowance',
+  'useUploadImageBytes',
   'useViewer',
   'useWildcardPack',
 ];

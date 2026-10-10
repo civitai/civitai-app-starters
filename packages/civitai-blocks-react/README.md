@@ -687,7 +687,8 @@ publish another.
 
 🔴 **No arm of `sources` takes a URL.** Name a workflow from this app's own
 subqueue plus indexes into its outputs, or `Image` ids from a previous
-`usePublishGenerationOutputs()` publish. The server re-verifies both — ownership,
+`usePublishGenerationOutputs()` publish or `useUploadImageBytes()` upload. The
+server re-verifies both — ownership,
 this app's provenance marker, and that the image is not already in a post.
 
 ⚠️ **Posting a published image removes it from this app's own grid.** The
@@ -1207,6 +1208,86 @@ if (img) {
   });
 }
 ```
+
+### `useUploadImageBytes()`
+
+Upload an image the block **produced in the tab** (a healed PNG, an edited
+render), with no picker, so the app can then post it. Returns `{ upload }`.
+`upload(bytes, { filename? })` resolves with the same moderated image a picked
+`useImageUpload()` upload returns (`imageId`, `nsfwLevel`, `contentRating`,
+`url`). That `imageId` is postable by this app through
+`useCreatePostFromApp()` as a `{ kind: 'published', imageIds }` source.
+
+- 🔴 **Page apps only.** A slot (model) block's host has no handler for it.
+- 🔴 **Requires `posts:write:self`.** The server refuses the upload without
+  it, and this hook does not prompt. Ask for the scope first with
+  `useRequestConsent()`, because the upload runs before the `createPost()`
+  call that would otherwise prompt.
+- **Images only:** PNG, WebP or JPEG by magic bytes. Anything else is refused
+  with `file type is not allowed`. The host names the stored file from the
+  sniffed type, whatever `filename` says.
+- **The cap is 40 MiB.** The hook refuses a larger buffer before sending it,
+  with the host's error `file exceeds the maximum upload size`. The host also
+  allows at most 3 uploads and 80 MiB per 60 seconds per page, and replies
+  `busy` past that.
+- **The upload is blocking.** The host replies once the image is scanned, so
+  allow for a wait of up to a few minutes. An image above the SFW ceiling or
+  flagged by the scan is refused with the scan's message.
+- Pass an `ArrayBuffer` (`await blob.arrayBuffer()`). A `Blob`, a
+  `Uint8Array` or an empty buffer is refused with
+  `invalid image-upload request`. The buffer is copied, not transferred.
+
+`upload` **rejects** with the host's error string on every refusal: the ones
+above, `no block token`, or a server message passed through verbatim (the
+missing scope, the posting flag, page-only, a rate limit, the scan). It
+rejects with `the host returned no uploaded image` if the reply carries
+neither an image nor an error.
+
+🔴 **A host that predates this variant ignores `bytes` and opens its upload
+picker instead**, so the call settles on whatever the viewer picks. Do not ship
+a block that relies on `useUploadImageBytes()` until the civitai.com host
+supports it.
+
+```tsx
+import {
+  CreatePostError,
+  useCreatePostFromApp,
+  useRequestConsent,
+  useUploadImageBytes,
+} from '@civitai/blocks-react';
+
+const { requestConsent } = useRequestConsent();
+const { upload } = useUploadImageBytes();
+const { createPost } = useCreatePostFromApp();
+
+// Once, before the first upload, e.g. on the button that starts the flow.
+requestConsent({ scopes: ['posts:write:self'] });
+
+async function postHealed(healed: Blob) {
+  try {
+    // 1. Bytes made in the tab, uploaded and scanned by the host.
+    const image = await upload(await healed.arrayBuffer(), { filename: 'healed.png' });
+    // 2. Posted through the existing bridge, with its own confirm.
+    const post = await createPost({
+      sources: [{ kind: 'published', imageIds: [image.imageId] }],
+      title: 'Fixed with Metadata Healer',
+    });
+    showToast(`Posted! ${post.url}`);
+  } catch (err) {
+    if (err instanceof CreatePostError && err.declined) return; // the viewer said no
+    showToast((err as Error).message); // e.g. 'busy', 'file type is not allowed'
+  }
+}
+```
+
+Under `createMockHost` / `Harness` the host's checks run in the host's order:
+the cap, then the window, then the type. `uploadImageBytesResult` sets the
+image an accepted upload returns, `uploadImageBytesError` forces a refusal
+(for example `block lacks posts:write:self scope`), and `onUploadImageBytes`
+reports what was accepted. The mock's `CREATE_POST_FROM_APP` accepts the
+uploaded `imageId`. The mock does not model the page-only rule, the scope
+check, the real scan, or an older host's picker. `dev:live` refuses every
+`bytes` upload.
 
 ### `useSaveImage()`
 

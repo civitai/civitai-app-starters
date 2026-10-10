@@ -184,6 +184,11 @@ export type {
   UseImageUploadGenerationSource,
   UseImageUploadOptions,
 } from './hooks/useImageUpload.js';
+export { useUploadImageBytes } from './hooks/useUploadImageBytes.js';
+export type {
+  UploadImageBytesOptions,
+  UseUploadImageBytes,
+} from './hooks/useUploadImageBytes.js';
 export { useGenerationResources } from './hooks/useGenerationResources.js';
 export type { UseGenerationResources } from './hooks/useGenerationResources.js';
 export {

@@ -637,9 +637,16 @@ export function isValidImageUploadResult(
     | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
     | { url: string; width: number; height: number }
     | { status: 'pending'; imageId: number; url: string };
+  error?: string;
 } {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
+  // `error` (civitai/civitai#5639): a refused or failed `OPEN_IMAGE_UPLOAD
+  // { bytes }`. Free text (host strings plus forwarded server messages), so
+  // only its TYPE is checked. 🔴 Accepting it is load-bearing: a validator that
+  // dropped `{ requestId, error }` would leave `useUploadImageBytes()` waiting
+  // out its whole timeout on a refusal the host already sent.
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
   // one of the purpose-keyed shapes (moderated / generationSource / pending).
   if (p.selected !== undefined) {

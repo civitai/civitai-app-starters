@@ -2260,6 +2260,26 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     // Dismissed: no `selected` → the hook resolves to null (no fabricated image).
     expect('selected' in payload).toBe(false);
   });
+
+  it('refuses the `bytes` variant with an error, never a fabricated image', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-bytes', bytes: new ArrayBuffer(8) });
+    const payload = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-bytes',
+      error: 'uploading image bytes is not supported in dev:live — use dev:mock',
+    });
+  });
 });
 
 describe('createLiveHost — app subqueue (served via blocks.queryAppWorkflows / cancelAppWorkflow)', () => {

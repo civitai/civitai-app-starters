@@ -1,0 +1,15 @@
+---
+'@civitai/blocks-react': minor
+'@civitai/app-sdk': minor
+---
+
+**`useUploadImageBytes()` uploads an image the block produced in the tab, so the app can post it (#582).** `const { upload } = useUploadImageBytes()`, then `upload(bytes, { filename? })` sends an `ArrayBuffer` to the host with no picker. It resolves with the same moderated image a picked `useImageUpload()` upload returns (`imageId`, `nsfwLevel`, `contentRating`, `url`). Post it through the existing `useCreatePostFromApp()` as `{ kind: 'published', imageIds: [image.imageId] }`. The contract is civitai/civitai#5639.
+
+- 🔴 **Release order: this needs the civitai.com host from civitai/civitai#5639.** A host that predates it ignores `bytes` and opens its upload picker instead, so the call settles on whatever the viewer picks. Do not rely on the hook until that host is deployed.
+- **Page apps only, and the token needs `posts:write:self`.** The server refuses the upload without the scope, and the hook does not prompt for it: ask first with `useRequestConsent()`.
+- **Images only:** PNG, WebP or JPEG by magic bytes, else `file type is not allowed`. The cap is 40 MiB; the hook refuses a larger buffer before sending it, with the host's error `file exceeds the maximum upload size`. The host also allows 3 uploads and 80 MiB per 60 seconds per page (`busy`). A `Blob`, a typed array or an empty buffer is `invalid image-upload request`. The upload is blocking: the host replies once the scan settles.
+- `upload` rejects with the host's error string, or a server message passed through verbatim, on every refusal. It rejects with `the host returned no uploaded image` when a reply carries neither an image nor an error.
+- `@civitai/app-sdk`: the `OPEN_IMAGE_UPLOAD` payload type gains `bytes?: ArrayBuffer` and `filename?: string`, and `IMAGE_UPLOAD_RESULT` gains `error?: string`. Both are optional, so existing callers are unchanged.
+- The reply validator now accepts `IMAGE_UPLOAD_RESULT { requestId, error }` and refuses a non-string `error`. Without that, a refusal would have been dropped and the hook would have waited out its timeout.
+- **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** the `bytes` variant runs the host's checks in the host's order: the request shape (`invalid image-upload request`), the cap, the 60-second window (`busy`), then the type. New options: `uploadImageBytesResult` (the image an accepted upload returns), `uploadImageBytesError` (a forced refusal after those checks; live-tunable via `setScenario`, and `undefined` clears it) and `onUploadImageBytes` (the sniffed type, the stored filename and a copy of the bytes). The mock's `CREATE_POST_FROM_APP` accepts the uploaded id. The mock does not model the page-only rule, the scope check, the real scan or an older host's picker.
+- `dev:live` refuses every `bytes` upload with an error. The picker path still replies dismissed.
