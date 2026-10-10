@@ -123,7 +123,8 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
         },
       }),
     ],
-    ['analytics empty, and with an empty events map', valid({ analytics: { events: {} } })],
+    ['analytics as an empty object (`events` is optional)', valid({ analytics: {} })],
+    ['analytics with an empty events map', valid({ analytics: { events: {} } })],
   ];
 
   it.each(cases)('%s', (_label, manifest) => {
@@ -209,21 +210,19 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       }),
       'analytics.events.clicked.properties.via.label',
     ],
-    // ⚠ REJECTED, BUT THE MESSAGE POINTS AT THE WRONG THING. A property
-    // declaration is a `oneOf` of three closed shapes, and for a `number` or
-    // `boolean` carrying an extra key the reported error is the FIRST branch's
-    // ("`values` is required"), not "`label` is not a known property". The
-    // verdict is right and is what this pins; the wording is a known wart of
-    // reporting a failed `oneOf`, not a rule of the canonical.
+    // A property declaration is a `oneOf` of three closed shapes. The error
+    // reported is the one from the member whose `type` the declaration names
+    // (see the discriminated-`oneOf` block below for the messages), so an extra
+    // key is reported as that key, not as the first member's missing `values`.
     [
-      'analytics: unknown key on a boolean property declaration (verdict only — see note)',
+      'analytics: unknown key on a boolean property declaration',
       valid({ analytics: { events: { clicked: { properties: { on: { type: 'boolean', label: 'x' } } } } } }),
-      'analytics.events.clicked.properties.on.values',
+      'analytics.events.clicked.properties.on.label',
     ],
     [
       'analytics: values on a number property',
       valid({ analytics: { events: { timed: { properties: { seconds: { type: 'number', values: ['1'] } } } } } }),
-      'analytics.events.timed.properties.seconds.type',
+      'analytics.events.timed.properties.seconds.values',
     ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
@@ -237,6 +236,141 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     const err = rejection(valid({ scopes: ['ModelsReadSelf'] }));
     expect(err.field).toBe('scopes[0]');
     expect(err.message).toContain('colon-separated lowercase');
+  });
+});
+
+/**
+ * WHICH error a failed `oneOf` reports. Ajv lists every member's errors in
+ * member order, so the plain first error is the first member's complaint
+ * whatever the author wrote; `defineBlock` instead reports from the member
+ * whose `const` discriminator the instance names. Whole messages are pinned,
+ * not fragments: the wording is the thing under test.
+ *
+ * The VERDICT is not in question here — every case is also asserted
+ * canonical-invalid, and the accept/reject cases above pin that the selection
+ * changes no verdict.
+ */
+describe('a failed discriminated oneOf reports the member the author wrote', () => {
+  const decl = (properties: Record<string, unknown>) =>
+    valid({ analytics: { events: { timed: { properties } } } });
+  const AT = 'analytics.events.timed.properties';
+
+  const cases: Array<[string, Record<string, unknown>, string, string]> = [
+    [
+      'an unknown key on a number property names that key',
+      decl({ seconds: { type: 'number', min: 0 } }),
+      `${AT}.seconds.min`,
+      `manifest.${AT}.seconds.min is not a known property when \`type\` is "number"`,
+    ],
+    [
+      '`values` on a number property is named as not allowed on a number',
+      decl({ seconds: { type: 'number', values: ['1'] } }),
+      `${AT}.seconds.values`,
+      `manifest.${AT}.seconds.values is not a known property when \`type\` is "number"`,
+    ],
+    [
+      'an unknown key on a boolean property names that key',
+      decl({ on: { type: 'boolean', label: 'x' } }),
+      `${AT}.on.label`,
+      `manifest.${AT}.on.label is not a known property when \`type\` is "boolean"`,
+    ],
+    [
+      'an unknown key on an enum property names that key',
+      decl({ via: { type: 'enum', values: ['key'], label: 'x' } }),
+      `${AT}.via.label`,
+      `manifest.${AT}.via.label is not a known property when \`type\` is "enum"`,
+    ],
+    [
+      'an enum without `values` still says `values` is required',
+      decl({ style: { type: 'enum' } }),
+      `${AT}.style.values`,
+      `manifest.${AT}.style.values is required`,
+    ],
+    [
+      'a type no member names still gets the allowed-types message',
+      decl({ query: { type: 'string' } }),
+      `${AT}.query.type`,
+      `manifest.${AT}.query.type must be equal to one of the allowed values ("enum", "number", "boolean")`,
+    ],
+    [
+      'a missing `type` still says `type` is required',
+      decl({ query: { values: ['a'] } }),
+      `${AT}.query.type`,
+      `manifest.${AT}.query.type is required`,
+    ],
+    [
+      'two bad declarations: the first is reported, from its OWN member',
+      decl({ on: { type: 'boolean', label: 'x' }, seconds: { type: 'number', values: ['1'] } }),
+      `${AT}.on.label`,
+      `manifest.${AT}.on.label is not a known property when \`type\` is "boolean"`,
+    ],
+    // PREFIX-NAMED SIBLINGS. `…/s` is a string prefix of `…/seconds` without
+    // being its parent, so the two declarations' errors must not be pooled.
+    // The longer-name-first cases are the ones that go wrong if they are: the
+    // shorter sibling's members then swallow every error of the longer one and
+    // what is left to report is its summary ("must match exactly one schema in
+    // oneOf"). The shorter-name-first cases pin the other order.
+    [
+      'prefix-named siblings, longer name first (`seconds` then `s`)',
+      decl({ seconds: { type: 'number', min: 0 }, s: { type: 'enum', values: ['a'], x: 1 } }),
+      `${AT}.seconds.min`,
+      `manifest.${AT}.seconds.min is not a known property when \`type\` is "number"`,
+    ],
+    [
+      'prefix-named siblings, longer name first (`count_total` then `count`)',
+      decl({ count_total: { type: 'boolean', label: 'x' }, count: { type: 'number', values: ['1'] } }),
+      `${AT}.count_total.label`,
+      `manifest.${AT}.count_total.label is not a known property when \`type\` is "boolean"`,
+    ],
+    [
+      'prefix-named siblings, shorter name first (`s` then `seconds`)',
+      decl({ s: { type: 'enum', values: ['a'], x: 1 }, seconds: { type: 'number', min: 0 } }),
+      `${AT}.s.x`,
+      `manifest.${AT}.s.x is not a known property when \`type\` is "enum"`,
+    ],
+    [
+      'prefix-named siblings, shorter name first (`count` then `count_total`)',
+      decl({ count: { type: 'number', values: ['1'] }, count_total: { type: 'boolean', label: 'x' } }),
+      `${AT}.count.values`,
+      `manifest.${AT}.count.values is not a known property when \`type\` is "number"`,
+    ],
+  ];
+
+  it.each(cases)('%s', (_label, manifest, field, message) => {
+    expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
+    const err = rejection(manifest);
+    expect(err.message).toBe(message);
+    expect(err.field).toBe(field);
+  });
+
+  it('an unknown key OUTSIDE any oneOf keeps the plain wording', () => {
+    const err = rejection(valid({ iframe: { minHeight: 137, bogus: 1 } }));
+    expect(err.message).toBe('manifest.iframe.bogus is not a known property here');
+  });
+
+  /**
+   * The selection is generic (any `oneOf` / `anyOf` whose members pin one
+   * property to a `const`), so it applies to every such site the canonical
+   * ever gains. Today there is exactly ONE — the property declaration. This
+   * ledger fails when a site is added or removed, so that whoever re-vendors
+   * it looks at what `defineBlock` then says for the new site.
+   */
+  it('LEDGER: the canonical has exactly one oneOf/anyOf site', () => {
+    const sites: string[] = [];
+    const scan = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
+      if (typeof node !== 'object' || node === null) return;
+      for (const [key, child] of Object.entries(node)) {
+        if ((key === 'oneOf' || key === 'anyOf') && Array.isArray(child)) sites.push(`${path}/${key}`);
+        scan(child, `${path}/${key}`);
+      }
+    };
+    scan(loadCanonicalSchema(), '#');
+    const NAME = '^[a-z][a-z0-9_]{0,63}$';
+    expect(sites).toEqual([
+      `#/properties/analytics/properties/events/patternProperties/${NAME}` +
+        `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
+    ]);
   });
 });
 
@@ -264,57 +398,159 @@ function interfaceBody(src: string, name: string): string {
 }
 
 /**
- * Nested manifest shapes typed on `BlockManifestV1` AHEAD of the vendored
- * schema bytes, and the deep-path twin of the same list. BOTH ARE EMPTY, and
- * that is the normal state.
+ * Manifest shapes typed on `BlockManifestV1` AHEAD of the vendored schema
+ * bytes: `TYPED_AHEAD` holds top-level KEYS (for the nested test's ledger) and
+ * `DEEP_TYPED_AHEAD` holds shape PATHS in the walker's grammar (for
+ * `SHAPE_LEDGER`). BOTH ARE EMPTY, and that is the normal state.
  *
- * They stay because the two shape ledgers below are EXACT. This repo's
- * practice is to type a new manifest field before the published schema carries
- * it, so that the scheduled re-vendor lands on an already-typed interface — and
- * with an exact ledger a new NESTED shape would turn that re-vendor red however
- * well it was typed. A shape listed here is expected by its ledger only once
- * the vendored schema carries it, which keeps the suite green on both sides of
- * the re-vendor. When the bytes land, move the entry into `LEDGER` /
- * `DEEP_LEDGER` and empty this again.
+ * They stay because the shape ledgers below are EXACT. This repo's practice is
+ * to type a new manifest field before the published schema carries it, so that
+ * the scheduled re-vendor lands on an already-typed interface — and with an
+ * exact ledger a new shape would turn that re-vendor red however well it was
+ * typed. A shape listed here is expected by its ledger only once the vendored
+ * schema carries it, which keeps the suite green on both sides of the
+ * re-vendor. When the bytes land, move the entry into `LEDGER` /
+ * `SHAPE_LEDGER` and empty this again.
+ *
+ * A `DEEP_TYPED_AHEAD` entry is matched on the PATH itself, so it can exempt a
+ * new shape under a key the schema already has (`analytics.events.*.range`).
+ *
+ * A new FIRST-LEVEL shape always needs its path (`foo`, or `foo[]` for an
+ * array of objects) in `DEEP_TYPED_AHEAD`, because the walker sees every
+ * first-level shape. Whether it ALSO needs its key in `TYPED_AHEAD` depends on
+ * how the schema declares it: the older NESTED test collects a top-level
+ * property only when it carries `properties` inline (directly, or on its
+ * `items`), so an inline shape needs both entries, and one declared only
+ * through composition (`allOf` / `oneOf` / `anyOf`) needs the deep entry alone.
  */
 const TYPED_AHEAD: string[] = [];
 const DEEP_TYPED_AHEAD: string[] = [];
 
 /**
- * Every object shape in a JSON schema, keyed by a path from the manifest root,
- * with the property names the schema declares on it.
+ * 🔴 LEDGER of every object-shape PATH the walker finds in the canonical below
+ * the root, first level included. Exact: the deep test fails when the set
+ * GROWS (a shape nobody has typed or looked at) or SHRINKS (the walker stopped
+ * finding one, which would make the key check vacuous for it).
+ */
+const SHAPE_LEDGER = [
+  'analytics',
+  'analytics.events.*',
+  'analytics.events.*.properties.*',
+  'goods[]',
+  'iframe',
+  'page',
+  'targets[]',
+];
+
+/** Every shape path the walker found below the root, sorted. */
+function shapePaths(shapes: SchemaShapes): string[] {
+  return [...shapes.keys.keys()].filter((p) => p !== '').sort();
+}
+
+/** The paths a shape ledger must equal: the ledger, plus each typed-ahead path the schema already carries. */
+function expectedShapePaths(
+  shapes: Map<string, unknown>,
+  ledger: string[],
+  typedAhead: string[],
+): string[] {
+  return [...ledger, ...typedAhead.filter((p) => shapes.has(p))].sort();
+}
+
+/** One member of a `oneOf` / `anyOf` whose members each pin `key` to a `const`. */
+interface SchemaVariant {
+  key: string;
+  value: unknown;
+  keys: string[];
+}
+
+interface SchemaShapes {
+  /** Path → every property name the schema declares there, across all composition. */
+  keys: Map<string, Set<string>>;
+  /** Path → the discriminated members found there, each with its own property names. */
+  variants: Map<string, SchemaVariant[]>;
+}
+
+/**
+ * Every object shape in a JSON schema, keyed by a path from the manifest root
+ * (`''`), with the property names the schema declares on it.
  *
  * Path grammar: `a.b` for a named property, `a.*` for a value reached through
  * `patternProperties` or an `additionalProperties` schema (a map), `a[]` for an
- * array's `items`. A node's own key set is the UNION of its inline
- * `properties` and those of every `allOf` / `oneOf` / `anyOf` branch, because
- * any one of them is a key a manifest can legally carry there. Branches are
- * descended into as well, so a nested shape declared only inside a branch is
- * still found. `$ref` is NOT resolved — the canonical uses none today, and the
- * shape ledger below would go red (SHRINK) if one replaced an inline shape.
+ * array's `items`.
+ *
+ * COMPOSITION IS EXPANDED RECURSIVELY and adds no path segment: a node stands
+ * for itself plus every `allOf` / `oneOf` / `anyOf` member and every `if` /
+ * `then` / `else` subschema, and each of those is expanded the same way (a
+ * member of a member — the property declaration is `allOf[ {…}, { oneOf: […] } ]`).
+ * A node's key set is the UNION of `properties` over that whole expansion,
+ * because any one of them is a key a manifest can legally carry there, and
+ * every node of the expansion is descended into, so a nested shape declared
+ * only inside a branch of a branch, or only under a `then`, is still found.
+ * (`if` is included on purpose: a condition that names a key is reasoning
+ * about a key a manifest can carry.)
+ *
+ * Where a `oneOf` / `anyOf` in that expansion has members that each pin the
+ * same property to a `const`, the members are also recorded as `variants`, so
+ * the caller can check each member's keys against the matching member of the
+ * TypeScript union instead of against the flattened union.
+ *
+ * WHAT IT DOES NOT READ — a shape reachable only through one of these is
+ * invisible, and nothing below fails when one is added:
+ *   - `$ref` / `$defs` are not resolved. (The canonical uses none today. A
+ *     `$ref` REPLACING an inline shape does fail the ledger, as a shrink.)
+ *   - `not`, `dependentSchemas`, `prefixItems`, `contains`, `propertyNames`,
+ *     `unevaluatedProperties` and `unevaluatedItems` subschemas.
+ *   - A `oneOf` / `anyOf` whose members do NOT share a `const` discriminator
+ *     gets the flattened key check only: a key the schema adds on one member is
+ *     satisfied by a type that carries it on any member.
  */
-function schemaShapes(root: unknown): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
+function schemaShapes(root: unknown): SchemaShapes {
+  const keys = new Map<string, Set<string>>();
+  const variants = new Map<string, SchemaVariant[]>();
   const join = (path: string, seg: string) => (path === '' ? seg : `${path}.${seg}`);
   const isObj = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
-  const branches = (n: Record<string, unknown>): Record<string, unknown>[] =>
-    (['allOf', 'oneOf', 'anyOf'] as const).flatMap((k) =>
+  const composed = (n: Record<string, unknown>): Record<string, unknown>[] => [
+    ...(['allOf', 'oneOf', 'anyOf'] as const).flatMap((k) =>
       Array.isArray(n[k]) ? (n[k] as unknown[]).filter(isObj) : [],
-    );
-  const keysOf = (n: Record<string, unknown>): string[] => [
-    ...(isObj(n.properties) ? Object.keys(n.properties) : []),
-    ...branches(n).flatMap(keysOf),
+    ),
+    ...(['if', 'then', 'else'] as const).flatMap((k) => (isObj(n[k]) ? [n[k]] : [])),
   ];
+  /** The node plus everything composed into it, to any depth. */
+  const expand = (n: Record<string, unknown>): Record<string, unknown>[] => [
+    n,
+    ...composed(n).flatMap(expand),
+  ];
+  const ownKeys = (n: Record<string, unknown>): string[] =>
+    isObj(n.properties) ? Object.keys(n.properties) : [];
+  const keysOf = (n: Record<string, unknown>): string[] => expand(n).flatMap(ownKeys);
+  const constOf = (member: Record<string, unknown>, key: string): { value: unknown } | null => {
+    const prop = isObj(member.properties) ? member.properties[key] : undefined;
+    return isObj(prop) && 'const' in prop ? { value: prop.const } : null;
+  };
+  const variantsOf = (n: Record<string, unknown>): SchemaVariant[] =>
+    (['oneOf', 'anyOf'] as const).flatMap((k) => {
+      const members = Array.isArray(n[k]) ? (n[k] as unknown[]).filter(isObj) : [];
+      const key = members[0]
+        ? ownKeys(members[0]).find((c) => members.every((m) => constOf(m, c) !== null))
+        : undefined;
+      if (key === undefined) return [];
+      return members.map((m) => ({ key, value: constOf(m, key)!.value, keys: keysOf(m) }));
+    });
   const walk = (n: unknown, path: string): void => {
     if (!isObj(n)) return;
-    const keys = keysOf(n);
-    if (keys.length > 0) {
-      const set = out.get(path) ?? new Set<string>();
-      keys.forEach((k) => set.add(k));
-      out.set(path, set);
+    const nodes = expand(n);
+    const found = nodes.flatMap(ownKeys);
+    if (found.length > 0) {
+      const set = keys.get(path) ?? new Set<string>();
+      found.forEach((k) => set.add(k));
+      keys.set(path, set);
     }
-    for (const node of [n, ...branches(n)]) {
+    const discriminated = nodes.flatMap(variantsOf);
+    if (discriminated.length > 0) {
+      variants.set(path, [...(variants.get(path) ?? []), ...discriminated]);
+    }
+    for (const node of nodes) {
       if (isObj(node.properties)) {
         for (const [k, v] of Object.entries(node.properties)) walk(v, join(path, k));
       }
@@ -326,38 +562,42 @@ function schemaShapes(root: unknown): Map<string, Set<string>> {
     }
   };
   walk(root, '');
-  return out;
+  return { keys, variants };
 }
 
 /**
- * The property names TypeScript gives the type reached by `path` from
- * `BlockManifestV1`, via the COMPILER (not a source regex), so a type alias, a
- * union or a `Record<string, X>` resolves the same way an inline literal
- * passed to `defineBlock` is checked. A union contributes every member's keys
- * (a discriminated union admits each member's keys on that member). Returns
- * `null` when the path does not resolve, which the caller reports by name.
+ * The OBJECT members of the type reached by `path` from `BlockManifestV1`
+ * (`''` is the manifest itself), via the COMPILER (not a source regex), so a
+ * type alias, a union or a `Record<string, X>` resolves the same way an inline
+ * literal passed to `defineBlock` is checked. A union yields one entry per
+ * object member; a primitive (`string[]`'s element) yields none, so a schema
+ * shape cannot be "typed" by `String.prototype`. Returns `null` when the path
+ * does not resolve to any object type, which the callers report by name.
  */
-let compiled: ts.Program | undefined;
-function typeKeysAt(path: string): Set<string> | null {
-  const file = fileURLToPath(new URL('../../src/blocks/types.ts', import.meta.url));
-  const program = (compiled ??= ts.createProgram([file], {
-    strict: true,
-    noEmit: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    skipLibCheck: true,
-  }));
-  const checker = program.getTypeChecker();
-  const sf = program.getSourceFile(file);
-  if (!sf) return null;
-  const decl = sf.statements.find(
-    (s): s is ts.InterfaceDeclaration =>
-      ts.isInterfaceDeclaration(s) && s.name.text === 'BlockManifestV1',
-  );
-  if (!decl) return null;
+let compiled: { checker: ts.TypeChecker; decl: ts.InterfaceDeclaration } | null | undefined;
+function typeMembersAt(path: string): { checker: ts.TypeChecker; members: ts.Type[] } | null {
+  if (compiled === undefined) {
+    const file = fileURLToPath(new URL('../../src/blocks/types.ts', import.meta.url));
+    const program = ts.createProgram([file], {
+      strict: true,
+      noEmit: true,
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      skipLibCheck: true,
+    });
+    const decl = program
+      .getSourceFile(file)
+      ?.statements.find(
+        (s): s is ts.InterfaceDeclaration =>
+          ts.isInterfaceDeclaration(s) && s.name.text === 'BlockManifestV1',
+      );
+    compiled = decl ? { checker: program.getTypeChecker(), decl } : null;
+  }
+  if (!compiled) return null;
+  const { checker, decl } = compiled;
   let t: ts.Type | undefined = checker.getTypeAtLocation(decl.name);
-  for (const seg of path.split(/\.|(?=\[\])/)) {
+  for (const seg of path === '' ? [] : path.split(/\.|(?=\[\])/)) {
     if (!t) return null;
     t = checker.getNonNullableType(t);
     if (seg === '*') {
@@ -371,8 +611,82 @@ function typeKeysAt(path: string): Set<string> | null {
   }
   if (!t) return null;
   t = checker.getNonNullableType(t);
-  const members = t.isUnion() ? t.types : [t];
-  return new Set(members.flatMap((m) => checker.getPropertiesOfType(m).map((p) => p.name)));
+  const members = (t.isUnion() ? t.types : [t]).filter((m) => m.flags & ts.TypeFlags.Object);
+  return members.length > 0 ? { checker, members } : null;
+}
+
+/**
+ * The property names TypeScript gives the type at `path`. A union contributes
+ * every member's keys; {@link typeVariantKeysAt} is the per-member read.
+ */
+function typeKeysAt(path: string): Set<string> | null {
+  const at = typeMembersAt(path);
+  if (!at) return null;
+  return new Set(at.members.flatMap((m) => at.checker.getPropertiesOfType(m).map((p) => p.name)));
+}
+
+/**
+ * The property names of the ONE union member at `path` whose `key` property is
+ * the literal `value` (`type: 'number'`), or `null` when no member is.
+ */
+function typeVariantKeysAt(path: string, key: string, value: unknown): Set<string> | null {
+  const at = typeMembersAt(path);
+  if (!at) return null;
+  const { checker, members } = at;
+  const literal = (t: ts.Type): unknown =>
+    t.isLiteral() ? t.value : t.flags & ts.TypeFlags.BooleanLiteral ? checker.typeToString(t) === 'true' : undefined;
+  const member = members.find((m) => {
+    const sym = checker.getPropertyOfType(m, key);
+    return sym !== undefined && literal(checker.getTypeOfSymbol(sym)) === value;
+  });
+  return member ? new Set(checker.getPropertiesOfType(member).map((p) => p.name)) : null;
+}
+
+/**
+ * `$schema` is a JSON-Schema META key, not a manifest field — a manifest may
+ * carry it to name the schema it validates against, and the TYPE should not.
+ */
+const ROOT_META_ONLY = ['$schema'];
+
+/**
+ * Every key the schema declares on a shape (the root included) that the type
+ * at the same path does not carry, as `path.key`; a shape whose path resolves
+ * to no object type is reported once, by path. For a discriminated union each
+ * member's keys are checked against the matching TypeScript member, reported
+ * as `path[key="value"].name`.
+ *
+ * DELIBERATELY ONE-WAY (schema keys ⊆ typed keys, not equality): this repo
+ * types a new field before the published schema carries it, so a type with a
+ * key the bytes do not have yet is the normal state for a while, and an exact
+ * match would turn that window red.
+ */
+function untypedSchemaKeys({ keys, variants }: SchemaShapes): string[] {
+  const untyped: string[] = [];
+  const at = (path: string, k: string) => (path === '' ? k : `${path}.${k}`);
+  for (const path of [...keys.keys()].sort()) {
+    const schemaKeys = keys.get(path)!;
+    const typed = typeKeysAt(path);
+    if (typed === null || typed.size === 0) {
+      untyped.push(`${path} (no object type resolves at this path from BlockManifestV1)`);
+      continue;
+    }
+    for (const k of schemaKeys) {
+      if (path === '' && ROOT_META_ONLY.includes(k)) continue;
+      if (!typed.has(k)) untyped.push(at(path, k));
+    }
+    for (const variant of variants.get(path) ?? []) {
+      const label = `${path}[${variant.key}=${JSON.stringify(variant.value)}]`;
+      const member = typeVariantKeysAt(path, variant.key, variant.value);
+      if (member === null) {
+        untyped.push(`${label} (no union member with that ${variant.key} at this path)`);
+        continue;
+      }
+      for (const k of variant.keys) {
+        if (!member.has(k) && typed.has(k)) untyped.push(`${label}.${k}`);
+      }
+    }
+  }
+  return untyped;
 }
 
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
@@ -500,8 +814,8 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
      * them needs a real schema walk rather than a wider predicate, and the
      * honest statement is that this guard covers INLINE shapes only — so the
      * "fails when the set GROWS" claim below is scoped to those. (Below the
-     * first level, composition IS read: see the DEEP test further down, which
-     * walks `patternProperties`, `allOf`, `oneOf` and `anyOf`.)
+     * first level — and for first-level shapes too — composition IS read: see
+     * the walker test further down and the limits stated on `schemaShapes`.)
      */
     const nested: { key: string; props: string[] }[] = [];
     for (const [key, def] of Object.entries(schema.properties ?? {})) {
@@ -563,58 +877,43 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
    * 🔴 THE SAME GAP, AT ANY DEPTH. The two tests above read one level of
    * inline `properties`. `analytics` is the first canonical shape that nests
    * further through `patternProperties` (a map keyed by event name) and
-   * `allOf`/`oneOf` (the property-declaration union), so a canonical that added
-   * `analytics.events.<name>.category` kept the whole suite green while
+   * `allOf` → `oneOf` (the property-declaration union), so a canonical that
+   * added `analytics.events.<name>.category` kept the whole suite green while
    * `defineBlock`'s inline form rejected `category` with TS2353 and Ajv
-   * accepted it. This walks every shape below the first level and checks its
-   * keys against the type the COMPILER resolves at the same path.
+   * accepted it. This walks every shape the schema declares, the root and the
+   * first level included, and checks its keys against the type the COMPILER
+   * resolves at the same path.
+   *
+   * What the walker reads and what it does not is stated once, on
+   * `schemaShapes`. The synthetic cases in the next `describe` are what show
+   * each kind of composition is actually reached.
    */
-  it('every canonical DEEP property (below the first level, any composition) is TYPED', () => {
+  it('every canonical property the shape walker reaches, at any depth, is TYPED', () => {
     const shapes = schemaShapes(schema);
-    // Positive control on the walker: it must find the first-level shapes the
-    // test above ledgers, or every assertion below is about an empty map.
-    expect(shapes.has('iframe') && shapes.has('goods[]')).toBe(true);
+    // Positive controls on the walker: it must find the root, the first-level
+    // shapes the test above ledgers, and the one discriminated union, or the
+    // assertions below are about an empty map.
+    expect(shapes.keys.has('') && shapes.keys.has('iframe') && shapes.keys.has('goods[]')).toBe(true);
+    expect(shapes.variants.get('analytics.events.*.properties.*')?.map((v) => v.value)).toEqual([
+      'enum',
+      'number',
+      'boolean',
+    ]);
 
-    // 🔴 LEDGER of deep shape PATHS, failing when the set GROWS (a deep shape
-    // nobody has typed or looked at) or SHRINKS (the walker stopped finding
-    // one, which would make the key check below vacuous for it). Typed-ahead
-    // paths are expected only when the vendored schema carries them.
-    const DEEP_LEDGER = ['analytics.events.*', 'analytics.events.*.properties.*'];
-    const deep = [...shapes.keys()].filter((p) => p.includes('.')).sort();
-    const expected = [
-      ...DEEP_LEDGER,
-      ...DEEP_TYPED_AHEAD.filter((p) => {
-        const top = p.split('.')[0]!;
-        return Object.keys(schema.properties ?? {}).includes(top);
-      }),
-    ].sort();
-    expect(deep, 'deep object shapes in the canonical schema').toEqual(expected);
-
-    // Every key the schema declares on a deep shape must be a key of the type
-    // at that path. DELIBERATELY ONE-WAY (schema keys ⊆ typed keys, not
-    // equality): this repo types a new field before the published schema
-    // carries it, so a type with a key the bytes do not have yet is the normal
-    // state for a while, and an exact match would turn that window red.
-    const untyped: string[] = [];
-    for (const path of deep) {
-      const typed = typeKeysAt(path);
-      if (typed === null || typed.size === 0) {
-        untyped.push(`${path} (no type resolves at this path from BlockManifestV1)`);
-        continue;
-      }
-      for (const k of shapes.get(path)!) {
-        if (!typed.has(k)) untyped.push(`${path}.${k}`);
-      }
-    }
-    expect(untyped, 'canonical deep properties with no type key').toEqual([]);
+    expect(shapePaths(shapes), 'object shapes in the canonical schema').toEqual(
+      expectedShapePaths(shapes.keys, SHAPE_LEDGER, DEEP_TYPED_AHEAD),
+    );
+    expect(untypedSchemaKeys(shapes), 'canonical properties with no type key').toEqual([]);
   });
 
-  it('the deep type resolver can see the analytics declaration types (positive control)', () => {
+  it('the type resolver follows each path kind to the right type (positive control)', () => {
     // The deep test already fails on a path that resolves to nothing. This
-    // pins that the resolver follows each path KIND to the right type — a map
-    // value (`*`), a union's members, an array's items (`[]`) — rather than to
-    // some other non-empty type. `arrayContaining`, not equality: the key check
-    // is one-way, so the type may carry a key the schema does not have yet.
+    // pins that the resolver follows each path KIND to the right type — the
+    // root, a map value (`*`), a union's members, an array's items (`[]`) —
+    // rather than to some other non-empty type. `arrayContaining`, not
+    // equality: the key check is one-way, so the type may carry a key the
+    // schema does not have yet.
+    expect([...(typeKeysAt('') ?? [])]).toEqual(expect.arrayContaining(['blockId', 'analytics']));
     expect([...(typeKeysAt('analytics.events.*') ?? [])]).toEqual(
       expect.arrayContaining(['description', 'properties']),
     );
@@ -622,7 +921,17 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
       expect.arrayContaining(['type', 'values']),
     );
     expect([...(typeKeysAt('goods[]') ?? [])]).toContain('priceBuzz');
+    expect([...(typeKeysAt('targets[]') ?? [])]).toContain('slotId');
     expect(typeKeysAt('analytics.nope.*')).toBeNull();
+    // A primitive is not an object shape: `scopes[]` is a string, and its
+    // `String.prototype` members must not count as typed keys.
+    expect(typeKeysAt('scopes[]')).toBeNull();
+
+    // One union MEMBER, selected by its discriminator literal.
+    const decl = 'analytics.events.*.properties.*';
+    expect([...(typeVariantKeysAt(decl, 'type', 'enum') ?? [])].sort()).toEqual(['type', 'values']);
+    expect([...(typeVariantKeysAt(decl, 'type', 'number') ?? [])]).toEqual(['type']);
+    expect(typeVariantKeysAt(decl, 'type', 'string')).toBeNull();
   });
 
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
@@ -655,5 +964,157 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     const schemaEnum = schema.properties.scopes?.items?.enum;
     expect(Array.isArray(schemaEnum)).toBe(true);
     expect(new Set(schemaEnum!).size).toBe(schemaEnum!.length);
+  });
+});
+
+/**
+ * The shape walker and its ledger, exercised on SYNTHETIC MUTATIONS of the
+ * canonical (a `structuredClone`; the vendored file is never touched).
+ *
+ * The real canonical can only show the walker is green today. Each case here
+ * adds one thing the real schema does not have, in one kind of place — a
+ * member of a member, an array's `items` behind an `anyOf`, a `then`, an
+ * `else`, an `if`, the root's own `then` — and pins exactly which shape path
+ * appears and which key is reported untyped. Skip a composition kind in
+ * `schemaShapes` and the case for that kind goes red.
+ */
+describe('the shape walker on synthetic schemas (guards on the guard above)', () => {
+  // A JSON schema, edited by path.
+  type Node = Record<string, any>;
+  const NAME = '^[a-z][a-z0-9_]{0,63}$';
+  const eventOf = (s: Node): Node => s.properties.analytics.properties.events.patternProperties[NAME];
+  const declOf = (s: Node): Node => eventOf(s).properties.properties.patternProperties[NAME];
+  const membersOf = (s: Node): Node[] => declOf(s).allOf[1].oneOf;
+  const mutated = (edit: (s: Node) => void) => {
+    const s = structuredClone(loadCanonicalSchema()) as Node;
+    edit(s);
+    return schemaShapes(s);
+  };
+  const DECL = 'analytics.events.*.properties.*';
+  const NO_TYPE = '(no object type resolves at this path from BlockManifestV1)';
+
+  it('CONTROL: the helpers reach the nodes they name, and the unmutated clone is clean', () => {
+    const s = structuredClone(loadCanonicalSchema()) as Node;
+    expect(Object.keys(eventOf(s).properties)).toEqual(['description', 'properties']);
+    expect(membersOf(s).map((m) => m.properties.type.const)).toEqual(['enum', 'number', 'boolean']);
+    const shapes = mutated(() => {});
+    expect(shapePaths(shapes)).toEqual([...SHAPE_LEDGER].sort());
+    expect(untypedSchemaKeys(shapes)).toEqual([]);
+  });
+
+  const cases: Array<[string, (s: Node) => void, string[], string[]]> = [
+    [
+      'a nested object shape on a member of a member (the `number` branch)',
+      (s) => {
+        membersOf(s)[1]!.properties.range = { type: 'object', properties: { min: { type: 'number' } } };
+      },
+      [`${DECL}.range`],
+      [`${DECL}.range`, `${DECL}.range ${NO_TYPE}`],
+    ],
+    [
+      "an array's `items` becoming an `anyOf` with an object member",
+      (s) => {
+        membersOf(s)[0]!.properties.values.items = {
+          anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' } } }],
+        };
+      },
+      [`${DECL}.values[]`],
+      [`${DECL}.values[] ${NO_TYPE}`],
+    ],
+    [
+      'a key under `then` on the event shape',
+      (s) => {
+        eventOf(s).if = { required: ['description'] };
+        eventOf(s).then = { properties: { category: { type: 'string' } } };
+      },
+      [],
+      ['analytics.events.*.category'],
+    ],
+    [
+      'a key under `else` on `analytics`',
+      (s) => {
+        s.properties.analytics.if = { required: ['events'] };
+        s.properties.analytics.else = { properties: { disabled: { type: 'boolean' } } };
+      },
+      [],
+      ['analytics.disabled'],
+    ],
+    [
+      'a key named only by an `if` condition',
+      (s) => {
+        eventOf(s).if = { properties: { kind: { const: 'timed' } } };
+      },
+      [],
+      ['analytics.events.*.kind'],
+    ],
+    [
+      'a whole new object shape under the ROOT `then`',
+      (s) => {
+        s.allOf[0].then.properties = {
+          build: { type: 'object', properties: { cache: { type: 'boolean' } } },
+        };
+      },
+      ['build'],
+      ['build', `build ${NO_TYPE}`],
+    ],
+    [
+      'a key added to ONE union member that the type carries only on ANOTHER',
+      (s) => {
+        membersOf(s)[1]!.properties.values = { type: 'array' };
+      },
+      [],
+      [`${DECL}[type="number"].values`],
+    ],
+    [
+      'a new union member the type has no member for',
+      (s) => {
+        membersOf(s).push({ type: 'object', properties: { type: { const: 'string' } } });
+      },
+      [],
+      [`${DECL}[type="string"] (no union member with that type at this path)`],
+    ],
+  ];
+
+  it.each(cases)('GROWTH: %s', (_label, edit, newPaths, untyped) => {
+    const shapes = mutated(edit);
+    expect(shapePaths(shapes)).toEqual([...SHAPE_LEDGER, ...newPaths].sort());
+    expect(untypedSchemaKeys(shapes)).toEqual(untyped);
+  });
+
+  it('SHRINK: a shape the walker stops finding leaves the ledger unequal', () => {
+    const shapes = mutated((s) => {
+      delete eventOf(s).properties.properties;
+    });
+    expect(shapePaths(shapes)).toEqual([...SHAPE_LEDGER].filter((p) => p !== DECL).sort());
+  });
+
+  /**
+   * `DEEP_TYPED_AHEAD` is empty, so the real ledger cannot show the mechanism
+   * works. These do, with a synthetic list: an entry is expected exactly when
+   * the schema carries that PATH — including a new shape under a key the
+   * schema already has, which a filter on the top-level key could not exempt.
+   */
+  describe('the typed-ahead mechanism (synthetic list)', () => {
+    const AHEAD = [`${DECL}.range`];
+    const withRange = () =>
+      mutated((s) => {
+        membersOf(s)[1]!.properties.range = { type: 'object', properties: { min: { type: 'number' } } };
+      });
+
+    it('a typed-ahead path the schema does NOT carry yet is not expected', () => {
+      const shapes = mutated(() => {});
+      expect(shapePaths(shapes)).toEqual(expectedShapePaths(shapes.keys, SHAPE_LEDGER, AHEAD));
+    });
+
+    it('a typed-ahead path the schema DOES carry is expected, under an existing top-level key', () => {
+      const shapes = withRange();
+      expect(shapePaths(shapes)).toEqual(expectedShapePaths(shapes.keys, SHAPE_LEDGER, AHEAD));
+      expect(expectedShapePaths(shapes.keys, SHAPE_LEDGER, AHEAD)).toContain(`${DECL}.range`);
+    });
+
+    it('CONTROL: without the typed-ahead entry the same schema fails the ledger', () => {
+      const shapes = withRange();
+      expect(shapePaths(shapes)).not.toEqual(expectedShapePaths(shapes.keys, SHAPE_LEDGER, []));
+    });
   });
 });
