@@ -1,5 +1,26 @@
 # @civitai/app-sdk
 
+## 0.63.0
+
+### Minor Changes
+
+- 02242ee: **The manifest gains an optional `analytics` (custom events) declaration, typed and validated.** `analytics.events` maps an event name to an optional `description` and a `properties` map, and each property is `{ type: 'enum', values: string[] }`, `{ type: 'number' }` or `{ type: 'boolean' }`. There is no free-text string type.
+
+  - **Types.** `BlockManifestV1.analytics`, plus the exported `BlockAnalyticsDeclaration`, `BlockAnalyticsEventDeclaration` and `BlockAnalyticsPropertyDeclaration` from `@civitai/app-sdk/blocks` and `@civitai/app-sdk/manifest`.
+  - **Schema.** Re-vendors the canonical App Block manifest schema from https://civitai.com/schemas/app-block/v1.json, which now declares `analytics`. `defineBlock` validates against it: event and property names must match `^[a-z][a-z0-9_]{0,63}$`; at most 50 events and 10 properties per event; an enum declares 1 to 50 distinct non-empty values of at most 64 characters; a `description` is at most 200 characters; no other keys are allowed at any level.
+  - 🔴 **This is a tightening, which is why the bump is `minor`.** The schema root allows undeclared keys, so until now a top-level `analytics` key of any shape passed `defineBlock` unvalidated. A manifest that already carries an `analytics` key that does not match the declaration above now fails.
+  - The platform's manifest validator remains authoritative.
+
+### Patch Changes
+
+- 5f60c53: **`defineBlock` now reports the right error for a rejected `analytics` property declaration.** A property declaration is one of three shapes selected by its `type`, and a rejected one used to be reported with the first shape's rule whichever `type` it named. It is now reported against the shape its `type` names:
+
+  - `{ type: 'number', min: 0 }` and `{ type: 'boolean', label: 'x' }` used to say `…values is required`. They now name the unknown key: `…min is not a known property when \`type\` is "number"`.
+  - `{ type: 'number', values: ['1'] }` used to say `…type must be equal to constant`. It now says `…values is not a known property when \`type\` is "number"`.
+  - An unknown key on an `enum` declaration keeps its field and now ends `when \`type\` is "enum"`instead of`here`.
+
+  `BlockManifestError.field` moves with the message in the first two cases (to the offending key). **No verdict changes:** every manifest is accepted or rejected exactly as before, and every other message is unchanged.
+
 ## 0.62.0
 
 ### Minor Changes
@@ -351,15 +372,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                        single measurements on one machine.
+                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1267,10 +1288,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                    after    @civitai/theme       0.3.1                   — 1 copy
-                                             @civitai/components  0.4.2                   — 1 copy
+                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                      after    @civitai/theme       0.3.1                   — 1 copy
+                                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
