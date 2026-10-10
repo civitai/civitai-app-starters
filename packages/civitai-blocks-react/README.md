@@ -1251,10 +1251,9 @@ image, so retrying after a timeout can create a duplicate.
 
 🔴 **A host that predates this variant ignores `bytes` and opens its upload
 picker instead**, so the call settles on whatever the viewer picks. The hook
-needs the civitai.com host from civitai/civitai#5639 at
-`95bb43430f864549e47ef4dbc5ae5569066826a0` or later, deployed: the upload's app
-stamp only persists from that head. Do not ship a block that relies on
-`useUploadImageBytes()` before then.
+needs civitai/civitai#5639 merged and deployed to civitai.com. That PR is still
+changing, so no intermediate head of it is enough. Do not ship a block that
+relies on `useUploadImageBytes()` before then.
 
 ```tsx
 import {
@@ -1305,10 +1304,14 @@ the cap, then the window, then the type. `uploadImageBytesResult` sets the
 image an accepted upload returns, `uploadImageBytesError` forces a refusal
 (for example `block lacks posts:write:self scope`), and `onUploadImageBytes`
 reports what was accepted. The mock's `CREATE_POST_FROM_APP` checks a
-`published` source the way the server does: it accepts only ids that same mock
-issued as postable (an accepted bytes upload, or a `PUBLISH_GENERATION_OUTPUTS`
-reply), each in one post only. An unknown id, a picked `useImageUpload()` id
-(production leaves it unstamped) or an already-posted id is refused with
+`published` source with the server's rule and refusal strings, but not its
+data. Production accepts the viewer's own images that this app stamped and that
+are not in a post yet, including ones from earlier sessions. The mock has no
+earlier sessions, so it accepts only ids it issued as postable in this session
+(an accepted bytes upload, or a `PUBLISH_GENERATION_OUTPUTS` reply) plus the
+ids you seed with `createMockHost({ postableImageIds: [...] })`, each in one
+post only. Any other id, a picked `useImageUpload()` id (production leaves it
+unstamped) or an already-posted id is refused with
 `an image is not available to post`. The mock does not model the page-only
 rule, the scope check, the real scan, or an older host's picker. `dev:live` has
 no bytes path: `upload` rejects with `the host returned no uploaded image`.

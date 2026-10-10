@@ -190,6 +190,29 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
     expect((await createPost([{ kind: 'published', imageIds: [5552] }])).caught).toBeNull();
   });
 
+  it('a `postableImageIds` seed (an earlier session’s stamped, unposted image) posts ONCE', async () => {
+    // 8801/8802 are distinct from every id the mock issues by default, so only
+    // the seed can make them postable.
+    await install({ postableImageIds: [8801, 8802] });
+    expect((await createPost([{ kind: 'published', imageIds: [8801] }])).caught).toBeNull();
+    expect((await createPost([{ kind: 'published', imageIds: [8801] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+    expect((await createPost([{ kind: 'published', imageIds: [8802] }])).caught).toBeNull();
+  });
+
+  it('with a seed, an unseeded id the mock never issued is still refused', async () => {
+    await install({ postableImageIds: [8801] });
+    expect((await createPost([{ kind: 'published', imageIds: [8803] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+    // A refused mixed post does not consume the seeded id.
+    expect((await createPost([{ kind: 'published', imageIds: [8801, 8803] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+    expect((await createPost([{ kind: 'published', imageIds: [8801] }])).caught).toBeNull();
+  });
+
   it('a source with no positive integer id is refused with the server string', async () => {
     await install();
     expect((await createPost([{ kind: 'published', imageIds: [0, -1, 1.5] }])).caught?.message).toBe(

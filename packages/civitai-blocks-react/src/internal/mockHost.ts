@@ -907,12 +907,15 @@ export interface MockHostOptions {
    * set. Live-tunable via {@link MockHost.setScenario}.
    *
    * A `{ kind: 'published', imageIds }` source is checked as the server's
-   * `resolveAppPublishedImages` checks it (civitai/civitai#5639). It may name
-   * ONLY ids this mock instance issued as postable: an accepted
-   * `OPEN_IMAGE_UPLOAD { bytes }` reply ({@link uploadImageBytesResult}) or a
-   * `PUBLISH_GENERATION_OUTPUTS` reply ({@link publishImageIds}). An unknown
-   * id, a picked `useImageUpload()` id (production leaves it unstamped) or an id
-   * a previous post already adopted is refused with
+   * `resolveAppPublishedImages` checks it (civitai/civitai#5639). Production
+   * accepts the viewer's own images that this app stamped and that are not in a
+   * post yet, from this session or an earlier one. The mock has no earlier
+   * sessions, so it accepts ONLY ids issued as postable on this mock instance
+   * (an accepted `OPEN_IMAGE_UPLOAD { bytes }` reply,
+   * {@link uploadImageBytesResult}, or a `PUBLISH_GENERATION_OUTPUTS` reply,
+   * {@link publishImageIds}) plus the ids seeded with {@link postableImageIds}.
+   * Any other id, a picked `useImageUpload()` id (production leaves it
+   * unstamped) or an id a previous post already adopted is refused with
    * `an image is not available to post`, and a source with no positive integer
    * id with `no valid image ids in a published source`. A refused post adopts
    * nothing. `workflow` sources are not checked. The mock does not model the
@@ -1088,6 +1091,17 @@ export interface MockHostOptions {
    * most 255 characters), and a copy of the `bytes`.
    */
   onUploadImageBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
+  /**
+   * Image ids the mock treats as already issued and postable when the host is
+   * created, as production treats an image this app stamped for the viewer in
+   * an EARLIER session that is not in a post yet. Each seeded id may be posted
+   * ONCE in a `CREATE_POST_FROM_APP` `{ kind: 'published', imageIds }` source;
+   * see {@link createPostResult} for what the mock refuses. Use it for a test
+   * that posts an image the block uploaded before the test started, instead of
+   * driving an upload or `PUBLISH_GENERATION_OUTPUTS` first. Absent → none.
+   * Read once at creation; not live-tunable.
+   */
+  postableImageIds?: number[];
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
@@ -2004,11 +2018,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let uploadBytesWindow: UploadBytesWindowEntry[] = [];
   // The ids a `CREATE_POST_FROM_APP` `{ kind: 'published' }` source may name:
   // ONLY ids this mock itself issued as postable (an accepted bytes upload, or a
-  // PUBLISH_GENERATION_OUTPUTS reply), and only until a post adopts them. Mirrors
-  // the host's `resolveAppPublishedImages` (civitai/civitai#5639): this app's
-  // provenance stamp and `postId IS NULL`. A picked `useImageUpload()` image is
-  // never added: production leaves it unstamped, so it is not postable.
-  const postableImageIds = new Set<number>();
+  // PUBLISH_GENERATION_OUTPUTS reply) plus the seeded `postableImageIds` (an
+  // earlier session's stamped, unposted images), and only until a post adopts
+  // them. Mirrors the host's `resolveAppPublishedImages` (civitai/civitai#5639):
+  // this app's provenance stamp and `postId IS NULL`. A picked `useImageUpload()`
+  // image is never added: production leaves it unstamped, so it is not postable.
+  const postableImageIds = new Set<number>(options.postableImageIds ?? []);
   let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
