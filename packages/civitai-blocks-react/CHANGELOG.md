@@ -1,5 +1,21 @@
 # @civitai/blocks-react
 
+## 0.67.1
+
+### Patch Changes
+
+- be256fb: **Docs only: the `useUploadImageBytes()` reference no longer says to wait for a host release, and states what an uploaded image can and cannot do.** The README section and the hook's JSDoc still told authors not to ship a block that relies on the hook until the host change behind it was merged and deployed. That change is in production, so the warning is removed. No code changes.
+
+  The README section now also states, as production rules:
+
+  - Generation metadata embedded in the uploaded file is not read, so the posted image has no generation details.
+  - Each uploaded image goes into exactly one post.
+  - An uploaded image never appears in `useGatedImages()` results.
+  - A post holds at most 20 images and names at most 10 sources.
+  - Posting from apps is still being rolled out, so `posting from apps is not enabled` is an ordinary refusal to handle, and it can arrive from `upload` as well as from `createPost()`.
+  - Creating the post needs an account with a verified email or a linked sign-in provider, and other account checks apply (finished onboarding, not brand new, not muted or banned).
+  - Server-side limits apply beyond the host's per-page window; a `busy` reply or a rate-limit error means wait and retry.
+
 ## 0.67.0
 
 ### Minor Changes
@@ -359,15 +375,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                        single measurements on one machine.
+                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2187,10 +2203,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                              after    @civitai/theme       0.3.1                   — 1 copy
-                                                       @civitai/components  0.4.2                   — 1 copy
+                                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                after    @civitai/theme       0.3.1                   — 1 copy
+                                                         @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
