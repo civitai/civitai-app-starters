@@ -1,8 +1,12 @@
+import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isPageSlotContext } from '@civitai/app-sdk/blocks';
 
+import { UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR, useUploadImageBytes } from '../src/hooks/useUploadImageBytes.js';
 import { createLiveHost } from '../src/live.js';
+import { resetTransport } from '../src/testing.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
@@ -2243,7 +2247,7 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
   });
 
   it('replies IMAGE_UPLOAD_RESULT dismissed (no `selected`) instead of hanging', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createLiveHost({
       blockToken: fakeJwt(DEFAULT_CLAIMS),
       viewer: { id: 42, username: 'dev-mod' },
@@ -2259,6 +2263,57 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     expect(payload.requestId).toBe('r-img');
     // Dismissed: no `selected` → the hook resolves to null (no fabricated image).
     expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('resolving the upload as dismissed (null)'))).toHaveLength(1);
+    expect(logged.filter((m) => m.includes('uploadImageBytesResult'))).toHaveLength(0);
+  });
+
+  it('a `useUploadImageBytes()` upload rejects with the no-image error, never hangs', async () => {
+    // dev:live has no bytes branch: the `bytes` variant gets the same DISMISSED
+    // reply as the picker path, and the hook (which has no "dismissed" outcome)
+    // rejects with its own no-image error. Driven through the REAL transport and
+    // validator, so a dropped reply would surface as a hook that never settles
+    // (its own bound is the 10-minute human-interaction timeout, far past
+    // `waitFor`'s).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      const host = createLiveHost({
+        blockToken: fakeJwt(DEFAULT_CLAIMS),
+        viewer: { id: 42, username: 'dev-mod' },
+        fetchImpl: (async () => {
+          throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+        }) as unknown as typeof fetch,
+      });
+      uninstall = host.install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const { result } = renderHook(() => useUploadImageBytes());
+      const state: { value?: unknown; caught?: Error } = {};
+      void result.current
+        .upload(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer as ArrayBuffer)
+        .then((v) => (state.value = v))
+        .catch((e: Error) => (state.caught = e));
+
+      await waitFor(() => expect(state.caught?.message).toBe(UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR));
+      expect(UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR).toBe('the host returned no uploaded image');
+      expect(state.value).toBeUndefined();
+      // The wire reply is the picker path's dismissed shape: no image, no error.
+      const reply = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+      expect('selected' in reply).toBe(false);
+      expect('error' in reply).toBe(false);
+      // The log says it REJECTS (not "dismissed (null)") and names the mock option.
+      const logged = warn.mock.calls.map((c) => String(c[0]));
+      expect(logged).toContain(
+        '[createLiveHost] OPEN_IMAGE_UPLOAD { bytes } received but live dev mode has no bytes upload path — ' +
+          'useUploadImageBytes().upload() REJECTS with "the host returned no uploaded image". ' +
+          'Test the bytes upload against the real site, or use ' +
+          'createMockHost({ uploadImageBytesResult }) in dev:mock.',
+      );
+      expect(logged.filter((m) => m.includes('dismissed (null)'))).toHaveLength(0);
+    } finally {
+      resetTransport();
+    }
   });
 });
 

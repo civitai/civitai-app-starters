@@ -84,6 +84,22 @@ const JPEG = [0xff, 0xd8, 0xff] as const;
 const RIFF = [0x52, 0x49, 0x46, 0x46] as const; // "RIFF"
 const WEBP = [0x57, 0x45, 0x42, 0x50] as const; // "WEBP" at offset 8
 
+/** The three image types the host recognises by magic bytes. */
+export type SniffedImageType = 'image/png' | 'image/webp' | 'image/jpeg';
+
+/**
+ * PNG / WebP / JPEG by magic bytes — the host's shared sniffer
+ * (`sniffSaveBytesImage`: the full 8-byte PNG signature, no GIF). Both `bytes`
+ * bridges use it: `SAVE_IMAGE` before its text fallback, and
+ * `OPEN_IMAGE_UPLOAD`, which accepts images only.
+ */
+export function sniffImageBytes(view: Uint8Array): SniffedImageType | null {
+  if (startsWith(view, PNG)) return 'image/png';
+  if (startsWith(view, RIFF) && startsWith(view, WEBP, 8)) return 'image/webp';
+  if (startsWith(view, JPEG)) return 'image/jpeg';
+  return null;
+}
+
 /**
  * Classify a `bytes` payload by CONTENT — the host's `classifySaveBytes`.
  * `filename` is the only hint and must already be CLEANED
@@ -94,9 +110,8 @@ const WEBP = [0x57, 0x45, 0x42, 0x50] as const; // "WEBP" at offset 8
  */
 export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
   const view = new Uint8Array(bytes);
-  if (startsWith(view, PNG)) return 'image/png';
-  if (startsWith(view, RIFF) && startsWith(view, WEBP, 8)) return 'image/webp';
-  if (startsWith(view, JPEG)) return 'image/jpeg';
+  const image = sniffImageBytes(view);
+  if (image) return image;
 
   if (view.includes(0)) return null;
   let text: string;

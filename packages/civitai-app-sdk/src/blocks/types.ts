@@ -2617,7 +2617,11 @@ export type BlockPostSource =
     }
   | {
       kind: 'published';
-      /** Ids returned by a previous `usePublishGenerationOutputs()` publish. */
+      /**
+       * Ids returned by a previous `usePublishGenerationOutputs()` publish, or
+       * by an in-tab `bytes` upload (`useUploadImageBytes()` in
+       * `@civitai/blocks-react`; page apps only).
+       */
       imageIds: number[];
     };
 

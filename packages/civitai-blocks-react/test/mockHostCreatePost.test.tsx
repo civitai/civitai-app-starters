@@ -63,7 +63,9 @@ describe('createMockHost — create post from app', () => {
 
     let r: unknown;
     await act(async () => {
-      r = await result.current.createPost({ sources: [{ kind: 'published', imageIds: [1] }] });
+      // A `workflow` source: a `published` id must have been issued by this mock
+      // first (mockHostImageUploadBytes.test.tsx pins that rule).
+      r = await result.current.createPost({ sources: [{ kind: 'workflow', workflowId: 'wf_1' }] });
     });
     expect(r).toEqual({ postId: 7, url: 'https://civitai.com/posts/7', imageIds: [1, 2, 3] });
   });

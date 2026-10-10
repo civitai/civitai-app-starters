@@ -166,7 +166,8 @@ export interface UseCreatePostFromApp {
  *
  * 🔴 NO ARM OF `sources` TAKES A URL. Name a workflow from this app's own
  * subqueue plus indexes into its outputs, or `Image` ids from a previous
- * `usePublishGenerationOutputs()` publish. The server re-verifies both.
+ * `usePublishGenerationOutputs()` publish or `useUploadImageBytes()` upload.
+ * The server re-verifies both.
  *
  * ⚠️ POSTING A PUBLISHED IMAGE REMOVES IT FROM THIS APP'S OWN GRID. The
  * app-scoped read behind `useGatedImages()` is conjoined with `postId IS NULL`,

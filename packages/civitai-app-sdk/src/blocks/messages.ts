@@ -810,6 +810,11 @@ export type ParentToBlockMessage =
       // The variant the host returns matches the `purpose`/`asyncScan` the block
       // requested; narrow structurally (`'status' in selected` for pending, then
       // `'imageId' in selected`) when a block uses more than one.
+      //
+      // `error` (civitai/civitai#5639) is set only on a refused or failed
+      // `bytes` upload, and never beside `selected`. A picker reply never
+      // carries it. An SDK that predates the field reads such a reply as "no
+      // image", which is the safe reading.
       type: 'IMAGE_UPLOAD_RESULT';
       payload: {
         requestId: string;
@@ -817,6 +822,8 @@ export type ParentToBlockMessage =
           | BlockUploadedImageInfo
           | BlockGenerationSourceImageInfo
           | BlockPendingImageInfo;
+        /** A `bytes` upload's refusal or failure: a host string or a forwarded server message. */
+        error?: string;
       };
     }
   | {
@@ -1397,8 +1404,31 @@ export type BlockToParentMessage =
       //     ignores it and blocking-resolves a moderated image — the SDK hook
       //     tolerates that (treats it as immediately-scanned; see the compat matrix
       //     in `useImageUpload`).
+      //
+      // `bytes` (civitai/civitai#5639) uploads an image the block PRODUCED IN
+      // THE TAB, with NO picker: an `ArrayBuffer` (structured-cloned, never
+      // transferred; a typed-array view or an empty buffer is refused). PAGE
+      // APPS ONLY, and the token needs `posts:write:self`. PNG / WebP / JPEG by
+      // magic bytes only. The host checks the per-file cap FIRST, then its
+      // rolling window, then the type. Always BLOCKING: `asyncScan` is ignored.
+      // `purpose: 'generationSource'` with `bytes` is refused. The reply is
+      // exactly one `IMAGE_UPLOAD_RESULT` carrying the moderated `display`
+      // shape or an `error`; a `requestId` reused while its upload is in flight
+      // gets no reply of its own. The row it creates is postable by THIS app
+      // through `CREATE_POST_FROM_APP` `{ kind: 'published', imageIds }`.
+      // `filename` is advisory (sanitised, extension forced from the sniffed
+      // type). 🔴 A host that predates the variant IGNORES `bytes` and opens
+      // its picker instead.
       type: 'OPEN_IMAGE_UPLOAD';
-      payload: { requestId: string; purpose?: BlockUploadPurpose; asyncScan?: boolean };
+      payload: {
+        requestId: string;
+        purpose?: BlockUploadPurpose;
+        asyncScan?: boolean;
+        /** In-tab image bytes; no picker. Page apps only. See the comment above. */
+        bytes?: ArrayBuffer;
+        /** Optional name for a `bytes` upload (host-sanitised). */
+        filename?: string;
+      };
     }
   | {
       // Persist a viewer's checkpoint override via the host. `null` clears

@@ -1492,12 +1492,26 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // the hook resolves to `null`) and log an actionable message. Honest-
             // by-design — never fabricate a moderated image id. Mirrors the
             // OPEN_BUZZ_PURCHASE "no headless contract" pattern.
-            logOnce(
-              'open-image-upload',
-              'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +
-                'modal — resolving the upload as dismissed (null). Test the image-upload flow ' +
-                'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
-            );
+            //
+            // The `bytes` variant (`useUploadImageBytes()`) gets the same reply,
+            // but that hook has no "dismissed" outcome: it REJECTS with its
+            // no-image error. So it gets its own message, naming its mock option.
+            if (typed.payload != null && 'bytes' in (typed.payload as object)) {
+              logOnce(
+                'open-image-upload-bytes',
+                'OPEN_IMAGE_UPLOAD { bytes } received but live dev mode has no bytes upload path — ' +
+                  'useUploadImageBytes().upload() REJECTS with "the host returned no uploaded image". ' +
+                  'Test the bytes upload against the real site, or use ' +
+                  'createMockHost({ uploadImageBytesResult }) in dev:mock.',
+              );
+            } else {
+              logOnce(
+                'open-image-upload',
+                'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +
+                  'modal — resolving the upload as dismissed (null). Test the image-upload flow ' +
+                  'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
+              );
+            }
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
               payload: { requestId: requestId ?? '' },
