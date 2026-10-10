@@ -38,11 +38,16 @@ const HOST_UNSUPPORTED_REPLY = 'unsupported on this host';
  * - `'unsupported'` — the host answered `unsupported on this host`: it knows the
  *   message and has no handler for it on this surface. Nothing was priced. **Fall
  *   back to one `useBuzzWorkflow().estimate()` per cell.**
- * - `'timeout'` — no reply arrived in time. 🔴 This is ALSO what a host that
- *   predates the message looks like: the host's `unsupported on this host` reply
- *   exists only for message types it already knows, so an older host sends
- *   nothing and the call ends here, after the full wait. Falling back to per-cell
- *   estimates is the right response to this code too.
+ * - `'timeout'` — no reply arrived in time. A host that supports the message
+ *   bounds its own work and replies well inside the default wait, marking any
+ *   cell it could not price in time as failed (`snapshot.error ===
+ *   'estimate timed out'`), so this code usually means the host or its upstream
+ *   is SLOW, not that it is old. 🔴 Do NOT fall back to per-cell estimates here:
+ *   that sends up to 16 more estimates at an upstream that is already struggling.
+ *   Show the estimate as unavailable and let the viewer retry later. A host that
+ *   predates the message also ends here (it never replies); an app that must
+ *   tell the two apart can probe once with a one-body batch and a short explicit
+ *   `timeoutMs`, and treat only THAT probe's `'timeout'` as "no batch support".
  * - `'invalid-request'` — the list is empty, is not an array, or holds more than
  *   {@link BATCH_ESTIMATE_MAX_CELLS} bodies. Refused by the hook before sending,
  *   or by the host. A per-cell fallback is pointless for an empty list and is the
@@ -90,7 +95,10 @@ export class BatchEstimateError extends Error {
  *   `WorkflowEstimateError` a single `estimate()` of that body would have
  *   rejected with (`code: 'failed' | 'no-cost'`, the reason on
  *   `error.snapshot.error`), so one function can turn either into viewer copy.
- *   It is a value here, not a throw: the other cells are still usable.
+ *   It is a value here, not a throw: the other cells are still usable. A cell
+ *   whose `snapshot.error` is `'estimate timed out'` was not priced before the
+ *   host's time budget for the call ran out: show it as unavailable and retry
+ *   later rather than re-estimating it at once.
  *
  * `snapshot` is the host's snapshot for the cell, verbatim, on both arms.
  */
@@ -119,10 +127,11 @@ export interface EstimateBatchOptions {
    * How long to wait for the host's reply, in milliseconds. Default
    * `WORKFLOW_REQUEST_TIMEOUT_MS` (120,000), the single estimate's bound.
    *
-   * A host that predates the batch message never replies, so this is also how
-   * long an app waits before it learns to fall back. An app that would rather
-   * fall back sooner can pass less, at the cost of giving up on a slow but
-   * healthy batch: 16 cost quotes run 4 at a time on the host.
+   * A host that supports the batch replies within its own time budget, well
+   * inside this default, so leave it unset for ordinary pricing. Pass a short
+   * value only for a deliberate old-host probe (a one-body batch, sent once):
+   * a host that predates the message never replies, and a short wait finds that
+   * out sooner. A short wait on a full grid gives up on slow but healthy batches.
    */
   timeoutMs?: number;
 }
@@ -208,8 +217,11 @@ function toBatchEstimateError(err: unknown): BatchEstimateError {
  *   // cells[i] answers bodies[i]
  * } catch (err) {
  *   if (!(err instanceof BatchEstimateError)) throw err;
- *   if (err.code === 'unsupported' || err.code === 'timeout') {
+ *   if (err.code === 'unsupported') {
  *     // this host has no batch estimate — price each cell with estimate()
+ *   } else {
+ *     // 'timeout' (a slow host, not an old one) or 'failed': show the estimate
+ *     // as unavailable and retry later — never one estimate() per cell
  *   }
  * }
  */

@@ -109,6 +109,23 @@ describe('createMockHost — batch estimate', () => {
     expect(batch!.aggregate).toEqual({ total: 31, pricedCells: 1, cellCount: 2 });
   });
 
+  it('`batchEstimateTimedOutCells` answers those cells as the host does when its call budget runs out', async () => {
+    const result = await hooks({ generation: { costPerGen, batchEstimateTimedOutCells: [1] } });
+    let batch: Awaited<ReturnType<typeof result.current.batch.estimateBatch>> | undefined;
+    await act(async () => {
+      batch = await result.current.batch.estimateBatch([body('a'), body('b'), body('c')]);
+    });
+    expect(batch!.cells.map((c) => (c.ok ? c.cost.total : null))).toEqual([12, null, 7]);
+    const timedOut = batch!.cells[1];
+    expect(timedOut.ok === false && timedOut.error.code).toBe('failed');
+    expect(timedOut.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'estimate timed out',
+    });
+    expect(batch!.aggregate).toEqual({ total: 19, pricedCells: 2, cellCount: 3 });
+  });
+
   it("`batchEstimate: 'unsupported'` answers as a host with no handler does", async () => {
     const result = await hooks({ generation: { batchEstimate: 'unsupported' } });
     let caught: unknown;

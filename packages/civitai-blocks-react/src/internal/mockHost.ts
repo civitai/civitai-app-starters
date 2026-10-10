@@ -326,6 +326,16 @@ export interface MockGenerationScenario {
    */
   batchEstimate?: 'supported' | 'unsupported' | 'silent';
   /**
+   * Indices of batch cells the mock answers as NOT PRICED IN TIME — the snapshot
+   * the host returns for a cell when the call's time budget runs out before that
+   * cell priced: `{ workflowId:'failed', status:'failed', error:'estimate timed out' }`.
+   * The other cells price normally and the call still resolves, so this tests a
+   * PARTIAL grid: the cell is `ok: false` with `WorkflowEstimateError` code
+   * `'failed'` and `snapshot.error === 'estimate timed out'`. Applies only with
+   * `batchEstimate: 'supported'`. Default: unset (no cell times out).
+   */
+  batchEstimateTimedOutCells?: number[];
+  /**
    * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
    * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
    * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
@@ -519,6 +529,11 @@ const MOCK_ESTIMATE_BATCH_MAX_CELLS = 16;
 /** The server's per-cell refusal of a `kind: 'training'` body inside a batch. */
 const MOCK_TRAINING_IN_BATCH_ERROR =
   'a training estimate cannot be part of a batch — estimate it on its own';
+/**
+ * The host's per-cell error when a batch call's time budget ran out before that
+ * cell priced (civitai/civitai `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`).
+ */
+const MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
 /** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
@@ -2654,7 +2669,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
-            const snapshots = (bodies as WorkflowBody[]).map((cell): BlockWorkflowSnapshot => {
+            const snapshots = (bodies as WorkflowBody[]).map((cell, index): BlockWorkflowSnapshot => {
+              // The host's snapshot for a cell its call budget ran out on.
+              if (gen.batchEstimateTimedOutCells?.includes(index)) {
+                return {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR,
+                };
+              }
               // The server refuses a training cell in a batch: a training
               // estimate stores the quote the viewer later confirms, so it is
               // estimated on its own. Refused BEFORE `estimateSnapshotFor`, which

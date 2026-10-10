@@ -498,18 +498,23 @@ resolves with one cell per body, in order, plus the run total. Returns
 `aggregate.pricedCells === aggregate.cellCount`; otherwise show it as a partial
 total.
 
+**The host bounds the time one call takes.** If its budget runs out, the call
+still resolves: the cells that priced are returned, and every other cell is
+`ok: false` with `snapshot.error === 'estimate timed out'`. Show those cells as
+unavailable and let the viewer retry later.
+
 `estimateBatch` rejects with `BatchEstimateError` only when the whole call
 failed. Branch on `err.code`:
 
 | `code` | Meaning | What to do |
 |---|---|---|
 | `'unsupported'` | The host answered `unsupported on this host`. | Price each cell with `estimate()`. |
-| `'timeout'` | No reply in time. A host that predates the batch message never replies, so this is what an older civitai.com looks like. | Price each cell with `estimate()`. Pass `{ timeoutMs }` to fall back sooner. |
+| `'timeout'` | No reply in time. A host that supports the batch replies within its own time budget, well inside the default wait, so this usually means a slow host, not an old one. | Show the estimate as unavailable and retry later. **Do not** fall back to one `estimate()` per cell: that sends up to 16 more estimates at a host that is already slow. |
 | `'invalid-request'` | Empty list, or more than 16 bodies. Refused before sending. | Fix the list. |
 | `'failed'` | Any other whole-call refusal: the scope, a rate limit, review preview. The reason is on `err.hostError`; log it, don't render it. | Show your own copy and retry later. |
 
-A 2 × 2 grid (two prompts × two checkpoints), with the fallback to per-cell
-estimates:
+A 2 × 2 grid (two prompts × two checkpoints), falling back to per-cell estimates
+only on a host that answers `'unsupported'`:
 
 ```tsx
 import { useState } from 'react';
@@ -540,9 +545,14 @@ export function GridQuote() {
     CHECKPOINTS.map((cp) => ({ kind: 'textToImage' as const, ...cp, params: { prompt } })),
   );
 
-  // Your copy, chosen by code. Never render `err.message` or `snapshot.error`.
+  // Your copy, chosen by code. Never render `err.message` or `snapshot.error`;
+  // matching the host's stable 'estimate timed out' string is fine.
   const why = (err: WorkflowEstimateError) =>
-    err.code === 'no-cost' ? 'No price for this cell' : 'This cell cannot run';
+    err.snapshot.error === 'estimate timed out'
+      ? 'Price not ready, try again shortly'
+      : err.code === 'no-cost'
+        ? 'No price for this cell'
+        : 'This cell cannot run';
 
   async function priceGrid() {
     try {
@@ -552,7 +562,8 @@ export function GridQuote() {
       return;
     } catch (err) {
       if (!(err instanceof BatchEstimateError)) throw err;
-      if (err.code !== 'unsupported' && err.code !== 'timeout') {
+      if (err.code !== 'unsupported') {
+        // 'timeout' is a slow host, not an old one: never fan out per cell here.
         setQuotes([]);
         setRunTotal(null);
         return; // show "pricing unavailable, try again" in your UI
@@ -594,11 +605,19 @@ The fallback spends one request of the shared allowance per cell, which is why
 the batch exists. Each submit stays per cell: call `submit(bodies[i])` for each
 cell the viewer confirms.
 
+A host that predates the batch message never replies, so the call ends in
+`'timeout'` after the full wait. Only if your app must support such a host,
+detect it with a deliberate probe: send a one-body batch once with a short
+`{ timeoutMs }`, and treat only that probe's `'timeout'` as "no batch support".
+Any other `'timeout'` is a slow host.
+
 **Mock host:** `createMockHost` and `Harness` price each cell exactly as they
 price one `estimate()` of that body (`costPerGen` and `failEstimate` apply per
-cell). Set `generation.batchEstimate` to `'unsupported'` or `'silent'` to test
-the fallback; `'silent'` never replies, like an older host, so pass a short
-`timeoutMs` in a test. **`dev:live`** forwards the call to civitai.com, so against
+cell). Set `generation.batchEstimate` to `'unsupported'` to test the fallback,
+or to `'silent'` to test a call that never gets a reply (pass a short
+`timeoutMs` in a test). Set `generation.batchEstimateTimedOutCells` to a list
+of cell indices to answer those cells as `'estimate timed out'`, the way the
+host does when its time budget runs out. **`dev:live`** forwards the call to civitai.com, so against
 a civitai.com that predates the batch procedure it rejects with `'failed'`
 rather than `'unsupported'`.
 
