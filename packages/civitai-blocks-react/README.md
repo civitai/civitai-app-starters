@@ -1271,8 +1271,10 @@ What the upload does and does not give you on civitai.com:
   arrives from `upload` as well as from `createPost()`. Handle it as an
   ordinary error branch, not as a bug in your app.
 - **Creating the post needs an account with a verified email or a linked
-  sign-in provider.** `upload` does not check this, so a viewer can upload and
-  then be refused at `createPost()`.
+  sign-in provider.** Other account checks apply too: onboarding must be
+  finished, the account must not be brand new, and it must not be muted or
+  banned. `upload` checks none of these, so a viewer can upload and then be
+  refused at `createPost()`.
 - **Server-side limits also apply**, to the upload and to the post, beyond the
   host's per-page window above. A `busy` reply or a rate-limit error such as
   `Rate limit exceeded, please retry shortly.` means wait and retry.

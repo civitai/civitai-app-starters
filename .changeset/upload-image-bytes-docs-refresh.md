@@ -11,5 +11,5 @@ The README section now also states, as production rules:
 - An uploaded image never appears in `useGatedImages()` results.
 - A post holds at most 20 images and names at most 10 sources.
 - Posting from apps is still being rolled out, so `posting from apps is not enabled` is an ordinary refusal to handle, and it can arrive from `upload` as well as from `createPost()`.
-- Creating the post needs an account with a verified email or a linked sign-in provider.
+- Creating the post needs an account with a verified email or a linked sign-in provider, and other account checks apply (finished onboarding, not brand new, not muted or banned).
 - Server-side limits apply beyond the host's per-page window; a `busy` reply or a rate-limit error means wait and retry.
