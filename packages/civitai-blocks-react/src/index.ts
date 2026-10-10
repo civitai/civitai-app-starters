@@ -175,8 +175,12 @@ export type {
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export type { UseCheckpointPicker } from './hooks/useCheckpointPicker.js';
-export { useResourcePicker } from './hooks/useResourcePicker.js';
-export type { UseResourcePicker } from './hooks/useResourcePicker.js';
+export { useResourcePicker, RESOURCE_PICKER_MULTIPLE_MAX } from './hooks/useResourcePicker.js';
+export type {
+  UseResourcePicker,
+  ResourcePickerOpenOptions,
+  ResourcePickerMultiple,
+} from './hooks/useResourcePicker.js';
 export { useImageUpload } from './hooks/useImageUpload.js';
 export type {
   UseImageUpload,

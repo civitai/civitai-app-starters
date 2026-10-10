@@ -782,12 +782,30 @@ export type ParentToBlockMessage =
       payload: { requestId: string; selected?: BlockCheckpointInfo };
     }
   | {
-      // Reply to OPEN_RESOURCE_PICKER (the PAGE resource picker). `selected` is
-      // absent when the user dismissed without choosing — the block's hook
-      // resolves to `null`. The payload is the narrow `BlockResourceInfo`
-      // projection ONLY; the iframe never receives a list or the catalog.
+      // Reply to OPEN_RESOURCE_PICKER (the PAGE resource picker). The payload is
+      // the narrow `BlockResourceInfo` projection ONLY; the iframe never
+      // receives search results or the catalog — only what the viewer picked.
+      //
+      // TWO REPLY SHAPES, one per request shape, never mixed:
+      //   - single pick (no `multiple` on the request): `{ requestId, selected? }`.
+      //     `selected` is absent when the user dismissed without choosing — the
+      //     hook resolves to `null`. Unchanged since the message was introduced.
+      //   - multi-select (`multiple` on the request): `{ requestId,
+      //     selectedResources }` — the picked resources in PICK ORDER, `[]` when
+      //     the user dismissed. `selected` is not set.
+      // A host that predates multi-select ignores `multiple`, opens a single
+      // pick and answers the FIRST shape; the hook reads the absence of
+      // `selectedResources` as that case and returns a list of zero or one.
+      //
+      // `error` is set only when the host REFUSES a request it will not open a
+      // picker for (e.g. `multiple` with a Checkpoint).
       type: 'RESOURCE_PICKER_RESULT';
-      payload: { requestId: string; selected?: BlockResourceInfo };
+      payload: {
+        requestId: string;
+        selected?: BlockResourceInfo;
+        selectedResources?: BlockResourceInfo[];
+        error?: string;
+      };
     }
   | {
       // Reply to OPEN_IMAGE_UPLOAD (the host-mediated block image upload).
@@ -1375,6 +1393,14 @@ export type BlockToParentMessage =
         resourceType: BlockResourcePickerType;
         /** Optional base-model family hint (ecosystem key or baseModel name). */
         baseModelGroup?: string;
+        /**
+         * Ask for SEVERAL resources in one picker session. LoRA only — the host
+         * refuses it with a Checkpoint. `max` is a whole number ≥ 1; the host
+         * clamps anything above 5 (the `additionalResources` cap) to 5. The
+         * reply is then `selectedResources`, not `selected`. OMIT the key for
+         * a single pick: its absence is what keeps that path unchanged.
+         */
+        multiple?: { max: number };
       };
     }
   | {

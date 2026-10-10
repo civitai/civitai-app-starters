@@ -844,7 +844,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
      * is trusted or spends Buzz.
      */
     const openPicker = (
-      params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId'>,
+      params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId' | 'multiple'>,
       resultType: PickerResultChannel,
       requestId: string,
     ) => {
@@ -863,15 +863,32 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         fetchImpl,
         ...(params.baseModelGroup != null ? { baseModelGroup: params.baseModelGroup } : {}),
         ...(params.currentVersionId != null ? { currentVersionId: params.currentVersionId } : {}),
+        ...(params.multiple ? { multiple: params.multiple } : {}),
         ...(win.document ? { document: win.document } : {}),
         ...(options.onPickerReady ? { onReady: options.onPickerReady } : {}),
         onResolve: (selection) => {
           openOverlays.delete(handle);
           if (torn) return;
+          if (params.multiple) {
+            // MULTI-select: the reply shape follows the REQUEST — always a list,
+            // `[]` on dismissal, and never `selected` (the production contract).
+            dispatchToBlock({
+              type: resultType,
+              payload: {
+                requestId,
+                selectedResources:
+                  selection && 'selectedResources' in selection ? selection.selectedResources : [],
+              },
+            });
+            return;
+          }
           dispatchToBlock({
             type: resultType,
             // A dismissal omits `selected` (the hooks resolve to undefined/null).
-            payload: { requestId, ...(selection ? { selected: selection.selected } : {}) },
+            payload: {
+              requestId,
+              ...(selection && 'selected' in selection ? { selected: selection.selected } : {}),
+            },
           });
         },
       });
@@ -1471,12 +1488,39 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // re-validated server-side at estimate/submit.
             const resourceType: 'Checkpoint' | 'LORA' =
               typed.payload?.resourceType === 'Checkpoint' ? 'Checkpoint' : 'LORA';
+            // MULTI-select (`multiple: { max }`) — the production host's rules:
+            // LoRA only, `max` a whole number ≥ 1 clamped to 5, and a refusal is
+            // ANSWERED with `error` (the hook throws on it) rather than opening
+            // a single-pick overlay the block did not ask for.
+            const rawMultiple = (typed.payload as { multiple?: unknown } | undefined)?.multiple;
+            let multiple: { max: number } | undefined;
+            if (rawMultiple !== undefined && rawMultiple !== null) {
+              const max =
+                typeof rawMultiple === 'object' ? (rawMultiple as { max?: unknown }).max : undefined;
+              const refusal =
+                resourceType === 'Checkpoint'
+                  ? 'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.'
+                  : typeof max !== 'number' || !Number.isInteger(max) || max < 1
+                    ? 'OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.'
+                    : null;
+              if (refusal !== null) {
+                // A refusal nobody can route is not worth sending.
+                if (!isRoutableRequestId(requestId)) return;
+                dispatchToBlock({
+                  type: 'RESOURCE_PICKER_RESULT',
+                  payload: { requestId, error: refusal },
+                });
+                return;
+              }
+              multiple = { max: Math.min(max as number, 5) };
+            }
             openPicker(
               {
                 type: resourceType,
                 ...(typeof typed.payload?.baseModelGroup === 'string'
                   ? { baseModelGroup: typed.payload.baseModelGroup }
                   : {}),
+                ...(multiple ? { multiple } : {}),
               },
               'RESOURCE_PICKER_RESULT',
               requestId ?? '',

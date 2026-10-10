@@ -890,6 +890,32 @@ describe('isValidResourcePickerResult', () => {
   ])('rejects %s', (_, payload) => {
     expect(isValidResourcePickerResult(payload)).toBe(false);
   });
+
+  // Multi-select reply (`selectedResources`).
+  it('accepts a list of picks', () => {
+    expect(
+      isValidResourcePickerResult({
+        requestId: 'r',
+        selectedResources: [selected, { versionId: 42, modelId: 7, baseModel: 'X', modelType: 'LORA' }],
+      }),
+    ).toBe(true);
+  });
+  it('accepts an empty list (multi-select dismiss)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selectedResources: [] })).toBe(true);
+  });
+  it('accepts a refusal carrying only an error', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', error: 'nope' })).toBe(true);
+  });
+  it.each([
+    ['selectedResources not an array', { requestId: 'r', selectedResources: selected }],
+    ['selectedResources null', { requestId: 'r', selectedResources: null }],
+    ['one entry missing versionId', { requestId: 'r', selectedResources: [selected, { modelType: 'LORA' }] }],
+    ['one entry with a string versionId', { requestId: 'r', selectedResources: [{ ...selected, versionId: '9001' }] }],
+    ['one entry not an object', { requestId: 'r', selectedResources: [selected, 7] }],
+    ['one entry with bad trainedWords', { requestId: 'r', selectedResources: [{ ...selected, trainedWords: [1] }] }],
+  ])('rejects a list reply: %s', (_, payload) => {
+    expect(isValidResourcePickerResult(payload)).toBe(false);
+  });
 });
 
 describe('isValidUserCheckpointSetResult', () => {
