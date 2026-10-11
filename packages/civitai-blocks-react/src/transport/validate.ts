@@ -58,6 +58,7 @@ import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
   ParentToBlockMessageType,
+  SharedStorageRateLimit,
   Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
@@ -1377,6 +1378,10 @@ export function isValidAppStorageQuotaResult(p: unknown): boolean {
 // uniform). Closes the silent-corrupt-return hole: without these,
 // `getCount/getCounts/append/vote/unvote`/`list` returned a missing field as
 // `undefined` typed `number`/`string` with no throw, no timeout.
+//
+// The optional `rateLimit` on the six write replies is NOT checked by any
+// predicate here, so it can never drop a reply; the hook parses it (see
+// `parseSharedStorageRateLimit` below the validators).
 
 /** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
 function isValidSharedValue(v: unknown): boolean {
@@ -1522,6 +1527,34 @@ export function isValidSharedWithdrawResult(p: unknown): boolean {
   if (typeof p.ok !== 'boolean') return false;
   if (typeof p.deleted !== 'boolean') return false;
   return true;
+}
+
+/**
+ * Validate the `rateLimit` a host put on a shared-storage refusal. Returns a
+ * copy holding ONLY the two known fields, or `undefined` when `value` is
+ * missing or malformed.
+ *
+ * Kept in lockstep with the platform's own parser for the same metadata
+ * (`parseRateLimitMeta` in civitai's `src/shared/utils/rate-limit-meta.ts`):
+ * `retryAfterSeconds` must be an integer of at least 1, and `retryAt` a string
+ * `Date.parse` can read. Anything else — a wrong type, a negative or fractional
+ * number, a missing field, a non-object — is malformed.
+ *
+ * 🔴 NOT A VALIDATOR, deliberately. None of the `isValidShared*Result`
+ * predicates look at `rateLimit`, so a malformed one can never DROP a reply:
+ * dropping it would hang the block's request to its timeout over an optional
+ * hint. The reply is delivered unchanged, and `useSharedStorage` calls this
+ * parser: a malformed value is ignored and the plain refusal error is thrown.
+ */
+export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLimit | undefined {
+  if (!isObject(value)) return undefined;
+  const { retryAfterSeconds, retryAt } = value;
+  if (typeof retryAfterSeconds !== 'number' || !Number.isInteger(retryAfterSeconds)) {
+    return undefined;
+  }
+  if (retryAfterSeconds < 1) return undefined;
+  if (typeof retryAt !== 'string' || Number.isNaN(Date.parse(retryAt))) return undefined;
+  return { retryAfterSeconds, retryAt };
 }
 
 // ============================================================

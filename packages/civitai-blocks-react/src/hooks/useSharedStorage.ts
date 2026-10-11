@@ -5,6 +5,54 @@ import type { SharedStorageValue, SharedStorageItemWire } from '@civitai/app-sdk
 import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { parseSharedStorageRateLimit } from '../transport/validate.js';
+
+/**
+ * A shared-storage write the server REFUSED because a per-(viewer, app) budget
+ * is empty — thrown by `append`, `update`, `vote`, `unvote`, `withdraw` and
+ * `report` when the host's refusal carries retry metadata.
+ *
+ * It EXTENDS `Error`, the class every other shared-storage refusal is thrown
+ * as, so existing `catch` code keeps working unchanged: `.message` is still the
+ * host's refusal text (for example `Too many submissions — retry in 312s`).
+ * Branch on `instanceof SharedStorageRateLimitError` to render the wait from
+ * {@link SharedStorageRateLimitError.retryAt} instead of parsing the message.
+ *
+ * Not thrown when the refusal carries no metadata — a host that predates it, or
+ * a refusal that is not a rate limit. Those stay a plain `Error`.
+ */
+export class SharedStorageRateLimitError extends Error {
+  /** Whole seconds until a retry can succeed, as of when the server refused. At least 1. */
+  readonly retryAfterSeconds: number;
+  /** ISO-8601 instant at which a retry can succeed. Prefer this for a countdown. */
+  readonly retryAt: string;
+
+  constructor(message: string, rateLimit: { retryAfterSeconds: number; retryAt: string }) {
+    super(message);
+    this.name = 'SharedStorageRateLimitError';
+    this.retryAfterSeconds = rateLimit.retryAfterSeconds;
+    this.retryAt = rateLimit.retryAt;
+  }
+}
+
+/**
+ * Throw {@link SharedStorageRateLimitError} when a write reply is a refusal (a
+ * PRESENT `error`, the same test as `throwOnReplyError`) that carries valid
+ * `rateLimit`. Otherwise returns, and the caller's usual reply check throws the
+ * plain `Error` as before.
+ *
+ * Parses `rateLimit` rather than trusting it: the transport delivers it as the
+ * host sent it, so a malformed value is ignored here and the caller's plain
+ * `Error` is thrown instead.
+ */
+function throwOnSharedRateLimit(
+  result: { error?: string; rateLimit?: unknown },
+  fallback: string,
+): void {
+  if (result.error === undefined) return;
+  const rateLimit = parseSharedStorageRateLimit(result.rateLimit);
+  if (rateLimit) throw new SharedStorageRateLimitError(result.error || fallback, rateLimit);
+}
 
 /**
  * The value a viewer contributes to the SHARED store: a required `title`, an
@@ -128,6 +176,11 @@ export interface UseSharedStorage {
  * / `getCount(s)`) and a hard reject on mutations (`append`/`vote`/`unvote`/
  * `withdraw`).
  *
+ * Writes are budgeted per (viewer, app) server-side. A write refused for that
+ * reason rejects with {@link SharedStorageRateLimitError} (a subclass of the
+ * plain `Error` every other refusal is) carrying `retryAfterSeconds` and
+ * `retryAt`, whenever the host sends the metadata.
+ *
  * The hook is stable across renders — it returns the same object identity once
  * the transport singleton is created, so it's safe in `useEffect`/`useMemo`
  * dependency arrays.
@@ -197,6 +250,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_REPORT', payload: { key, reason } },
           'SHARED_REPORT_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared report failed');
         throwOnFailedReply(result, 'shared report failed');
       },
       async getCount(key) {
@@ -223,6 +277,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_APPEND', payload: { value } },
           'SHARED_APPEND_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared append failed');
         throwOnReplyError(result, 'shared append failed');
         return { key: result.key };
       },
@@ -232,6 +287,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_UPDATE', payload: { key, value } },
           'SHARED_UPDATE_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared update failed');
         throwOnFailedReply(result, 'shared update failed');
       },
       async vote(key) {
@@ -240,6 +296,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_VOTE', payload: { key } },
           'SHARED_VOTE_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared vote failed');
         throwOnReplyError(result, 'shared vote failed');
         return result.count;
       },
@@ -249,6 +306,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_UNVOTE', payload: { key } },
           'SHARED_UNVOTE_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared unvote failed');
         throwOnReplyError(result, 'shared unvote failed');
         return result.count;
       },
@@ -258,6 +316,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_WITHDRAW', payload: { key } },
           'SHARED_WITHDRAW_RESULT',
         );
+        throwOnSharedRateLimit(result, 'shared withdraw failed');
         throwOnFailedReply(result, 'shared withdraw failed');
         // `deleted` is optional on the wire type because an error reply omits
         // it. On the success path the validator requires a boolean, so this is

@@ -99,11 +99,13 @@ and nobody else's writes can reach it.
 | One whole value (`title` + `body` + `data`) | 64 KB, wire bytes | `apps-shared.router.ts:88` |
 | Entries per viewer, per app | 50 | `apps-shared.router.ts:91`, `:755-760` |
 | App-wide bytes / rows (shared **with** the per-viewer store) | 50 MB / 1,000,000 | `apps-shared.router.ts:70-71`, `:784-789` |
-| Posts + edits per viewer | 20 a day | `src/server/utils/shared-storage-rate-limit.ts:35-36` |
-| Votes + unvotes | 30 a minute | `shared-storage-rate-limit.ts:41-42` |
-| Reports | 20 a day | `shared-storage-rate-limit.ts:50-51` |
-| Withdrawals | 30 a minute | `shared-storage-rate-limit.ts:73-74` |
+| Posts, edits, votes, withdrawals, reports | rate-limited per viewer, per app | [`@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits) |
 | Page size | 1–100, default 50 | `apps-shared.router.ts:408-409` |
+
+A rate-limited refusal carries retry metadata. From the `@civitai/blocks-react`
+release after `0.67.x` it is thrown as `SharedStorageRateLimitError` (same
+README section). This example still handles it in the `null` arm below, because
+it pins the published `0.67.x`.
 
 `@civitai/app-sdk` doesn't export any of these yet, so `src/App.tsx` states the
 two it relies on once, with their source. The inputs are capped at 200 and
@@ -193,7 +195,10 @@ host's scope message. That happens both here and in production.
 ⚠️ The mock host differs from production in ways that matter here:
 
 - **It enforces none of the shared limits**: no length caps, no 64 KB cap, no
-  50-entry cap, no rate limits, no trust check, no feature flag.
+  50-entry cap, no rate limits, no trust check, no feature flag. (A
+  rate-limited refusal can be simulated with the mock host's
+  `shared.rateLimitNext` knob, from the `@civitai/blocks-react` release after
+  `0.67.x`.)
 - **It lets anonymous viewers write.** The host refuses
   (`apps-shared.router.ts:364-369`). This example never offers the write.
 - **`withdraw` deletes anyone's row.** The host deletes only your own.

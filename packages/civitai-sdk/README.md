@@ -294,6 +294,28 @@ The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error
 first, so `ApiError.message` says only "Invalid query" — the field-level reason is
 in `ApiError.body.details`.
 
+**Writes are rate-limited per (viewer, app)**; the limits are listed once, in
+[the `@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits). A write refused for a limit is an `ApiError` with
+`status === 429`, a `Retry-After` header the client does not expose, and a body
+of `{ code: 'TOO_MANY_REQUESTS', message, error, rateLimit: { retryAfterSeconds,
+retryAt } }`. This client does not validate `body.rateLimit`, so check it before
+you render it:
+
+```ts
+import { ApiError } from '@civitai/sdk';
+
+try {
+  await app.sharedStorage.append({ title: 'My deck' });
+} catch (error) {
+  const rateLimit =
+    error instanceof ApiError && error.status === 429
+      ? (error.body as { rateLimit?: { retryAt?: unknown } } | null)?.rateLimit
+      : undefined;
+  if (typeof rateLimit?.retryAt === 'string') showRetryAt(new Date(rateLimit.retryAt));
+  else throw error;
+}
+```
+
 If you are porting from `@civitai/blocks-react`'s `useSharedStorage`, the bridge
 *host* normalised all of this for you and nothing normalises it here;
 [`BREAKING.md`](./BREAKING.md) covers what the port does and does not cost.

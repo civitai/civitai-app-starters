@@ -506,7 +506,8 @@ export function App() {
  * `app quota exceeded` / `app row limit exceeded` strings as the per-viewer one,
  * and both bridges fall back to `storage request failed`, so those three
  * classify. Everything else the shared store can refuse with lands on `null`:
- * the per-viewer post cap, the daily post/edit and per-minute vote rate limits,
+ * the per-viewer post cap, the write rate limits (see the `@civitai/blocks-react`
+ * README, "Shared-storage write limits"),
  * the account-trust gate, the feature flag, a missing scope, and an anonymous
  * caller. (Its `value-too-large` arm cannot fire here: the shared store's
  * whole-value message is worded differently, and this UI's input caps keep

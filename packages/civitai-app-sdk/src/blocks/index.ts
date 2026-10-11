@@ -165,6 +165,7 @@ export type {
   ParentToBlockMessage,
   ParentToBlockMessageType,
   SharedStorageItemWire,
+  SharedStorageRateLimit,
   SharedStorageValue,
   WrappedToken,
   BlockBuzzTransactionsParams,

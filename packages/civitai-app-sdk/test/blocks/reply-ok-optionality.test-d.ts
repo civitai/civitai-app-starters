@@ -56,6 +56,7 @@ import { expectTypeOf } from 'vitest';
 import type {
   ParentToBlockMessage,
   ParentToBlockMessageType,
+  SharedStorageRateLimit,
 } from '../../src/blocks/messages.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ expectTypeOf<SharedWithdrawResult>().toEqualTypeOf<{
   ok?: boolean;
   deleted?: boolean;
   error?: string;
+  rateLimit?: SharedStorageRateLimit;
 }>();
 
 const sharedWithdrawError: SharedWithdrawResult = { requestId: 'r', error: 'boom' };
@@ -223,6 +225,7 @@ expectTypeOf<SharedUpdateResult>().toEqualTypeOf<{
   requestId: string;
   ok?: boolean;
   error?: string;
+  rateLimit?: SharedStorageRateLimit;
 }>();
 
 const sharedUpdateError: SharedUpdateResult = { requestId: 'r', error: 'boom' };
@@ -248,7 +251,21 @@ expectTypeOf<SharedReportResult>().toEqualTypeOf<{
   requestId: string;
   ok?: boolean;
   error?: string;
+  rateLimit?: SharedStorageRateLimit;
 }>();
+
+// `rateLimit` (#597) is OPTIONAL on every shared write reply and has the
+// exported shape — a host that predates it omits it, so it can never be required.
+expectTypeOf<SharedStorageRateLimit>().toEqualTypeOf<{
+  retryAfterSeconds: number;
+  retryAt: string;
+}>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedReportResult>>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedUpdateResult>>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedWithdrawResult>>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_APPEND_RESULT'>>>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_VOTE_RESULT'>>>();
+expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_UNVOTE_RESULT'>>>();
 
 const sharedReportError: SharedReportResult = { requestId: 'r', error: 'boom' };
 void sharedReportError;
