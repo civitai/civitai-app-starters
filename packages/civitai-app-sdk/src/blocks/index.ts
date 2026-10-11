@@ -228,6 +228,7 @@ export type {
   BlockNavigateScope,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
+  BlockEstimateBatchAggregate,
   BlockModelSubstitution,
   ModelSubstitutionReason,
   BlockStepToolCall,

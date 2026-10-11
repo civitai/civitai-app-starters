@@ -353,7 +353,10 @@ export class WorkflowEstimateError extends Error {
    * rather than on prose. It is the ONLY stable branch target here:
    * `snapshot.error` is server-authored and can change without notice, and
    * {@link WorkflowEstimateError.message} is a generic developer-facing summary
-   * whose exact wording is not a contract either.
+   * whose exact wording is not a contract either. The one carve-out is a batch
+   * cell the host's time budget ran out on: it keeps `code: 'failed'`, and its
+   * stable signal is `timedOut: true` on the `useBatchEstimate()` cell, never a
+   * match on `snapshot.error`.
    *
    * 🔴 THIS IS WHAT A VIEWER-FACING MESSAGE MUST BE DERIVED FROM. Branch on
    * `code` and return a string your app owns and localises; never render
