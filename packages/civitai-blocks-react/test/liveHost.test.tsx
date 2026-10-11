@@ -792,6 +792,193 @@ describe('createLiveHost — token + non-forwarded messages', () => {
   });
 });
 
+describe('createLiveHost — TRACK_EVENT is checked against the manifest analytics.events', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  /** Pairwise-distinct names and values, none equal to anything the messages hard-code. */
+  const MANIFEST = {
+    blockId: 'b',
+    analytics: {
+      events: {
+        generate_clicked: {
+          description: 'pressed Generate',
+          properties: {
+            mode: { type: 'enum', values: ['txt2img', 'img2img'] },
+            batch: { type: 'number' },
+            advanced: { type: 'boolean' },
+          },
+        },
+        share_opened: {},
+      },
+    },
+  };
+
+  async function install(manifest?: unknown) {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'm' },
+      fetchImpl: vi.fn(async () => meOk({ id: 42, username: 'm' })) as unknown as typeof fetch,
+      ...(manifest !== undefined ? { manifest } : {}),
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    warnSpy.mockClear(); // only what TRACK_EVENT logs from here on
+  }
+
+  /** Post, then give the (synchronous) handler and any wrong reply a tick. */
+  async function track(payload: unknown) {
+    window.parent.postMessage({ type: 'TRACK_EVENT', payload }, ORIGIN);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  const warnings = () => warnSpy.mock.calls.map((c) => String(c[0]));
+
+  beforeEach(() => {
+    inbound = collectInbound();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('a declared, valid event logs nothing and posts no reply', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    await track({ eventName: 'generate_clicked', properties: { mode: 'img2img', batch: 3, advanced: false } });
+    await track({ eventName: 'share_opened' });
+    await track({ eventName: 'generate_clicked', properties: { mode: 'txt2img', batch: undefined } });
+    expect(warnings()).toEqual([]);
+    expect(inbound.messages.length).toBe(before);
+  });
+
+  it('an undeclared event warns ONCE, naming the event and pointing at analytics.events', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    await track({ eventName: 'checkout_started', properties: { mode: 'txt2img' } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"checkout_started"');
+    expect(warnings()[0]).toContain('`analytics.events` in block.manifest.json');
+    expect(warnings()[0]).toMatch(/dropped event/);
+    // The same event again: no second warning.
+    await track({ eventName: 'checkout_started' });
+    expect(warnings()).toHaveLength(1);
+    // A DIFFERENT undeclared event is a distinct problem.
+    await track({ eventName: 'cart_viewed' });
+    expect(warnings()).toHaveLength(2);
+    expect(warnings()[1]).toContain('"cart_viewed"');
+    expect(inbound.messages.length).toBe(before);
+  });
+
+  it('an undeclared event name that breaks the naming rule says so', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'GenerateClicked' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/lowercase snake_case/);
+  });
+
+  it('an undeclared property warns once, naming the event and the property', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties: { mode: 'txt2img', seed_bucket: 7 } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"generate_clicked"');
+    expect(warnings()[0]).toContain('"seed_bucket"');
+    expect(warnings()[0]).toMatch(/not declared/);
+    await track({ eventName: 'generate_clicked', properties: { seed_bucket: 9 } });
+    expect(warnings()).toHaveLength(1);
+  });
+
+  it('an enum value that is not declared warns, listing the declared values', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties: { mode: 'inpaint' } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"mode"');
+    expect(warnings()[0]).toContain('"inpaint"');
+    expect(warnings()[0]).toContain('"txt2img", "img2img"');
+    expect(warnings()[0]).toMatch(/Free-text strings are never stored/);
+  });
+
+  it.each([
+    ['number sent as a string', { batch: '4' }, 'batch', /declares it as number/],
+    ['number that is not finite', { batch: Number.POSITIVE_INFINITY }, 'batch', /declares it as number/],
+    ['boolean sent as a number', { advanced: 1 }, 'advanced', /declares it as boolean/],
+    ['enum sent as a number', { mode: 2 }, 'mode', /declares it as enum/],
+    ['enum sent as null', { mode: null }, 'mode', /declares it as enum/],
+  ])('a wrong type warns: %s', async (_label, properties, prop, pattern) => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain(`"${prop}"`);
+    expect(warnings()[0]).toMatch(pattern);
+  });
+
+  it('a manifest with no analytics: every event is undeclared, and says none are declared', async () => {
+    await install({ blockId: 'b', scopes: [] });
+    await track({ eventName: 'generate_clicked' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/declares no events yet/);
+  });
+
+  it('an unreadable declaration is reported once, and nothing counts as declared', async () => {
+    await install({ analytics: { events: { generate_clicked: { properties: { mode: { type: 'string' } } } } } });
+    await track({ eventName: 'generate_clicked' });
+    const first = warnings();
+    expect(first).toHaveLength(2);
+    expect(first[0]).toMatch(/could not be read/);
+    expect(first[0]).toContain('"string"');
+    expect(first[1]).toContain('"generate_clicked"');
+    await track({ eventName: 'generate_clicked' });
+    expect(warnings()).toHaveLength(2);
+  });
+
+  it('without a manifest, the first TRACK_EVENT says the check is off — once', async () => {
+    await install();
+    await track({ eventName: 'generate_clicked' });
+    await track({ eventName: 'anything_else' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/pass `manifest` to createLiveHost/);
+  });
+
+  it('never throws and never replies on malformed payloads', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    const hostile = {
+      eventName: 'generate_clicked',
+      get properties(): unknown {
+        throw new Error('getter');
+      },
+    };
+    for (const payload of [
+      undefined,
+      null,
+      'generate_clicked',
+      42,
+      [],
+      { eventName: 42 },
+      { eventName: 'generate_clicked', properties: 'mode=txt2img' },
+      { eventName: 'generate_clicked', properties: [1, 2] },
+      { eventName: 'constructor' },
+      { eventName: 'generate_clicked', properties: { constructor: 1, toString: 'x' } },
+    ]) {
+      await expect(track(payload)).resolves.toBeUndefined();
+    }
+    // A throwing getter does not survive postMessage's clone in a browser; call
+    // the checker path the way the switch does to prove it is total anyway.
+    const { createTrackEventChecker } = await import('../src/internal/trackEventCheck.js');
+    expect(() => createTrackEventChecker(MANIFEST).check(hostile)).not.toThrow();
+    expect(() => createTrackEventChecker(new Proxy({}, { get: () => { throw new Error('x'); } })).check({ eventName: 'a' })).not.toThrow();
+    expect(inbound.messages.length).toBe(before);
+    // `constructor` is not declared even though every object inherits one.
+    expect(warnings().some((w) => w.includes('"constructor"') && /not declared in/.test(w))).toBe(true);
+    // Undeclared properties named like Object.prototype members are reported, not matched.
+    expect(warnings().some((w) => w.includes('"toString"'))).toBe(true);
+  });
+});
+
 describe('createLiveHost — read-only token startup warning', () => {
   let uninstall: (() => void) | undefined;
   afterEach(() => {

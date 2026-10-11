@@ -70,6 +70,9 @@ function LiveHost({ children }: { children: ReactNode }) {
     // `context`: the live host's default is a page slot too.
     const host = createLiveHost({
       blockToken: token,
+      // Each `track()` is checked against `analytics.events`; the console warns
+      // once per event or property production would drop.
+      manifest,
       backendBaseUrl: '',
       fetchImpl: (input, init) => fetch(input, init), // bound: a detached `fetch` throws
     });

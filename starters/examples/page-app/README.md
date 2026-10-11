@@ -21,7 +21,7 @@ back to, adds a note, and opens them on Civitai later.
 | `useRequestSignIn()` for an anonymous viewer | `AccountPanel` |
 | `useRequestConsent()` → `useBlockToken().scopes` → `useViewer()` | `AccountPanel`, `ViewerName` |
 | `useConsentUnavailable()`: stop asking when the host says "never" | `AccountPanel` |
-| `useBlockAnalytics()` | `App`, `AccountPanel`, `PinDetail` |
+| `useBlockAnalytics()` with events declared under `analytics.events` | `App`, `AccountPanel`, `PinDetail`, `block.manifest.json` |
 | `useAppStorage()`: the whole board in one per-viewer row | `App`, `src/board.ts` |
 
 ## What a page app changes
@@ -100,11 +100,15 @@ if your page generates; `buzz-workflow` shows the generation side.
   is `availability: ['mod']` until a Flipt segment widens it
   (`src/server/services/feature-flags.service.ts:616`). The live segment is
   runtime config and cannot be read from source.
-- **`useBlockAnalytics()` is dropped.** Neither real host handles
-  `TRACK_EVENT` ("no host-side sink wired", `hostHandlerParity.ts:168-177`).
-  The calls here are harmless and show up in the harness log, but no event
-  reaches any pipeline today. The hooks reference describes a pipeline that is
-  not wired yet.
+- **`useBlockAnalytics()` records only what the manifest declares.** Both hosts
+  forward `TRACK_EVENT`, and the platform keeps an event only when the APPROVED
+  manifest names it under `analytics.events`, with only the declared properties
+  of the declared type. This app declares its six events in `block.manifest.json`.
+  It sends no model id: there is no free-text property type, and a `number`
+  property should not carry an identifier. Events are recorded only on the
+  production site and are fire-and-forget; owners see aggregates in the app's
+  analytics panel. In `dev:live` the harness passes the manifest to
+  `createLiveHost`, so an undeclared event or property warns in the console.
 - **The pre-paint theme fragment is allowlisted.** The host appends
   `#civitai-block=v1&theme=…` only for apps in `BLOCK_INIT_FRAGMENT_ALLOWLIST`,
   which today holds one first-party app

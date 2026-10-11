@@ -117,6 +117,9 @@ function LiveHost({ children }: { children: ReactNode }) {
     // `backendBaseUrl: ''` = same origin; vite.config.ts proxies `/api`.
     const host = createLiveHost({
       blockToken: token,
+      // Each `track()` is checked against `analytics.events`; the console warns
+      // once per event or property production would drop.
+      manifest,
       backendBaseUrl: '',
       // No `context`: the live host's default is a complete `app.page` context
       // (dev-token mints page tokens only).
