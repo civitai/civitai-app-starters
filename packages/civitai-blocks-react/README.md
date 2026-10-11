@@ -1285,7 +1285,7 @@ await shared.unvote(key);
 await shared.withdraw(key);                            // remove my own entry
 ```
 
-#### Write limits and `SharedStorageRateLimitError`
+#### Shared-storage write limits
 
 Every write is budgeted per **(viewer, app)** on the server. One viewer
 exhausting their budget in your app costs them nothing in another app, and
@@ -1335,9 +1335,9 @@ try {
 - **Don't retry before `retryAt`.** A refused retry gets nothing, and once the
   budget is empty every attempt is refused until it refills.
 - **Absent metadata is not "retry now".** A host that predates it, or a refusal
-  that is not a rate limit, throws the plain `Error`. The SDK also drops a
-  malformed `rateLimit` (and still delivers the refusal as a plain `Error`)
-  rather than throw something you would render.
+  that is not a rate limit, throws the plain `Error`. The hook also ignores a
+  malformed `rateLimit` and throws the plain `Error`, rather than hand you
+  something you would render.
 - On the wire the refusal reply is `{ requestId, error, rateLimit?: { retryAfterSeconds, retryAt } }`
   (type `SharedStorageRateLimit` in `@civitai/app-sdk/blocks`) on the six write
   replies.

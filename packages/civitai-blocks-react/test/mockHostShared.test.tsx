@@ -362,7 +362,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
       expect(at).toBeLessThanOrEqual(after + 60_000);
     });
 
-    it('a malformed rateLimit knob arrives as a plain Error (the transport strips it)', async () => {
+    it('a malformed rateLimit knob arrives as a plain Error (the hook ignores it)', async () => {
       host = createMockHost({
         declaredScopes: STORAGE_SCOPES,
         shared: { rateLimitNext: 1, rateLimit: { retryAfterSeconds: 2.5 } },

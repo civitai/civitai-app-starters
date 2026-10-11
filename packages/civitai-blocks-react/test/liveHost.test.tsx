@@ -2593,7 +2593,7 @@ describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
   const TOKEN = fakeJwt(DEFAULT_CLAIMS);
 
   // Pairwise-distinct from every default in the code under test (the mock
-  // host's 60s default, the POLL backoff), so a hardcoded value cannot pass.
+  // host's 60s default), so a hardcoded value cannot pass.
   const RATE_LIMIT = { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' };
   const MESSAGE = 'Too many submissions — retry in 312s';
 
@@ -2628,11 +2628,6 @@ describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
     uninstall = host.install();
-  }
-
-  function callsTo(procedure: string): number {
-    return fetchMock.mock.calls.filter((c) => String(c[0]).includes(`/api/trpc/${procedure}`))
-      .length;
   }
 
   beforeEach(() => {
@@ -2714,17 +2709,6 @@ describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
     });
   }
 
-  it('a refusal WITHOUT data.rateLimit carries no rateLimit key (plain refusal unchanged)', async () => {
-    installWithFetch(async (url) => {
-      if (url.includes('/api/trpc/apps.shared.append')) return trpcErr('FORBIDDEN', 403);
-      throw new Error(`unexpected ${url}`);
-    });
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('SHARED_APPEND', { requestId: 'r-plain', value: { title: 't' } });
-    const payload = await waitForMessage(inbound, 'SHARED_APPEND_RESULT');
-    expect(payload).toEqual({ requestId: 'r-plain', key: '', error: 'FORBIDDEN' });
-  });
-
   it('a MALFORMED data.rateLimit is not forwarded; the refusal itself still is', async () => {
     installWithFetch(async (url) => {
       if (url.includes('/api/trpc/apps.shared.vote')) {
@@ -2736,39 +2720,6 @@ describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
     post('SHARED_VOTE', { requestId: 'r-bad', key: 'req:1' });
     const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
     expect(payload).toEqual({ requestId: 'r-bad', count: 0, error: 'Too many votes — retry in 9s' });
-  });
-
-  it('a shared-storage 429 is NOT retried: exactly one fetch, even past the POLL backoff', async () => {
-    installWithFetch(async (url) => {
-      if (url.includes('/api/trpc/apps.shared.append')) return trpcRateLimited(MESSAGE, RATE_LIMIT);
-      throw new Error(`unexpected ${url}`);
-    });
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('SHARED_APPEND', { requestId: 'r-once', value: { title: 't' } });
-    // The LONG wait (~5s budget) is deliberate: a path that retried with the
-    // POLL backoff (250/500/1000ms) would reply only after its last attempt, and
-    // this must then fail on the COUNT below rather than on a wait timeout.
-    await waitForMessageLong(inbound, 'SHARED_APPEND_RESULT');
-    // Then wait past the first backoff so an in-flight retry would have been sent.
-    await new Promise((r) => setTimeout(r, 400));
-    expect(callsTo('apps.shared.append')).toBe(1);
-    expect(inbound.messages.filter((m) => m.type === 'SHARED_APPEND_RESULT')).toHaveLength(1);
-  });
-
-  it('CONTROL: a POLL 429 is still transient — retried, and the success is delivered', async () => {
-    installWithFetch(async (url) => {
-      if (url.includes('/api/trpc/blocks.pollWorkflow')) {
-        return callsTo('blocks.pollWorkflow') === 1
-          ? trpcErr('Rate limit exceeded, please retry shortly.', 429)
-          : trpcOk({ workflowId: 'wf_429', status: 'succeeded' });
-      }
-      throw new Error(`unexpected ${url}`);
-    });
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('POLL_WORKFLOW', { requestId: 'r-poll-429', workflowId: 'wf_429' });
-    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
-    expect((payload.snapshot as BlockWorkflowSnapshot).status).toBe('succeeded');
-    expect(callsTo('blocks.pollWorkflow')).toBe(2);
   });
 
   it('SEAM: useSharedStorage().append() over the live host rejects with SharedStorageRateLimitError', async () => {

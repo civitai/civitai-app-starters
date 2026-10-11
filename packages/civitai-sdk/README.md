@@ -294,12 +294,8 @@ The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error
 first, so `ApiError.message` says only "Invalid query" — the field-level reason is
 in `ApiError.body.details`.
 
-**Writes are budgeted per (viewer, app).** `append` and `update` share one
-budget: a burst of 10 refilling one per 6 minutes, plus 50 a day refilling
-continuously, spent only by writes that land. That budget goes live with the
-next civitai.com release; until then the limit is a fixed 20 a day. `withdraw`
-has its own limit of 30 a minute. The full table is in the `@civitai/blocks-react` README under
-`useSharedStorage()`. A write refused for budget is an `ApiError` with
+**Writes are rate-limited per (viewer, app)**; the limits are listed once, in
+[the `@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits). A write refused for a limit is an `ApiError` with
 `status === 429`, a `Retry-After` header the client does not expose, and a body
 of `{ code: 'TOO_MANY_REQUESTS', message, error, rateLimit: { retryAfterSeconds,
 retryAt } }`. This client does not validate `body.rateLimit`, so check it before

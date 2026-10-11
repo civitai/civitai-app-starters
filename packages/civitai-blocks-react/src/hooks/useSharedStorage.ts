@@ -41,9 +41,9 @@ export class SharedStorageRateLimitError extends Error {
  * `rateLimit`. Otherwise returns, and the caller's usual reply check throws the
  * plain `Error` as before.
  *
- * Re-parses `rateLimit` rather than trusting it: the iframe transport already
- * strips a malformed one, but `sendTypedRequest` also runs over transports that
- * do not project, and the check is one function either way.
+ * Parses `rateLimit` rather than trusting it: the transport delivers it as the
+ * host sent it, so a malformed value is ignored here and the caller's plain
+ * `Error` is thrown instead.
  */
 function throwOnSharedRateLimit(
   result: { error?: string; rateLimit?: unknown },

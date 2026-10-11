@@ -386,15 +386,8 @@ interface TrpcDataResult {
  * the exact blip the round-5 dogfood hit. Anything ≥ 500, plus 408 (timeout)
  * and 429 (rate-limit), is also transient.
  *
- * 🔴 `transient` IS READ BY ONE CALLER: {@link pollWithRetry}. Nothing else
- * retries, and the shared-storage bridges in particular must NOT: their 429 is a
- * per-(viewer, app) write-budget refusal whose wait is minutes (the
- * `retryAfterSeconds` it carries), so the POLL backoff of under two seconds
- * could only burn three more refused requests — and a write refused after the
- * reserve is charged to the server's rejection bucket. The 429 stays transient
- * HERE because a POLL 429 is the blip this list was written for, and a POLL
- * must never turn into a terminal `failed` over one. Pinned by the
- * "shared-storage 429 is not retried" case in `test/liveHost.test.tsx`.
+ * Only {@link pollWithRetry} reads `transient`; a shared-storage 429 is a
+ * write-budget refusal whose wait is minutes, so it must never be retried.
  */
 function isTransientHttpStatus(status: number): boolean {
   return status >= 500 || status === 408 || status === 429 || status === 401;

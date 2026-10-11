@@ -1380,7 +1380,7 @@ export function isValidAppStorageQuotaResult(p: unknown): boolean {
 // `undefined` typed `number`/`string` with no throw, no timeout.
 //
 // The optional `rateLimit` on the six write replies is NOT checked by any
-// predicate here, so it can never drop a reply; it is projected instead (see
+// predicate here, so it can never drop a reply; the hook parses it (see
 // `parseSharedStorageRateLimit` below the validators).
 
 /** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
@@ -1530,23 +1530,6 @@ export function isValidSharedWithdrawResult(p: unknown): boolean {
 }
 
 /**
- * The shared-storage replies a host may attach `rateLimit` to: the six WRITE
- * replies the host builds with `sharedStorageErrorReply`. The reads
- * (`SHARED_LIST/GET/GET_COUNT/GET_COUNTS_RESULT`) have no write budget and never
- * carry it, so a `rateLimit` on one of them is left alone (and unread).
- */
-export const SHARED_RATE_LIMITED_REPLY_TYPES: ReadonlySet<string> = new Set<
-  ParentToBlockMessageType
->([
-  'SHARED_APPEND_RESULT',
-  'SHARED_UPDATE_RESULT',
-  'SHARED_VOTE_RESULT',
-  'SHARED_UNVOTE_RESULT',
-  'SHARED_WITHDRAW_RESULT',
-  'SHARED_REPORT_RESULT',
-]);
-
-/**
  * Validate the `rateLimit` a host put on a shared-storage refusal. Returns a
  * copy holding ONLY the two known fields, or `undefined` when `value` is
  * missing or malformed.
@@ -1560,8 +1543,8 @@ export const SHARED_RATE_LIMITED_REPLY_TYPES: ReadonlySet<string> = new Set<
  * 🔴 NOT A VALIDATOR, deliberately. None of the `isValidShared*Result`
  * predicates look at `rateLimit`, so a malformed one can never DROP a reply:
  * dropping it would hang the block's request to its timeout over an optional
- * hint. The reply is delivered; {@link projectSharedRateLimit} strips the bad
- * field, and the hook falls back to the plain refusal error.
+ * hint. The reply is delivered unchanged, and `useSharedStorage` calls this
+ * parser: a malformed value is ignored and the plain refusal error is thrown.
  */
 export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLimit | undefined {
   if (!isObject(value)) return undefined;
@@ -1572,20 +1555,6 @@ export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLi
   if (retryAfterSeconds < 1) return undefined;
   if (typeof retryAt !== 'string' || Number.isNaN(Date.parse(retryAt))) return undefined;
   return { retryAfterSeconds, retryAt };
-}
-
-/**
- * Projection for {@link SHARED_RATE_LIMITED_REPLY_TYPES}: a valid `rateLimit` is
- * narrowed to its two known fields, a malformed one is REMOVED, and the rest of
- * the reply passes through untouched. Identity when the reply has no
- * `rateLimit` key, which is every reply from a host that predates the field and
- * every non-rate-limited refusal.
- */
-function projectSharedRateLimit(payload: unknown): unknown {
-  if (!isObject(payload) || !('rateLimit' in payload)) return payload;
-  const { rateLimit, ...rest } = payload;
-  const parsed = parseSharedStorageRateLimit(rateLimit);
-  return parsed ? { ...rest, rateLimit: parsed } : rest;
 }
 
 // ============================================================
@@ -1711,18 +1680,12 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: two projections exist today, and every other type
- * is returned by identity — this is not a general sanitizer and must not be read
- * as one:
- *  - `IMAGES_RESULT` → {@link projectGatedImage} on each image;
- *  - the six shared-storage WRITE replies
- *    ({@link SHARED_RATE_LIMITED_REPLY_TYPES}) → {@link projectSharedRateLimit},
- *    which keeps a valid `rateLimit` and STRIPS a malformed one.
- * Add a case here (and say so in the type's validator docblock) if another
- * message ever needs one.
+ * 🔴 SCOPE, STATED HONESTLY: `IMAGES_RESULT` is the ONLY type projected today.
+ * Every other type is returned by identity — this is not a general sanitizer and
+ * must not be read as one. Add a case here (and say so in the type's validator
+ * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
-  if (SHARED_RATE_LIMITED_REPLY_TYPES.has(type)) return projectSharedRateLimit(payload);
   if (type !== 'IMAGES_RESULT') return payload;
   if (!isObject(payload)) return payload;
   const result = payload.result;

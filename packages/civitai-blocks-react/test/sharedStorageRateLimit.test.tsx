@@ -7,35 +7,23 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { SharedStorageRateLimitError as PublicSharedStorageRateLimitError } from '../src/index.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
-import {
-  parseSharedStorageRateLimit,
-  payloadValidatorFor,
-  projectInboundPayload,
-} from '../src/transport/validate.js';
+import { parseSharedStorageRateLimit } from '../src/transport/validate.js';
 
 /**
  * Shared-storage rate-limit metadata (#597): the optional `rateLimit` the host
  * puts beside `error` on the six shared WRITE replies.
  *
- *  - the transport keeps a valid one, STRIPS a malformed one and still delivers
- *    the reply (a validator must never drop a reply over an optional hint);
+ *  - `parseSharedStorageRateLimit` accepts exactly the platform's valid shape;
  *  - the hook throws `SharedStorageRateLimitError` (an `Error` subclass) with
- *    the exact fields when it is present, and the plain `Error` otherwise.
+ *    the exact fields when it is valid, and the plain `Error` when it is absent
+ *    or malformed — the transport delivers it as sent, so the hook's parse is
+ *    the only thing standing between a malformed value and the caller.
  *
  * Fixture values are pairwise distinct and distinct from every default in the
  * code (the mock host's 60s), so a hardcoded literal cannot pass.
  */
 
 const VALID = { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' };
-
-const WRITE_REPLIES: Array<{ type: string; failure: Record<string, unknown> }> = [
-  { type: 'SHARED_APPEND_RESULT', failure: { key: '' } },
-  { type: 'SHARED_UPDATE_RESULT', failure: { ok: false } },
-  { type: 'SHARED_VOTE_RESULT', failure: { count: 0 } },
-  { type: 'SHARED_UNVOTE_RESULT', failure: { count: 0 } },
-  { type: 'SHARED_WITHDRAW_RESULT', failure: { ok: false, deleted: false } },
-  { type: 'SHARED_REPORT_RESULT', failure: { ok: false } },
-];
 
 /** Every malformed shape, named, so a failure says which one leaked. */
 const MALFORMED: Array<[string, unknown]> = [
@@ -79,43 +67,6 @@ describe('parseSharedStorageRateLimit', () => {
       expect(parseSharedStorageRateLimit(value)).toBeUndefined();
     });
   }
-});
-
-describe('shared write replies: validation accepts, projection keeps or strips `rateLimit`', () => {
-  for (const { type, failure } of WRITE_REPLIES) {
-    describe(type, () => {
-      const base = { requestId: 'r-1', ...failure, error: 'Too many submissions — retry in 312s' };
-
-      it('a valid rateLimit is accepted and preserved', () => {
-        const payload = { ...base, rateLimit: { ...VALID } };
-        expect(payloadValidatorFor(type)!(payload)).toBe(true);
-        expect(projectInboundPayload(type, payload)).toEqual({
-          ...base,
-          rateLimit: { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' },
-        });
-      });
-
-      it('an absent rateLimit is accepted and the payload passes by identity', () => {
-        expect(payloadValidatorFor(type)!(base)).toBe(true);
-        expect(projectInboundPayload(type, base)).toBe(base);
-      });
-
-      for (const [name, value] of MALFORMED) {
-        it(`a malformed rateLimit (${name}) is STRIPPED and the reply still accepted`, () => {
-          const payload = { ...base, rateLimit: value };
-          expect(payloadValidatorFor(type)!(payload)).toBe(true);
-          const projected = projectInboundPayload(type, payload) as Record<string, unknown>;
-          expect(projected).toEqual(base);
-          expect('rateLimit' in projected).toBe(false);
-        });
-      }
-    });
-  }
-
-  it('a READ reply is out of scope: its payload passes by identity', () => {
-    const payload = { requestId: 'r-1', count: 0, error: 'x', rateLimit: 'junk' };
-    expect(projectInboundPayload('SHARED_GET_COUNT_RESULT', payload)).toBe(payload);
-  });
 });
 
 // ---------------------------------------------------------------------------

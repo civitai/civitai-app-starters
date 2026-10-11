@@ -723,7 +723,8 @@ export interface MockSharedScenario {
    * The metadata a {@link rateLimitNext} refusal carries. `retryAfterSeconds`
    * defaults to 60; `retryAt` defaults to now + `retryAfterSeconds`, computed
    * when each refusal is sent. Pass a malformed value to exercise a block's
-   * fallback: the transport strips it and the refusal arrives as a plain `Error`.
+   * fallback: the hook parses it, ignores the malformed value and throws a plain
+   * `Error`.
    */
   rateLimit?: { retryAfterSeconds?: number; retryAt?: string };
 }

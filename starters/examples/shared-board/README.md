@@ -99,19 +99,13 @@ and nobody else's writes can reach it.
 | One whole value (`title` + `body` + `data`) | 64 KB, wire bytes | `apps-shared.router.ts:88` |
 | Entries per viewer, per app | 50 | `apps-shared.router.ts:91`, `:755-760` |
 | App-wide bytes / rows (shared **with** the per-viewer store) | 50 MB / 1,000,000 | `apps-shared.router.ts:70-71`, `:784-789` |
-| Posts + edits per viewer (one budget) | a burst of 10 refilling 1 per 6 minutes, and 50 a day refilling continuously (one per ~29 minutes); only posts and edits that land count | `src/server/utils/shared-storage-rate-limit.ts:186-191` (`SHARED_WRITE_BUDGET`) |
-| Refused posts + edits | 10, refilling 1 per 30 minutes, and can go 10 into debt; no post or edit is accepted while it is empty | `shared-storage-rate-limit.ts:192-206` |
-| Votes + unvotes | 30 a minute | `shared-storage-rate-limit.ts:35-36` |
-| Reports | 20 a day | `shared-storage-rate-limit.ts:44-45` |
-| Withdrawals | 30 a minute | `shared-storage-rate-limit.ts:67-68` |
+| Posts, edits, votes, withdrawals, reports | rate-limited per viewer, per app | [`@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits) |
 | Page size | 1–100, default 50 | `apps-shared.router.ts:408-409` |
 
-The posts + edits budget goes live with the next civitai.com release. Until then
-the live limit is a fixed window of 20 posts + edits a day. A refusal for any of
-these limits carries retry metadata; from the `@civitai/blocks-react` release
-after `0.67.x` it is thrown as `SharedStorageRateLimitError` (see that package's
-README, `useSharedStorage()`). This example still handles it in the `null` arm
-below, because it pins the published `0.67.x`.
+A rate-limited refusal carries retry metadata. From the `@civitai/blocks-react`
+release after `0.67.x` it is thrown as `SharedStorageRateLimitError` (same
+README section). This example still handles it in the `null` arm below, because
+it pins the published `0.67.x`.
 
 `@civitai/app-sdk` doesn't export any of these yet, so `src/App.tsx` states the
 two it relies on once, with their source. The inputs are capped at 200 and
