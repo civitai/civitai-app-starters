@@ -149,6 +149,30 @@ describe('isValidWorkflowSnapshot', () => {
       }),
     ).toBe(true);
   });
+  it.each([
+    ['a fee', { total: 49, authorFee: 37 }],
+    ['zero (no fee applies)', { total: 12, authorFee: 0 }],
+    ['absent (an older host, or a total that is not itemised)', { total: 12 }],
+  ])('accepts cost.authorFee — %s', (_label, cost) => {
+    expect(isValidWorkflowSnapshot({ workflowId: 'wf_estimate', status: 'pending', cost })).toBe(
+      true,
+    );
+  });
+  it.each([
+    ['a string', '37'],
+    ['null', null],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['negative', -1],
+  ])('rejects a present but malformed cost.authorFee — %s', (_label, authorFee) => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'wf_estimate',
+        status: 'pending',
+        cost: { total: 49, authorFee },
+      }),
+    ).toBe(false);
+  });
   it('accepts a snapshot carrying a well-formed autoClaim (dailyBoost)', () => {
     expect(
       isValidWorkflowSnapshot({

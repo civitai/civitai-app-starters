@@ -240,6 +240,15 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (typeof s.status !== 'string' || !WORKFLOW_STATUSES.has(s.status)) return false;
   if (s.cost !== undefined) {
     if (!isObject(s.cost) || typeof s.cost.total !== 'number') return false;
+    // OPTIONAL: an older host omits it and the snapshot stays valid. Present, it
+    // is subtracted from `total` by the block, so a non-number or a negative
+    // would render a wrong price.
+    if (
+      s.cost.authorFee !== undefined &&
+      (!isFiniteNumber(s.cost.authorFee) || s.cost.authorFee < 0)
+    ) {
+      return false;
+    }
   }
   if (s.imageUrls !== undefined) {
     if (!Array.isArray(s.imageUrls)) return false;

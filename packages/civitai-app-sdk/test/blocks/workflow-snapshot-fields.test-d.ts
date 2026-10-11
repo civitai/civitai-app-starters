@@ -129,3 +129,17 @@ const badToolCall: BlockStepToolCall = {
   function: { name: 'f', arguments: '{}' },
 };
 void badToolCall;
+
+// --- the itemised app fee: OPTIONAL beside a required `total` ---
+expectTypeOf(snapshot.cost).toEqualTypeOf<{ total: number; authorFee?: number } | undefined>();
+expectTypeOf<NonNullable<BlockWorkflowSnapshot['cost']>['authorFee']>().toEqualTypeOf<
+  number | undefined
+>();
+// Present and absent both assign; an app written before the field still compiles.
+const itemised: BlockWorkflowSnapshot['cost'] = { total: 49, authorFee: 37 };
+const notItemised: BlockWorkflowSnapshot['cost'] = { total: 49 };
+void itemised;
+void notItemised;
+// @ts-expect-error — the fee is a number, never a string
+const wrong: BlockWorkflowSnapshot['cost'] = { total: 49, authorFee: '37' };
+void wrong;
