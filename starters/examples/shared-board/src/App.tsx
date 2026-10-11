@@ -506,7 +506,8 @@ export function App() {
  * `app quota exceeded` / `app row limit exceeded` strings as the per-viewer one,
  * and both bridges fall back to `storage request failed`, so those three
  * classify. Everything else the shared store can refuse with lands on `null`:
- * the per-viewer post cap, the daily post/edit and per-minute vote rate limits,
+ * the per-viewer post cap, the post/edit write budget (a burst of 10 plus 50 a
+ * day, and a rejection budget for refused writes) and the per-minute vote limit,
  * the account-trust gate, the feature flag, a missing scope, and an anonymous
  * caller. (Its `value-too-large` arm cannot fire here: the shared store's
  * whole-value message is worded differently, and this UI's input caps keep

@@ -1285,6 +1285,66 @@ await shared.unvote(key);
 await shared.withdraw(key);                            // remove my own entry
 ```
 
+#### Write limits and `SharedStorageRateLimitError`
+
+Every write is budgeted per **(viewer, app)** on the server. One viewer
+exhausting their budget in your app costs them nothing in another app, and
+re-minting the block token does not reset it.
+
+| Writes | Budget |
+|---|---|
+| `append` + `update` (one shared budget) | a **burst of 10**, refilling **1 every 6 minutes**, and a **daily bucket of 50**, refilling continuously (one every ~29 minutes). A write needs a token from both. |
+| — writes the server **refused** (moderation block, the 50-entry cap, quota, not found, …) | also charged to a **rejection bucket of 10**, refilling **1 every 30 minutes**. No `append`/`update` is accepted while it is empty. Concurrent refused writes can drive it into debt, down to −10, which has to refill first. |
+| `vote` + `unvote` | 30 a minute, shared |
+| `withdraw` | 30 a minute |
+| `report` | 20 a day |
+
+Only writes that **land** spend the `append`/`update` budget: a write that fails
+without landing gets its token back. The few failures the platform marks as its
+own fault are refunded without a rejection charge too.
+
+> The `append`/`update` budget above goes live with the next civitai.com
+> release. Until then the live limit is a fixed window of **20 posts + edits a
+> day** per (viewer, app). The vote, withdraw and report limits, and the retry
+> metadata below, are already live.
+
+A write refused for budget arrives with retry metadata, and the hook rejects with
+**`SharedStorageRateLimitError`**. It extends the plain `Error` every other
+refusal is thrown as, so existing `catch` code keeps working, and `.message` is
+still the server's text (`Too many submissions — retry in 312s`, or `votes`,
+`withdrawals`, `reports`). Branch on the class to render the wait instead of
+parsing the message:
+
+```tsx
+import { SharedStorageRateLimitError, useSharedStorage } from '@civitai/blocks-react';
+
+const shared = useSharedStorage();
+try {
+  await shared.append({ title: 'Add dark mode' });
+} catch (err) {
+  if (err instanceof SharedStorageRateLimitError) {
+    // err.retryAt: ISO-8601 instant a retry can succeed; err.retryAfterSeconds: whole seconds, ≥ 1.
+    const at = new Date(err.retryAt).toLocaleTimeString();
+    showNotice(`You're posting fast. Try again at ${at}.`);
+  } else {
+    throw err;
+  }
+}
+```
+
+- **Don't retry before `retryAt`.** A refused retry gets nothing, and once the
+  budget is empty every attempt is refused until it refills.
+- **Absent metadata is not "retry now".** A host that predates it, or a refusal
+  that is not a rate limit, throws the plain `Error`. The SDK also drops a
+  malformed `rateLimit` (and still delivers the refusal as a plain `Error`)
+  rather than throw something you would render.
+- On the wire the refusal reply is `{ requestId, error, rateLimit?: { retryAfterSeconds, retryAt } }`
+  (type `SharedStorageRateLimit` in `@civitai/app-sdk/blocks`) on the six write
+  replies.
+- `createMockHost({ shared: { rateLimitNext: 1, rateLimit: { retryAfterSeconds: 312 } } })`
+  refuses the next write this way, so you can test the branch locally
+  (`setScenario({ shared: { rateLimitNext } })` arms it mid-session).
+
 ### `useCheckpointPicker()`
 
 Drive the platform Checkpoint picker + persist a viewer override.

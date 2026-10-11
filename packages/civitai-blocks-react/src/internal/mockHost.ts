@@ -709,6 +709,23 @@ export interface MockSharedScenario {
    * error UX.
    */
   failNext?: number;
+  /**
+   * Refuse the next N shared WRITES (`append`/`update`/`vote`/`unvote`/
+   * `withdraw`/`report`) as RATE-LIMITED (counts down), the way the platform
+   * does when a per-(viewer, app) budget is empty: the reply carries the
+   * server's refusal text plus `rateLimit` metadata, so the hook rejects with
+   * `SharedStorageRateLimitError`. Checked before {@link failNext}, as the
+   * server checks the budget before attempting the write. Live-tunable via
+   * `setScenario({ shared: { rateLimitNext } })`.
+   */
+  rateLimitNext?: number;
+  /**
+   * The metadata a {@link rateLimitNext} refusal carries. `retryAfterSeconds`
+   * defaults to 60; `retryAt` defaults to now + `retryAfterSeconds`, computed
+   * when each refusal is sent. Pass a malformed value to exercise a block's
+   * fallback: the transport strips it and the refusal arrives as a plain `Error`.
+   */
+  rateLimit?: { retryAfterSeconds?: number; retryAt?: string };
 }
 
 /**
@@ -2179,6 +2196,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   const sharedStore = new Map<string, SharedRow>();
   let sharedSeq = 0;
   let sharedFailNext = sharedScenario.failNext ?? 0;
+  let sharedRateLimitNext = sharedScenario.rateLimitNext ?? 0;
+  let sharedRateLimitMeta = sharedScenario.rateLimit;
+  /**
+   * When a {@link MockSharedScenario.rateLimitNext} refusal is pending, consume
+   * one and return the reply's error fields; otherwise `null`. The message
+   * matches the platform's wording per write family
+   * (`apps-shared.router.ts`: submissions / votes / withdrawals / reports).
+   */
+  const takeSharedRateLimit = (
+    noun: 'submissions' | 'votes' | 'withdrawals' | 'reports',
+  ): { error: string; rateLimit: { retryAfterSeconds: number; retryAt: string } } | null => {
+    if (sharedRateLimitNext <= 0) return null;
+    sharedRateLimitNext -= 1;
+    const retryAfterSeconds = sharedRateLimitMeta?.retryAfterSeconds ?? 60;
+    const retryAt =
+      sharedRateLimitMeta?.retryAt ?? new Date(Date.now() + retryAfterSeconds * 1000).toISOString();
+    return {
+      error: `Too many ${noun} — retry in ${retryAfterSeconds}s`,
+      rateLimit: { retryAfterSeconds, retryAt },
+    };
+  };
   const sharedNow = new Date().toISOString();
   // Seed newest-LAST so the last-listed seed has the highest seq (newest-first).
   for (const s of sharedScenario.seed ?? []) {
@@ -3849,6 +3887,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SHARED_APPEND': {
+            const appendLimited = takeSharedRateLimit('submissions');
+            if (appendLimited) {
+              dispatchToBlock({
+                type: 'SHARED_APPEND_RESULT',
+                payload: { requestId, key: '', ...appendLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3892,6 +3938,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_VOTE': {
             const key = typed.payload?.key ?? '';
+            const voteLimited = takeSharedRateLimit('votes');
+            if (voteLimited) {
+              dispatchToBlock({
+                type: 'SHARED_VOTE_RESULT',
+                payload: { requestId, count: 0, ...voteLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3920,6 +3974,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_UNVOTE': {
             const key = typed.payload?.key ?? '';
+            const unvoteLimited = takeSharedRateLimit('votes');
+            if (unvoteLimited) {
+              dispatchToBlock({
+                type: 'SHARED_UNVOTE_RESULT',
+                payload: { requestId, count: 0, ...unvoteLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3947,6 +4009,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_WITHDRAW': {
             const key = typed.payload?.key ?? '';
+            const withdrawLimited = takeSharedRateLimit('withdrawals');
+            if (withdrawLimited) {
+              dispatchToBlock({
+                type: 'SHARED_WITHDRAW_RESULT',
+                payload: { requestId, ok: false, deleted: false, ...withdrawLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3965,6 +4035,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_UPDATE': {
             const key = typed.payload?.key ?? '';
+            const updateLimited = takeSharedRateLimit('submissions');
+            if (updateLimited) {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, ...updateLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -4037,6 +4115,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_REPORT': {
             const key = typed.payload?.key ?? '';
+            const reportLimited = takeSharedRateLimit('reports');
+            if (reportLimited) {
+              dispatchToBlock({
+                type: 'SHARED_REPORT_RESULT',
+                payload: { requestId, ok: false, ...reportLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -4286,9 +4372,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       if (patch.storage.failNext !== undefined) storageFailNext = patch.storage.failNext;
     }
     if (patch.shared !== undefined) {
-      // Only `failNext` is live-tunable; `seed` is install-time (re-install to
-      // change the backing store).
+      // `failNext`, `rateLimitNext` and `rateLimit` are live-tunable; `seed` is
+      // install-time (re-install to change the backing store).
       if (patch.shared.failNext !== undefined) sharedFailNext = patch.shared.failNext;
+      if (patch.shared.rateLimitNext !== undefined) sharedRateLimitNext = patch.shared.rateLimitNext;
+      if (patch.shared.rateLimit !== undefined) sharedRateLimitMeta = patch.shared.rateLimit;
     }
   }
 

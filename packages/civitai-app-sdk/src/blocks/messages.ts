@@ -296,6 +296,28 @@ export interface SharedStorageValue {
 }
 
 /**
+ * Retry metadata on a RATE-LIMITED shared-storage refusal. The host adds it
+ * beside `error` on the six write replies (`SHARED_APPEND_RESULT`,
+ * `SHARED_UPDATE_RESULT`, `SHARED_VOTE_RESULT`, `SHARED_UNVOTE_RESULT`,
+ * `SHARED_WITHDRAW_RESULT`, `SHARED_REPORT_RESULT`) when the server refused the
+ * write because a per-(viewer, app) budget is empty, so a block can render the
+ * wait instead of parsing it out of the prose `error`.
+ *
+ * Its PRESENCE marks the refusal as rate-limited; every other refusal omits it.
+ * ADDITIVE + OPTIONAL: a host that predates it never sends it, so a block must
+ * treat "absent" as "not known to be rate-limited", never as "retry now".
+ *
+ * Same shape as the platform's tRPC `error.data.rateLimit` and the REST 429
+ * body's `rateLimit` (which also comes with a `Retry-After` header).
+ */
+export interface SharedStorageRateLimit {
+  /** Whole seconds until a retry can succeed. An integer, at least 1. */
+  retryAfterSeconds: number;
+  /** ISO-8601 instant at which a retry can succeed. */
+  retryAt: string;
+}
+
+/**
  * One SHARED-storage entry as it appears on the wire in `SHARED_LIST_RESULT`.
  * `createdAt`/`updatedAt` are ISO-8601 strings; the block-side hook rehydrates
  * them to `Date` (mirrors `APP_STORAGE_LIST_RESULT`'s `updatedAt`). `count` is
@@ -1027,26 +1049,51 @@ export type ParentToBlockMessage =
   | {
       // Reply to SHARED_APPEND. `key` is the id the host minted for the new
       // entry. `error` on validation/host failure.
+      //
+      // `rateLimit` rides beside `error` on a RATE-LIMITED refusal only (see
+      // `SharedStorageRateLimit`); the same holds for the five write replies
+      // below (UPDATE, VOTE, UNVOTE, WITHDRAW, REPORT).
       type: 'SHARED_APPEND_RESULT';
-      payload: { requestId: string; key: string; error?: string };
+      payload: {
+        requestId: string;
+        key: string;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SHARED_VOTE. `count` is the entry's vote total AFTER applying
       // the (idempotent) vote from this viewer.
       type: 'SHARED_VOTE_RESULT';
-      payload: { requestId: string; count: number; error?: string };
+      payload: {
+        requestId: string;
+        count: number;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SHARED_UNVOTE. `count` is the entry's vote total AFTER
       // removing this viewer's vote (idempotent when they hadn't voted).
       type: 'SHARED_UNVOTE_RESULT';
-      payload: { requestId: string; count: number; error?: string };
+      payload: {
+        requestId: string;
+        count: number;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SHARED_WITHDRAW. `deleted: false` means the viewer's entry
       // wasn't present (still treated as success — idempotent withdraw).
       type: 'SHARED_WITHDRAW_RESULT';
-      payload: { requestId: string; ok?: boolean; deleted?: boolean; error?: string };
+      payload: {
+        requestId: string;
+        ok?: boolean;
+        deleted?: boolean;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SHARED_UPDATE. `ok: true` when the author's entry was updated
@@ -1057,7 +1104,12 @@ export type ParentToBlockMessage =
       // truthiness, so an `error: ''` cannot read as success (mirrors
       // `SHARED_WITHDRAW_RESULT`; see the union's header note).
       type: 'SHARED_UPDATE_RESULT';
-      payload: { requestId: string; ok?: boolean; error?: string };
+      payload: {
+        requestId: string;
+        ok?: boolean;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SHARED_GET (single-row fetch-by-key). On success `item` is the
@@ -1078,7 +1130,12 @@ export type ParentToBlockMessage =
       // `SHARED_WITHDRAW_RESULT`). Filing a report does NOT hide the row — a
       // moderator decides.
       type: 'SHARED_REPORT_RESULT';
-      payload: { requestId: string; ok?: boolean; error?: string };
+      payload: {
+        requestId: string;
+        ok?: boolean;
+        error?: string;
+        rateLimit?: SharedStorageRateLimit;
+      };
     }
   | {
       // Reply to SAVE_IMAGE (host-mediated download bridge). `ok: true` once the

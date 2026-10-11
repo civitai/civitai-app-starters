@@ -133,6 +133,7 @@ import {
   type BlockNavigateScope,
   type BlockWorkflowSnapshot,
   type ColorDomain,
+  type SharedStorageRateLimit,
   type Theme,
   type ViewerInfo,
   type WorkflowBody,
@@ -142,6 +143,7 @@ import {
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
+import { parseSharedStorageRateLimit } from '../transport/validate.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -354,6 +356,11 @@ interface RawTrpcResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
+  /**
+   * The validated `error.data.rateLimit` of a rate-limited refusal, when the
+   * server sent one (today only the `apps.shared.*` write procedures do).
+   */
+  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
@@ -367,6 +374,8 @@ interface TrpcDataResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
+  /** See {@link RawTrpcResult.rateLimit}. */
+  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
@@ -376,6 +385,16 @@ interface TrpcDataResult {
  * deploy (the dev token is fine; the pod just hasn't loaded the verifier yet) —
  * the exact blip the round-5 dogfood hit. Anything ≥ 500, plus 408 (timeout)
  * and 429 (rate-limit), is also transient.
+ *
+ * 🔴 `transient` IS READ BY ONE CALLER: {@link pollWithRetry}. Nothing else
+ * retries, and the shared-storage bridges in particular must NOT: their 429 is a
+ * per-(viewer, app) write-budget refusal whose wait is minutes (the
+ * `retryAfterSeconds` it carries), so the POLL backoff of under two seconds
+ * could only burn three more refused requests — and a write refused after the
+ * reserve is charged to the server's rejection bucket. The 429 stays transient
+ * HERE because a POLL 429 is the blip this list was written for, and a POLL
+ * must never turn into a terminal `failed` over one. Pinned by the
+ * "shared-storage 429 is not retried" case in `test/liveHost.test.tsx`.
  */
 function isTransientHttpStatus(status: number): boolean {
   return status >= 500 || status === 408 || status === 429 || status === 401;
@@ -561,7 +580,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       }
       if (!res.ok) {
         const msg = extractTrpcError(parsed) ?? `${procedure} failed: HTTP ${res.status}`;
-        return { error: msg, transient: isTransientHttpStatus(res.status) };
+        const rateLimit = parseSharedStorageRateLimit(extractTrpcErrorData(parsed)?.rateLimit);
+        return {
+          error: msg,
+          transient: isTransientHttpStatus(res.status),
+          ...(rateLimit ? { rateLimit } : {}),
+        };
       }
       return { parsed };
     } catch (err) {
@@ -602,7 +626,13 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     method: 'GET' | 'POST',
   ): Promise<TrpcDataResult> {
     const raw = await rawTrpcCall(procedure, input, method);
-    if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
+    if (raw.error !== undefined) {
+      return {
+        error: raw.error,
+        transient: raw.transient,
+        ...(raw.rateLimit ? { rateLimit: raw.rateLimit } : {}),
+      };
+    }
     const data = extractData(raw.parsed);
     if (data === undefined) {
       return { error: `${procedure}: malformed response (no data)` };
@@ -1964,7 +1994,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_APPEND_RESULT',
-                  payload: { requestId: requestId ?? '', key: '', error: r.error },
+                  payload: { requestId: requestId ?? '', key: '', ...sharedRefusal(r) },
                 });
                 return;
               }
@@ -1988,7 +2018,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               dispatchToBlock({
                 type: 'SHARED_UPDATE_RESULT',
                 payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
                   : { requestId: requestId ?? '', ok: true },
               });
             });
@@ -2002,7 +2032,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 if (r.error) {
                   dispatchToBlock({
                     type: 'SHARED_VOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
                   });
                   return;
                 }
@@ -2023,7 +2053,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 if (r.error) {
                   dispatchToBlock({
                     type: 'SHARED_UNVOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
                   });
                   return;
                 }
@@ -2048,7 +2078,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                       requestId: requestId ?? '',
                       ok: false,
                       deleted: false,
-                      error: r.error,
+                      ...sharedRefusal(r),
                     },
                   });
                   return;
@@ -2088,7 +2118,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               dispatchToBlock({
                 type: 'SHARED_REPORT_RESULT',
                 payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
                   : { requestId: requestId ?? '', ok: true },
               });
             });
@@ -2527,12 +2557,37 @@ function extractData(parsed: unknown): unknown {
  * `{ error: { message } }`. Returns undefined when no message is found.
  */
 function extractTrpcError(parsed: unknown): string | undefined {
+  const message = trpcErrorShape(parsed)?.message;
+  return typeof message === 'string' ? message : undefined;
+}
+
+/**
+ * The `data` object of a tRPC error response (`{ error: { json: { data } } }`
+ * or `{ error: { data } }`), or undefined. The platform's error formatter puts
+ * machine-readable refusal fields here — `rateLimit` on a rate-limited
+ * shared-storage write — which {@link extractTrpcError} alone dropped.
+ */
+function extractTrpcErrorData(parsed: unknown): Record<string, unknown> | undefined {
+  const data = trpcErrorShape(parsed)?.data;
+  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : undefined;
+}
+
+/** The unwrapped tRPC error shape (superjson `{ json }` or plain), or undefined. */
+function trpcErrorShape(parsed: unknown): Record<string, unknown> | undefined {
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const error = (parsed as { error?: unknown }).error;
   if (typeof error !== 'object' || error === null) return undefined;
   const inner =
     'json' in error ? (error as { json?: unknown }).json : (error as Record<string, unknown>);
   if (typeof inner !== 'object' || inner === null) return undefined;
-  const message = (inner as { message?: unknown }).message;
-  return typeof message === 'string' ? message : undefined;
+  return inner as Record<string, unknown>;
+}
+
+/**
+ * The error fields of a shared-storage WRITE reply — `error`, plus `rateLimit`
+ * only when the refusal carried it. The dev-host twin of the production host's
+ * `sharedStorageErrorReply`, so the six write bridges build the refusal one way.
+ */
+function sharedRefusal(r: TrpcDataResult): { error: string; rateLimit?: SharedStorageRateLimit } {
+  return { error: r.error ?? '', ...(r.rateLimit ? { rateLimit: r.rateLimit } : {}) };
 }

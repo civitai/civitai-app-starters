@@ -262,7 +262,7 @@ export type {
   AppStorageQuota,
   UseAppStorage,
 } from './hooks/useAppStorage.js';
-export { useSharedStorage } from './hooks/useSharedStorage.js';
+export { useSharedStorage, SharedStorageRateLimitError } from './hooks/useSharedStorage.js';
 export type {
   SharedAppendValue,
   SharedListItem,

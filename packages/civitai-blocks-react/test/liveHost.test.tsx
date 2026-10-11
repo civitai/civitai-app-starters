@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isPageSlotContext } from '@civitai/app-sdk/blocks';
 
 import { UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR, useUploadImageBytes } from '../src/hooks/useUploadImageBytes.js';
+import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useSharedStorage.js';
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
@@ -2582,5 +2583,215 @@ describe('createLiveHost — app subqueue (served via blocks.queryAppWorkflows /
     await new Promise((r) => setTimeout(r, 50));
     expect(inbound.messages.some((m) => m.type === 'CANCEL_APP_WORKFLOW_RESULT')).toBe(false);
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('blocks.cancelAppWorkflow'))).toBe(false);
+  });
+});
+
+describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  // Pairwise-distinct from every default in the code under test (the mock
+  // host's 60s default, the POLL backoff), so a hardcoded value cannot pass.
+  const RATE_LIMIT = { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' };
+  const MESSAGE = 'Too many submissions — retry in 312s';
+
+  /**
+   * The platform's tRPC refusal on the wire: superjson error envelope whose
+   * `data` carries what civitai's `errorFormatter` adds (`rateLimit`) beside the
+   * default `code`/`httpStatus`.
+   */
+  function trpcRateLimited(message: string, rateLimit: unknown, status = 429) {
+    const body = {
+      error: {
+        json: {
+          message,
+          code: -32029,
+          data: { code: 'TOO_MANY_REQUESTS', httpStatus: status, rateLimit },
+        },
+      },
+    };
+    return {
+      ok: false,
+      status,
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    } as unknown as Response;
+  }
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  function callsTo(procedure: string): number {
+    return fetchMock.mock.calls.filter((c) => String(c[0]).includes(`/api/trpc/${procedure}`))
+      .length;
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  const WRITES: Array<{
+    send: string;
+    payload: Record<string, unknown>;
+    procedure: string;
+    reply: string;
+    failureFields: Record<string, unknown>;
+  }> = [
+    {
+      send: 'SHARED_APPEND',
+      payload: { value: { title: 't' } },
+      procedure: 'apps.shared.append',
+      reply: 'SHARED_APPEND_RESULT',
+      failureFields: { key: '' },
+    },
+    {
+      send: 'SHARED_UPDATE',
+      payload: { key: 'req:1', value: { title: 't' } },
+      procedure: 'apps.shared.update',
+      reply: 'SHARED_UPDATE_RESULT',
+      failureFields: { ok: false },
+    },
+    {
+      send: 'SHARED_VOTE',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.vote',
+      reply: 'SHARED_VOTE_RESULT',
+      failureFields: { count: 0 },
+    },
+    {
+      send: 'SHARED_UNVOTE',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.unvote',
+      reply: 'SHARED_UNVOTE_RESULT',
+      failureFields: { count: 0 },
+    },
+    {
+      send: 'SHARED_WITHDRAW',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.withdraw',
+      reply: 'SHARED_WITHDRAW_RESULT',
+      failureFields: { ok: false, deleted: false },
+    },
+    {
+      send: 'SHARED_REPORT',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.report',
+      reply: 'SHARED_REPORT_RESULT',
+      failureFields: { ok: false },
+    },
+  ];
+
+  for (const w of WRITES) {
+    it(`${w.send}: a tRPC 429 refusal forwards error.data.rateLimit onto ${w.reply}`, async () => {
+      installWithFetch(async (url) => {
+        if (url.includes(`/api/trpc/${w.procedure}`)) return trpcRateLimited(MESSAGE, RATE_LIMIT);
+        throw new Error(`unexpected ${url}`);
+      });
+      await waitForMessage(inbound, 'BLOCK_INIT');
+      post(w.send, { requestId: `r-${w.send}`, ...w.payload });
+      const payload = await waitForMessage(inbound, w.reply);
+      expect(payload).toEqual({
+        requestId: `r-${w.send}`,
+        ...w.failureFields,
+        error: MESSAGE,
+        rateLimit: { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' },
+      });
+    });
+  }
+
+  it('a refusal WITHOUT data.rateLimit carries no rateLimit key (plain refusal unchanged)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('/api/trpc/apps.shared.append')) return trpcErr('FORBIDDEN', 403);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_APPEND', { requestId: 'r-plain', value: { title: 't' } });
+    const payload = await waitForMessage(inbound, 'SHARED_APPEND_RESULT');
+    expect(payload).toEqual({ requestId: 'r-plain', key: '', error: 'FORBIDDEN' });
+  });
+
+  it('a MALFORMED data.rateLimit is not forwarded; the refusal itself still is', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('/api/trpc/apps.shared.vote')) {
+        return trpcRateLimited('Too many votes — retry in 9s', { retryAfterSeconds: -9, retryAt: 'x' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_VOTE', { requestId: 'r-bad', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
+    expect(payload).toEqual({ requestId: 'r-bad', count: 0, error: 'Too many votes — retry in 9s' });
+  });
+
+  it('a shared-storage 429 is NOT retried: exactly one fetch, even past the POLL backoff', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('/api/trpc/apps.shared.append')) return trpcRateLimited(MESSAGE, RATE_LIMIT);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_APPEND', { requestId: 'r-once', value: { title: 't' } });
+    // The LONG wait (~5s budget) is deliberate: a path that retried with the
+    // POLL backoff (250/500/1000ms) would reply only after its last attempt, and
+    // this must then fail on the COUNT below rather than on a wait timeout.
+    await waitForMessageLong(inbound, 'SHARED_APPEND_RESULT');
+    // Then wait past the first backoff so an in-flight retry would have been sent.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(callsTo('apps.shared.append')).toBe(1);
+    expect(inbound.messages.filter((m) => m.type === 'SHARED_APPEND_RESULT')).toHaveLength(1);
+  });
+
+  it('CONTROL: a POLL 429 is still transient — retried, and the success is delivered', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('/api/trpc/blocks.pollWorkflow')) {
+        return callsTo('blocks.pollWorkflow') === 1
+          ? trpcErr('Rate limit exceeded, please retry shortly.', 429)
+          : trpcOk({ workflowId: 'wf_429', status: 'succeeded' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('POLL_WORKFLOW', { requestId: 'r-poll-429', workflowId: 'wf_429' });
+    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
+    expect((payload.snapshot as BlockWorkflowSnapshot).status).toBe('succeeded');
+    expect(callsTo('blocks.pollWorkflow')).toBe(2);
+  });
+
+  it('SEAM: useSharedStorage().append() over the live host rejects with SharedStorageRateLimitError', async () => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      installWithFetch(async (url) => {
+        if (url.includes('/api/trpc/apps.shared.append')) return trpcRateLimited(MESSAGE, RATE_LIMIT);
+        throw new Error(`unexpected ${url}`);
+      });
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      const { result } = renderHook(() => useSharedStorage());
+      const err = await result.current.append({ title: 't' }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(SharedStorageRateLimitError);
+      expect(err).toBeInstanceOf(Error);
+      const rl = err as SharedStorageRateLimitError;
+      expect(rl.message).toBe('Too many submissions — retry in 312s');
+      expect(rl.retryAfterSeconds).toBe(312);
+      expect(rl.retryAt).toBe('2031-04-05T06:07:08.000Z');
+    } finally {
+      resetTransport();
+    }
   });
 });
