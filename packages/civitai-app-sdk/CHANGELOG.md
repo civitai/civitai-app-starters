@@ -1,5 +1,53 @@
 # @civitai/app-sdk
 
+## 0.64.0
+
+### Minor Changes
+
+- d642754: **`useBatchEstimate()` prices a grid of generations in one request (#578, item 1).** `const { estimateBatch } = useBatchEstimate()`, then `estimateBatch(bodies)` sends up to 16 workflow bodies, each exactly what `useBuzzWorkflow().estimate()` takes. It resolves with `{ cells, aggregate }`: `cells[i]` answers `bodies[i]`, either `{ ok: true, cost, snapshot }` or `{ ok: false, error, timedOut, snapshot }`, where `error` is the same `WorkflowEstimateError` a single `estimate()` of that body rejects with. `aggregate` is `{ total, pricedCells, cellCount }`. `total` sums the cells that priced and covers the whole list only when `pricedCells === cellCount`.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5696 is merged and deployed to civitai.com.** A host without it does not answer the message at all, so `estimateBatch` waits out its timeout (120 s by default) before rejecting.
+  - **Estimate only.** Nothing is submitted and no Buzz is held or spent. There is no batch submit, watch or cancel. Each cell is still submitted with `useBuzzWorkflow().submit()` and its own confirmation.
+  - **One request against the estimate allowance per call**, however many cells. Cells are metered on an allowance of their own, shared the same way (on a page app, by every viewer of the app). A call over either limit is refused whole.
+  - `kind: 'training'` bodies are refused per cell; estimate a training run with `estimate()`.
+  - **Whole-call failures reject with `BatchEstimateError`**, whose `code` is one of `'unsupported'` (the host answered `unsupported on this host`), `'timeout'` (no reply in time), `'invalid-request'` (empty, or more than `BATCH_ESTIMATE_MAX_CELLS` = 16 bodies, refused before sending) or `'failed'` (anything else, with the host's text on `hostError`). Fall back to one `estimate()` per cell only on `'unsupported'`; the README shows how. A `'timeout'` usually means a slow host, not an old one: show the estimate as unavailable and retry later rather than sending one estimate per cell. An app that must detect a host predating the message can probe once with a one-body batch and a short `estimateBatch(bodies, { timeoutMs })`.
+  - **The host bounds the time one call takes.** When its budget runs out the call still resolves, with the cells that priced and `ok: false` cells with `timedOut: true` for the rest. Branch on `timedOut`, not on `snapshot.error`: the hook maps the host's wording so apps never match it.
+  - New exports: `useBatchEstimate`, `BatchEstimateError`, `BATCH_ESTIMATE_MAX_CELLS`, and the types `UseBatchEstimate`, `BatchEstimateResult`, `BatchEstimateCell`, `BatchEstimateErrorCode`, `EstimateBatchOptions`, `BlockEstimateBatchAggregate`.
+  - `@civitai/app-sdk`: the message union gains `ESTIMATE_WORKFLOW_BATCH { requestId, bodies }` and `ESTIMATE_BATCH_RESULT { requestId, snapshots?, aggregate?, error? }`, plus the `BlockEstimateBatchAggregate` type on `./blocks`.
+  - The reply validator accepts `ESTIMATE_BATCH_RESULT` with either a bare string `error` or `snapshots` (each a valid workflow snapshot) plus a numeric `aggregate`. It refuses anything else.
+  - **Mock host (`createMockHost` / `Harness`):** prices each cell exactly as it prices one `ESTIMATE_WORKFLOW` of that body. `costPerGen` and `failEstimate` apply per cell, and a training cell is refused as the server refuses it. New option `generation.batchEstimate`: `'supported'` (default), `'unsupported'` (replies `unsupported on this host`) or `'silent'` (never replies, like an older host). New option `generation.batchEstimateTimedOutCells`: cell indices answered with the host's per-cell snapshot when its time budget runs out (they come back `timedOut: true`). Both can be changed at runtime through `setScenario`.
+  - **`dev:live`** forwards the call to `blocks.estimateWorkflowBatch`. Against a civitai.com without that procedure it rejects with `'failed'` (the server's not-found text), not `'unsupported'`.
+
+- 0a049d8: **A price quote now itemises the app fee: `cost.authorFee` (civitai/civitai-app-starters#579).** `BlockWorkflowSnapshot['cost']` was `{ total }`, and `total` includes the app author's per-generation fee, so an app could not show "generation X + app fee Y". `cost` gains an optional `authorFee`: the part of `total` that is the fee, in whole Buzz. `total` keeps its meaning and value, so an app that never reads the new field is unaffected.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5688 is merged and deployed to civitai.com.** The field is sent by the host. Against a host that predates that change `cost.authorFee` is **absent** on every reply and `total` is exactly what it is today, so nothing breaks, but the documented field would not appear.
+  - **A number** on the `estimate()` result for a `textToImage` or registered-`step` body, and on the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price. **`0` means a fee was looked up and none applies** to the request.
+  - **Absent** when the total is not itemised: an older host; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost; the registered-`step` `submit()` refusal for a missing orchestrator price quote, which refuses before any fee is looked up; and `customComfy`, pass-through `step` and `training` quotes, which price no fee. Do not read absent as `0`.
+  - The inbound snapshot validator accepts the field and refuses a present value that is not a finite number `>= 0`, as it does for the other optional snapshot fields.
+  - **Mock host (`createMockHost` / the dev harness):** new `generation.authorFee` (a number, a `(body) => number`, or `false`; URL `?authorFee=<n>` / `?authorFee=off`). The fee is added into the quote's `cost.total` on top of `costPerGen` and itemised beside it, on the estimate and on the `submitCapRefusal` reply, for `textToImage` and registered-`step` bodies. A simulated balance is debited `costPerGen + authorFee`. 🔴 **The default is `0`, so those two replies now carry `authorFee: 0`** where they carried `cost: { total }` alone; a test that deep-equals the mock's `cost` needs the extra key, or `authorFee: false` to simulate an older host.
+
+- 94f3c2b: **`useResourcePicker()` can collect several LoRAs in one picker session (#580).** Pass `multiple: { max }` and `open` resolves with a **list** of the picked resources, in the order the viewer picked them, instead of a single resource: `const loras = await open({ resourceType: 'LORA', multiple: { max: 3 } })`. Dismissing the picker resolves with `[]`. Each entry is the same `BlockResourceInfo` a single pick returns, and every id is still re-validated at estimate and submit.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5687 is merged and deployed to civitai.com.** A host that predates it ignores `multiple` and opens the single-pick picker. `open` still resolves with a list there, of the one LoRA the viewer picked or `[]`, so nothing breaks, but the viewer cannot pick several until the host ships.
+  - **Without `multiple`, nothing changes.** `open` sends the same message and resolves with one resource or `null`, exactly as before.
+  - **LoRA only.** `multiple` with `resourceType: 'Checkpoint'` is a type error, and at runtime `open` rejects before sending anything. It is never treated as a single pick.
+  - **`max` is a whole number of at least 1, capped at 5**, the cap on `additionalResources`. A larger value is clamped to 5; `0`, a negative number or a fraction makes `open` reject. The cap is exported as `RESOURCE_PICKER_MULTIPLE_MAX`. The host applies the same clamp and the same refusals.
+  - `baseModelGroup` works with `multiple` as it does for a single pick.
+  - If the host refuses a `multiple` request, `open` rejects with the host's message.
+  - New exports from `@civitai/blocks-react`: `RESOURCE_PICKER_MULTIPLE_MAX` and the types `ResourcePickerOpenOptions` and `ResourcePickerMultiple`.
+  - `@civitai/app-sdk`: the `OPEN_RESOURCE_PICKER` payload type gains `multiple?: { max: number }`, and `RESOURCE_PICKER_RESULT` gains `selectedResources?: BlockResourceInfo[]` and `error?: string`. All optional, so existing callers are unchanged. A single-pick reply still carries only `selected`.
+  - The reply validator checks every entry of `selectedResources` the way it checks `selected`. A list with one malformed entry is dropped whole.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** a `multiple` request resolves with two curated LoRAs by default, cut to the request's `max`. New option `cannedMultiPicks` sets the list; `null` or `[]` simulates a dismissed picker, and `cannedPicks: { LORA: null }` dismisses both pick modes. The mock answers a raw `multiple` + Checkpoint request, or an invalid `max`, with the host's error.
+  - **`dev:live`:** the in-harness picker has a multi-select mode. A card click stages or un-stages a LoRA, and the "Add" button sends the staged list in the order it was staged.
+
+- 7bffea3: **Rate-limited shared-storage writes now say when to retry (#597).** When the server refuses a shared write because the viewer's per-app budget is empty, `useSharedStorage()`'s `append`, `update`, `vote`, `unvote`, `withdraw` and `report` reject with the new **`SharedStorageRateLimitError`**, carrying `retryAfterSeconds` (whole seconds, at least 1) and `retryAt` (an ISO-8601 instant). It extends `Error`, the class every other shared-storage refusal is thrown as, so existing `catch` code keeps working and `.message` is still the server's text (`Too many submissions — retry in 312s`). A refusal without the metadata (an older host, or a refusal that is not a rate limit) is still a plain `Error`.
+
+  - `@civitai/app-sdk`: new type `SharedStorageRateLimit` on `./blocks`, and an optional `rateLimit?: SharedStorageRateLimit` on the six shared write replies (`SHARED_APPEND_RESULT`, `SHARED_UPDATE_RESULT`, `SHARED_VOTE_RESULT`, `SHARED_UNVOTE_RESULT`, `SHARED_WITHDRAW_RESULT`, `SHARED_REPORT_RESULT`).
+  - **Tolerant of a bad value.** No reply validator checks `rateLimit`, so it can never cause a reply to be dropped. The hook parses it: a malformed one (wrong types, a non-integer or a value below 1, a missing field, an unparseable `retryAt`, a non-object) is ignored and the refusal is thrown as a plain `Error`.
+  - **`dev:live`** forwards `error.data.rateLimit` from the tRPC refusal onto the bridge reply. It does not retry a shared-storage write: only POLL retries transient statuses, and a 429 on POLL is still retried.
+  - **Mock host:** new `shared.rateLimitNext` (refuse the next N writes as rate-limited) and `shared.rateLimit` (`{ retryAfterSeconds?, retryAt? }`, defaulting to 60 s from now), both settable through `setScenario`.
+  - README: a new "Shared-storage write limits" section under `useSharedStorage()` lists the per-(viewer, app) write limits, the refusal shape and how to handle the error.
+
 ## 0.63.0
 
 ### Minor Changes
@@ -372,15 +420,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                            single measurements on one machine.
+                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1288,10 +1336,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                      after    @civitai/theme       0.3.1                   — 1 copy
-                                               @civitai/components  0.4.2                   — 1 copy
+                                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                        after    @civitai/theme       0.3.1                   — 1 copy
+                                                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
