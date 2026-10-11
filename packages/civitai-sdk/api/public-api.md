@@ -509,6 +509,20 @@ export interface Host {
         returnUrl?: string;
     }): void;
     /**
+     * Sends one custom event to the app's analytics. Fire-and-forget: no reply
+     * and no acknowledgement. The wire is `useBlockAnalytics().track`'s.
+     *
+     * 🔴 Only what the manifest DECLARES under `analytics.events` is recorded,
+     * against the approved manifest. An undeclared event is counted as dropped and
+     * its name is not stored. A declared event keeps only its declared
+     * properties, each only when the value has the declared type — `enum` (one of
+     * the declared strings), `number` or `boolean`; there is no free-text string.
+     * Each mount may send 10 events a second and 500 in all; an event over a
+     * limit is dropped in the browser and counted nowhere. Owners see aggregates
+     * in the app's analytics panel, never individual events.
+     */
+    track(eventName: string, properties?: Record<string, unknown>): void;
+    /**
      * Saves to the viewer's device through the host, because a sandboxed frame
      * cannot. The host fetches only from origins it allowlists.
      */

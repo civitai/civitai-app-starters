@@ -46,6 +46,25 @@ describe('host chrome', () => {
     expect(t.sent.at(-1)).toEqual({ type: 'REQUEST_SIGN_IN', payload: { returnUrl: '/gallery' } });
   });
 
+  it('sends a custom event as TRACK_EVENT, with no reply awaited', () => {
+    const t = createFakeTransport();
+    const result = createHost(t).track('generate_clicked', { mode: 'txt2img', batch: 4 });
+    expect(result).toBeUndefined();
+    expect(t.sent.at(-1)).toEqual({
+      type: 'TRACK_EVENT',
+      payload: { eventName: 'generate_clicked', properties: { mode: 'txt2img', batch: 4 } },
+    });
+  });
+
+  it('omits properties from the TRACK_EVENT payload when none are given', () => {
+    const t = createFakeTransport();
+    createHost(t).track('sign_in_clicked');
+    // `toEqual` treats a present-but-undefined key as absent; assert the key itself.
+    const payload = t.sent.at(-1)?.payload as Record<string, unknown>;
+    expect(payload).toEqual({ eventName: 'sign_in_clicked' });
+    expect(Object.keys(payload)).toEqual(['eventName']);
+  });
+
   it('downloads an own-output url under the name given', async () => {
     const t = createFakeTransport();
     t.handle('SAVE_IMAGE', () => ({ ok: true }));

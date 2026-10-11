@@ -375,6 +375,7 @@ wider scope — and refuses without one.
 | `navigate(path, { scope, target })` | Deep-links within this app's own sub-paths; `scope: 'site'` asks to leave the app for a civitai.com page instead. `scope` defaults to `'app'` |
 | `onVisibilityChange(handler)` | Reports the page hiding and returning |
 | `requestSignIn({ returnUrl })` | Starts sign-in; the block re-initialises signed in |
+| `track(eventName, properties)` | Sends a custom event to your app's analytics, fire-and-forget. Only events and properties declared under `analytics.events` in the manifest are recorded — see *Custom events* below |
 | `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |
 | `openResourcePicker({ resourceType })` | civitai's own picker; resolves the one pick, or `null` |
 | `openBuzzPurchase({ suggestedAmount })` | The purchase flow; resolves `{ purchased }` |
@@ -477,6 +478,38 @@ bound your app wants. A viewer who declines rejects the call.
 than failing the call, so `imageIds` can be **shorter** than what you selected
 and nothing says which index dropped. Compare lengths; do not pair ids to
 indexes.
+
+### Custom events
+
+```ts
+app.host.track('generate_clicked', { mode: 'txt2img', batch: 4 });
+```
+
+🔴 **Only what the manifest declares is recorded.** Declare each event, and each
+property it carries, under `analytics.events` in `block.manifest.json`; events
+are accepted against the approved manifest:
+
+```json
+"analytics": {
+  "events": {
+    "generate_clicked": {
+      "properties": {
+        "mode": { "type": "enum", "values": ["txt2img", "img2img"] },
+        "batch": { "type": "number" }
+      }
+    }
+  }
+}
+```
+
+- An undeclared event is counted as dropped; its name and properties are not stored.
+- A declared event keeps only its declared properties, each only when the value
+  has the declared type. Types are `enum`, `number` and `boolean`; there is no
+  free-text string, so a string is kept only when it is one of the enum's values.
+- Each mount may send 10 events a second and 500 in all, in bodies of at most
+  32 KiB. An event over a limit is dropped in the browser and counted nowhere.
+- Fire-and-forget: there is no reply. Owners see aggregates in the app's
+  analytics panel, never individual events.
 
 ## Parent origins
 

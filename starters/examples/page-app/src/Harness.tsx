@@ -109,6 +109,9 @@ function LiveHost({ children }: { children: ReactNode }) {
     // reflects app-scoped NAVIGATE into ROUTE_CHANGED itself.
     const host = createLiveHost({
       blockToken: token,
+      // Each `track()` is checked against `analytics.events`; the console warns
+      // once per event or property production would drop.
+      manifest,
       backendBaseUrl: '',
       fetchImpl: (input, init) => fetch(input, init), // bound: a detached `fetch` throws
     });

@@ -132,6 +132,7 @@ export type HostNotifications = {
   NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
   REQUEST_SIGN_IN: { returnUrl?: string };
   REQUEST_CONSENT: { scopes?: string[] };
+  TRACK_EVENT: { eventName: string; properties?: Record<string, unknown> };
 };
 
 export type HostPushes = {

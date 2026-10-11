@@ -23,6 +23,21 @@
     "resizable": true,
     "sandbox": "allow-scripts allow-forms"
   },
+  "analytics": {
+    "events": {
+      "pin_added": { "description": "Viewer pinned a model to their board" },
+      "pin_removed": { "description": "Viewer removed a pin" },
+      "pin_opened": { "description": "Viewer opened a pin's detail page" },
+      "sign_in_clicked": { "description": "Anonymous viewer pressed Sign in" },
+      "name_consent_requested": { "description": "Viewer asked to show their name" },
+      "open_on_civitai": {
+        "description": "Viewer opened a pinned model on civitai.com",
+        "properties": {
+          "target": { "type": "enum", "values": ["current", "new_tab"] }
+        }
+      }
+    }
+  },
   "contentRating": "g",
   "minApiVersion": "1.0",
   "buildCommand": "npm run build",

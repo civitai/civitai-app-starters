@@ -25,13 +25,22 @@ messages have no destination yet.
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
 | `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
-| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `TRACK_EVENT` | — | Not carried |
+| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK` | — | Not carried |
+| `TRACK_EVENT` | `app.host.track(eventName, properties)` | **Carried**, same wire as `useBlockAnalytics().track`. 🔴 Only events and properties DECLARED under the manifest's `analytics.events` are recorded — see below |
 
-⚠ `TRACK_EVENT` is filed above beside two one-consumer capabilities, which understates it: it is emitted by
-`useBlockAnalytics`, which the fleet apps call widely. It is listed as *not carried* because **it has
-no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, *"analytics fire-and-forget; no
-host-side sink wired (dropped, never hangs)"*. So those call sites are already no-ops; this is net-new
-capability rather than a migration gap.
+⚠ **`TRACK_EVENT` used to be listed here as *not carried*, because no host handled it — every
+`useBlockAnalytics` call was a no-op.** Both hosts now forward it, so the calls an app already makes start
+counting — but only against the declaration. What is recorded:
+
+- **Declared events only.** An event name the approved manifest does not declare under `analytics.events` is
+  counted as a drop; its name and properties are not stored. An app that never declared its events records
+  nothing but that count.
+- **Declared properties of the declared type only.** Types are `enum` (one of the declared strings), `number`
+  and `boolean`. There is no free-text string, so an id, a prompt or a username sent as a string is dropped.
+  An undeclared property, or a value of the wrong type, is dropped and the rest of the event kept.
+- **Budgets.** Each mount may send 10 events a second and 500 in all, in bodies of at most 32 KiB; an event
+  over a limit is dropped in the browser and counted nowhere. Signed-out viewers are counted, never identified.
+- **Fire-and-forget.** No reply, no acknowledgement. Owners see aggregates in the app's analytics panel.
 
 ## Scope binding is per-route
 
@@ -299,7 +308,7 @@ iframe, and nothing about the call site looks different.
 On `app.host`: `requestSignIn`, `download` (was `SAVE_IMAGE`),
 `openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
 `publishGenerationOutputs`, `resize`, **`autoResize`**, `reportError`, `navigate`
-and `onVisibilityChange`. Reach for `autoResize(element)` over bare `resize` —
+and `onVisibilityChange` — plus `track`, which raises no UI (see `TRACK_EVENT` above). Reach for `autoResize(element)` over bare `resize` —
 it wires the `ResizeObserver` for you and returns a stop function. Consent is `app.requestGrants` (was `requestConsent`).
 
 `publishGenerationOutputs` keeps `usePublishGenerationOutputs`'s wire exactly —

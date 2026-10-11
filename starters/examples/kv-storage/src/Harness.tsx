@@ -56,6 +56,9 @@ function LiveHost({ children }: { children: ReactNode }) {
     // `backendBaseUrl: ''` = same origin; vite.config.ts proxies `/api`.
     const host = createLiveHost({
       blockToken: token,
+      // Each `track()` is checked against `analytics.events`; the console warns
+      // once per event or property production would drop.
+      manifest,
       backendBaseUrl: '',
       context: MODEL_SLOT,
       fetchImpl: (input, init) => fetch(input, init), // bound: a detached `fetch` throws

@@ -120,7 +120,7 @@ export function App() {
   const addPin = useCallback(
     async (pin: Pin) => {
       const ok = await save({ pins: [pin, ...board.pins] }, 'save that pin');
-      if (ok) track('pin_added', { modelId: pin.modelId });
+      if (ok) track('pin_added');
       return ok;
     },
     [board, save, track],
@@ -130,7 +130,7 @@ export function App() {
     async (modelId: number) => {
       const ok = await save({ pins: board.pins.filter((p) => p.modelId !== modelId) }, 'remove that pin');
       if (!ok) return;
-      track('pin_removed', { modelId });
+      track('pin_removed');
       // Leaving the detail page of a pin that no longer exists.
       if (route.view === 'pin' && route.modelId === modelId) navigate('');
     },
@@ -139,7 +139,7 @@ export function App() {
 
   const openPin = useCallback(
     (modelId: number) => {
-      track('pin_opened', { modelId });
+      track('pin_opened');
       navigate(`pin/${modelId}`); // app scope (the default): this app's own /pin/<id>
     },
     [navigate, track],
@@ -512,7 +512,10 @@ function PinDetail({
   }
 
   const openOnCivitai = (target: 'current' | 'new_tab') => {
-    track('open_on_civitai', { modelId: pin.modelId, target });
+    // Only what block.manifest.json declares under `analytics.events` is recorded:
+    // `target` is a declared enum. A model id is not sent — there is no free-text
+    // property type, and a number property should never carry an identifier.
+    track('open_on_civitai', { target });
     // `scope: 'site'` resolves at the civitai.com root and LEAVES the app. Without
     // it this would be a request for this app's own `/models/<id>`.
     navigate(`models/${pin.modelId}`, { scope: 'site', target });

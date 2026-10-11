@@ -1821,12 +1821,59 @@ produces from the call a block actually makes.
 
 ### `useBlockAnalytics()`
 
-Fire-and-forget event tracking into the host's analytics pipeline.
+Custom events for your app's analytics panel. Fire-and-forget: no reply, no
+acknowledgement.
 
 ```tsx
 const { track } = useBlockAnalytics();
-track('generate_clicked', { modelId });
+track('generate_clicked', { mode: 'txt2img', batch: 4 });
 ```
+
+🔴 **Only what your manifest DECLARES is recorded.** Declare every event, and
+every property it carries, under `analytics.events` in `block.manifest.json`.
+Events are accepted against the APPROVED manifest, so a reviewer sees what your
+app tracks:
+
+```json
+"analytics": {
+  "events": {
+    "generate_clicked": {
+      "description": "User pressed Generate",
+      "properties": {
+        "mode": { "type": "enum", "values": ["txt2img", "img2img"] },
+        "batch": { "type": "number" },
+        "advanced": { "type": "boolean" }
+      }
+    }
+  }
+}
+```
+
+| You send | Production |
+|---|---|
+| A declared event, declared properties of the declared type | Recorded |
+| An event the manifest does not declare | Counted as a drop; its name and properties are not stored |
+| A property the event does not declare | Dropped; the rest of the event is recorded |
+| A value of the wrong type, or a string that is not one of the enum's values | Dropped; the rest of the event is recorded |
+
+- **Types are `enum`, `number` and `boolean`.** There is no free-text string, so
+  a prompt, an email or a username cannot be recorded. A `number` is not
+  range-limited: do not use one to carry an identifier.
+- **Names** are lowercase snake_case (a letter, then up to 63 of `a-z`, `0-9`,
+  `_`). At most 50 events per app and 10 properties per event.
+- **Limits.** Each mount of your app may send 10 events a second and 500 in
+  total, in bodies of at most 32 KiB. An event over a limit is dropped in the
+  browser and counted nowhere, so the panel's numbers are floors.
+- **Where.** Events are recorded only from the production site.
+- **What owners see.** Aggregates in the app's analytics panel: per declared
+  event, counts, unique signed-in viewers and property breakdowns. Signed-out
+  viewers are counted as events, never identified. The team's own activity is
+  excluded by default. Individual events are never shown.
+
+**Check it locally.** Pass your manifest to `createLiveHost` (see
+[`/live`](#in-a-devlive-harness)); in `dev:live` the console then warns once per
+undeclared event, undeclared property, or value of the wrong type. Every
+`starters/examples/*` harness does this.
 
 ### `useRequestSignIn()`
 
@@ -2565,7 +2612,7 @@ set, failing on growth and on shrinkage.
 | Export | What it is |
 |---|---|
 | `createLiveHost` | 🔴 **Real backend, real Buzz.** Installs a host that proxies the block's `postMessage` traffic to civitai.com using a dev block token. Returns a handle; call `.install()` and keep the teardown, exactly like `createMockHost`. |
-| `LiveHostOptions` *(type)* | Options for the above. `blockToken` is required; everything else (`backendBaseUrl`, `viewer`, `theme`, `context`, `onOutbound`, …) has a default. |
+| `LiveHostOptions` *(type)* | Options for the above. `blockToken` is required; everything else (`backendBaseUrl`, `viewer`, `theme`, `context`, `onOutbound`, `manifest`, …) has a default. Pass `manifest` to have `TRACK_EVENT` checked against `analytics.events`. |
 
 ### In a `dev:live` harness
 
@@ -2577,6 +2624,10 @@ import { createLiveHost, type LiveHostOptions } from '@civitai/blocks-react/live
 const options: LiveHostOptions = {
   blockToken: devBlockToken,
   theme: 'dark',
+  // Your block.manifest.json, as imported. Each `track()` is checked against its
+  // `analytics.events`, and the console warns once per undeclared event,
+  // undeclared property, or value of the wrong type — what production drops.
+  manifest,
 };
 
 const host = createLiveHost(options);

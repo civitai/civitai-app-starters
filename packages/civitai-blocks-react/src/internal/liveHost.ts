@@ -83,6 +83,12 @@
  * the switch's `default: return` with no reply at all, so `useSharedStorage()`
  * hung to the 30s protocol timeout in dev:live for code that worked in dev:mock.
  *
+ * TRACK_EVENT: recorded only in production, so the live host forwards nothing
+ * and replies nothing (production replies nothing either). What it does is
+ * CHECK each event against the manifest passed as `options.manifest` and warn
+ * once per distinct problem production would silently drop — see
+ * `trackEventCheck.ts`.
+ *
  * 🔴 SCOPE — the capabilities live mode still cannot SERVE. Each REFUSES on its
  * own reply channel — `logOnce` (or `console.info`) plus an honest error, never
  * a fabricated success and never silence. Two guards stand behind this list:
@@ -144,6 +150,7 @@ import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './co
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 import { parseSharedStorageRateLimit } from '../transport/validate.js';
+import { createTrackEventChecker } from './trackEventCheck.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -209,6 +216,25 @@ export interface LiveHostOptions {
    * `dev:live` run this is omitted — the dev clicks a card in the overlay.
    */
   onPickerReady?: (handle: PickerOverlayHandle) => void;
+  /**
+   * The app's manifest — pass `block.manifest.json` as the harness imported it.
+   * Used for one thing: each `TRACK_EVENT` is checked against its
+   * `analytics.events` declaration, and the console warns ONCE per distinct
+   * problem production would silently drop — an undeclared event, an
+   * undeclared property, a value that does not match the declared type or enum.
+   * A declared, valid event logs nothing. The check never throws, never blocks
+   * the block, and sends no reply (production sends none either). Omit it and
+   * the first `TRACK_EVENT` says the check is off.
+   *
+   * Typed `unknown` because an imported JSON file widens its string literals
+   * (`"type": "enum"` reads as `string`), which a stricter type would reject.
+   *
+   * @example
+   * // `manifest` = your block.manifest.json, imported as JSON — every
+   * // `starters/examples/*` harness does this.
+   * createLiveHost({ blockToken, manifest });
+   */
+  manifest?: unknown;
 }
 
 /** Page slot id — dev-token mints page tokens (mirrors PAGE_SLOT_ID server-side). */
@@ -517,6 +543,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         '`civitai login --token <key>` (https://civitai.com/user/account), then re-mint the dev token.',
     );
   }
+
+  // `TRACK_EVENT` vs the manifest's `analytics.events`; dedupes its own warnings.
+  const trackEventChecker = createTrackEventChecker(options.manifest);
 
   // One-time "not supported in live v1" log gating per capability.
   const loggedOnce = new Set<string>();
@@ -2363,9 +2392,20 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'TRACK_EVENT':
+            // Fire-and-forget, no reply — as in production, where the host
+            // forwards it and the ingest keeps only what the manifest's
+            // `analytics.events` declares. Nothing is sent anywhere from here;
+            // the only effect is a once-per-problem console warning for what
+            // production would drop (see `trackEventCheck.ts`).
+            for (const message of trackEventChecker.check(typed.payload)) {
+              // eslint-disable-next-line no-console
+              console.warn(`[createLiveHost] ${message}`);
+            }
+            return;
+
           case 'REQUEST_SIGN_IN':
           case 'BLOCK_ERROR':
-            // No-op. TRACK_EVENT/BLOCK_ERROR are fire-and-forget; REQUEST_SIGN_IN
+            // No-op. BLOCK_ERROR is fire-and-forget; REQUEST_SIGN_IN
             // can't open a login in dev (the viewer comes from the token — a
             // failed viewer fetch already warns in resolveViewer).
             return;
