@@ -186,12 +186,15 @@ export function conjuncts(cond) {
 /** The exact conjunct set `record-tree` must carry for a ledger. */
 export function recordConjuncts(ledger) {
   const core = Object.keys(ledger).filter((id) => ledger[id] === 'core');
+  const advisory = Object.keys(ledger).filter((id) => ledger[id] === 'advisory');
   return [
     '!cancelled()',
     "github.event_name == 'pull_request'",
     `needs.${LANES_JOB}.result == 'success'`,
     `needs.${LANES_JOB}.outputs.lane == 'full'`,
     ...core.flatMap((id) => [`needs.${id}.result == 'success'`, `needs.${LANES_JOB}.outputs.${id} == 'true'`]),
+    // Skipped by its lane is fine; failed or cancelled is not.
+    ...advisory.flatMap((id) => [`needs.${id}.result != 'failure'`, `needs.${id}.result != 'cancelled'`]),
   ];
 }
 
@@ -207,8 +210,8 @@ export function evaluateConjunction(cond, ctx) {
     if (c === '!cancelled()') return !ctx.cancelled;
     let m = c.match(/^github\.event_name == '([^']*)'$/);
     if (m) return ctx.event === m[1];
-    m = c.match(/^needs\.([\w-]+)\.result == '([^']*)'$/);
-    if (m) return (ctx.results[m[1]] ?? '') === m[2];
+    m = c.match(/^needs\.([\w-]+)\.result (==|!=) '([^']*)'$/);
+    if (m) return ((ctx.results[m[1]] ?? '') === m[3]) === (m[2] === '==');
     m = c.match(/^needs\.([\w-]+)\.outputs\.([\w-]+) == '([^']*)'$/);
     if (m) return (ctx.outputs[m[1]]?.[m[2]] ?? '') === m[3];
     throw new Error(`unknown conjunct shape: ${c}`);

@@ -619,6 +619,13 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
   const OTHER_TREE = '4'.repeat(40);
   const RUN = 900;
   const REPO_ID = 77;
+  const RUN_HEAD = '5'.repeat(40);
+  const BLOB_CI = '6'.repeat(40);
+  const BLOB_LANES = '7'.repeat(40);
+  const BLOB_OTHER = '8'.repeat(40);
+  /** One day after the record below was created. */
+  const NOW = Date.parse('2000-01-02T00:00:00Z');
+  const DAY = 24 * 60 * 60 * 1000;
   const NAME = `ci-tested-tree-${TREE}-full`;
 
   /** A fake GitHub API in which the push is skip-eligible; `edit` perturbs ONE thing. */
@@ -641,6 +648,12 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
         status: 'completed',
         conclusion: 'success',
         head_repository: { full_name: REPO },
+        head_sha: RUN_HEAD,
+      },
+      // blobs[ref][path]: the same two blobs on the pushed commit and the run's head.
+      blobs: {
+        [SHA]: { '.github/workflows/ci.yml': BLOB_CI, 'scripts/ci-lanes.mjs': BLOB_LANES },
+        [RUN_HEAD]: { '.github/workflows/ci.yml': BLOB_CI, 'scripts/ci-lanes.mjs': BLOB_LANES },
       },
       jobs: [{ name: 'Record the tested tree', conclusion: 'success' }, { name: 'SDK (typecheck + test + build)', conclusion: 'success' }],
       fail: null,
@@ -655,7 +668,9 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
           ? 'compare'
           : path.startsWith('actions/artifacts')
             ? 'artifacts'
-            : /^actions\/runs\/\d+\/jobs/.test(path)
+            : path.startsWith('contents/')
+              ? 'contents'
+              : /^actions\/runs\/\d+\/jobs/.test(path)
               ? 'jobs'
               : /^actions\/runs\/\d+$/.test(path)
                 ? 'run'
@@ -663,7 +678,9 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
       if (w.fail === route) return { ok: false, status: 502, json: async () => ({}) };
       if (w.fail === `${route}:throw`) throw new Error('ECONNRESET');
       const id = Number(path.match(/^actions\/runs\/(\d+)/)?.[1]);
+      const blob = path.match(/^contents\/(.+)\?ref=([0-9a-f]+)$/);
       const body = {
+        contents: blob ? { sha: w.blobs?.[blob[2]]?.[blob[1]] } : undefined,
         commit: w.commit,
         compare: w.compare,
         artifacts: { artifacts: w.artifacts },
@@ -674,7 +691,8 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
     };
     return { fetchImpl, calls };
   }
-  const gate = (w, over = {}) => pushGate({ api: 'https://api.invalid', repo: REPO, token: 't', sha: SHA, before: BEFORE, fetchImpl: w.fetchImpl, ...over });
+  const gate = (w, over = {}) =>
+    pushGate({ api: 'https://api.invalid', repo: REPO, token: 't', sha: SHA, before: BEFORE, fetchImpl: w.fetchImpl, now: NOW, ...over });
 
   test('POSITIVE CONTROL: the clean world skips, after asking every endpoint', async () => {
     const w = world();
@@ -682,10 +700,25 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
     assert.deepEqual(g, { skip: true, reason: `matched run ${RUN}`, tree: TREE, runId: RUN });
     assert.deepEqual(
       w.calls.map((c) => c.split('?')[0]),
-      [`git/commits/${SHA}`, `compare/${BEFORE}...${SHA}`, 'actions/artifacts', `actions/runs/${RUN}`, `actions/runs/${RUN}/jobs`],
+      [
+        `git/commits/${SHA}`,
+        `compare/${BEFORE}...${SHA}`,
+        'actions/artifacts',
+        'contents/.github/workflows/ci.yml',
+        'contents/scripts/ci-lanes.mjs',
+        `actions/runs/${RUN}`,
+        `actions/runs/${RUN}/jobs`,
+        'contents/.github/workflows/ci.yml',
+        'contents/scripts/ci-lanes.mjs',
+      ],
+    );
+    // The definition blobs are read at BOTH refs: the pushed commit and the run's head.
+    assert.deepEqual(
+      w.calls.filter((c) => c.startsWith('contents/')).map((c) => c.split('?ref=')[1]),
+      [SHA, SHA, RUN_HEAD, RUN_HEAD],
     );
     assert.ok(w.calls[2].includes(`name=${NAME}`), 'the artifact lookup is not by the full-lane name');
-    assert.ok(w.calls[4].includes('filter=latest'), 'the record job is not read from the LATEST attempt');
+    assert.ok(w.calls[6].includes('filter=latest'), 'the record job is not read from the LATEST attempt');
     const d = decide({ event: 'push', pushGate: g });
     assert.equal(d.lane, 'tree-already-tested');
     assert.deepEqual(Object.keys(d.jobs).filter((k) => d.jobs[k]).sort(), [...ADVISORY_JOBS].sort());
@@ -706,6 +739,14 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
     ['recording run head is a fork', (w) => ({ ...w, run: { ...w.run, head_repository: { full_name: 'x/y' } } }), /head repository x\/y/],
     ['partial match: record job skipped in the latest attempt', (w) => ({ ...w, jobs: [{ name: 'Record the tested tree', conclusion: 'skipped' }] }), /latest Record the tested tree job is skipped/],
     ['partial match: record job absent in the latest attempt', (w) => ({ ...w, jobs: [] }), /is absent/],
+    ["the vouching run's head has a DIFFERENT ci.yml", (w) => ({ ...w, blobs: { ...w.blobs, [RUN_HEAD]: { ...w.blobs[RUN_HEAD], '.github/workflows/ci.yml': BLOB_OTHER } } }), /its head has a different \.github\/workflows\/ci\.yml than the pushed commit/],
+    ["the vouching run's head has a DIFFERENT ci-lanes.mjs", (w) => ({ ...w, blobs: { ...w.blobs, [RUN_HEAD]: { ...w.blobs[RUN_HEAD], 'scripts/ci-lanes.mjs': BLOB_OTHER } } }), /its head has a different scripts\/ci-lanes\.mjs than the pushed commit/],
+    ['API failure: blob lookup', (w) => ({ ...w, fail: 'contents' }), /API error: contents\/\.github\/workflows\/ci\.yml answered HTTP 502/],
+    ["no blob sha for the run's head", (w) => ({ ...w, blobs: { [SHA]: w.blobs[SHA] } }), /API error: no blob sha for/],
+    ['the run reports no head sha', (w) => ({ ...w, run: { ...w.run, head_sha: undefined } }), /no head sha/],
+    ['a record just OVER 3 days old', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], created_at: new Date(NOW - 3 * DAY - 1000).toISOString() }] }), /no unexpired same-repository record under 3 days old/],
+    ['a record dated in the future', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], created_at: new Date(NOW + DAY).toISOString() }] }), /no unexpired/],
+    ['a record with no readable date', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], created_at: 'yesterday' }] }), /no unexpired/],
     ['ci.yml changed in the push', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: '.github/workflows/ci.yml' }] } }), /changes \.github\/workflows\/ci\.yml/],
     ['the classifier changed in the push', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'scripts/ci-lanes.mjs' }] } }), /changes scripts\/ci-lanes\.mjs/],
     ['a cache-key input (lockfile) changed', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'pnpm-lock.yaml' }] } }), /changes pnpm-lock\.yaml/],
@@ -732,6 +773,11 @@ describe('push gate: main skips its core jobs only for an exact, verified, full-
       assert.deepEqual(Object.keys(d.jobs).filter((k) => !d.jobs[k]), []);
     });
   }
+
+  test('a record just UNDER 3 days old still vouches', async () => {
+    const g = await gate(world((w) => ({ ...w, artifacts: [{ ...w.artifacts[0], created_at: new Date(NOW - 3 * DAY + 1000).toISOString() }] })));
+    assert.deepEqual([g.skip, g.runId], [true, RUN]);
+  });
 
   test('a first push / missing before / malformed sha -> no skip, and no request made', async () => {
     for (const over of [{ before: '0'.repeat(40) }, { before: undefined }, { sha: 'main' }]) {

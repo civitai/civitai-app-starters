@@ -409,6 +409,13 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
     assert.deepEqual(tags(mutate("      && needs.lanes.result == 'success'\n", "      || needs.lanes.result == 'success'\n")), ['record-condition-shape']);
   });
 
+  test('record-tree no longer excluding a FAILED advisory job', () => {
+    assert.deepEqual(
+      tags(mutate("      && needs.schema-drift.result != 'failure' && needs.schema-drift.result != 'cancelled'\n", "      && needs.schema-drift.result != 'cancelled'\n")),
+      ['record-condition-missing'],
+    );
+  });
+
   test('record-tree uploading a name the gate never looks up', () => {
     assert.deepEqual(tags(mutate('          name: ci-tested-tree-${{ steps.tree.outputs.sha }}-full\n', '          name: ci-tested-tree-${{ steps.tree.outputs.sha }}\n')), [
       'record-artifact-name',
@@ -472,10 +479,18 @@ describe('THE SEAM: record-tree fires only for a run that tested the whole tree'
     }
   });
 
-  test('a core job failing does not record; an ADVISORY job failing still does', () => {
+  test('a core job failing does not record, and neither does an ADVISORY job failing or cancelled', () => {
+    // The gate only accepts a run that concluded success; a failed advisory job
+    // makes the run a failure, so a record from it could never be used.
     const all = decide({ event: 'pull_request', files: [{ filename: '.github/workflows/ci.yml' }] });
+    assert.equal(evaluateConjunction(record.if, ctxFor(all)), true, 'control: every job green records');
     assert.equal(evaluateConjunction(record.if, ctxFor(all, { fail: ['packaging'] })), false);
-    assert.equal(evaluateConjunction(record.if, ctxFor(all, { fail: ['schema-drift'] })), true);
+    for (const id of ADVISORY_JOBS) {
+      assert.equal(evaluateConjunction(record.if, ctxFor(all, { fail: [id] })), false, `${id} failed but the tree was recorded`);
+      const cancelled = ctxFor(all);
+      cancelled.results[id] = 'cancelled';
+      assert.equal(evaluateConjunction(record.if, cancelled), false, `${id} cancelled but the tree was recorded`);
+    }
   });
 
   test('a failed lanes job runs everything but records nothing', () => {

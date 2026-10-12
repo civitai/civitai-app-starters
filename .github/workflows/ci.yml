@@ -870,10 +870,14 @@ jobs:
   # lane-limited run never records; and the artifact name ends in `-full`,
   # which is the only name the gate looks up.
   #
-  # Advisory jobs are in `needs:` (so the record waits for them) but not in the
-  # condition: the push run re-runs all five against the same tree anyway.
+  # Advisory jobs are in `needs:` and in the condition, but differently: one
+  # that was lane-SKIPPED is fine (the push run re-runs all five against the
+  # same tree), one that FAILED or was cancelled blocks the record. The gate
+  # only accepts a run whose conclusion is `success`, and a failed advisory job
+  # makes the run a failure, so that record could never be used.
   # `tests/guards/ci-lanes-ledger.test.mjs` pins `needs:` to every job and the
-  # condition to every core job, as sets: adding a job without both fails.
+  # condition to every core and advisory job, as sets: adding a job without
+  # both fails.
   record-tree:
     name: Record the tested tree
     runs-on: ubuntu-latest
@@ -909,6 +913,11 @@ jobs:
       && needs.examples.result == 'success' && needs.lanes.outputs.examples == 'true'
       && needs.packaging.result == 'success' && needs.lanes.outputs.packaging == 'true'
       && needs.public-types.result == 'success' && needs.lanes.outputs.public-types == 'true'
+      && needs.schema-drift.result != 'failure' && needs.schema-drift.result != 'cancelled'
+      && needs.starter-pins.result != 'failure' && needs.starter-pins.result != 'cancelled'
+      && needs.orchestrator-catalog-drift.result != 'failure' && needs.orchestrator-catalog-drift.result != 'cancelled'
+      && needs.design-system-cross-browser.result != 'failure' && needs.design-system-cross-browser.result != 'cancelled'
+      && needs.design-system-drift-guard.result != 'failure' && needs.design-system-drift-guard.result != 'cancelled'
       }}
     steps:
       # The default ref for pull_request is the merge commit every other job
@@ -924,5 +933,6 @@ jobs:
         with:
           name: ci-tested-tree-${{ steps.tree.outputs.sha }}-full
           path: tested-tree.json
-          retention-days: 14
+          # The gate ignores a record older than 3 days (MAX_RECORD_AGE_MS).
+          retention-days: 3
           if-no-files-found: error

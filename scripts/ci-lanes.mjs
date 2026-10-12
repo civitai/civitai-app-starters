@@ -198,6 +198,17 @@ export const WORKFLOW_PATH = '.github/workflows/ci.yml';
  */
 export const GATE_INPUTS = Object.freeze([WORKFLOW_PATH, 'scripts/ci-lanes.mjs', 'pnpm-lock.yaml', 'package.json']);
 
+/**
+ * The files that DEFINE a record: the workflow that uploads it and the
+ * classifier that decides the lane it was uploaded under. A run vouches for a
+ * tree only if its head commit carries the same blobs of these as the pushed
+ * commit does.
+ */
+export const RECORD_DEFINITION = Object.freeze([WORKFLOW_PATH, 'scripts/ci-lanes.mjs']);
+
+/** A skip never rests on a record older than this (the artifact's `created_at`). */
+export const MAX_RECORD_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
 /** What runs on main when the exact tree already passed: the advisory five, nothing else. */
 export const TREE_LANE = 'tree-already-tested';
 
@@ -520,14 +531,27 @@ const HEX40 = /^[0-9a-f]{40}$/;
  *   2. none of `GATE_INPUTS` changed between `before` and `sha`, judged from a
  *      complete compare (300 files is the compare API's cap; at the cap the
  *      list may be truncated and a gate input could hide past it);
- *   3. an unexpired `<prefix><tree><suffix>` artifact exists, uploaded by a run
- *      of THIS repository's ci.yml on a pull_request from THIS repository (a
- *      fork's run executes the fork's ci.yml and can upload any name);
+ *   3. an unexpired `<prefix><tree><suffix>` artifact, no older than
+ *      `MAX_RECORD_AGE_MS`, exists, uploaded by a run of THIS repository's
+ *      ci.yml on a pull_request from THIS repository;
  *   4. that run's CURRENT state, read now and not from the artifact, is
  *      `completed`/`success` (a re-run that failed flips it), and its latest
- *      attempt's `Record the tested tree` job concluded `success`.
+ *      attempt's `Record the tested tree` job concluded `success`;
+ *   5. the run's head commit carries the SAME `ci.yml` and `scripts/ci-lanes.mjs`
+ *      blobs as the pushed commit (`RECORD_DEFINITION`).
+ *
+ * 🔴 WHO CAN FORGE A RECORD, AND WHAT (5) IS FOR. A pull_request run executes
+ * the PR's own copy of ci.yml, so ANY pull request whose branch edits ci.yml
+ * can upload an artifact under any name without testing anything, a
+ * same-repository branch just as easily as a fork. Excluding forks (3) removes
+ * the people without write access; it does not make a same-repository run
+ * honest. (5) is what does: a run may vouch only if the workflow and classifier
+ * on its head are byte-for-byte the ones on the pushed commit, i.e. the record
+ * was produced by the definition main is about to trust. The run actually
+ * executed its MERGE commit's copies; where those differ from its head's, they
+ * came from main as it was then.
  */
-export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetch }) {
+export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetch, now = Date.now() }) {
   const no = (reason) => ({ skip: false, reason });
   try {
     if (!HEX40.test(sha ?? '')) return no('no pushed sha');
@@ -559,12 +583,24 @@ export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetc
     const name = `${RECORD_ARTIFACT_PREFIX}${tree}${RECORD_ARTIFACT_SUFFIX}`;
     const listed = await get(`actions/artifacts?name=${encodeURIComponent(name)}&per_page=100`);
     if (!Array.isArray(listed?.artifacts)) return no('the artifact listing is not a list');
+    const fresh = (a) => {
+      const age = now - Date.parse(a.created_at);
+      return Number.isFinite(age) && age >= 0 && age <= MAX_RECORD_AGE_MS;
+    };
     const candidates = listed.artifacts
-      .filter((a) => a?.name === name && a.expired === false)
+      .filter((a) => a?.name === name && a.expired === false && fresh(a))
       .filter((a) => a.workflow_run && a.workflow_run.repository_id === a.workflow_run.head_repository_id)
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
       .slice(0, 5);
-    if (!candidates.length) return no(`no unexpired same-repository record named ${name}`);
+    if (!candidates.length) return no(`no unexpired same-repository record under ${MAX_RECORD_AGE_MS / 86_400_000} days old named ${name}`);
+
+    const blobOf = async (path, ref) => {
+      const blob = (await get(`contents/${path}?ref=${ref}`))?.sha;
+      if (!HEX40.test(blob ?? '')) throw new Error(`no blob sha for ${path}@${ref}`);
+      return blob;
+    };
+    const pushed = {};
+    for (const path of RECORD_DEFINITION) pushed[path] = await blobOf(path, sha);
 
     const rejected = [];
     for (const a of candidates) {
@@ -585,6 +621,18 @@ export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetc
       const record = (jobs?.jobs ?? []).filter((j) => j?.name === RECORD_JOB_NAME);
       if (record.length !== 1 || record[0].conclusion !== 'success') {
         rejected.push(`run ${id}: its latest ${RECORD_JOB_NAME} job is ${record.map((j) => j.conclusion).join(',') || 'absent'}`);
+        continue;
+      }
+      if (!HEX40.test(run.head_sha ?? '')) {
+        rejected.push(`run ${id}: no head sha`);
+        continue;
+      }
+      let differs = null;
+      for (const path of RECORD_DEFINITION) {
+        if ((await blobOf(path, run.head_sha)) !== pushed[path]) differs = path;
+      }
+      if (differs) {
+        rejected.push(`run ${id}: its head has a different ${differs} than the pushed commit`);
         continue;
       }
       return { skip: true, reason: `matched run ${id}`, tree, runId: id };
