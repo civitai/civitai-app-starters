@@ -46,12 +46,14 @@ jobs:
   # filter leaves required contexts pending forever.
   #
   # 🔴 THE CORE JOBS' `needs: lanes` + CONDITION, THE `starter` MATRIX'S
-  # PER-STEP GATING, AND ITS JOB-LEVEL `!cancelled()` ARE NOT DEAD CODE. In
-  # this change alone no lane turns a core job off (pull_request and push both
-  # run every core job), so they look removable. They are the wiring the
-  # release-PR lane and the push-to-main tested-tree skip switch core jobs off
-  # through; delete them and those lanes stop skipping anything, or, for the
-  # matrix, stop reporting the five required `Starter (<name>)` contexts.
+  # PER-STEP GATING, AND ITS JOB-LEVEL `!cancelled()` ARE NOT DEAD CODE. They
+  # are the wiring the release-PR lane (and the push-to-main tested-tree skip)
+  # switch core jobs off through; delete them and those lanes stop skipping
+  # anything, or, for the matrix, stop reporting the five required
+  # `Starter (<name>)` contexts.
+  #
+  # The lanes themselves (`full`, and `release` for a Version Packages PR that
+  # is only a version bump) are defined in the script's header.
   #
   # NOT a required context, and it must not become one: nothing depends on it
   # succeeding. `tests/guards/ci-lanes-ledger.test.mjs` pins this job's outputs
