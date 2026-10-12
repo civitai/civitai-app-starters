@@ -648,7 +648,8 @@ showImages(done.imageUrls ?? []);
    ceiling above instead of a quote. Two exceptions are refused without a
    quote, before any reservation: a workflow with a training step (a
    `training-quote-*` `errorCode`, as on the single-step arm), and a workflow
-   with a `repeat` step at any depth.
+   with a `repeat` step at any depth (`workflow_repeat_unbounded`; a retry may
+   succeed).
 3. **One author fee per workflow**, not one per step, on the quoted base. The
    estimate's `cost.authorFee` is that single fee, already inside `cost.total`.
    If the workflow bills more than the quote, the fee charged is held to the
@@ -682,7 +683,7 @@ A body the host will not run is refused before anything is priced or reserved:
 | `'workflow_too_many_steps'` | more than 8 steps |
 | `'workflow_step_denied'` | a step names a platform-internal `$type` |
 | `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; a step name breaks the rules above; a `repeat` or `merge` is malformed; or a repeat `as` name is also a step name |
-| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied) |
+| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied); or the workflow has a `repeat` and no price quote could be had (retrying may work) |
 
 - **Requires a host that knows the kind.** An older host refuses the body.
 - **Test it locally.** The mock host prices each step with
@@ -694,8 +695,10 @@ A body the host will not run is refused before anything is priced or reserved:
   `generation.failWorkflowStep: '<name>'` (`'$<index>'` for an unnamed step)
   makes one step fail, so you can render a partial failure. The mock checks
   where a reference points, not whether its `path` exists; it never re-prices;
-  it does not expand a `repeat` step into generated `<name>.<n>` steps; and it
-  never refuses an unquoted training step, because it always quotes.
+  and it does not expand a `repeat` step into generated `<name>.<n>` steps. It
+  quotes every workflow unless you set `generation.workflowUnpriced: true`,
+  which simulates no quote: a workflow with a training step or a `repeat` is
+  refused, and any other is reserved at `buzzBudget` × steps with no fee.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The

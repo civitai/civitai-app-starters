@@ -624,6 +624,60 @@ describe('createMockHost — kind: workflow', () => {
     expect(mockWorkflowBodyRefusal(chain())).toBeNull();
   });
 
+  // ---------------------------------------------------------------- unpriced
+
+  describe('generation.workflowUnpriced (no quote)', () => {
+    const repeatStep = (template: Record<string, unknown> = { $type: 'echo' }) =>
+      step('r', { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template }, { $type: 'repeat' });
+
+    it.each([
+      ['a top-level repeat', workflow([step('a'), repeatStep()], { xs: [1] }), 1],
+      [
+        'a repeat nested in a repeat',
+        workflow(
+          [repeatStep({ $type: 'repeat', input: { for: { $ref: '$arguments', path: 'xs', as: 'y' }, template: { $type: 'echo' } } })],
+          { xs: [1] },
+        ),
+        0,
+      ],
+    ])('refuses %s with workflow_repeat_unbounded, before anything is debited', async (_, body, index) => {
+      const { host, estimate, submit } = await setup({ buzz: { balance: 500 }, generation: { workflowUnpriced: true } });
+      const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_repeat_unbounded');
+      expect(snapshot.error).toBe(
+        `workflow step ${index}: a workflow with a repeat needs a price quote and none could be obtained; try again`,
+      );
+      const out = await submit(body);
+      expect(out).toBeInstanceOf(WorkflowSubmitError);
+      expect((out as WorkflowSubmitError).snapshot.errorCode).toBe('workflow_repeat_unbounded');
+      expect(host.buzz.getBalance()).toBe(500);
+    });
+
+    it('refuses a training step (even in a repeat template) with the training code, ahead of the repeat', async () => {
+      const { estimate } = await setup({ generation: { workflowUnpriced: true } });
+      const body = workflow([repeatStep({ $type: 'training', input: {} })], { xs: [1] });
+      const snapshot = expectEstimateRefusal(await estimate(body), 'training-quote-unavailable');
+      expect(snapshot.error).toBe('Training needs a price quote and none could be obtained; try again.');
+    });
+
+    it('a workflow with neither proceeds, reserved at budget × steps with no fee', async () => {
+      const { host, estimate, submit, poll } = await setup({
+        buzzBudget: 50,
+        buzz: { balance: 500 },
+        pollsUntilDone: 1,
+        generation: { workflowUnpriced: true, costPerGen, authorFee: FEE },
+      });
+      expect(((await estimate(chain())) as BlockWorkflowSnapshot).cost).toEqual({ total: 150, authorFee: 0 });
+      const { workflowId } = (await submit(chain())) as BlockWorkflowSnapshot;
+      expect(host.buzz.getBalance()).toBe(350);
+      expect((await poll(workflowId)).cost).toEqual({ total: 150 });
+    });
+
+    it('a QUOTED repeat workflow is not refused', async () => {
+      const { estimate } = await setup({ generation: { costPerGen: 2 } });
+      expect(((await estimate(workflow([repeatStep()], { xs: [1, 2] }))) as BlockWorkflowSnapshot).cost?.total).toBe(4);
+    });
+  });
+
   // ---------------------------------------------------------------- submit
 
   describe('submit', () => {

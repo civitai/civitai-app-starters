@@ -1485,7 +1485,8 @@ export type WorkflowBodyWorkflowStep = {
  *     the ceiling above instead of at a quote — unless it contains a training
  *     step, which is refused without a quote exactly as on the single-step arm
  *     (a `training-quote-*` `errorCode`), or a `repeat` step at any depth,
- *     which is refused without a quote too, before any reservation.
+ *     which is refused without a quote too, before any reservation, with
+ *     `errorCode: 'workflow_repeat_unbounded'` — retrying later may succeed.
  *  3. **One author fee per workflow**, not one per step, computed on the
  *     QUOTED base. The estimate's `cost.authorFee` is that single fee, already
  *     inside `cost.total`. If the workflow bills more than the quote, the fee
@@ -1869,7 +1870,10 @@ export interface BlockWorkflowSnapshot {
    *  - `'workflow_repeat_unbounded'` — a `repeat` step iterates something other
    *    than an array in the body's `arguments`, or more than
    *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} times, nested repeats
-   *    multiplied.
+   *    multiplied; or the workflow has a `repeat` and the host could get no
+   *    price quote for it (`error` then reads `… a workflow with a repeat needs
+   *    a price quote and none could be obtained; try again`, and a retry may
+   *    succeed).
    *
    * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
    * inbound validator accepts any string here. Handle an unrecognised code as a

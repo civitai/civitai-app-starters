@@ -73,7 +73,8 @@ export interface MockWorkflowRefusal {
     | 'workflow_step_denied'
     | 'workflow_ref_invalid'
     | 'workflow_too_many_steps'
-    | 'workflow_repeat_unbounded';
+    | 'workflow_repeat_unbounded'
+    | 'training-quote-unavailable';
 }
 
 const ARGUMENTS_REF = '$arguments';
@@ -326,6 +327,33 @@ function checkStepInput(
   if (sourceProblem) return sourceProblem;
   state.loopVars.add(forClause.as);
   return checkStepInput(template.$type, template.input, depth + 2, new Set([...sources, forClause.as]), state);
+}
+
+/** The host's refusal text for an unquoted training step (`UNQUOTED_TRAINING_ERROR`). */
+export const MOCK_UNQUOTED_TRAINING_ERROR =
+  'Training needs a price quote and none could be obtained; try again.';
+
+/**
+ * The refusal for a body {@link mockWorkflowBodyRefusal} ACCEPTED when the host
+ * could get NO price quote for it, or `null` when it would proceed (reserved at
+ * the ceiling). In the host's order: a training step anywhere (its own
+ * `training-quote-*` refusal — the mock reports `'training-quote-unavailable'`,
+ * the code for "no usable answer"), then a `repeat` anywhere
+ * (`workflow_repeat_unbounded`, naming the first such step).
+ */
+export function mockUnpricedWorkflowRefusal(body: {
+  steps: ReadonlyArray<{ $type: string; input: unknown }>;
+}): MockWorkflowRefusal | null {
+  const types = body.steps.map((step) => collectStepTypes(step.$type, step.input) ?? [step.$type]);
+  if (types.some((ts) => ts.some((t) => t === 'training' || t === 'imageResourceTraining'))) {
+    return { error: MOCK_UNQUOTED_TRAINING_ERROR, errorCode: 'training-quote-unavailable' };
+  }
+  const index = types.findIndex((ts) => ts.some(isRepeat));
+  if (index === -1) return null;
+  return {
+    error: `workflow step ${index}: a workflow with a repeat needs a price quote and none could be obtained; try again`,
+    errorCode: 'workflow_repeat_unbounded',
+  };
 }
 
 /** The host's wire schema, mirrored: exact keys, types and sizes. No `errorCode`. */

@@ -261,7 +261,8 @@ const body: WorkflowBody = {
   references are known and charges the difference.
 - **A workflow the host cannot price still proceeds**, reserved at the ceiling above — unless it
   contains a training step (refused without a quote, as on the single-step arm) or a `repeat`
-  step at any depth (also refused without a quote, before any reservation).
+  step at any depth (also refused without a quote, before any reservation, as
+  `workflow_repeat_unbounded`).
 - **One author fee per workflow**, on the quoted base, itemised as `cost.authorFee` on the
   estimate. If the workflow bills more, the fee charged is held to the fee shown; a workflow that
   does not succeed has its whole fee reversed, even if earlier steps delivered output.
