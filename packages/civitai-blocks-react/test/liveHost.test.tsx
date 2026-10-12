@@ -548,6 +548,10 @@ describe('createLiveHost — workflow forwarding', () => {
   it.each([
     ['a whole number of seconds', 7, 7],
     ['a value the server will cap, sent as-is', 90, 90],
+    // The server floors and treats `<= 0` as no hold; the host does neither.
+    ['a fraction, NOT floored', 12.9, 12.9],
+    ['zero, NOT dropped', 0, 0],
+    ['a negative, NOT dropped', -3, -3],
   ])('POLL_WORKFLOW forwards waitSeconds unchanged: %s', async (_label, sent, forwarded) => {
     installWithFetch(async (url) => {
       if (url.endsWith('blocks.pollWorkflow')) {
