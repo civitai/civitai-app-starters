@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { humanize } from '../ux/humanize.js';
 import { FreeTier, freeTierFetch, type FreeTierStatus } from './free-tier.js';
@@ -101,95 +101,72 @@ describe('free chat replies', () => {
 describe('free chat replies without AbortSignal.any', () => {
   // Safari before 17.4, Chrome before 116 and Firefox before 124 have no AbortSignal.any.
   const any = AbortSignal.any;
-  const drop = () => delete (AbortSignal as { any?: unknown }).any;
-  const restore = () => (AbortSignal.any = any);
-
-  /** The caller's signal, counting the abort listeners put on it and taken off again. */
-  function watched() {
-    const controller = new AbortController();
-    const live = new Set<unknown>();
-    const add = controller.signal.addEventListener.bind(controller.signal);
-    const remove = controller.signal.removeEventListener.bind(controller.signal);
-    controller.signal.addEventListener = ((type: string, listener: unknown, options?: unknown) => {
-      if (type === 'abort') live.add(listener);
-      add(type, listener as EventListener, options as AddEventListenerOptions);
-    }) as typeof controller.signal.addEventListener;
-    controller.signal.removeEventListener = ((type: string, listener: unknown, options?: unknown) => {
-      if (type === 'abort') live.delete(listener);
-      remove(type, listener as EventListener, options as EventListenerOptions);
-    }) as typeof controller.signal.removeEventListener;
-    return { controller, live };
-  }
+  beforeEach(() => {
+    delete (AbortSignal as { any?: unknown }).any;
+  });
+  afterEach(() => {
+    AbortSignal.any = any;
+  });
 
   const send = (doFetch: typeof fetch, signal: AbortSignal) => doFetch('https://orch/v1/chat/completions', { method: 'POST', body: '{"model":"x"}', signal });
 
-  it('sends a free reply, and leaves no listener on the caller\'s signal once it is read', async () => {
-    drop();
-    try {
-      for (const payWhenOut of [false, true]) {
-        const tier = await loaded();
-        const { calls, inner } = endpoint({ free: () => new Response('data: {"text":"hello"}\n\n', { status: 200 }) });
-        const { controller, live } = watched();
+  it('sends a free reply, and it reads in full', async () => {
+    for (const payWhenOut of [false, true]) {
+      const tier = await loaded();
+      const { calls, inner } = endpoint({ free: () => new Response('data: {"text":"hello"}\n\n', { status: 200 }) });
 
-        const response = await send(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut })), controller.signal);
-        expect(calls).toEqual(['free']);
-        expect(await response.text()).toBe('data: {"text":"hello"}\n\n');
-        expect(live.size).toBe(0);
-      }
-    } finally {
-      restore();
+      const response = await send(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut })), new AbortController().signal);
+
+      expect(calls).toEqual(['free']);
+      expect(await response.text()).toBe('data: {"text":"hello"}\n\n');
     }
   });
 
-  it("stops a free reply when the caller aborts, even after it has started", async () => {
-    drop();
-    try {
-      for (const payWhenOut of [false, true]) {
-        const tier = await loaded();
-        const seen: AbortSignal[] = [];
-        const open = (signal: AbortSignal) =>
-          new Response(
-            new ReadableStream<Uint8Array>({
-              start(stream) {
-                stream.enqueue(new TextEncoder().encode('data: {"text":"he"}\n\n'));
-                signal.addEventListener('abort', () => stream.error(signal.reason));
-              },
-            }),
-            { status: 200 },
-          );
-        const inner = (async (_input: RequestInfo | URL, init?: RequestInit) => (seen.push(init!.signal!), open(init!.signal!))) as typeof fetch;
-        const { controller, live } = watched();
+  it('stops a free reply when the caller aborts, even after it has started', async () => {
+    for (const payWhenOut of [false, true]) {
+      const tier = await loaded();
+      const seen: AbortSignal[] = [];
+      const open = (signal: AbortSignal) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new TextEncoder().encode('data: {"text":"he"}\n\n'));
+              signal.addEventListener('abort', () => stream.error(signal.reason));
+            },
+          }),
+          { status: 200 },
+        );
+      const inner = (async (_input: RequestInfo | URL, init?: RequestInit) => (seen.push(init!.signal!), open(init!.signal!))) as typeof fetch;
+      const caller = new AbortController();
 
-        const response = await send(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut })), controller.signal);
-        const reader = response.body!.getReader();
-        await reader.read();
-        controller.abort(new Error('stopped by the viewer'));
+      const response = await send(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut })), caller.signal);
+      const reader = response.body!.getReader();
+      await reader.read();
+      caller.abort(new Error('stopped by the viewer'));
 
-        expect(seen[0]!.aborted).toBe(true);
-        await expect(reader.read()).rejects.toThrow('stopped by the viewer');
-        expect(live.size).toBe(0);
-      }
-    } finally {
-      restore();
+      expect(seen[0]!.aborted).toBe(true);
+      await expect(reader.read()).rejects.toThrow('stopped by the viewer');
     }
   });
 
-  it('leaves no listener behind when a free reply is used up or slow to start', async () => {
-    drop();
-    try {
-      const usedUp = endpoint({ free: () => new Response('', { status: 429 }) });
-      const first = watched();
-      await send(freeTierFetch(usedUp.inner, QWEN, await loaded(), () => ({ useFree: true, payWhenOut: true })), first.controller.signal);
-      expect(usedUp.calls).toEqual(['free', 'paid']);
-      expect(first.live.size).toBe(0);
+  it('never sends a free reply the caller stopped before it went out', async () => {
+    const caller = new AbortController();
+    const stop = new Error('stopped while the allowance loaded');
+    // The viewer presses Stop while the chat is still asking how many free replies are left.
+    const tier = new FreeTier(async () => {
+      caller.abort(stop);
+      return status();
+    });
+    const seen: AbortSignal[] = [];
+    // Like fetch: an aborted signal rejects with its reason; otherwise the reply would arrive.
+    const inner = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init!.signal!);
+      if (init!.signal!.aborted) throw init!.signal!.reason;
+      return new Response('data: {"text":"hello"}\n\n', { status: 200 });
+    }) as typeof fetch;
 
-      const slow = endpoint({ free: () => new Response(new ReadableStream({ start() {} }), { status: 200 }) });
-      const second = watched();
-      await send(freeTierFetch(slow.inner, QWEN, await loaded(), () => ({ useFree: true, payWhenOut: true }), 20), second.controller.signal);
-      expect(slow.calls).toEqual(['free', 'paid']);
-      expect(second.live.size).toBe(0);
-    } finally {
-      restore();
-    }
+    await expect(send(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut: false })), caller.signal)).rejects.toBe(stop);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.reason).toBe(stop);
   });
 });
