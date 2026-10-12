@@ -118,6 +118,18 @@ export const RELEASE_BRANCH = 'changeset-release/main';
  * What runs on a release-lane PR, as a set: every other job's output is `false`.
  * `starter` is not here, so its heavy steps are off; its every-lane steps
  * (`UNGATED_STEPS`, which include both release guards) still run in all five legs.
+ *
+ * THE TRADE, AS IT ACTUALLY IS. A version bump cannot itself break a core job
+ * in this repo: the root `pnpm.overrides` pin every `@civitai/*` workspace
+ * package to `workspace:*`, so the starters and packages build against the
+ * same local code whatever the carets say. What the lane drops is the release
+ * PR RE-TESTING MAIN'S CODE right before a publish. `release.yml` publishes on
+ * the merge push and does not wait for CI, so if main ever carries a red core
+ * job, a green release-lane PR can merge and publish it. The full-suite run on
+ * the release PR was the last thing that would have been red in front of
+ * whoever merges. Measured exposure when this was written: 0 of 100 recent
+ * push-to-main runs were red on a core job, and 0 of 17 release-PR runs with a
+ * core failure failed on a step this lane drops.
  */
 export const RELEASE_LANE_JOBS = Object.freeze(['packaging', 'starter-pins']);
 
@@ -379,20 +391,22 @@ export function decide({ event, files, filesError, release } = {}) {
 
   // The release lane needs BOTH halves: the head is the release branch of this
   // repository (decided by the caller from the payload, never from the actor)
-  // AND the content check came back with no problem. `problem === null` is the
-  // only accepted value; undefined, a string, or a missing `release` all fall
-  // through to the ordinary pull_request lane below.
+  // AND `checkReleaseContent` came back with no problem. That function is the
+  // ONE walk over the files: it applies `releaseRuleFor` (path + status) to
+  // every entry before any blob check, so a non-release path is a problem
+  // there and is not re-derived here. `problem === null` is the only accepted
+  // value; undefined, a string, or a missing `release` all fall through to the
+  // ordinary pull_request lane below.
   let releaseNote = '';
   if (release) {
-    const pathProblem = files.map(releaseRuleFor).find((r) => typeof r === 'string');
-    if (pathProblem === undefined && release.problem === null) {
+    if (release.problem === null) {
       return {
         lane: 'release',
         reason: `release PR, version bump only (${files.length} files): ${RELEASE_LANE_JOBS.join(', ')} + the starter guards`,
         jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, RELEASE_LANE_JOBS.includes(id)])),
       };
     }
-    releaseNote = `release branch, but NOT a pure version bump (${pathProblem ?? release.problem ?? 'content not checked'}); full suite. `;
+    releaseNote = `release branch, but NOT a pure version bump (${release.problem ?? 'content not checked'}); full suite. `;
   }
 
   const jobs = everyJob(true);
