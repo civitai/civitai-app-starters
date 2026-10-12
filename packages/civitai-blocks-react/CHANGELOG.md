@@ -1,5 +1,30 @@
 # @civitai/blocks-react
 
+## 0.69.0
+
+### Minor Changes
+
+- 9cb2cef: **A training price-quote refusal now carries a machine-readable `errorCode`.** `BlockWorkflowSnapshot` gains an optional `errorCode`, a stable companion to `error` for a block to branch on instead of matching the prose. The host already sends it (civitai/civitai#5689 is live); until now the SDK did not declare it.
+
+  - **Where it appears:** the refusal for a pass-through `step` body whose `$type` is a training type (`'training'` or `'imageResourceTraining'`) when the host could not get a price quote: `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`. That is the reply to `estimate()` (rejects with `WorkflowEstimateError`), to `submit()` (rejects with `WorkflowSubmitError`, before anything is reserved), and to that body's cell in a batch estimate. Read it from `err.snapshot.errorCode`. The `kind: 'training'` arm does not set it.
+  - **Known values** (new exported type `KnownBlockWorkflowErrorCode`): `'training-quote-rejected'` (the request itself was refused; resending it will not help), `'training-quote-unavailable'` (no usable answer; a retry may succeed), `'training-quote-unpriced'` (answered without a price).
+  - 🔴 **An unknown value is possible.** The field is typed `KnownBlockWorkflowErrorCode | (string & {})`, the host may add codes, and the inbound validator accepts any string. Keep a default branch.
+  - **Absent** on every other reply and from a host that predates the field.
+  - The inbound snapshot validator accepts the field and refuses a present value that is not a string, as it does for the other optional snapshot fields. (Earlier `@civitai/blocks-react` releases already delivered the field untouched at runtime, since the validator does not strip unknown keys; it was just untyped and unchecked.)
+  - **Mock host:** unchanged. It does not quote training steps, so it has no refusal to attach a code to.
+
+- 40d982e: **`useWorkflowBatch()` watches a grid of submitted workflows and cancels them together (#578, item 3).** `const { cells, summary, cancelAll, rewatch } = useWorkflowBatch(workflowIds)`. Each cell is still submitted with `useBuzzWorkflow().submit()` and its own confirmation; there is no batch submit.
+
+  - **The array of ids is the batch.** There is no server-side batch id and no host change. Persist the array and pass it back to re-attach after a reload.
+  - **One poll in flight per workflow.** Each cell is one ordinary `watch()`. A restarted loop waits for the previous loop's in-flight poll. `options` (`intervalMs`, `waitSeconds`, `timeoutMs`, `maxRetries`) go to every cell's `watch()`.
+  - **At most `WORKFLOW_BATCH_MAX_CELLS` = 30 ids**, the poll allowance (1,200 per 60 s per block instance and viewer) divided by one watch's 40 polls a minute. A longer list, a duplicate, an empty id or a `'failed'`/`'whatif'` placeholder throws.
+  - **`summary`**: `total`, `running`, `succeeded`, `failed`, `canceled`, `expired`, `stopped`, `realisedCost` (the sum of `cost.total` on terminal snapshots, as the host reported it; the author fee is not included), `costedCells`, `settled`.
+  - **A host failure placeholder (`workflowId: 'failed'`) is never counted as a workflow outcome.** On a poll it stops the cell (`phase: 'stopped'`, `error` set); call `rewatch()`. On a cancel it is a `failed` cancel.
+  - **`cancelAll()`** resolves with `{ canceled, alreadySettled, refused, notAttempted, failed, complete }`. Cancels share the estimate allowance (150 per 10 s per block instance), so at most four are in flight, and after the first refused cancel (`status: 'processing'`) the rest are not sent. Nothing is retried automatically; call it again when `complete` is `false`.
+  - **Unmounting stops every poll.**
+  - New exports: `useWorkflowBatch`, `WORKFLOW_BATCH_MAX_CELLS`, and the types `UseWorkflowBatch`, `WorkflowBatchCell`, `WorkflowBatchCellPhase`, `WorkflowBatchCancelState`, `WorkflowBatchCancelResult`, `WorkflowBatchSummary`, `WorkflowBatchOptions`.
+  - **Mock host (`createMockHost` / `Harness`):** a cancelled workflow now stays `canceled` on later polls (it used to count down to `succeeded`), cancelling a finished workflow reports its real status, and polling an id the mock did not submit counts down to done instead of answering `processing` forever. New options `generation.cancelRefused` (`true` or a list of ids: answer cancels with the host's refusal, `status: 'processing'`) and `generation.workflowOutcome` (`(workflowId, body) => 'succeeded' | 'failed' | 'expired'`). Both can be changed through `setScenario`.
+
 ## 0.68.0
 
 ### Minor Changes
@@ -430,15 +455,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                single measurements on one machine.
+                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2258,10 +2283,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                  after    @civitai/theme       0.3.1                   — 1 copy
-                                                           @civitai/components  0.4.2                   — 1 copy
+                                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                    after    @civitai/theme       0.3.1                   — 1 copy
+                                                             @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
