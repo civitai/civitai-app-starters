@@ -535,12 +535,14 @@ try {
 | `'training-quote-rejected'` | the orchestrator refused the request itself; resending the same body will not help. `error` reads `Training could not be priced: <reason>` when the reason is safe to show |
 | `'training-quote-unavailable'` | no usable answer (an outage, a timeout, a rate limit, insufficient funds, …); a retry may succeed |
 | `'training-quote-unpriced'` | the orchestrator answered without a price |
+| `'daily-limit-exceeded'` | a viewer-confirmed job (a training run or a [confirmed step](#userunconfirmedstep--one-job-above-the-per-call-budget)) would exceed what remains today of the daily Buzz limit **the viewer** set for this app. Nothing was charged, no job started, and only the viewer can raise the limit. Arrives on a confirmed submit's failed snapshot, never on an estimate; `useRunConfirmedStep()` surfaces it as `err.dailyLimitExceeded` |
 | absent | any other reply, and every reply from a host that predates the field |
 
 - **Treat an unknown value as possible.** The field is typed as an open string
   (`KnownBlockWorkflowErrorCode | (string & {})`), the host may add codes, and
   the inbound validator accepts any string. Keep a `default` branch.
-- The `kind: 'training'` arm does not set it.
+- A `kind: 'training'` **estimate** does not set it; the three `training-quote-*`
+  codes belong to the pass-through arm.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
@@ -1221,6 +1223,172 @@ click, and it checks a run's body against its quote by `datasetId` only — the
 server compares the whole body.
 **`dev:live` refuses both bridges**, because the server refuses every training
 request from a dev token.
+
+### `useRunConfirmedStep()` — one job above the per-call budget
+
+A pass-through `step` job (`{ kind: 'step', $type, input, maxBuzz }`) that costs
+more than the app may spend without asking is refused by `submit()` — unless the
+**viewer confirms that exact price** in Civitai's own dialog. This hook is that
+path. It is the training run's confirm applied to any pass-through `$type`
+(`polyGen`, a long video job, …). Three steps, two hooks:
+
+1. **Quote** — `useBuzzWorkflow().estimate(body)`, the body you would submit. When
+   the job qualifies the reply carries `stepQuote: { quoteId, total, stepType,
+   expiresAt }`. `total` is the price the viewer will confirm and be charged.
+2. **Run** — `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId })`
+   (`RUN_CONFIRMED_STEP`). Civitai reads the quote back from the server, shows
+   the viewer the price in **its** chrome and submits on their click. Resolves
+   with the submitted workflow's snapshot.
+3. **Watch** — `useBuzzWorkflow().watch(snapshot.workflowId)`, as for any job.
+
+No `stepQuote` on the estimate means the ordinary rules apply: submit it if it
+fits the budget, and otherwise it cannot run from an app. Change nothing in the
+body between the estimate and the run — the server checks it against the quoted
+one.
+
+🔴 **Only a fixed price is confirmable.** `stepQuote` is present when the
+orchestrator quoted a **fixed** price (positive, not variable or metered) that is
+above the token's per-call `buzzBudget` and at most
+`BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000 Buzz). The viewer confirms what
+they are charged, so a price that may move, or no price at all, gets no quote.
+`stepQuote.total` can differ from `cost.total` on the same snapshot (which stays
+what an unconfirmed submit would reserve) — put `stepQuote.total` on your button.
+
+🔴 **Single-use, and it expires.** A quote is good for one run and for **15
+minutes** (`stepQuote.expiresAt`). The server prices the job again at submit and
+refuses a higher price. Estimate again to get a new one.
+
+🔴 **Availability.** Behind the host flag **`app-blocks-confirmed-step`**, which
+ships **off** and is evaluated per viewer; requires a civitai.com host carrying
+civitai/civitai#5786. **Page apps only** — the model slot answers with an error.
+The manifest must declare **`ai:write:budgeted`** and the viewer must be signed
+in and have granted it. **Refused for development, dev-tunnel and review
+tokens**, so **`dev:live` cannot exercise it**: the estimate there never carries
+a `stepQuote` and the bridge replies with a refusal. Build the flow against the
+mock host (below). Where the feature is unavailable nothing errors — the estimate
+simply has no `stepQuote`, which is also what an older host sends.
+
+🔴 **No retry, ever.** Every confirmation is its own job: there is no idempotency
+key, and confirming the same body twice starts and charges two jobs. The hook
+never re-sends and never prompts for consent, and `useBuzzWorkflow().submit()`
+**refuses** a step body that carries a `quoteId` before sending anything — only
+`RUN_CONFIRMED_STEP`'s dialog can confirm a quote. `runConfirmedStep` also
+refuses, before sending, a body whose `quoteId` is missing or is not an
+`sq_`-shaped id (a training `tq_…` quote, or `undefined` from an estimate that
+returned no `stepQuote`).
+
+`runConfirmedStep` **rejects** with a `RunConfirmedStepError`; read the flags
+before saying anything about money:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.declined` | the viewer dismissed the confirm — **no job was submitted**; the quote is still good until it expires | revert, say nothing |
+| `err.dailyLimitExceeded` | the job would exceed what remains today of the daily Buzz limit **the viewer** set for this app — **no job, nothing charged**. Civitai has already told the viewer and linked to where the limit is raised | say nothing more; do **not** retry and do **not** offer a Buzz purchase (more Buzz does not lift a limit) |
+| `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the job **may be running and charged** | 🔴 **never retry automatically**: check the viewer's generations first (`useAppWorkflows()` lists this app's runs). A retry needs a new estimate and a new confirmation, and is a **second, separately charged job** if the first one started |
+| `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the app's daily spend or rate limit). Refunded: **no job, nothing charged**; the quote is used up | show `err.message` (the server's reason); a retry needs a new estimate and usually a later time |
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid confirmed step request` / `no block token`) | show or ignore per case |
+| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, changed price, the flag is off) | estimate again, then retry |
+
+```tsx
+const { estimate, submit, watch } = useBuzzWorkflow();
+const { runConfirmedStep } = useRunConfirmedStep();
+const { requestSignIn } = useRequestSignIn();
+
+async function generate3d(prompt: string) {
+  const body: WorkflowBodyPassThroughStep = {
+    kind: 'step',
+    $type: 'polyGen',
+    input: { prompt },
+    maxBuzz: 250,
+  };
+  const quote = (await estimate(body)).stepQuote;
+
+  try {
+    const started = quote
+      ? // Over the per-call budget: the viewer confirms `quote.total` in Civitai's dialog.
+        await runConfirmedStep({ ...body, quoteId: quote.quoteId })
+      : // Within it (or not confirmable): the ordinary path.
+        await submit(body);
+    return await watch(started.workflowId);
+  } catch (err) {
+    if (!(err instanceof RunConfirmedStepError)) throw err;
+    if (err.declined) return; // no job — say nothing
+    if (err.dailyLimitExceeded) return; // no job — Civitai already told the viewer
+    if (err.signInRequired) return requestSignIn();
+    if (err.unconfirmed) return showCheckYourGenerations(); // may be running — never auto-retry
+    if (err.refused) return showError(err.message); // a cap refusal; no job, nothing charged
+    showError('Could not start this job. Get a new price and try again.');
+  }
+}
+```
+
+**With the mock host** — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing` — this is the only place the flow can be
+exercised before a production host has it. A pass-through `step` estimate carries
+a `stepQuote` whenever the mock's price for it (`generation.costPerGen`, or
+`cost`) is above the token's per-call budget (`buzzBudget`, default 200) and at
+most 5,000, for a signed-in viewer; there is no separate switch. The mock holds
+the quotes it stored and refuses an unknown, expired or already-run one, a body
+that differs from the quoted one, and a plain `SUBMIT_WORKFLOW` carrying a
+`quoteId`. How the run settles is `runConfirmedStepError`:
+
+| `runConfirmedStepError` | URL | outcome |
+|---|---|---|
+| unset | — | the viewer confirms; the job starts, charged `stepQuote.total` |
+| `'declined'` | `?confirmedStep=declined` | `err.declined`; the quote survives |
+| `'daily-limit-exceeded'` | `?confirmedStep=daily-limit` | `err.dailyLimitExceeded`; the quote survives |
+| `'submission-unconfirmed'` | `?confirmedStep=unconfirmed` | `err.unconfirmed`; the quote is used up |
+| any other string | — | a server message; the quote is used up |
+
+`runConfirmedStepCapRefusal` resolves the server's refunded cap refusal
+(`err.refused`), and both knobs are live-tunable with `host.setScenario(...)`.
+
+```tsx
+import { createMockHost } from '@civitai/blocks-react/testing';
+
+const host = createMockHost({
+  consentGranted: true,
+  generation: { costPerGen: 800 }, // above the default 200 per-call budget → quoted
+  runConfirmedStepError: 'declined',
+});
+const uninstall = host.install();
+// …later: the viewer confirms this time.
+host.setScenario({ runConfirmedStepError: undefined });
+```
+
+What the mock does **not** model: it has no dialog, so the run settles at once
+where the real host waits on a click; it prices every estimate as fixed, where
+the real host gives a variable or metered price no `stepQuote`; and the flag, the
+page-only rule and the submit-time re-price are server-side.
+
+#### 3D outputs: `model3dOutputs`
+
+A step that produces 3D models (`polyGen`) lists every model url in
+`snapshot.imageUrls`, as before. `snapshot.model3dOutputs` says which is which:
+one `{ url, format, variant }` per model, where `format` is the model's own file
+format (`'glb'`, `'fbx'`, …) and `variant` is the output it came from (`'model'`,
+`'riggedFbxModel'`, `'basicAnimations.walkingModel'`, …). Both are open sets
+named by the orchestrator. The field is **omitted** when the workflow produced no
+3D model and on hosts that predate it, and the same field is on each
+`useAppWorkflows()` row.
+
+```tsx
+function modelsOf(snapshot: BlockWorkflowSnapshot) {
+  const models = snapshot.model3dOutputs ?? [];
+  return {
+    // The plain mesh, in the format a web viewer loads.
+    glb: models.find((m) => m.format === 'glb' && m.variant === 'model')?.url,
+    // The rigged export, for a download button.
+    riggedFbx: models.find((m) => m.variant === 'riggedFbxModel')?.url,
+    // Every animation clip, whatever the host named them.
+    animations: models.filter((m) => m.variant.startsWith('basicAnimations.')),
+  };
+}
+```
+
+In the mock host, `generation.model3dOutputs` puts labels (and their urls in
+`imageUrls`) on a succeeded pass-through step.
 
 ### `useAppWorkflows(params?)`
 

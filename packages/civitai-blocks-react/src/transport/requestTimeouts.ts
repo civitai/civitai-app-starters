@@ -110,6 +110,12 @@ const REQUEST_TIMEOUT_CLASS = {
   // viewer who then clicked Train would start a CHARGED run the block had
   // already reported as failed.
   RUN_TRAINING: 'human',
+  // 🔴 `'human'`, same reason as RUN_TRAINING directly above: the host shows the
+  // viewer the job's price in its own confirm and replies only on their click or
+  // dismiss. At the 30s default the request would reject with the dialog still
+  // open, and a viewer who then confirmed would start a CHARGED job the block
+  // had already reported as failed.
+  RUN_CONFIRMED_STEP: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',

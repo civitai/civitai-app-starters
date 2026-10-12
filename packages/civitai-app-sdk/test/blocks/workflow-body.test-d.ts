@@ -383,9 +383,10 @@ expectTypeOf(passThroughNested).toMatchTypeOf<WorkflowBody>();
 // The pass-through arm's key set mirrors the host's `.strict()`
 // `blockPassThroughStepBodySchema` exactly — `step` is present in the TYPE as
 // the optional-undefined arm discriminator (the host spells it `z.undefined()`),
-// and the wire body omits it entirely.
+// and the wire body omits it entirely. `quoteId` is the host's optional
+// confirmed-submit key (civitai/civitai#5786), absent on every other body.
 expectTypeOf<keyof StepPassThrough>().toEqualTypeOf<
-  'kind' | 'step' | '$type' | 'input' | 'maxBuzz'
+  'kind' | 'step' | '$type' | 'input' | 'maxBuzz' | 'quoteId'
 >();
 expectTypeOf<StepPassThrough['$type']>().toEqualTypeOf<string>();
 expectTypeOf<StepPassThrough['input']>().toEqualTypeOf<Record<string, unknown>>();

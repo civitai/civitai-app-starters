@@ -10,6 +10,7 @@ import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
+import { useRunConfirmedStep } from '../src/hooks/useRunConfirmedStep.js';
 import { useRunTraining } from '../src/hooks/useRunTraining.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -98,6 +99,17 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
         sources: [{ kind: 'workflow', workflowId: 'wf_app_1', imageIndexes: [0] }],
       });
   },
+  RUN_CONFIRMED_STEP: () => {
+    const { result } = renderHook(() => useRunConfirmedStep());
+    return () =>
+      result.current.runConfirmedStep({
+        kind: 'step',
+        $type: 'polyGen',
+        input: { prompt: 'a chair' },
+        maxBuzz: 250,
+        quoteId: `sq_${'0'.repeat(32)}`,
+      });
+  },
   RUN_TRAINING: () => {
     const { result } = renderHook(() => useRunTraining());
     return () =>
@@ -148,6 +160,10 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
     type: 'CREATE_POST_RESULT',
     extra: { result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1] } },
   },
+  RUN_CONFIRMED_STEP: {
+    type: 'CONFIRMED_STEP_RESULT',
+    extra: { snapshot: { workflowId: 'wf_step_1', status: 'pending' } },
+  },
   RUN_TRAINING: {
     type: 'TRAINING_RESULT',
     extra: { snapshot: { workflowId: 'wf_train_1', status: 'pending' } },
@@ -193,6 +209,11 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_IMAGE_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
+      // The host shows the viewer a job's price in its own confirm and submits
+      // only on their click. At the 30s default the request would reject with
+      // the dialog open, and a viewer who then confirmed would start a CHARGED
+      // job the block had reported as failed.
+      'RUN_CONFIRMED_STEP',
       // The host opens a training CONSENT dialog and submits only on the
       // viewer's click. At the 30s default the request would reject with the
       // dialog open, and a viewer who then clicked Train would start a CHARGED

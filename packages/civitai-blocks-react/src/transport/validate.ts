@@ -327,6 +327,45 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
   if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
   if (s.trainingQuote !== undefined && !isValidTrainingQuote(s.trainingQuote)) return false;
+  if (s.stepQuote !== undefined && !isValidStepQuote(s.stepQuote)) return false;
+  if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
+  return true;
+}
+
+/**
+ * Shape check for `stepQuote` — the viewer-confirmable quote a pass-through
+ * `step` estimate returns when its fixed price is above the per-call budget. The
+ * block passes `quoteId` back verbatim, renders `total` on its confirm button
+ * and may show `stepType`, so all three are pinned to their types.
+ *
+ * `quoteId`'s `sq_…` FORMAT is deliberately not pinned HERE, for the reason
+ * given on {@link isValidTrainingQuote}: a host changing the handle's format
+ * must not turn every such estimate reply into a dropped one. The format is
+ * checked where it is an instruction rather than an observation — on the way
+ * OUT, in `useRunConfirmedStep()`.
+ */
+function isValidStepQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (typeof q.stepType !== 'string') return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `model3dOutputs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. A block matches
+ * an entry's `url` against its image list and loads it, and branches on
+ * `format` / `variant`, so each is pinned to a string. `format` and `variant`
+ * are OPEN sets (the orchestrator's own format names and output field paths)
+ * and are never checked against a list; `variant` may be the empty string.
+ */
+function isValidModel3dOutputs(outputs: unknown): boolean {
+  if (!Array.isArray(outputs)) return false;
+  for (const o of outputs) {
+    if (!isObject(o) || !isNonEmptyString(o.url)) return false;
+    if (typeof o.format !== 'string' || typeof o.variant !== 'string') return false;
+  }
   return true;
 }
 
@@ -936,6 +975,7 @@ function isValidAppWorkflow(w: unknown): boolean {
   // OPTIONAL — absent on hosts that predate them; checked only when present.
   if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
   if (w.trainedEpochs !== undefined && !isValidTrainedEpochs(w.trainedEpochs)) return false;
+  if (w.model3dOutputs !== undefined && !isValidModel3dOutputs(w.model3dOutputs)) return false;
   return true;
 }
 
@@ -1273,6 +1313,27 @@ export function isValidTrainingDatasetResult(p: unknown): boolean {
  * field. A dropped refusal would leave a Train button spinning for ten minutes.
  */
 export function isValidTrainingResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_CONFIRMED_STEP`. A well-formed reply carries EITHER a `snapshot`
+ * (a valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`)
+ * OR an `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, for the reason given on
+ * {@link isValidTrainingResult}: this request carries the same TEN-MINUTE
+ * consent bound, and the host forwards server refusals (an expired or used
+ * quote, a changed body or price, the feature flag) in the same field as its own
+ * codes. A membership check would drop those and leave a Run button spinning for
+ * ten minutes.
+ */
+export function isValidConfirmedStepResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
@@ -1791,6 +1852,9 @@ export function payloadValidatorFor(
       return isValidTrainingDatasetResult;
     case 'TRAINING_RESULT':
       return isValidTrainingResult;
+    // Settles a charged job, like TRAINING_RESULT directly above.
+    case 'CONFIRMED_STEP_RESULT':
+      return isValidConfirmedStepResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

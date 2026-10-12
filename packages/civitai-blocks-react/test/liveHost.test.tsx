@@ -2561,6 +2561,40 @@ describe('createLiveHost — training bridges (refused: the server refuses dev t
       expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
     });
   }
+
+  // Same shape, same reason: the server refuses a confirmed step from a dev
+  // token and the price is confirmed in host chrome. A missing case would hang
+  // the hook for the 10-minute consent bound.
+  it('RUN_CONFIRMED_STEP replies CONFIRMED_STEP_RESULT with a refusal and makes no network call', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error('RUN_CONFIRMED_STEP must not touch the network');
+    });
+    uninstall = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const callsAfterInit = fetchMock.mock.calls.length;
+
+    post('RUN_CONFIRMED_STEP', {
+      requestId: 'r-RUN_CONFIRMED_STEP',
+      body: {
+        kind: 'step',
+        $type: 'polyGen',
+        input: {},
+        maxBuzz: 250,
+        quoteId: `sq_${'0'.repeat(32)}`,
+      },
+    });
+    const reply = await waitForMessage(inbound, 'CONFIRMED_STEP_RESULT');
+
+    expect(reply.requestId).toBe('r-RUN_CONFIRMED_STEP');
+    expect(reply.error).toBe('confirmed steps are not supported in dev:live — use dev:mock');
+    expect('snapshot' in reply).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+  });
 });
 
 describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', () => {

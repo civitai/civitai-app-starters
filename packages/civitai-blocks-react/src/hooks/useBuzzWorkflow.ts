@@ -103,6 +103,24 @@ export const TRAINING_BODY_SUBMIT_REFUSAL =
   "useBuzzWorkflow.submit() does not run a kind:'training' body — estimate it here, then run it with useRunTraining().runTraining({ ...body, quoteId }). Nothing was sent.";
 
 /**
+ * Why {@link UseBuzzWorkflow.submit} refuses a pass-through `step` body that
+ * carries a `quoteId`.
+ *
+ * 🔴 REFUSED BEFORE THE SEND, for the same reason as
+ * {@link TRAINING_BODY_SUBMIT_REFUSAL}. A `quoteId` on a pass-through body means
+ * "charge this job against the price the viewer confirmed", and only
+ * `RUN_CONFIRMED_STEP`'s host-chrome dialog can record that confirmation — so a
+ * `SUBMIT_WORKFLOW` carrying one can never start the job; the server refuses it
+ * as unconfirmed. Nothing is sent and nothing is spent, which is why this too is
+ * a plain `Error` and not a {@link WorkflowSubmitError}.
+ *
+ * The same body WITHOUT `quoteId` is an ordinary pass-through submit and is not
+ * affected.
+ */
+export const CONFIRMED_STEP_BODY_SUBMIT_REFUSAL =
+  "useBuzzWorkflow.submit() does not run a step body that carries a quoteId — run it with useRunConfirmedStep().runConfirmedStep(body), or drop quoteId to submit it as an ordinary job. Nothing was sent.";
+
+/**
  * Snapshot statuses that mean "no further polling is needed."
  * Used by both `submit` (a host can return an instant-fail / cached result)
  * and `poll` so the hook can't get stuck in 'polling' after a terminal reply.
@@ -711,6 +729,15 @@ export interface UseBuzzWorkflow {
    * A `kind: 'training'` body's reply also carries
    * {@link BlockWorkflowSnapshot.trainingQuote} — the `quoteId` to run it with
    * through `useRunTraining()`.
+   *
+   * A pass-through `step` body's reply carries
+   * {@link BlockWorkflowSnapshot.stepQuote} when its FIXED price is above the
+   * token's per-call budget (and within the per-job ceiling). That job cannot
+   * run through {@link UseBuzzWorkflow.submit}; run it with
+   * `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId:
+   * stepQuote.quoteId })`, which has the viewer confirm `stepQuote.total`. No
+   * `stepQuote` means the ordinary rules apply — it is also what a host without
+   * the feature sends.
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -814,6 +841,9 @@ export interface UseBuzzWorkflow {
    *
    * 🔴 A `kind: 'training'` BODY IS REFUSED before anything is sent — it runs
    * only through `useRunTraining()`. See {@link TRAINING_BODY_SUBMIT_REFUSAL}.
+   * So is a pass-through `step` body that carries a `quoteId` — it runs only
+   * through `useRunConfirmedStep()`. See
+   * {@link CONFIRMED_STEP_BODY_SUBMIT_REFUSAL}.
    */
   submit: (
     body: WorkflowBody,
@@ -1172,6 +1202,15 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // mint and the consent retry: nothing about this call may reach the wire.
       if (body.kind === 'training') {
         const refused = new Error(TRAINING_BODY_SUBMIT_REFUSAL);
+        setError(refused);
+        setStatus('error');
+        throw refused;
+      }
+      // See `CONFIRMED_STEP_BODY_SUBMIT_REFUSAL`. Keyed on the PRESENCE of a
+      // `quoteId`, whatever its shape: a malformed one is no more submittable
+      // than a well-formed one, and the server would refuse both.
+      if (body.kind === 'step' && (body as { quoteId?: unknown }).quoteId !== undefined) {
+        const refused = new Error(CONFIRMED_STEP_BODY_SUBMIT_REFUSAL);
         setError(refused);
         setStatus('error');
         throw refused;

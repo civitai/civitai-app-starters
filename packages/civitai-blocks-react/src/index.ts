@@ -183,6 +183,21 @@ export type {
   BlockTrainingQuote,
   WorkflowBodyTraining,
 } from './hooks/useRunTraining.js';
+export {
+  useRunConfirmedStep,
+  RunConfirmedStepError,
+  RUN_CONFIRMED_STEP_ERROR_CODES,
+  isRunConfirmedStepErrorCode,
+  isStepQuoteId,
+} from './hooks/useRunConfirmedStep.js';
+export type {
+  UseRunConfirmedStep,
+  QuotedStepBody,
+  RunConfirmedStepErrorCode,
+  BlockRunConfirmedStepHostError,
+  BlockStepQuote,
+  WorkflowBodyPassThroughStep,
+} from './hooks/useRunConfirmedStep.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,

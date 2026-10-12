@@ -274,7 +274,16 @@ export type {
   BlockTrainingRejectionReason,
   BlockPrepareTrainingDatasetHostError,
   BlockRunTrainingHostError,
+  BlockStepQuote,
+  BlockModel3dOutput,
+  BlockRunConfirmedStepHostError,
 } from './types.js';
+
+/**
+ * Host bounds for a viewer-confirmed pass-through step, mirrored from
+ * civitai/civitai — see `BlockWorkflowSnapshot.stepQuote`.
+ */
+export { BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB, BLOCK_STEP_QUOTE_ID_REGEX } from './types.js';
 
 /**
  * Host bounds for the App Blocks `kind: 'training'` flow, mirrored from

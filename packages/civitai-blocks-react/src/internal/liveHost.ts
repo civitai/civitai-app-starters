@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 48, of which 10 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 49, of which 11 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -113,6 +113,10 @@
  *   • RUN_TRAINING — the same dev-token refusal, plus the host-chrome consent
  *     dialog a run is confirmed in, which this harness does not have. Replies
  *     with a refusal.
+ *   • RUN_CONFIRMED_STEP — the server refuses a confirmed step from a dev token
+ *     and the estimate never returns a `stepQuote` for one, and the price is
+ *     confirmed in host chrome this harness does not have. Replies with a
+ *     refusal.
  *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
  *     civitai.com session, which the local harness does not have; test
  *     publishing against the mock host — `createMockHost` or `Harness` from
@@ -254,6 +258,12 @@ const trainingUnsupportedLog = (type: string): string =>
   `${type} is not supported in dev:live (the server refuses every training request from a ` +
   'dev token, and a run needs the host-chrome consent dialog). Replying with a refusal. ' +
   'Use dev:mock to exercise the training flow.';
+
+/**
+ * The reply `RUN_CONFIRMED_STEP` gets in dev:live — see its handler.
+ */
+export const CONFIRMED_STEP_UNSUPPORTED_ERROR =
+  'confirmed steps are not supported in dev:live — use dev:mock';
 
 /**
  * Decoded payload of a block-token JWT (the claims `BlockTokenService.sign`
@@ -1402,6 +1412,33 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'TRAINING_RESULT',
               payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'RUN_CONFIRMED_STEP': {
+            // UNSUPPORTED in live, and the SERVER decides it, exactly as for the
+            // training bridges above: a confirmed step is refused for a dev token
+            // ("a confirmed step is not available from a development or review
+            // session" — `quotedGrantTokenGate` in civitai/civitai), so a forwarded
+            // ESTIMATE never carries a `stepQuote` here and a block has no real
+            // `quoteId` to send. The price is also confirmed in host chrome this
+            // harness does not have, and the job is CHARGED — faking either half
+            // would let dev prove out a flow production does not have.
+            //
+            // Use dev:mock: an over-budget `generation.costPerGen` makes its
+            // estimate quote one, and `runConfirmedStepError` covers `declined`,
+            // `daily-limit-exceeded` and `submission-unconfirmed`.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'confirmed-step',
+              'RUN_CONFIRMED_STEP is not supported in dev:live (the server refuses a confirmed ' +
+                'step from a dev token, and the price is confirmed in host chrome). Replying ' +
+                'with a refusal. Use dev:mock to exercise the confirmed-step flow.',
+            );
+            dispatchToBlock({
+              type: 'CONFIRMED_STEP_RESULT',
+              payload: { requestId, error: CONFIRMED_STEP_UNSUPPORTED_ERROR },
             });
             return;
           }

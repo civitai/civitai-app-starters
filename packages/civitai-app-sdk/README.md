@@ -140,7 +140,7 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -207,6 +207,40 @@ const body: WorkflowBody = {
   input: { image: imageUrl },
   maxBuzz: 10,
 };
+```
+
+**Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
+can still run when the **viewer confirms its exact price** in Civitai's own dialog
+(civitai/civitai#5786). When the orchestrator quotes a **fixed** price (positive, not variable
+or metered) above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`
+(5,000), the `estimate` reply carries `snapshot.stepQuote` (`quoteId`, `total`, `stepType`,
+`expiresAt`). Send the same body back with that `quoteId` on the `RUN_CONFIRMED_STEP` bridge
+(`CONFIRMED_STEP_RESULT`); a `quoteId` body sent as an ordinary submit is refused. A quote is
+single-use and expires after 15 minutes. Each confirmation is its own job, so a
+`submission-unconfirmed` result — the outcome is unknown — must never be retried automatically:
+a retry is a new, separately charged job. Page apps only, `ai:write:budgeted`, behind the host
+flag `app-blocks-confirmed-step` (off by default), and refused for development, dev-tunnel and
+review tokens — so it is exercised against the mock host, not `dev:live`. Use it through
+`@civitai/blocks-react`'s `useRunConfirmedStep()`.
+
+**3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
+`snapshot.imageUrls`; `snapshot.model3dOutputs` (and the same field on an `AppWorkflow` row)
+labels them. Omitted when there are none.
+
+```ts
+import type { BlockModel3dOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+// `format` is the model's file format; `variant` is the output it came from.
+function pickModel(
+  snapshot: BlockWorkflowSnapshot,
+  format: string,
+  variant: string,
+): BlockModel3dOutput | undefined {
+  return snapshot.model3dOutputs?.find((m) => m.format === format && m.variant === variant);
+}
+
+const mesh = pickModel(snapshot, 'glb', 'model');
+const rigged = pickModel(snapshot, 'fbx', 'riggedFbxModel');
 ```
 
 `WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
