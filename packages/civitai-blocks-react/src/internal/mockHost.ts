@@ -535,8 +535,14 @@ function isValidTrainingDatasetItems(items: unknown): boolean {
   });
 }
 
-/** The real server's refusal for a training request from a token without the spend scope. */
-export const MOCK_TRAINING_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
+/**
+ * The real server's refusal for ANY money call from a token without the spend
+ * scope: civitai's `estimateWorkflow`, `estimateWorkflowBatch`, `submitWorkflow`
+ * and the training procedures all throw `FORBIDDEN` with exactly this message
+ * BEFORE any pricing, rate-limit or budget work. ONE constant for every mock
+ * path that refuses on `consentGranted === false`, so the copies cannot drift.
+ */
+export const MOCK_SPEND_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
 /** The real server's refusal for an unknown, expired or spent quote on `RUN_TRAINING`. */
 export const MOCK_TRAINING_QUOTE_GONE_ERROR =
   'training quote not found, expired or already used — estimate again';
@@ -775,6 +781,16 @@ export interface MockHostOptions {
    * real mint WITHHOLDS it until the viewer consents, so this defaults to
    * `false` — the first token carries NO budgeted scope, and `REQUEST_CONSENT`
    * grants it + pushes a `TOKEN_REFRESH` (the lazy-consent round-trip).
+   *
+   * 🔴 WHILE IT IS `false` THE MOCK ENFORCES THE SCOPE, as the real server does:
+   * `ESTIMATE_WORKFLOW`, `ESTIMATE_WORKFLOW_BATCH` and `SUBMIT_WORKFLOW` (and the
+   * training paths) refuse the whole call with `block lacks ai:write:budgeted
+   * scope`, in the shape the page host sends for each. `submit()` recovers on
+   * its own (its consent prompt-and-retry grants and re-sends with the same
+   * idempotency key); `estimate()` and the batch estimate do NOT retry, so a
+   * block must call `requestConsent({ scopes: ['ai:write:budgeted'] })` and
+   * estimate again once the grant lands. A test that is not ABOUT consent sets
+   * this to `true`.
    */
   consentGranted?: boolean;
   /**
@@ -2617,19 +2633,39 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // two to diagnose from the block side.
             return { workflowId: 'wf_estimate', status: 'pending' };
           }
+          // 🔴 THE SPEND-SCOPE GATE — EVERY body kind, not just training.
+          // civitai's `estimateWorkflow` throws `FORBIDDEN` with exactly this
+          // message as its FIRST act after authenticating the token, before any
+          // pricing, and the page host catches the throw into
+          // `failureSnapshot(err)` — the `'failed'` sentinel id, no `cost`. That
+          // is the signal a block answers with `requestConsent(...)` and a retry.
+          // Until #608 only the training arm checked it, so the refusal → consent
+          // → retry loop was unreachable for every other estimate in `pnpm dev`.
+          //
+          // Sits AFTER the `failEstimate` knobs on purpose: an explicitly forced
+          // failure is what the author asked to see, and `estimate()` is not
+          // consent-retried, so a scope refusal ahead of it would hide the knob
+          // behind a message the author never asked for.
+          //
+          // The batch path refuses the WHOLE call before it reaches this function
+          // (see ESTIMATE_WORKFLOW_BATCH), so this branch is the single-estimate
+          // one in practice.
+          if (!consentGranted) {
+            return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
+          }
           // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
           // kind-agnostic rule above, because the real arm is not a priced
-          // pass-through: it needs the spend scope, names a dataset the server
-          // must hold, refuses a price above the per-run ceiling, and STORES a
-          // quote the run is later checked against. Each refusal is the
-          // server's message in the host's `failureSnapshot` shape.
+          // pass-through: it names a dataset the server must hold, refuses a
+          // price above the per-run ceiling, and STORES a quote the run is later
+          // checked against. (The spend scope is checked above, for every kind.)
+          // Each refusal is the server's message in the host's `failureSnapshot`
+          // shape.
           if (body.kind === 'training') {
             const refuse = (error: string): BlockWorkflowSnapshot => ({
               workflowId: 'failed',
               status: 'failed',
               error,
             });
-            if (!consentGranted) return refuse(MOCK_TRAINING_SCOPE_ERROR);
             const imageCount = trainingDatasets.get(body.datasetId);
             if (imageCount === undefined) return refuse(MOCK_TRAINING_DATASET_GONE_ERROR);
             const total = trainingQuoteTotal;
@@ -2816,6 +2852,21 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // 🔴 THE SPEND-SCOPE GATE, WHOLE-CALL. civitai's
+            // `estimateWorkflowBatch` throws `FORBIDDEN` before pricing a single
+            // cell, and the host (`estimateBatchGate.ts`) catches the throw into
+            // `{ requestId, error: err.message }` — NOT a per-cell failure, and
+            // no `snapshots`/`aggregate`. The SDK surfaces it as
+            // `BatchEstimateError` code `'failed'` with this text on `hostError`.
+            // After the request-shape checks above, because those are the host's
+            // own gate and run before the server is consulted.
+            if (!consentGranted) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: MOCK_SPEND_SCOPE_ERROR },
+              });
+              return;
+            }
             const snapshots = (bodies as WorkflowBody[]).map((cell, index): BlockWorkflowSnapshot => {
               // The host's snapshot for a cell its call budget ran out on.
               if (gen.batchEstimateTimedOutCells?.includes(index)) {
@@ -2869,6 +2920,49 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
 
+            // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
+            // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
+            // 'failed' sentinel id and NO `cost`, which is what separates an
+            // errored submit from a priced budget rejection
+            // (civitai/civitai-app-starters#251). Checked FIRST — a forced
+            // host-side throw pre-empts every server-side decision below,
+            // including the spend-scope gate.
+            if (gen.failSubmitException === true) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: gen.failSubmitExceptionMessage ?? 'mock: submit failed',
+                  },
+                },
+              });
+              return;
+            }
+
+            // 🔴 THE SPEND-SCOPE GATE. civitai's `submitWorkflow` throws
+            // `FORBIDDEN` with this message as its first act after
+            // authenticating the token — before the budget, the training
+            // confirmation, the currency resolution and any debit — and the page
+            // host's SUBMIT_WORKFLOW handler catches the rejected mutation into
+            // `failureSnapshot(err)`: the `'failed'` sentinel, NO `cost`. So
+            // `submit()` rejects as `'exception'`, and `withConsentRetry` (the
+            // token lacks `ai:write:budgeted`) prompts, this mock grants and
+            // pushes TOKEN_REFRESH, and the SAME-KEY retry lands below. Nothing
+            // is debited and no workflow is recorded on this arm.
+            if (!consentGranted) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR },
+                },
+              });
+              return;
+            }
+
             // A `kind: 'training'` body is never started by SUBMIT_WORKFLOW: the
             // server charges a training run only against a quote a signed-in
             // session confirmed, which only RUN_TRAINING's dialog records. The
@@ -2893,27 +2987,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const cost = costFor(body);
             // What the viewer pays: the generation plus the app fee.
             const charged = cost + (authorFeeFor(body) ?? 0);
-
-            // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
-            // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
-            // 'failed' sentinel id and NO `cost`, which is what separates an
-            // errored submit from a priced budget rejection
-            // (civitai/civitai-app-starters#251). Checked FIRST — a host-side
-            // throw pre-empts every server-side decision below.
-            if (gen.failSubmitException === true) {
-              dispatchToBlock({
-                type: 'WORKFLOW_SUBMITTED',
-                payload: {
-                  requestId,
-                  snapshot: {
-                    workflowId: 'failed',
-                    status: 'failed',
-                    error: gen.failSubmitExceptionMessage ?? 'mock: submit failed',
-                  },
-                },
-              });
-              return;
-            }
 
             // Disallowed-account path (content-rating clamp): the real backend
             // rejects a picked pool outside the app's maturity policy at the
@@ -3483,7 +3556,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!isValidTrainingDatasetItems(items)) {
               return reply({ error: 'invalid training dataset' });
             }
-            if (!consentGranted) return reply({ error: MOCK_TRAINING_SCOPE_ERROR });
+            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
             if (trainingDatasetError !== undefined) return reply({ error: trainingDatasetError });
             const named = new Set((items as Array<{ imageId: number }>).map((it) => it.imageId));
             const rejected = trainingDatasetRejected
@@ -3525,7 +3598,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!b || b.kind !== 'training' || typeof b.quoteId !== 'string' || !b.quoteId) {
               return reply({ error: 'invalid training request' });
             }
-            if (!consentGranted) return reply({ error: MOCK_TRAINING_SCOPE_ERROR });
+            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
             const quote = trainingQuotes.get(b.quoteId);
             if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
               return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });

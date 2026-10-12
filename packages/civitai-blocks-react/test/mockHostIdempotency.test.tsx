@@ -121,7 +121,9 @@ describe('createMockHost — idempotencyKey format gate', () => {
   });
 
   it('🔴 a VALID key goes THROUGH — the gate is reachable, not a blanket deny', async () => {
-    uninstall = createMockHost({}).install();
+    // Consent granted: a raw SUBMIT_WORKFLOW from an un-granted token is refused
+    // by the spend-scope gate (#608), which is AFTER this gate and not under test.
+    uninstall = createMockHost({ consentGranted: true }).install();
     await ready();
 
     const reply = await submitRaw('sheet_42-panel_7-a1b2c3');
@@ -131,7 +133,7 @@ describe('createMockHost — idempotencyKey format gate', () => {
   });
 
   it('🔴 an ABSENT key goes through — the field is optional on this host path', async () => {
-    uninstall = createMockHost({}).install();
+    uninstall = createMockHost({ consentGranted: true }).install();
     await ready();
 
     const reply = await submitRaw(undefined);

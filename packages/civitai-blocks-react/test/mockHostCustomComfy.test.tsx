@@ -99,7 +99,7 @@ describe('createMockHost — customComfy generation', () => {
   it('estimate returns a cost for a customComfy body (non-empty sentinel workflowId survives the inbound validator)', async () => {
     // A plausible fixed display estimate (~15-20 Buzz) via the shared costPerGen
     // knob — no customComfy-specific config surface.
-    uninstall = createMockHost({ generation: { costPerGen: 17 }, pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 17 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -113,7 +113,7 @@ describe('createMockHost — customComfy generation', () => {
   });
 
   it('estimate returns the default cost when no scenario cost is configured', async () => {
-    uninstall = createMockHost({ pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
