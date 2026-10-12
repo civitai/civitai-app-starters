@@ -34,8 +34,29 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { JOBS, ADVISORY_JOBS, CORE_JOBS, STEP_GATED_JOBS, UNGATED_STEPS, RELEASE_LANE_JOBS, classifyPath } from '../../scripts/ci-lanes.mjs';
-import { parseJobs, parseSteps, problems as rawProblems, laneCondition, stepIsGated, LANES_JOB } from './lib/ci-workflow.mjs';
+import {
+  JOBS,
+  ADVISORY_JOBS,
+  CORE_JOBS,
+  STEP_GATED_JOBS,
+  UNGATED_STEPS,
+  RELEASE_LANE_JOBS,
+  RECORD_ARTIFACT_PREFIX,
+  RECORD_ARTIFACT_SUFFIX,
+  RECORD_JOB_NAME,
+  classifyPath,
+  decide,
+} from '../../scripts/ci-lanes.mjs';
+import {
+  parseJobs,
+  parseSteps,
+  problems as rawProblems,
+  laneCondition,
+  stepIsGated,
+  evaluateConjunction,
+  LANES_JOB,
+  RECORD_JOB,
+} from './lib/ci-workflow.mjs';
 
 const SHAPE = { stepGated: STEP_GATED_JOBS, ungatedSteps: UNGATED_STEPS };
 const problems = (t, ledger) => rawProblems(t, ledger, SHAPE);
@@ -281,7 +302,13 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
   });
 
   test('a job in the ledger that ci.yml does not have', () => {
-    assert.deepEqual(tags(text, { ...JOBS, ghost: 'core' }), ['ledger-job-not-in-workflow', 'output-missing']);
+    assert.deepEqual(tags(text, { ...JOBS, ghost: 'core' }), [
+      'ledger-job-not-in-workflow',
+      'output-missing',
+      'record-needs-missing',
+      'record-condition-missing',
+      'record-condition-missing',
+    ]);
   });
 
   test('a job with no condition at all', () => {
@@ -360,9 +387,112 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
     assert.deepEqual(tags(mutate('  workflow_dispatch: {}\n', "  workflow_dispatch: {}\n  schedule:\n    - cron: '17 5 * * *'\n")), ['schedule-trigger']);
   });
 
+  test('a job added to ci.yml AND the ledger but not to record-tree', () => {
+    const grown = `${text}\n  brand-new:\n    name: New\n    needs: lanes\n    if: ${laneCondition('brand-new')}\n    runs-on: ubuntu-latest\n`;
+    const t = tags(grown, { ...JOBS, 'brand-new': 'core' });
+    assert.deepEqual(t.sort(), ['output-missing', 'record-condition-missing', 'record-condition-missing', 'record-needs-missing'].sort());
+  });
+
+  test('a job dropped from record-tree needs, and a condition conjunct dropped', () => {
+    assert.deepEqual(tags(mutate('      - examples\n', '')), ['record-needs-missing']);
+    assert.deepEqual(tags(mutate("      && needs.lanes.outputs.lane == 'full'\n", '')), ['record-condition-missing']);
+    // The seam: a starter that SUCCEEDED with its heavy steps off.
+    assert.deepEqual(
+      tags(mutate("      && needs.starter.result == 'success' && needs.lanes.outputs.starter == 'true'\n", "      && needs.starter.result == 'success'\n")),
+      ['record-condition-missing'],
+    );
+  });
+
+  test('record-tree conditioned on success() or with an OR', () => {
+    const anchor = "      ${{ !cancelled()\n";
+    assert.deepEqual(tags(mutate(anchor, '      ${{ success()\n')).sort(), ['record-condition-missing', 'record-condition-unknown'].sort());
+    assert.deepEqual(tags(mutate("      && needs.lanes.result == 'success'\n", "      || needs.lanes.result == 'success'\n")), ['record-condition-shape']);
+  });
+
+  test('record-tree uploading a name the gate never looks up', () => {
+    assert.deepEqual(tags(mutate('          name: ci-tested-tree-${{ steps.tree.outputs.sha }}-full\n', '          name: ci-tested-tree-${{ steps.tree.outputs.sha }}\n')), [
+      'record-artifact-name',
+    ]);
+  });
+
   test('the lanes job made conditional, or no longer running the script', () => {
     const header = '    name: CI lanes (which jobs this run needs)\n';
     assert.deepEqual(tags(mutate(header, `${header}    if: github.event_name == 'pull_request'\n`)), ['lanes-conditional']);
     assert.deepEqual(tags(mutate('        run: node scripts/ci-lanes.mjs\n', '        run: echo skipped\n')), ['lanes-script']);
+  });
+});
+
+describe('THE SEAM: record-tree fires only for a run that tested the whole tree', () => {
+  // Builds the needs context GitHub would hand record-tree, from the REAL
+  // `decide()` and the REAL condition in ci.yml, so a change on either side of
+  // the seam (a new lane, a new step-gated job, an edited condition) is
+  // measured here rather than reasoned about.
+  const record = parseJobs(text).find((j) => j.id === RECORD_JOB);
+  /** results: what each job concluded; a job whose output is false is skipped, except step-gated ones, which succeed. */
+  function ctxFor(decision, { event = 'pull_request', fail = [], lanesResult = 'success' } = {}) {
+    const results = { [LANES_JOB]: lanesResult };
+    for (const id of Object.keys(JOBS)) {
+      const ran = lanesResult !== 'success' || decision.jobs[id] || STEP_GATED_JOBS.includes(id);
+      results[id] = fail.includes(id) ? 'failure' : ran ? 'success' : 'skipped';
+    }
+    const outputs =
+      lanesResult === 'success'
+        ? { [LANES_JOB]: { lane: decision.lane, ...Object.fromEntries(Object.entries(decision.jobs).map(([k, v]) => [k, String(v)])) } }
+        : { [LANES_JOB]: {} };
+    return { event, cancelled: false, results, outputs };
+  }
+  const docsOnly = decide({ event: 'pull_request', files: [{ filename: 'README.md' }] });
+  const release = decide({ event: 'pull_request', files: [{ filename: 'packages/a/CHANGELOG.md', status: 'modified' }], release: { problem: null } });
+
+  test('POSITIVE CONTROL: a full-lane PR with advisory jobs lane-skipped DOES record', () => {
+    assert.equal(docsOnly.lane, 'full');
+    assert.ok(ADVISORY_JOBS.every((id) => !docsOnly.jobs[id]), 'the control needs the advisory jobs skipped');
+    assert.equal(evaluateConjunction(record.if, ctxFor(docsOnly)), true);
+  });
+
+  test('a release-lane run, every job green, does NOT record', () => {
+    assert.equal(release.lane, 'release');
+    const ctx = ctxFor(release);
+    assert.equal(ctx.results.starter, 'success', 'the starter legs succeed in the release lane; that is the trap');
+    assert.equal(evaluateConjunction(record.if, ctx), false);
+  });
+
+  test('ANY one core job switched off by its lane output, yet concluding success, does not record', () => {
+    // Today only the release lane switches core jobs off and it switches most of
+    // them off at once, so the starter conjunct is never the deciding one there.
+    // Here each is decisive alone: a full-lane decision with ONE core output
+    // flipped to false, and that job still reporting success (as a step-gated
+    // job does).
+    const all = decide({ event: 'pull_request', files: [{ filename: '.github/workflows/ci.yml' }] });
+    for (const id of CORE_JOBS) {
+      const flipped = { ...all, jobs: { ...all.jobs, [id]: false } };
+      const ctx = ctxFor(flipped);
+      ctx.results[id] = 'success';
+      assert.equal(evaluateConjunction(record.if, ctx), false, `${id} off but successful still recorded the tree`);
+    }
+  });
+
+  test('a core job failing does not record; an ADVISORY job failing still does', () => {
+    const all = decide({ event: 'pull_request', files: [{ filename: '.github/workflows/ci.yml' }] });
+    assert.equal(evaluateConjunction(record.if, ctxFor(all, { fail: ['packaging'] })), false);
+    assert.equal(evaluateConjunction(record.if, ctxFor(all, { fail: ['schema-drift'] })), true);
+  });
+
+  test('a failed lanes job runs everything but records nothing', () => {
+    assert.equal(evaluateConjunction(record.if, ctxFor(docsOnly, { lanesResult: 'failure' })), false);
+  });
+
+  test('push, schedule and tree-skipped runs never record', () => {
+    const push = decide({ event: 'push' });
+    assert.equal(evaluateConjunction(record.if, ctxFor(push, { event: 'push' })), false);
+    const sched = decide({ event: 'schedule' });
+    assert.equal(evaluateConjunction(record.if, ctxFor(sched, { event: 'schedule' })), false);
+    const skipped = decide({ event: 'push', pushGate: { skip: true, tree: 'a'.repeat(40), runId: 1 } });
+    assert.equal(evaluateConjunction(record.if, ctxFor(skipped, { event: 'push' })), false);
+  });
+
+  test('the job name and artifact name are the ones the gate looks up', () => {
+    assert.equal(record.name, RECORD_JOB_NAME);
+    assert.equal(RECORD_ARTIFACT_PREFIX + '<tree>' + RECORD_ARTIFACT_SUFFIX, 'ci-tested-tree-<tree>-full');
   });
 });
