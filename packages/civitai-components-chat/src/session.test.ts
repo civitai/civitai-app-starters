@@ -151,7 +151,9 @@ describe('ChatSession with added MCP servers', () => {
 
   it('opens a new server and closes the old one when the list changes, keeping the conversation; an equal list changes nothing', async () => {
     let list: ChatMcpServer[] = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'old' }];
-    const { session, servers } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('run_command', 'read_file') }, () => list);
+    let waiting = 0;
+    const hang: FakeTool = { name: 'wait', run: () => (waiting++, new Promise(() => undefined)) };
+    const { session, servers } = setup({ [SANDBOX]: [...tools('run_command'), hang], [OTHER]: [...tools('run_command', 'read_file'), hang] }, () => list);
     session.store.startNew();
     session.store.appendUserTurn('build me a site', []);
     const conversation = session.store.current;
@@ -164,21 +166,24 @@ describe('ChatSession with added MCP servers', () => {
     session.syncMcpServers();
     await run(await session.toolSet(turn), 'sandbox__run_command');
     expect(servers[SANDBOX]!.initializes).toBe(1);
-    expect(servers[SANDBOX]!.deletes).toBe(0);
     expect(servers[SANDBOX]!.authorizations.at(-1)).toBe('Bearer new');
 
-    // A new url: the old session is ended at once, before any reply.
+    // A new url: the old connection is closed at once, before any reply, ending a call still running on it.
+    const running = run(await session.toolSet(turn), 'sandbox__wait');
+    await vi.waitFor(() => expect(waiting).toBe(1));
     list = [{ id: 'sandbox', url: OTHER, token: () => 'new' }];
     session.syncMcpServers();
-    await vi.waitFor(() => expect(servers[SANDBOX]!.deletes).toBe(1));
+    await expect(running).rejects.toThrow(/connection closed/i);
     const swapped = await session.toolSet(turn);
     expect(Object.keys(swapped)).toEqual(expect.arrayContaining(['sandbox__run_command', 'sandbox__read_file']));
     expect(servers[OTHER]!.initializes).toBe(1);
 
     // Removed: closed, and its tools are gone.
+    const stillRunning = run(swapped, 'sandbox__wait');
+    await vi.waitFor(() => expect(waiting).toBe(2));
     list = [];
     session.syncMcpServers();
-    await vi.waitFor(() => expect(servers[OTHER]!.deletes).toBe(1));
+    await expect(stillRunning).rejects.toThrow(/connection closed/i);
     expect(Object.keys(await session.toolSet(turn)).filter((name) => name.startsWith('sandbox__'))).toEqual([]);
 
     expect(session.store.current).toBe(conversation);

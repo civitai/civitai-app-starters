@@ -9,15 +9,13 @@ export interface FakeTool {
   run?(args: Record<string, unknown>, progress: (value: number) => Promise<void>): Promise<CallToolResult> | CallToolResult;
 }
 
-/** What one fake server saw, so a test can count sessions, closes and tokens. */
+/** What one fake server saw, so a test can count sessions and tokens. */
 export interface FakeMcpServer {
   readonly url: string;
   /** The `Authorization` header of every POST. */
   readonly authorizations: (string | null)[];
   /** `initialize` requests: one per new session. */
   initializes: number;
-  /** DELETEs: sessions the client ended. */
-  deletes: number;
   tools: FakeTool[];
 }
 
@@ -27,9 +25,8 @@ export interface FakeMcpServer {
  */
 export function fakeMcpServers(servers: Record<string, FakeTool[] | 'down'>): { fetch: typeof fetch; servers: Record<string, FakeMcpServer> } {
   const seen: Record<string, FakeMcpServer> = {};
-  let sessions = 0;
   for (const [url, tools] of Object.entries(servers)) {
-    seen[url] = { url, authorizations: [], initializes: 0, deletes: 0, tools: tools === 'down' ? [] : tools };
+    seen[url] = { url, authorizations: [], initializes: 0, tools: tools === 'down' ? [] : tools };
   }
 
   const handle = async (request: Request): Promise<Response> => {
@@ -38,14 +35,9 @@ export function fakeMcpServers(servers: Record<string, FakeTool[] | 'down'>): { 
     if (!server) return new Response('no route', { status: 599 });
     if (servers[url] === 'down') throw new TypeError('fetch failed');
     if (request.method === 'GET') return new Response(null, { status: 405 });
-    if (request.method === 'DELETE') {
-      server.deletes++;
-      return new Response(null, { status: 200 });
-    }
     server.authorizations.push(request.headers.get('authorization'));
     const body = (await request.clone().json()) as { method?: string };
-    const initializing = body.method === 'initialize';
-    if (initializing) server.initializes++;
+    if (body.method === 'initialize') server.initializes++;
 
     const mcp = new Server({ name: 'fake', version: '1.0.0' }, { capabilities: { tools: {} } });
     mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -62,12 +54,7 @@ export function fakeMcpServers(servers: Record<string, FakeTool[] | 'down'>): { 
     });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await mcp.connect(transport);
-    const response = await transport.handleRequest(request);
-    if (!initializing) return response;
-    // Stateless servers name no session; this one does, so a client that ends its session is seen to.
-    const headers = new Headers(response.headers);
-    headers.set('mcp-session-id', `s-${++sessions}`);
-    return new Response(response.body, { status: response.status, headers });
+    return transport.handleRequest(request);
   };
 
   const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => handle(new Request(input, init))) as typeof globalThis.fetch;

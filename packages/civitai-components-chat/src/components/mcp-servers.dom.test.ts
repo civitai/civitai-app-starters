@@ -38,10 +38,8 @@ describe('<civitai-chat> mcpServers', () => {
     await chat.updateComplete;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fake.servers[SANDBOX]!.initializes).toBe(1);
-    expect(fake.servers[SANDBOX]!.deletes).toBe(0);
 
     chat.mcpServers = [{ id: 'sandbox', url: OTHER, token: () => 'tok' }];
-    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.deletes).toBe(1));
     await vi.waitFor(() => expect(fake.servers[OTHER]!.initializes).toBe(1));
   });
 

@@ -41,7 +41,7 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(globalThis) }: McpConnectionOptions): McpConnection {
   const endpoint = new URL(url, typeof location === 'undefined' ? 'http://localhost/' : location.href);
-  let pending: Promise<{ client: Client; transport: StreamableHTTPClientTransport }> | null = null;
+  let pending: Promise<Client> | null = null;
 
   const authedFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
@@ -52,26 +52,19 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
   const connect = (): Promise<Client> => {
     pending ??= (async () => {
       const client = new Client({ name: 'chat-cvt', version: '0.1.0' });
-      const transport = new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch });
-      await client.connect(transport);
-      return { client, transport };
+      await client.connect(new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch }));
+      return client;
     })().catch((error: unknown) => {
       pending = null;
       throw error;
     });
-    return pending.then(({ client }) => client);
+    return pending;
   };
 
-  // `end` also tells the server the session is over, so it can free what it holds for it.
-  const reset = async (end = false) => {
+  const reset = async () => {
     const stale = pending;
     pending = null;
-    await stale
-      ?.then(async ({ client, transport }) => {
-        if (end) await transport.terminateSession().catch(() => undefined);
-        await client.close();
-      })
-      .catch(() => undefined);
+    await stale?.then((client) => client.close()).catch(() => undefined);
   };
 
   // A server restart forgets the session; the next call starts a new one.
@@ -109,6 +102,6 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
             onprogress: opts.onProgress,
           })) as CallToolResult,
       ),
-    close: () => reset(true),
+    close: reset,
   };
 }
