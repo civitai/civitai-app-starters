@@ -495,6 +495,53 @@ if (quote.cost) showPrice(priceLine(quote.cost));
   reports `authorFee: 0`, and `authorFee: false` (`?authorFee=off`) leaves it
   out, as an older host does.
 
+#### Why a training step could not be priced: `snapshot.errorCode`
+
+A pass-through `step` body whose `$type` is a training type (`'training'` or
+`'imageResourceTraining'`) needs a price quote; when the host cannot get one it
+refuses with `{ workflowId: 'failed', status: 'failed', error, errorCode }` and
+no `cost`. `estimate()` rejects with a `WorkflowEstimateError` and `submit()`
+with a `WorkflowSubmitError` (before anything is reserved), and a batch
+estimate returns it as that body's cell. `errorCode` is the stable value to
+branch on; `error` stays the diagnostic read.
+
+```tsx
+import { useBuzzWorkflow, WorkflowEstimateError } from '@civitai/blocks-react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const { estimate } = useBuzzWorkflow();
+declare const body: WorkflowBody;
+
+try {
+  await estimate(body);
+} catch (err) {
+  if (!(err instanceof WorkflowEstimateError)) throw err;
+  switch (err.snapshot.errorCode) {
+    case 'training-quote-rejected': // the request itself was refused — change it
+      showError('These training settings were refused. Check them and try again.');
+      break;
+    case 'training-quote-unavailable': // no answer right now — retrying may work
+    case 'training-quote-unpriced': // answered without a price
+      showError('Training cannot be priced right now. Try again shortly.');
+      break;
+    default: // no code, or one a later host added
+      showError('Could not get a price.');
+  }
+}
+```
+
+| `errorCode` | Means |
+|---|---|
+| `'training-quote-rejected'` | the orchestrator refused the request itself; resending the same body will not help. `error` reads `Training could not be priced: <reason>` when the reason is safe to show |
+| `'training-quote-unavailable'` | no usable answer (an outage, a timeout, a rate limit, insufficient funds, …); a retry may succeed |
+| `'training-quote-unpriced'` | the orchestrator answered without a price |
+| absent | any other reply, and every reply from a host that predates the field |
+
+- **Treat an unknown value as possible.** The field is typed as an open string
+  (`KnownBlockWorkflowErrorCode | (string & {})`), the host may add codes, and
+  the inbound validator accepts any string. Keep a `default` branch.
+- The `kind: 'training'` arm does not set it.
+
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
 > orchestrator whatif prices a cache hit (identical workflow) at 0 and a fresh
