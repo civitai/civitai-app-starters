@@ -21,8 +21,11 @@ on:
     # no webhook from civitai, no repository_dispatch, nothing to subscribe to.
     # So the ONLY thing that closes the gap between "the canonical changed" and
     # "the mirror was re-vendored" is this cron firing. Until it does, the guard
-    # is red on every PR in this repo and nothing clears it but a human noticing
-    # and dispatching this workflow by hand.
+    # is red wherever it runs and nothing clears it but a human noticing and
+    # dispatching this workflow by hand. Since `ci.yml` grew lanes, "wherever it
+    # runs" is: every push to main, ci.yml's daily scheduled run, and the PRs
+    # that touch the vendored schema, its check script, ci.yml or
+    # `scripts/ci-lanes.mjs` (the classifier there decides) -- NOT every PR.
     #
     # The concrete case this was raised for: civitai PR #4314 added an optional
     # `repository` property to the canonical manifest schema and merged to
@@ -87,8 +90,9 @@ jobs:
       # a manual `workflow_dispatch`, so there is no override. If the canonical
       # drifts again while that PR sits open, the PR's bytes are stale and merging
       # it does NOT restore parity; `ci.yml`'s `schema-drift` job is a hard fail
-      # on every PR in the repo until a later run re-vendors. That is the
-      # escalation — loud, repo-wide, within ~6 hours — but it points at the wrong
+      # wherever it runs (every push to main, the daily scheduled run, and the PRs
+      # `scripts/ci-lanes.mjs` routes to it) until a later run re-vendors. That is
+      # the escalation — loud, within ~6 hours — but it points at the wrong
       # object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT and the next run
       # re-vendors. An open-but-abandoned PR blocks every future re-vendor for as
       # long as it stays open. The old behaviour kept re-vendoring instead, and
