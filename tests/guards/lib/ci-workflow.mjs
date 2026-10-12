@@ -153,10 +153,8 @@ export function triggerBlock(text) {
 }
 
 export const LANES_JOB = 'lanes';
-export const ALERT_JOB = 'advisory-alert';
 /** Jobs that are not in the ledger because they ARE the lane machinery. */
-const STRUCTURAL = [LANES_JOB, ALERT_JOB];
-export const ALERT_CONDITION = "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
+const STRUCTURAL = [LANES_JOB];
 export const laneCondition = (id) => `\${{ !cancelled() && needs.${LANES_JOB}.outputs.${id} != 'false' }}`;
 /** The job-level condition of a step-gated job: the status function and nothing else. */
 export const STEP_GATED_JOB_CONDITION = '${{ !cancelled() }}';
@@ -268,29 +266,6 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     }
     if (!lanes.body.some((l) => /^\s*-\s*id:\s*decide\s*$/.test(l) || /^\s*id:\s*decide\s*$/.test(l))) {
       out.push(`[lanes-step-id] no step with \`id: decide\` in the \`${LANES_JOB}\` job; every output reads \`steps.decide\``);
-    }
-  }
-
-  const alert = byId.get(ALERT_JOB);
-  if (!alert) {
-    out.push(`[alert-missing] ci.yml has no \`${ALERT_JOB}\` job; a red advisory job on main notifies nobody`);
-  } else {
-    const advisory = ledgerIds.filter((id) => ledger[id] === 'advisory');
-    const want = [LANES_JOB, ...advisory];
-    for (const id of want.filter((id) => !alert.needs.includes(id))) {
-      out.push(`[alert-needs-missing] \`${ALERT_JOB}\` does not need \`${id}\`, so a red \`${id}\` on main is never reported`);
-    }
-    for (const id of alert.needs.filter((id) => !want.includes(id))) {
-      out.push(`[alert-needs-unknown] \`${ALERT_JOB}\` needs \`${id}\`, which is not an advisory job`);
-    }
-    if (alert.if !== ALERT_CONDITION) {
-      out.push(`[alert-condition] \`${ALERT_JOB}\` has \`if: ${alert.if}\`; expected exactly \`if: ${ALERT_CONDITION}\` (push to main only, and still running when an advisory job failed)`);
-    }
-    const body = alert.body.join('\n');
-    for (const id of advisory) {
-      if (!body.includes(`needs.${id}.result`)) {
-        out.push(`[alert-result-unread] \`${ALERT_JOB}\` never reads \`needs.${id}.result\`, so it cannot report that job`);
-      }
     }
   }
 
