@@ -76,6 +76,9 @@ jobs:
 
       # The runner's preinstalled node is enough (built-ins only), which keeps
       # this job, and so the start of every job behind it, to a few seconds.
+      # THROWAWAY: break the classifier job on purpose to observe fail-open.
+      - run: exit 1
+
       - id: decide
         run: node scripts/ci-lanes.mjs
         env:
