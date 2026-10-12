@@ -1323,10 +1323,8 @@ export interface MockHostOptions {
    * gets the harness theme (and still follows a later `setTheme`). Only a slot
    * this SDK has no shape for is left alone — there is no `theme` field to set.
    *
-   * 🔴 The slot also decides how `SET_USER_CHECKPOINT` is answered, as it does
-   * in production. On `app.page` (the default) `useCheckpointPicker().persist()`
-   * is refused with `ok: false` and the page host's own error text; on any other
-   * slot it resolves. Pass a `ModelSlotContext` to test a block that persists.
+   * The slot also decides `SET_USER_CHECKPOINT`, as in production: refused on
+   * `app.page` (the default), persisted on a model slot.
    */
   context?: BlockContext;
   /**

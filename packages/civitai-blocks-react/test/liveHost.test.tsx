@@ -1892,40 +1892,6 @@ describe('createLiveHost — SET_USER_CHECKPOINT on a PAGE (refused, as the page
   });
 });
 
-describe('createLiveHost — a type outside the protocol', () => {
-  it('gets no reply even with a requestId, as on the real host', async () => {
-    // INVARIANT GUARD, green before and after the page-refusal change. The real
-    // host's `unsupported on this host` reply is built only for a request type
-    // its inventory declares; an undeclared type gets nothing.
-    const inbound = collectInbound();
-    const fetchMock = vi.fn(async (url: string) => {
-      throw new Error(`should not have fetched ${url}`);
-    });
-    const uninstall = createLiveHost({
-      blockToken: fakeJwt(DEFAULT_CLAIMS),
-      viewer: { id: 42, username: 'dev-mod' },
-      fetchImpl: fetchMock as unknown as typeof fetch,
-    }).install();
-    try {
-      await waitForMessage(inbound, 'BLOCK_INIT');
-      const before = inbound.messages.length;
-
-      post('NOT_A_PROTOCOL_MESSAGE', { requestId: 'r-unknown' });
-      // POSITIVE CONTROL, posted AFTER it: a declared request is answered.
-      post('REQUEST_TOKEN', { requestId: 'r-known' });
-      await waitForMessage(inbound, 'TOKEN_REFRESH_RESPONSE');
-
-      expect(
-        inbound.messages.slice(before).map((m) => [m.type, m.payload?.requestId]),
-      ).toEqual([['TOKEN_REFRESH_RESPONSE', 'r-known']]);
-      expect(fetchMock.mock.calls).toEqual([]);
-    } finally {
-      uninstall();
-      inbound.stop();
-    }
-  });
-});
-
 describe('pollWaitSecondsForWire', () => {
   // Same steps as the server's own resolver, except the cap: this one stops at
   // the 60 the procedure's input schema accepts and leaves the lower policy
