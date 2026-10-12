@@ -90,6 +90,7 @@ import type {
   useUploadImageBytes,
   useViewer,
   useWildcardPack,
+  useWorkflowBatch,
   UseAppStorage,
   UseAppWorkflows,
   UseBatchEstimate,
@@ -134,6 +135,7 @@ import type {
   UseUploadImageBytes,
   UseViewer,
   UseWildcardPack,
+  UseWorkflowBatch,
 } from '../index.js';
 
 /** Mutual assignability. Bracketed so unions are compared whole — see above. */
@@ -221,5 +223,6 @@ type _useUploadImageBytes = Assert<
 >;
 type _useViewer = Assert<Exact<ReturnType<typeof useViewer>, UseViewer>>;
 type _useWildcardPack = Assert<Exact<ReturnType<typeof useWildcardPack>, UseWildcardPack>>;
+type _useWorkflowBatch = Assert<Exact<ReturnType<typeof useWorkflowBatch>, UseWorkflowBatch>>;
 
 export {};

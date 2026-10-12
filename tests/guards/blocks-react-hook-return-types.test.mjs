@@ -103,6 +103,7 @@ const HOOK_FILES = [
   'useUploadImageBytes',
   'useViewer',
   'useWildcardPack',
+  'useWorkflowBatch',
 ];
 
 /**

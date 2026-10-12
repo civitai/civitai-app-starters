@@ -576,10 +576,11 @@ resolves with one cell per body, in order, plus the run total. Returns
 - **`kind: 'training'` bodies are refused per cell.** Estimate a training run
   with `useBuzzWorkflow().estimate()`.
 - **Estimate only.** Nothing is submitted and no Buzz is held or spent. There is
-  no batch submit, watch or cancel. Submit each cell with
+  no batch submit. Submit each cell with
   `useBuzzWorkflow().submit()`, which asks the viewer and checks the budget per
   cell. `aggregate.total` is a quote, not a lock: each cell is priced again when
-  it is submitted.
+  it is submitted. To follow the submitted cells and cancel them together, see
+  [`useWorkflowBatch()`](#useworkflowbatch).
 
 `aggregate.total` sums the cells that priced. It covers the whole grid only when
 `aggregate.pricedCells === aggregate.cellCount`; otherwise show it as a partial
@@ -710,6 +711,121 @@ of cell indices to answer those cells the way the host does when its time
 budget runs out (`ok: false`, `timedOut: true`). **`dev:live`** forwards the call to civitai.com, so against
 a civitai.com that predates the batch procedure it rejects with `'failed'`
 rather than `'unsupported'`.
+
+### `useWorkflowBatch()`
+
+Watch a set of already-submitted workflows as one batch: per-cell status, a
+summary, and cancel-all. Built for grid apps that submit each cell with
+`useBuzzWorkflow().submit()` (each with its own confirmation, unchanged) and
+then have to follow all of them. `useWorkflowBatch(workflowIds, options?)`
+returns `{ cells, summary, cancelAll, rewatch }`.
+
+- **The array of ids is the batch.** There is no server-side batch id. Append
+  each id as its `submit()` resolves, and persist the same array (plain
+  strings) to re-attach after a reload by passing it back. Skip a submit that
+  resolved with the `'failed'` placeholder id: nothing was created.
+- **Every cell is one ordinary `watch()`**, so each workflow has exactly one
+  poll in flight. When a cell's loop restarts (the list changes, `rewatch()`,
+  a StrictMode remount) the new loop waits for the old loop's poll to return.
+  `options` (`intervalMs`, `waitSeconds`, `timeoutMs`, `maxRetries`) are passed
+  to every cell's `watch()`.
+- **At most 30 ids** (`WORKFLOW_BATCH_MAX_CELLS`): the poll allowance (1,200 per
+  60 s per block instance and viewer) divided by one watch's 40 polls a minute.
+  A longer list, a duplicate, an empty id or a `'failed'`/`'whatif'`
+  placeholder throws.
+- **`summary`** counts `succeeded`, `failed`, `canceled`, `expired` and `running`
+  (not terminal, including cells with no snapshot yet) from each cell's latest
+  snapshot, plus `realisedCost`: the sum of `cost.total` on the terminal
+  snapshots that carry one. That is the generation cost the host reported, not a
+  ledger read; the author fee is charged separately and is not included.
+  `settled` is `running === 0`.
+- **A host failure placeholder is not a workflow outcome.** When the host fails
+  a poll it answers `{ workflowId: 'failed', status: 'failed' }`. That says
+  nothing about the workflow, so the cell is not counted as failed: its `phase`
+  becomes `'stopped'` with `error` set, and `summary.stopped` counts it. A
+  stopped cell (also a watch that timed out or ran out of retries) is not
+  polled again until you call `rewatch()`.
+- **`cancelAll()` cancels every cell not known to be finished** and resolves
+  (never rejects) with `{ canceled, alreadySettled, refused, notAttempted,
+  failed, complete }`, each a list of ids. Cancels charge the estimate allowance
+  (150 per 10 s per block instance; on a page app every viewer shares it), so at
+  most four are in flight. A refused cancel resolves `status: 'processing'`: it
+  was not sent and the workflow is still running. After the first refusal the
+  rest of the call is not sent (`notAttempted`). A cancel answered with the
+  host's failure placeholder is `failed`, not a failed workflow. Nothing is
+  retried automatically. When `complete` is `false`, wait a few seconds and call
+  `cancelAll()` again; it targets only cells that are still not finished.
+- **Unmounting stops every poll.** A `cancelAll()` already running keeps sending.
+
+```tsx
+import { useEffect, useState } from 'react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+import { useBuzzWorkflow, useWorkflowBatch } from '@civitai/blocks-react';
+
+const SAVED = 'grid-run-ids';
+
+function GridRun({ bodies }: { bodies: WorkflowBody[] }) {
+  const { submit } = useBuzzWorkflow();
+  const [ids, setIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED) ?? '[]') as string[];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED, JSON.stringify(ids));
+    } catch {
+      // Storage can be unavailable; the run still works, it just won't re-attach.
+    }
+  }, [ids]);
+
+  const { cells, summary, cancelAll, rewatch } = useWorkflowBatch(ids);
+  const [cancelNote, setCancelNote] = useState<string | null>(null);
+
+  async function runCell(body: WorkflowBody, key: string) {
+    const snap = await submit(body, { idempotencyKey: key });
+    if (snap.workflowId !== 'failed') setIds((prev) => [...prev, snap.workflowId]);
+  }
+
+  async function onCancelAll() {
+    const result = await cancelAll();
+    setCancelNote(
+      result.complete
+        ? null
+        : `${result.refused.length + result.notAttempted.length + result.failed.length} cells are still running. Try again in a few seconds.`,
+    );
+  }
+
+  return (
+    <div>
+      <button onClick={() => bodies.forEach((b, i) => void runCell(b, `cell-${i}`))}>Run grid</button>
+      <p>
+        {summary.succeeded} done, {summary.failed} failed, {summary.canceled} cancelled,{' '}
+        {summary.running} running. Spent {summary.realisedCost} Buzz.
+      </p>
+      {!summary.settled && <button onClick={onCancelAll}>Cancel all</button>}
+      {summary.stopped > 0 && <button onClick={rewatch}>Refresh stalled cells</button>}
+      {cancelNote && <p>{cancelNote}</p>}
+      <ul>
+        {cells.map((cell) => (
+          <li key={cell.workflowId}>{cell.snapshot?.status ?? 'queued'}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+**Mock host:** `createMockHost` and `Harness` keep a cancelled workflow
+cancelled on later polls, report a finished workflow's real status when it is
+cancelled, and count down an id they did not submit (one restored after a
+reload) like any other. Set `generation.cancelRefused` to `true` (or a list of
+workflow ids) to answer cancels the way the host does when the allowance is used
+up, and `generation.workflowOutcome` to a `(workflowId, body) => 'succeeded' |
+'failed' | 'expired'` function to give a grid a mix of outcomes. The mock does
+not model the rate limits themselves.
 
 ### `useBuzzPurchase()`
 

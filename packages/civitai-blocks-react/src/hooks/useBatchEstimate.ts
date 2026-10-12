@@ -232,9 +232,10 @@ function toBatchEstimateError(err: unknown): BatchEstimateError {
  * - **`kind: 'training'` bodies are refused per cell.** Estimate a training run
  *   with `useBuzzWorkflow().estimate()`.
  *
- * 🔴 ESTIMATE ONLY. There is no batch submit, watch or cancel and no id for the
- * list. The total is a quote: nothing reserves it and each cell is priced again
- * at `submit()`.
+ * 🔴 ESTIMATE ONLY. There is no batch submit and no server-side id for the
+ * list. To watch and cancel the submitted cells together, use
+ * `useWorkflowBatch()`. The total is a quote: nothing reserves it and each cell
+ * is priced again at `submit()`.
  *
  * Like `estimate()`, this does NOT prompt for consent. It needs the
  * `ai:write:budgeted` scope; without it the call rejects with `code: 'failed'`.
