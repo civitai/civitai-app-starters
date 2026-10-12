@@ -118,8 +118,8 @@ per-generation budget instead, and no top-up is offered.
 `?consent=0` starts WITHOUT the spend scope, at the Allow generations step;
 Allow grants it, and the price and Generate follow. `?consent=ungrantable`
 starts without it in a host that can never grant it, so Allow ends in the
-"isn't available" message. (The mock prices a generation even without the
-scope, which the real host refuses; the example never asks it to.)
+"isn't available" message. (Like the real host, the mock refuses an estimate
+or a submit without the scope; the example never asks it to.)
 
 A submit that reaches the mock with a short wallet is rejected with
 `'exception'`, as in production. The app then re-reads the wallet and offers a
