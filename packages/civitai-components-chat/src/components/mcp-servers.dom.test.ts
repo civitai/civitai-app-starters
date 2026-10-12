@@ -32,7 +32,8 @@ describe('<civitai-chat> mcpServers', () => {
     chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' }];
     chat.app = fakeApp();
     document.body.append(chat);
-    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.initializes).toBe(1));
+    // The first test in this file pays the cold import of the whole runtime.
+    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.initializes).toBe(1), { timeout: 10_000 });
 
     chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' }];
     await chat.updateComplete;

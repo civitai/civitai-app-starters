@@ -28,7 +28,8 @@ describe('civitai-chat', () => {
     chat.scope = 'board';
     chat.app = fakeApp();
     document.body.append(chat);
-    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-composer')).not.toBeNull());
+    // The first test in this file pays the cold import of the whole runtime.
+    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-composer')).not.toBeNull(), { timeout: 10_000 });
 
     expect(document.querySelector('civitai-chat-composer')).toBeNull();
     expect(document.documentElement.dataset.theme).toBeUndefined();

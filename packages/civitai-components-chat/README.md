@@ -139,8 +139,9 @@ chat.mcpServers = [
   request, and may return a string or a promise. The chat never sends an added server the viewer's
   Civitai token: an entry without `token` is skipped with a console warning.
 - **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
-  whose `url` changed. A call still running on a closed server fails, and so does any later call
-  to it: a closed server is never reopened. The conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:
+  whose `url` changed. A call still running on a closed connection fails, and so does any later
+  call through it (a tool built before the change): a closed connection never reconnects. Listing
+  the same `id` and `url` again opens a new connection. The conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:
   `token` and `label` changes apply without reconnecting.
 - **Long calls.** Calls ask for MCP progress notifications, and each one restarts a 610 s timeout,
   so a tool that keeps reporting progress (a build, a test run) is not cut off however long it runs.
