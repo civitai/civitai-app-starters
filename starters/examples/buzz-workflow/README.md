@@ -133,6 +133,13 @@ and one without at 120 Buzz, so the CTA goes from `free (cache hit)` on the
 first Generate to `120 Buzz` on the re-gen — the #59 behaviour. (The real
 orchestrator decides cache hits by the whole workflow, not the seed alone.)
 
+The harness starts with the spend scope (`ai:write:budgeted`) already granted.
+The mock refuses an estimate without it, as production does, and this example
+prices on mount without asking for consent first — so `?consent=0`, which starts
+without the scope, shows a failed first quote until the first Generate, whose
+submit prompts for consent and retries. To ask for consent before pricing, copy
+the gate in `buzz-purchase` or `generate-studio`.
+
 `npm run dev:live` runs it against the real backend and **spends your own
 Buzz** — see [the examples README](../README.md#against-the-real-backend-devlive). See the [root README](../../../README.md) for submit → review →
 deploy.

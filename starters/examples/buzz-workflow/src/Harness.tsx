@@ -35,16 +35,35 @@ const MODEL_SLOT: ModelSlotContext = {
   modelNsfwLevel: 1,
 };
 
+/**
+ * Whether the mock starts with the spend scope (`ai:write:budgeted`) already
+ * granted. Default YES, and that is a choice about THIS example, not about the
+ * mock: the mock refuses an estimate from a token without the scope, exactly as
+ * production does, and this example prices on mount without first asking for
+ * consent — so un-granted, its first quote fails and the button shows `…` until
+ * the first Generate (whose submit prompts, is granted and retries on its own).
+ * `?consent=0` starts WITHOUT the scope, to see that real first-visit state; the
+ * mock's own `?consent=granted` can only turn consent ON, which is why this
+ * reads the URL itself. (buzz-purchase, generate-studio and generation-kinds ask
+ * for consent BEFORE they estimate, which is the pattern to copy.)
+ */
+function startsWithConsent(): boolean {
+  const consent = new URLSearchParams(window.location.search).get('consent');
+  return consent !== '0' && consent !== 'ungrantable';
+}
+
 export function Harness({ children }: { children: ReactNode }) {
   if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
   // The SDK's mock host: no network, no Buzz. `declaredScopes` is the
   // manifest's own list, so a scope the manifest forgot fails here exactly as
-  // the real host refuses it. URL knobs: `?theme=light`, `?viewer=anon`, …
+  // the real host refuses it. URL knobs: `?theme=light`, `?viewer=anon`,
+  // `?consent=0`, …
   return (
     <MockHost
       declaredScopes={manifest.scopes}
       blockId={manifest.blockId}
       context={MODEL_SLOT}
+      consentGranted={startsWithConsent()}
       // The orchestrator prices a cache hit at 0, and the SEED decides
       // cache-hit-ness (gotcha #59): a fixed seed is free here, a fresh one costs.
       generation={{ costPerGen: (req) => (req.kind === 'textToImage' && req.params?.seed !== undefined ? 0 : 120) }}

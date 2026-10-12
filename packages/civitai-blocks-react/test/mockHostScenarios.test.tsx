@@ -112,7 +112,7 @@ describe('createMockHost — generation scenario', () => {
   });
 
   it('costPerGen as a number reports on estimate + succeeded', async () => {
-    uninstall = createMockHost({ generation: { costPerGen: 42 }, pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 42 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -135,7 +135,7 @@ describe('createMockHost — generation scenario', () => {
     generation: NonNullable<Parameters<typeof createMockHost>[0]>['generation'],
     body: Parameters<ReturnType<typeof useBuzzWorkflow>['estimate']>[0] = BODY,
   ) => {
-    uninstall = createMockHost({ generation, pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, generation, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
     let snap!: Awaited<ReturnType<typeof result.current.estimate>>;
@@ -297,7 +297,7 @@ describe('createMockHost — generation scenario', () => {
   });
 
   it('the estimate path still prices normally when failEstimate is unset (control)', async () => {
-    uninstall = createMockHost({ generation: { costPerGen: 42 } }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 42 } }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 

@@ -64,7 +64,7 @@ describe('createMockHost', () => {
   });
 
   it('estimate→submit→poll resolves to a succeeded snapshot with image + cost', async () => {
-    uninstall = createMockHost({ pollsUntilDone: 2, cost: 12 }).install();
+    uninstall = createMockHost({ consentGranted: true, pollsUntilDone: 2, cost: 12 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     // Wait for init so the transport flushes outbound to the mock host.
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));

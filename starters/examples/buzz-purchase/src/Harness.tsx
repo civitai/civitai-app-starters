@@ -75,8 +75,8 @@ export function Harness({ children }: { children: ReactNode }) {
       // it over the mock's 200-Buzz per-generation budget instead — no top-up.
       //
       // `?consent=0` starts at the "Allow generations" step instead (see
-      // `startsWithConsent`). Note the mock prices a generation even without the
-      // spend scope, which the real host refuses; the example never asks it to.
+      // `startsWithConsent`). Like the real host, the mock refuses an estimate or
+      // a submit without the spend scope; the example never asks it to.
       //
       // A submit that DOES reach the mock with a short wallet is REJECTED with
       // 'exception', as in production; the app then re-reads the wallet and

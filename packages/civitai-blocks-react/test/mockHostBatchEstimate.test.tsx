@@ -48,8 +48,13 @@ describe('createMockHost — batch estimate', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * Consent GRANTED by default: these cases are about pricing, and an un-granted
+   * token is refused whole-call (#608 — covered by its own describe below). A
+   * case may still pass `consentGranted: false` explicitly.
+   */
   async function hooks(options: Parameters<typeof createMockHost>[0]) {
-    uninstall = createMockHost(options).install();
+    uninstall = createMockHost({ consentGranted: true, ...options }).install();
     const { result } = renderHook(() => ({ batch: useBatchEstimate(), single: useBuzzWorkflow() }));
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
     return result;

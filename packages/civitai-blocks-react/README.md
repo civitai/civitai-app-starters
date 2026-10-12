@@ -704,7 +704,10 @@ Any other `'timeout'` is a slow host.
 
 **Mock host:** `createMockHost` and `Harness` price each cell exactly as they
 price one `estimate()` of that body (`costPerGen` and `failEstimate` apply per
-cell). Set `generation.batchEstimate` to `'unsupported'` to test the fallback,
+cell). Like the host, they refuse the **whole call** while the token lacks
+`ai:write:budgeted` — `'failed'`, with `hostError` `block lacks
+ai:write:budgeted scope` — so pass `consentGranted: true`, or drive
+`requestConsent()` and estimate again once the scope lands. Set `generation.batchEstimate` to `'unsupported'` to test the fallback,
 or to `'silent'` to test a call that never gets a reply (pass a short
 `timeoutMs` in a test). Set `generation.batchEstimateTimedOutCells` to a list
 of cell indices to answer those cells the way the host does when its time
@@ -2071,6 +2074,46 @@ on every parameter change. Prompting there would open a consent dialog with no
 user gesture behind it, once per edit. A failed `estimate()` rejects exactly as
 it always has; show no price and let `submit()` do the asking.
 
+The same goes for `useBatchEstimate()`. Until the viewer grants
+`ai:write:budgeted` the host refuses **every** estimate, single and batch, with
+`block lacks ai:write:budgeted scope` (`WorkflowEstimateError` / `BatchEstimateError`,
+code `'failed'`). To show a price before the first Generate, ask on a user
+gesture and estimate again once the grant lands:
+
+```tsx
+import { useEffect, useState } from 'react';
+import { useBlockToken, useBuzzWorkflow, useRequestConsent } from '@civitai/blocks-react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+function Price({ body }: { body: WorkflowBody }) {
+  const token = useBlockToken();
+  const { requestConsent } = useRequestConsent();
+  const { estimate } = useBuzzWorkflow();
+  const [price, setPrice] = useState<number | null>(null);
+  const canPrice = token.scopes.includes('ai:write:budgeted');
+
+  // Keyed on `canPrice`, so the quote is fetched again when the grant lands.
+  useEffect(() => {
+    if (!canPrice) return;
+    estimate(body).then((s) => setPrice(s.cost?.total ?? null), () => setPrice(null));
+  }, [canPrice, body, estimate]);
+
+  if (!canPrice) {
+    return (
+      <button onClick={() => requestConsent({ scopes: ['ai:write:budgeted'] })}>
+        Allow generations
+      </button>
+    );
+  }
+  return <span>{price === null ? '…' : `${price} Buzz`}</span>;
+}
+```
+
+The mock host enforces this too (since `@civitai/blocks-react` 0.70.0, #608): with
+the default `consentGranted: false` its estimate, batch estimate and submit
+refuse exactly as the host does, `REQUEST_CONSENT` grants and pushes the
+refreshed token, and `consentGrantable: false` keeps the refusal in place.
+
 ```tsx
 // This is the whole thing. No try/catch around a consent prompt, no watching
 // useBlockToken().scopes, no manual retry.
@@ -2652,6 +2695,29 @@ const uninstall = host.install();
 host.setScenario({ failMode: 'none' });   // live-tune mid-test
 uninstall();
 ```
+
+🔴 **The mock enforces the spend scope, as the host does** (since `0.70.0`,
+[#608](https://github.com/civitai/civitai-app-starters/issues/608)).
+`consentGranted` defaults to `false` — production's first token does not carry
+`ai:write:budgeted` — and while it is `false`, an estimate, a batch estimate and
+a submit are refused with `block lacks ai:write:budgeted scope`, each in the
+shape the host sends:
+
+| Call | What your code sees before consent |
+|---|---|
+| `estimate()` | rejects `WorkflowEstimateError`, code `'failed'`, reason on `err.snapshot.error` |
+| `estimateBatch()` | rejects `BatchEstimateError`, code `'failed'`, reason on `err.hostError` |
+| `submit()` | prompts for consent, the mock grants it and pushes a refreshed token, and the call is retried once with the **same** idempotency key — it resolves, and is charged once |
+
+`consentGrantable: false` (or `?consent=ungrantable`) keeps the refusal: the
+prompt is answered with `CONSENT_UNAVAILABLE` and `submit()` rejects with code
+`'exception'`.
+
+**Migrating a test:** one that estimates or submits and is not *about* consent
+passes `consentGranted: true` (or uses `?consent=granted` in a harness). One that
+is about consent drives it: estimate, see the refusal, call
+`requestConsent({ scopes: ['ai:write:budgeted'] })`, wait for
+`useBlockToken().scopes` to include it, estimate again.
 
 ### Testing overlay elements
 

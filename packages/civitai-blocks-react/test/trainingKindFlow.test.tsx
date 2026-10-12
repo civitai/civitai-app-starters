@@ -26,7 +26,7 @@ import {
   MOCK_TRAINING_NONE_IMPORTED_ERROR,
   MOCK_TRAINING_QUOTE_GONE_ERROR,
   MOCK_TRAINING_BOUNDS,
-  MOCK_TRAINING_SCOPE_ERROR,
+  MOCK_SPEND_SCOPE_ERROR,
   type MockHostOptions,
 } from '../src/internal/mockHost.js';
 import { getTransport } from '../src/transport/singleton.js';
@@ -545,7 +545,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
         quoteId: `tq_${'0'.repeat(32)}`,
       }),
     );
-    expect((r.error as RunTrainingError).message).toBe(MOCK_TRAINING_SCOPE_ERROR);
+    expect((r.error as RunTrainingError).message).toBe(MOCK_SPEND_SCOPE_ERROR);
     expect(m.outbound.filter((o) => o.type === 'RUN_TRAINING')).toHaveLength(1);
     expect(m.outbound.filter((o) => o.type === 'REQUEST_CONSENT')).toHaveLength(0);
   });
