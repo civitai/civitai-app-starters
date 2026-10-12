@@ -715,7 +715,8 @@ describe('confirmed step — what the server refuses to quote', () => {
     expect(single.value!.stepQuote?.total).toBe(PRICE);
   });
 
-  for (const $type of ['training', 'imageResourceTraining']) {
+  // Canonical spellings AND mixed case: the server folds case on this check.
+  for (const $type of ['training', 'imageResourceTraining', 'Training', 'IMAGEresourceTRAINING']) {
     it(`an over-budget estimate of a "${$type}" step REJECTS with the server's message instead of a price`, async () => {
       const m = install();
       uninstall = m.uninstall;
@@ -774,6 +775,28 @@ describe('confirmed step — what the server refuses to quote', () => {
       () => ({ a: [{ b: new URL('https://example.com/10') }] }),
       'body.input.a[0].b is a URL',
     ],
+    // Sparse-array holes. Each fixture has real elements around the hole, so it
+    // is distinct from `[]` and from `[null]` — `map`/`join` would skip the hole
+    // and bind it like the dense array without it.
+    // eslint-disable-next-line no-sparse-arrays
+    ['a hole in the middle', () => ({ list: [21, , 23] }), 'body.input.list[1] is an empty array slot'],
+    // eslint-disable-next-line no-sparse-arrays
+    ['a hole at the start', () => ({ list: [, 'b', 'c'] }), 'body.input.list[0] is an empty array slot'],
+    [
+      'a trailing hole',
+      () => {
+        const list: unknown[] = [true, false];
+        list.length = 3;
+        return { list };
+      },
+      'body.input.list[2] is an empty array slot',
+    ],
+    [
+      'a nested hole',
+      // eslint-disable-next-line no-sparse-arrays
+      () => ({ grid: [[1, 2], [3, , 5]] }),
+      'body.input.grid[1][1] is an empty array slot',
+    ],
   ];
 
   for (const [label, input, where] of NON_JSON) {
@@ -809,6 +832,48 @@ describe('confirmed step — what the server refuses to quote', () => {
       input: { s: 'x', n: 1.5, t: true, z: null, list: [1, 'a', false, null, { k: [] }], gone: undefined },
     });
     expect(stepQuote.total).toBe(PRICE);
+  });
+
+  it('a mixed-case NON-training $type is still quoted (the fold matches only the two names)', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    for (const $type of ['PolyGen', 'Trainings', 'trainingPreview']) {
+      const { stepQuote } = await quote(result, { ...BODY, $type });
+      expect(stepQuote.stepType, $type).toBe($type);
+    }
+  });
+
+  it('a hole is not an explicit null: [1, null, 3] IS quoted where [1, , 3] is refused', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    const { stepQuote } = await quote(result, { ...BODY, input: { list: [1, null, 3] } });
+    expect(stepQuote.total).toBe(PRICE);
+  });
+
+  it('RUN: a mixed-case training $type is refused and the quote is KEPT', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    const { quoted } = await quote(result);
+    const r = await settle(() => result.current.run.runConfirmedStep({ ...quoted, $type: 'TrAiNiNg' }));
+    expect((r.error as RunConfirmedStepError).message).toBe(SERVER_TRAINING_TYPE_ERROR);
+    expect((await settle(() => result.current.run.runConfirmedStep(quoted))).error).toBeUndefined();
+  });
+
+  it('RUN: a sparse-array hole is refused naming the slot', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    const { quoted } = await quote(result);
+    const r = await settle(() =>
+      // eslint-disable-next-line no-sparse-arrays
+      result.current.run.runConfirmedStep({ ...quoted, input: { ...quoted.input, list: [31, , 33] } }),
+    );
+    expect((r.error as RunConfirmedStepError).message).toBe(
+      `${SERVER_NON_JSON_PREFIX}body.input.list[1] is an empty array slot`,
+    );
   });
 
   it('RUN: a training $type is refused with the server message and the quote is KEPT', async () => {

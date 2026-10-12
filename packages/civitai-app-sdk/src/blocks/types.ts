@@ -1933,12 +1933,14 @@ export interface BlockWorkflowSnapshot {
    * run. Neither has an {@link BlockWorkflowSnapshot.errorCode}; they are
    * server messages, so match on the text and keep a generic branch:
    *  - `a training step type cannot run as a confirmed step — use
-   *    kind:'training'` — `$type` is `training` or `imageResourceTraining`.
+   *    kind:'training'` — `$type` is `training` or `imageResourceTraining`, in
+   *    any casing.
    *    Training has its own kind ({@link WorkflowBodyTraining}).
    *  - `a confirmed step needs plain JSON input (objects, arrays, strings,
    *    finite numbers, booleans, null) — <path> is <what>` — `input` holds a
-   *    `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity` or an
-   *    `undefined` array element. The quote is bound to the exact body, so the
+   *    `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an
+   *    `undefined` array element or an empty slot in a sparse array
+   *    (`… — body.input.list[1] is an empty array slot`). The quote is bound to the exact body, so the
    *    body must be exactly representable. The part after the dash names the
    *    offending path (`body.input.when is a Date`) and varies: match on the
    *    text BEFORE the dash.

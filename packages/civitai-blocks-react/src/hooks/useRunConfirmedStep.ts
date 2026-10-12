@@ -239,9 +239,9 @@ export interface UseRunConfirmedStep {
  *
  * 🔴 ESTIMATE THE BODY ON ITS OWN. A batch estimate (`useBatchEstimate()`) never
  * carries a `stepQuote`. And where a quote would be granted, the estimate
- * REJECTS instead for a training `$type` (`training` / `imageResourceTraining` —
- * use `kind: 'training'`) and for an `input` that is not plain JSON (a `Date`,
- * `Map`, `Set`, `BigInt`, `NaN`, …). Both are server messages with no code; see
+ * REJECTS instead for a training `$type` (`training` / `imageResourceTraining`,
+ * any casing — use `kind: 'training'`) and for an `input` that is not plain JSON
+ * (a `Date`, `Map`, `Set`, `BigInt`, `NaN`, an empty slot in a sparse array, …). Both are server messages with no code; see
  * `BlockWorkflowSnapshot.stepQuote` for the exact text.
  *
  * 🔴 THE CONFIRM IS CIVITAI'S, AND IT IS THE CHARGE. The price on it is read back

@@ -219,7 +219,7 @@ or metered) above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_
 single-use and expires after 15 minutes. Only a **single** estimate carries `stepQuote` — a
 batch estimate stores nothing, so its cells never do. Where a quote would be granted, the
 estimate **fails instead** (`{ workflowId: 'failed', status: 'failed', error }`) for a training
-`$type` (`a training step type cannot run as a confirmed step — use kind:'training'`) and for an
+`$type` in any casing (`a training step type cannot run as a confirmed step — use kind:'training'`) and for an
 `input` that is not plain JSON (`a confirmed step needs plain JSON input (objects, arrays,
 strings, finite numbers, booleans, null) — <path> is <what>`; the suffix varies, so match on
 the text before the dash). Each confirmation is its own job, so a

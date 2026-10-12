@@ -1272,8 +1272,8 @@ a flag — they are server messages, so match on the text:
 
 | `snapshot.error` / `err.message` | cause | fix |
 |---|---|---|
-| `a training step type cannot run as a confirmed step — use kind:'training'` | `$type` is `training` or `imageResourceTraining` | train with [`kind: 'training'`](#usepreparetrainingdataset-and-useruntraining--lora-training), which has its own dataset and checks |
-| starts with `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ` and ends with the offending path, e.g. `body.input.when is a Date` | `input` holds something that is not plain JSON: a `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, or an `undefined` array element. The quote is bound to the exact body, so the body must be exactly representable | send plain JSON (an ISO string for a date, an array for a set). The suffix varies, so match on the part **before the dash** |
+| `a training step type cannot run as a confirmed step — use kind:'training'` | `$type` is `training` or `imageResourceTraining`, in any casing | train with [`kind: 'training'`](#usepreparetrainingdataset-and-useruntraining--lora-training), which has its own dataset and checks |
+| starts with `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ` and ends with the offending path, e.g. `body.input.when is a Date` | `input` holds something that is not plain JSON: a `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an `undefined` array element, or an empty slot in a sparse array (`… is an empty array slot`). The quote is bound to the exact body, so the body must be exactly representable | send plain JSON (an ISO string for a date, an array for a set). The suffix varies, so match on the part **before the dash** |
 
 🔴 **Single-use, and it expires.** A quote is good for one run and for **15
 minutes** (`stepQuote.expiresAt`). The server prices the job again at submit and

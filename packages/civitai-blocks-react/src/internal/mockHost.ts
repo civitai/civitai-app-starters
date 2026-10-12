@@ -642,9 +642,19 @@ const PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS: ReadonlySet<string> = new Set(
   RUN_CONFIRMED_STEP_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
 );
 
-/** The orchestrator's training `$type`s, which never run as a confirmed step. */
+/**
+ * The orchestrator's training `$type`s, which never run as a confirmed step —
+ * matched CASE-INSENSITIVELY, as the server refuses a caller-supplied `$type`
+ * (`isTrainingStepTypeIgnoringCase`): `Training` or `IMAGERESOURCETRAINING` is
+ * refused like the canonical spelling. Only for refusing a submitted `$type`;
+ * the trained-epochs simulation keys on the exact spelling, as the host does.
+ */
+const TRAINING_STEP_TYPES_FOLDED: ReadonlySet<string> = new Set([
+  'training',
+  'imageresourcetraining',
+]);
 const isTrainingStepTypeName = (stepType: string): boolean =>
-  stepType === 'training' || stepType === 'imageResourceTraining';
+  TRAINING_STEP_TYPES_FOLDED.has(stepType.toLowerCase());
 
 /**
  * The orchestrator `$type` of a PASS-THROUGH step body, else `undefined`. Keyed
@@ -695,8 +705,8 @@ const describeNonJson = (value: unknown): string => {
  * object keys sorted at EVERY depth, so two bodies with the same values compare
  * equal however they were written. EXACT, OR IT THROWS — only plain objects,
  * arrays, strings, finite numbers, booleans and `null` are accepted. A `Date`,
- * `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity` or an `undefined`
- * array element throws {@link NonJsonStepBodyError} naming the path, because a
+ * `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an `undefined`
+ * array element or an empty slot in a sparse array throws {@link NonJsonStepBodyError} naming the path, because a
  * looser form would give two different such values the same bytes. An object
  * key whose value is `undefined` is skipped, as JSON drops it.
  */
@@ -710,7 +720,14 @@ const canonicalStepJson = (value: unknown, path: string): string => {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((entry, i) => canonicalStepJson(entry, `${path}[${i}]`)).join(',')}]`;
+    // BY INDEX, not `map`: `map` and `join` skip a hole, so a sparse array would
+    // bind as if its empty slots were not there. The server refuses a hole.
+    const entries: string[] = [];
+    for (let i = 0; i < value.length; i += 1) {
+      if (!(i in value)) throw new NonJsonStepBodyError(`${path}[${i}] is an empty array slot`);
+      entries.push(canonicalStepJson(value[i], `${path}[${i}]`));
+    }
+    return `[${entries.join(',')}]`;
   }
   if (typeof value === 'object') {
     const proto = Object.getPrototypeOf(value) as unknown;
@@ -1321,9 +1338,9 @@ export interface MockHostOptions {
    * takes to reach this path. ONLY a single `ESTIMATE_WORKFLOW` quotes one: a
    * batch-estimate cell never carries `stepQuote`, as on the server. And where a
    * quote would be granted, two bodies make the estimate FAIL instead, with the
-   * server's message: a training `$type` (`training`, `imageResourceTraining`),
-   * and an `input` that is not plain JSON (a `Date`, `Map`, `Set`, `BigInt`,
-   * `NaN`, …).
+   * server's message: a training `$type` (`training`, `imageResourceTraining`,
+   * in any casing), and an `input` that is not plain JSON (a `Date`, `Map`,
+   * `Set`, `BigInt`, `NaN`, an empty slot in a sparse array, …).
    *
    * Whether the QUOTE survives follows the real flow: the host's own gate,
    * dialog and daily-limit codes settle before the server claims the quote, so
