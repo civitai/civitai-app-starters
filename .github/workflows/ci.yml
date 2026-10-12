@@ -46,8 +46,10 @@ jobs:
   # `skipped`, which satisfies a required context; a workflow-level `paths:`
   # filter leaves required contexts pending forever.
   #
-  # The lanes themselves (`full`, `scheduled`, and `release` for a Version
-  # Packages PR that is only a version bump) are defined in the script's header.
+  # The lanes themselves (`full`, `scheduled`, `release` for a Version Packages
+  # PR that is only a version bump, and `tree-already-tested` for a push to main
+  # whose exact tree a full-lane PR run already passed; see `record-tree` at the
+  # bottom) are defined in the script's header.
   #
   # NOT a required context, and it must not become one: nothing depends on it
   # succeeding. `tests/guards/ci-lanes-ledger.test.mjs` pins this job's outputs
@@ -58,6 +60,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # The push gate reads artifact listings, runs and their jobs.
+      actions: read
     outputs:
       lane: ${{ steps.decide.outputs.lane }}
       sdk: ${{ steps.decide.outputs.sdk }}
@@ -785,3 +789,80 @@ jobs:
       - run: pnpm check:public-types:selftest
 
       - run: pnpm check:public-types
+
+  # THE TESTED-TREE RECORD, read by the push gate in `scripts/ci-lanes.mjs`.
+  #
+  # On a pull_request run that took the FULL lane and in which every CORE job
+  # ran its full step set and succeeded, upload a marker named for the tested
+  # MERGE commit's tree. A push to main whose commit has that exact tree then
+  # skips its core jobs (the advisory five still run there).
+  #
+  # 🔴 THE CONDITION NAMES EVERY CORE JOB, ONE BY ONE, AND THAT IS THE ONLY SHAPE
+  # THAT WORKS. `success()` is false whenever any needed job was SKIPPED, and
+  # the lanes skip advisory jobs on most PRs, so a `success()` record would
+  # never fire; `!contains(needs.*.result, 'skipped')` never fires for the same
+  # reason. Both were measured never firing in a sibling repository.
+  # `!cancelled()` stops the implicit `success()` from being AND-ed in.
+  #
+  # 🔴 `result == 'success'` IS NOT ENOUGH ON ITS OWN: in the release lane the
+  # `starter` legs SUCCEED with their heavy steps switched off. So each core job
+  # also needs its lane output to be `'true'`, and the lane must be `full`. A
+  # lane-limited run never records; and the artifact name ends in `-full`,
+  # which is the only name the gate looks up.
+  #
+  # Advisory jobs are in `needs:` (so the record waits for them) but not in the
+  # condition: the push run re-runs all five against the same tree anyway.
+  # `tests/guards/ci-lanes-ledger.test.mjs` pins `needs:` to every job and the
+  # condition to every core job, as sets: adding a job without both fails.
+  record-tree:
+    name: Record the tested tree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs:
+      - lanes
+      - sdk
+      - schema-drift
+      - starter-pins
+      - orchestrator-catalog-drift
+      - civitai-sdk
+      - blocks-react
+      - design-system
+      - design-system-cross-browser
+      - design-system-drift-guard
+      - readme-snippets
+      - starter
+      - examples
+      - packaging
+      - public-types
+    if: >-
+      ${{ !cancelled()
+      && github.event_name == 'pull_request'
+      && needs.lanes.result == 'success'
+      && needs.lanes.outputs.lane == 'full'
+      && needs.sdk.result == 'success' && needs.lanes.outputs.sdk == 'true'
+      && needs.civitai-sdk.result == 'success' && needs.lanes.outputs.civitai-sdk == 'true'
+      && needs.blocks-react.result == 'success' && needs.lanes.outputs.blocks-react == 'true'
+      && needs.design-system.result == 'success' && needs.lanes.outputs.design-system == 'true'
+      && needs.readme-snippets.result == 'success' && needs.lanes.outputs.readme-snippets == 'true'
+      && needs.starter.result == 'success' && needs.lanes.outputs.starter == 'true'
+      && needs.examples.result == 'success' && needs.lanes.outputs.examples == 'true'
+      && needs.packaging.result == 'success' && needs.lanes.outputs.packaging == 'true'
+      && needs.public-types.result == 'success' && needs.lanes.outputs.public-types == 'true'
+      }}
+    steps:
+      # The default ref for pull_request is the merge commit every other job
+      # tested (`github.sha`), so this is the tree they ran against.
+      - uses: actions/checkout@v7
+
+      - id: tree
+        run: echo "sha=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - run: printf '{"tree":"%s","run_id":"%s","commit":"%s","lane":"full"}\n' "${{ steps.tree.outputs.sha }}" "${{ github.run_id }}" "${{ github.sha }}" > tested-tree.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-tested-tree-${{ steps.tree.outputs.sha }}-full
+          path: tested-tree.json
+          retention-days: 14
+          if-no-files-found: error

@@ -34,6 +34,7 @@ import {
   globToRegExp,
   isReleaseHead,
   packageJsonBumpProblem,
+  pushGate,
 } from '../../scripts/ci-lanes.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -417,5 +418,174 @@ describe('the blob fetcher', () => {
     const get = blobFetcher({ api: 'x', repo: 'o/r', shas: { base: 'main' }, fetchImpl: async () => assert.fail('fetched') });
     await assert.rejects(get('a', 'base'), /no base sha/);
     await assert.rejects(get('a', 'head'), /no head sha/);
+  });
+});
+
+describe('push gate: main skips its core jobs only for an exact, verified, full-lane tested tree', () => {
+  const REPO = 'civitai/civitai-app-starters';
+  const SHA = '1'.repeat(40);
+  const BEFORE = '2'.repeat(40);
+  const TREE = '3'.repeat(40);
+  const OTHER_TREE = '4'.repeat(40);
+  const RUN = 900;
+  const REPO_ID = 77;
+  const NAME = `ci-tested-tree-${TREE}-full`;
+
+  /** A fake GitHub API in which the push is skip-eligible; `edit` perturbs ONE thing. */
+  function world(edit = (w) => w) {
+    const w = edit({
+      commit: { tree: { sha: TREE } },
+      compare: { status: 'ahead', files: [{ filename: 'packages/civitai-app-sdk/src/x.ts' }] },
+      artifacts: [
+        {
+          name: NAME,
+          expired: false,
+          created_at: '2000-01-01T00:00:00Z',
+          workflow_run: { id: RUN, repository_id: REPO_ID, head_repository_id: REPO_ID },
+        },
+      ],
+      run: {
+        id: RUN,
+        event: 'pull_request',
+        path: '.github/workflows/ci.yml',
+        status: 'completed',
+        conclusion: 'success',
+        head_repository: { full_name: REPO },
+      },
+      jobs: [{ name: 'Record the tested tree', conclusion: 'success' }, { name: 'SDK (typecheck + test + build)', conclusion: 'success' }],
+      fail: null,
+    });
+    const calls = [];
+    const fetchImpl = async (url) => {
+      const path = url.replace(`https://api.invalid/repos/${REPO}/`, '');
+      calls.push(path);
+      const route = path.startsWith('git/commits/')
+        ? 'commit'
+        : path.startsWith('compare/')
+          ? 'compare'
+          : path.startsWith('actions/artifacts')
+            ? 'artifacts'
+            : /^actions\/runs\/\d+\/jobs/.test(path)
+              ? 'jobs'
+              : /^actions\/runs\/\d+$/.test(path)
+                ? 'run'
+                : 'unknown';
+      if (w.fail === route) return { ok: false, status: 502, json: async () => ({}) };
+      if (w.fail === `${route}:throw`) throw new Error('ECONNRESET');
+      const id = Number(path.match(/^actions\/runs\/(\d+)/)?.[1]);
+      const body = {
+        commit: w.commit,
+        compare: w.compare,
+        artifacts: { artifacts: w.artifacts },
+        run: w.runs?.[id] ?? w.run,
+        jobs: { jobs: w.jobsById?.[id] ?? w.jobs },
+      }[route];
+      return { ok: true, status: 200, json: async () => body };
+    };
+    return { fetchImpl, calls };
+  }
+  const gate = (w, over = {}) => pushGate({ api: 'https://api.invalid', repo: REPO, token: 't', sha: SHA, before: BEFORE, fetchImpl: w.fetchImpl, ...over });
+
+  test('POSITIVE CONTROL: the clean world skips, after asking every endpoint', async () => {
+    const w = world();
+    const g = await gate(w);
+    assert.deepEqual(g, { skip: true, reason: `matched run ${RUN}`, tree: TREE, runId: RUN });
+    assert.deepEqual(
+      w.calls.map((c) => c.split('?')[0]),
+      [`git/commits/${SHA}`, `compare/${BEFORE}...${SHA}`, 'actions/artifacts', `actions/runs/${RUN}`, `actions/runs/${RUN}/jobs`],
+    );
+    assert.ok(w.calls[2].includes(`name=${NAME}`), 'the artifact lookup is not by the full-lane name');
+    assert.ok(w.calls[4].includes('filter=latest'), 'the record job is not read from the LATEST attempt');
+    const d = decide({ event: 'push', pushGate: g });
+    assert.equal(d.lane, 'tree-already-tested');
+    assert.deepEqual(Object.keys(d.jobs).filter((k) => d.jobs[k]).sort(), [...ADVISORY_JOBS].sort());
+  });
+
+  /** [label, the one perturbation, the reason it must give] */
+  const FAIL_OPEN = [
+    ['tree mismatch: the only record is for another tree', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], name: `ci-tested-tree-${OTHER_TREE}-full` }] }), /no unexpired same-repository record/],
+    ['no record at all', (w) => ({ ...w, artifacts: [] }), /no unexpired same-repository record/],
+    ['a LANE-LIMITED record (no -full suffix)', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], name: `ci-tested-tree-${TREE}` }] }), /no unexpired/],
+    ['a release-lane record', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], name: `ci-tested-tree-${TREE}-release` }] }), /no unexpired/],
+    ['an expired record', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], expired: true }] }), /no unexpired/],
+    ['a record uploaded by a FORK pull request', (w) => ({ ...w, artifacts: [{ ...w.artifacts[0], workflow_run: { id: RUN, repository_id: REPO_ID, head_repository_id: 5 } }] }), /no unexpired same-repository/],
+    ['recording run no longer success (a failed re-run)', (w) => ({ ...w, run: { ...w.run, conclusion: 'failure' } }), /conclusion failure/],
+    ['recording run still in progress (a re-run underway)', (w) => ({ ...w, run: { ...w.run, status: 'in_progress', conclusion: null } }), /status in_progress/],
+    ['recording run was a push run', (w) => ({ ...w, run: { ...w.run, event: 'push' } }), /event push/],
+    ['recording run was another workflow', (w) => ({ ...w, run: { ...w.run, path: '.github/workflows/release.yml' } }), /workflow \.github\/workflows\/release\.yml/],
+    ['recording run head is a fork', (w) => ({ ...w, run: { ...w.run, head_repository: { full_name: 'x/y' } } }), /head repository x\/y/],
+    ['partial match: record job skipped in the latest attempt', (w) => ({ ...w, jobs: [{ name: 'Record the tested tree', conclusion: 'skipped' }] }), /latest Record the tested tree job is skipped/],
+    ['partial match: record job absent in the latest attempt', (w) => ({ ...w, jobs: [] }), /is absent/],
+    ['ci.yml changed in the push', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: '.github/workflows/ci.yml' }] } }), /changes \.github\/workflows\/ci\.yml/],
+    ['the classifier changed in the push', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'scripts/ci-lanes.mjs' }] } }), /changes scripts\/ci-lanes\.mjs/],
+    ['a cache-key input (lockfile) changed', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'pnpm-lock.yaml' }] } }), /changes pnpm-lock\.yaml/],
+    ['a cache-key input (root package.json) changed', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'package.json' }] } }), /changes package\.json/],
+    ['ci.yml renamed AWAY in the push', (w) => ({ ...w, compare: { ...w.compare, files: [{ filename: 'x.yml', previous_filename: '.github/workflows/ci.yml' }] } }), /changes \.github\/workflows\/ci\.yml/],
+    ['not a fast-forward (force push)', (w) => ({ ...w, compare: { ...w.compare, status: 'diverged' } }), /not a fast-forward/],
+    ['compare list at the API cap', (w) => ({ ...w, compare: { status: 'ahead', files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })) } }), /truncated/],
+    ['API failure: commit', (w) => ({ ...w, fail: 'commit' }), /API error: git\/commits\/.* HTTP 502/],
+    ['API failure: compare', (w) => ({ ...w, fail: 'compare' }), /API error: compare.* HTTP 502/],
+    ['API failure: artifacts', (w) => ({ ...w, fail: 'artifacts' }), /API error: actions\/artifacts answered HTTP 502/],
+    ['API failure: run', (w) => ({ ...w, fail: 'run' }), /API error: actions\/runs\/900 answered HTTP 502/],
+    ['API failure: jobs', (w) => ({ ...w, fail: 'jobs' }), /API error: actions\/runs\/900\/jobs answered HTTP 502/],
+    ['transport error', (w) => ({ ...w, fail: 'run:throw' }), /API error: ECONNRESET/],
+    ['a commit with no tree', (w) => ({ ...w, commit: {} }), /no readable tree/],
+    ['an artifact listing that is not a list', (w) => ({ ...w, artifacts: null }), /not a list/],
+  ];
+  for (const [label, edit, reason] of FAIL_OPEN) {
+    test(`${label} -> no skip`, async () => {
+      const g = await gate(world(edit));
+      assert.equal(g.skip, false);
+      assert.match(g.reason, reason);
+      const d = decide({ event: 'push', pushGate: g });
+      assert.equal(d.lane, 'full');
+      assert.deepEqual(Object.keys(d.jobs).filter((k) => !d.jobs[k]), []);
+    });
+  }
+
+  test('a first push / missing before / malformed sha -> no skip, and no request made', async () => {
+    for (const over of [{ before: '0'.repeat(40) }, { before: undefined }, { sha: 'main' }]) {
+      const w = world();
+      const g = await gate(w, over);
+      assert.equal(g.skip, false, JSON.stringify(over));
+      assert.deepEqual(w.calls, []);
+    }
+  });
+
+  test('a later candidate can vouch when the newest cannot, and the newest is tried first', async () => {
+    const w = world((w) => ({
+      ...w,
+      artifacts: [w.artifacts[0], { ...w.artifacts[0], created_at: '2000-01-02T00:00:00Z', workflow_run: { ...w.artifacts[0].workflow_run, id: 901 } }],
+      runs: { 901: { ...w.run, id: 901, conclusion: 'failure' } },
+    }));
+    const g = await gate(w);
+    assert.deepEqual([g.skip, g.runId], [true, RUN]);
+    assert.ok(w.calls.indexOf('actions/runs/901') < w.calls.indexOf(`actions/runs/${RUN}`));
+  });
+
+  test('when no candidate vouches, every rejection is named', async () => {
+    const w = world((w) => ({
+      ...w,
+      artifacts: [w.artifacts[0], { ...w.artifacts[0], created_at: '2000-01-02T00:00:00Z', workflow_run: { ...w.artifacts[0].workflow_run, id: 901 } }],
+      runs: { 901: { ...w.run, id: 901, conclusion: 'failure' } },
+      jobsById: { [RUN]: [{ name: 'Record the tested tree', conclusion: 'failure' }] },
+    }));
+    const g = await gate(w);
+    assert.equal(g.skip, false);
+    assert.match(g.reason, /run 901: conclusion failure; run 900: its latest Record the tested tree job is failure/);
+  });
+
+  test('workflow_dispatch and schedule never take the tree lane, whatever the gate said', () => {
+    const skip = { skip: true, tree: TREE, runId: RUN };
+    assert.equal(decide({ event: 'workflow_dispatch', pushGate: skip }).lane, 'full');
+    assert.deepEqual(Object.values(decide({ event: 'workflow_dispatch', pushGate: skip }).jobs).filter((v) => !v), []);
+    assert.equal(decide({ event: 'schedule', pushGate: skip }).lane, 'scheduled');
+    assert.equal(decide({ event: 'pull_request', files: [{ filename: 'README.md' }], pushGate: skip }).lane, 'full');
+  });
+
+  test('only skip === true skips', () => {
+    for (const g of [{ skip: 'true' }, { skip: 1 }, {}, null, undefined]) {
+      assert.equal(decide({ event: 'push', pushGate: g }).lane, 'full', JSON.stringify(g));
+    }
   });
 });
