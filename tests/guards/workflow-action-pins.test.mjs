@@ -230,12 +230,19 @@ test('this suite is actually wired into a PR-triggered CI job (guard the guard)'
     if (/^  [A-Za-z0-9_-]+:\s*$/.test(ciLines[i])) break; // next job
     jobBody.push(ciLines[i]);
   }
+  //
+  // ONE job-level condition is allowed, as an exact string: the bare status
+  // function. It is the opposite of a disarm. The job `needs:` the `lanes` job,
+  // and a job with `needs:` and no status function is SKIPPED whenever that
+  // dependency fails or is skipped, which would take this suite with it;
+  // `!cancelled()` is what keeps it running then. Anything narrower (an event
+  // test, a lane output) is still refused here.
   assert.deepEqual(
-    jobBody.filter((l) => /^    if\s*:/.test(l)),
+    jobBody.filter((l) => /^    if\s*:/.test(l)).filter((l) => l !== '    if: ${{ !cancelled() }}'),
     [],
     `the \`${ciLines[jobIdx].trim().replace(/:$/, '')}\` job in ci.yml (which runs ` +
-      '`pnpm test:guards`) has a job-level `if:`. That disarms this suite exactly as ' +
-      'completely as an `if:` on the step itself.',
+      '`pnpm test:guards`) has a job-level `if:` other than the bare `${{ !cancelled() }}`. ' +
+      'That disarms this suite exactly as completely as an `if:` on the step itself.',
   );
 
   // (c) The npm script must still reach THIS file. Narrowing the glob in package.json
