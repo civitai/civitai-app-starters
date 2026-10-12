@@ -8,13 +8,15 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
-import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import { decodeBlockTokenPayload, pollWaitSecondsForWire } from '../src/internal/liveHost.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
+  BlockContext,
   BlockInitPayload,
   BlockResourceInfo,
   BlockWorkflowSnapshot,
+  ModelSlotContext,
 } from '@civitai/app-sdk/blocks';
 
 /**
@@ -28,8 +30,8 @@ import type {
  *   - maps a backend error into a failed-shape reply (never hangs);
  *   - builds BLOCK_INIT from the decoded token + a mocked `/blocks/me`;
  *   - SERVES App-Storage KV via the block-token `apps.storage.*` procs (GET for
- *     queries, POST for mutations) and FORWARDS SET_USER_CHECKPOINT to
- *     `blocks.updateUserSettings`;
+ *     queries, POST for mutations), FORWARDS SET_USER_CHECKPOINT to
+ *     `blocks.updateUserSettings` on a model slot and REFUSES it on a page;
  *   - opens a buzz-purchase tab and replies purchased:false (the one remaining
  *     honest-by-design non-served capability).
  *
@@ -75,6 +77,16 @@ const BODY = {
   modelId: 7,
   modelVersionId: 99,
   params: { prompt: 'a cat' },
+};
+
+/** A complete model-slot context — the surface that CAN persist a checkpoint. */
+const MODEL_SLOT_CONTEXT: ModelSlotContext = {
+  slotId: 'model.sidebar_top',
+  modelId: 11,
+  modelVersionId: 22,
+  modelName: 'Fixture model',
+  modelType: 'Checkpoint',
+  modelNsfwLevel: 1,
 };
 
 /** A tRPC superjson success envelope carrying `{ snapshot }`. */
@@ -463,6 +475,140 @@ describe('createLiveHost — workflow forwarding', () => {
     const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
     expect(payload.requestId).toBe('r-sub');
     expect((payload.snapshot as BlockWorkflowSnapshot).workflowId).toBe('wf_1');
+  });
+
+  /** The `{ json }` input of every call the host made to `procedure`, in order. */
+  function inputsTo(procedure: string): unknown[] {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).endsWith(procedure))
+      .map((c) => (JSON.parse(String((c[1] as RequestInit).body)) as { json: unknown }).json);
+  }
+
+  it('SUBMIT_WORKFLOW forwards the idempotencyKey to blocks.submitWorkflow', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'pending' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-key', body: BODY, idempotencyKey: 'sheet-7_panel-3' });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(payload.requestId).toBe('r-key');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([
+      { blockToken: TOKEN, body: BODY, idempotencyKey: 'sheet-7_panel-3' },
+    ]);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['an empty string', { idempotencyKey: '' }],
+    ['not a string', { idempotencyKey: 42 }],
+  ])('SUBMIT_WORKFLOW sends NO idempotencyKey field when it is %s', async (_label, extra) => {
+    // The production hosts forward it only when it is a non-empty string, and
+    // otherwise leave the field off rather than sending `undefined` or junk.
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'pending' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-nokey', body: BODY, ...extra });
+    await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([{ blockToken: TOKEN, body: BODY }]);
+  });
+
+  it('SUBMIT_WORKFLOW: a key the server refuses comes back as a failed snapshot', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcErr('Invalid string: must match pattern /^[A-Za-z0-9_-]{1,64}$/', 400);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-badkey', body: BODY, idempotencyKey: 'a:b:c' });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([
+      { blockToken: TOKEN, body: BODY, idempotencyKey: 'a:b:c' },
+    ]);
+    expect(payload).toEqual({
+      requestId: 'r-badkey',
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Invalid string: must match pattern /^[A-Za-z0-9_-]{1,64}$/',
+      },
+    });
+  });
+
+  it.each([
+    ['a whole number of seconds', 9, 9],
+    ['a fraction, floored', 12.9, 12],
+    ['above the wire bound, capped at it', 600, 60],
+    ['exactly the wire bound', 60, 60],
+  ])('POLL_WORKFLOW forwards waitSeconds: %s', async (_label, sent, forwarded) => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'processing' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-wait', workflowId: 'wf_1', waitSeconds: sent });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_STATUS');
+    expect(payload.requestId).toBe('r-wait');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: forwarded },
+    ]);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['zero', { waitSeconds: 0 }],
+    ['a fraction below one', { waitSeconds: 0.9 }],
+    ['negative', { waitSeconds: -3 }],
+    ['not a number', { waitSeconds: '15' }],
+    ['not finite', { waitSeconds: Number.POSITIVE_INFINITY }],
+  ])('POLL_WORKFLOW sends NO waitSeconds field when it is %s', async (_label, extra) => {
+    // "No hold" is an absent field, never `waitSeconds: 0`, so a block that
+    // does not long-poll makes the request it always made.
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'processing' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-nowait', workflowId: 'wf_1', ...extra });
+    await waitForMessage(inbound, 'WORKFLOW_STATUS');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([{ blockToken: TOKEN, workflowId: 'wf_1' }]);
+  });
+
+  it('POLL_WORKFLOW keeps waitSeconds on the retry after a transient error', async () => {
+    let calls = 0;
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        calls += 1;
+        if (calls === 1) return trpcErr('upstream hiccup', 503);
+        return trpcOk({ workflowId: 'wf_1', status: 'succeeded' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-retry', workflowId: 'wf_1', waitSeconds: 7 });
+    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
+    expect((payload.snapshot as BlockWorkflowSnapshot).status).toBe('succeeded');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: 7 },
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: 7 },
+    ]);
   });
 
   it('POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS', async () => {
@@ -1566,7 +1712,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
   });
 });
 
-describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUserSettings)', () => {
+describe('createLiveHost — SET_USER_CHECKPOINT on a MODEL SLOT (forwarded to blocks.updateUserSettings)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -1577,6 +1723,7 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
     const host = createLiveHost({
       blockToken: TOKEN,
       viewer: { id: 42, username: 'dev-mod' },
+      context: MODEL_SLOT_CONTEXT,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
     uninstall = host.install();
@@ -1631,7 +1778,7 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
     });
   });
 
-  it('surfaces the REAL backend error (page token lacks modelId) as ok:false', async () => {
+  it('surfaces the REAL backend error (a token that lacks modelId) as ok:false', async () => {
     installWithFetch(async (url) => {
       if (url.includes('blocks.updateUserSettings')) {
         return trpcErr('block token lacks modelId context', 400);
@@ -1659,6 +1806,155 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
       String(c[0]).includes('blocks.updateUserSettings'),
     );
     expect(called).toBe(false);
+  });
+});
+
+describe('createLiveHost — SET_USER_CHECKPOINT on a PAGE (refused, as the page host refuses it)', () => {
+  // The strings below are civitai's own (`PageBlockHost.tsx`), typed out on
+  // purpose — a test that imported the constant could not see it change.
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  /** Every fetch throws: the page host makes NO backend call for this message. */
+  function install(context?: BlockContext) {
+    fetchMock = vi.fn(async (url: string) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' },
+      ...(context ? { context } : {}),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['a numeric versionId', 9001],
+    ['null (clear the override)', null],
+    ['a malformed versionId', 'not-a-number'],
+  ])('the DEFAULT context is a page: %s is refused with no backend call', async (_label, versionId) => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { requestId: 'r-page', versionId });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload).toEqual({
+      requestId: 'r-page',
+      ok: false,
+      error: 'page blocks cannot persist a checkpoint override (no model binding)',
+    });
+    expect(fetchMock.mock.calls).toEqual([]);
+  });
+
+  it('an explicit page context is refused the same way', async () => {
+    install({ slotId: 'app.page', slug: 'my-app', subPath: 'a/b', viewerUserId: 42 });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { requestId: 'r-page-2', versionId: 9001 });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload).toEqual({
+      requestId: 'r-page-2',
+      ok: false,
+      error: 'page blocks cannot persist a checkpoint override (no model binding)',
+    });
+    expect(fetchMock.mock.calls).toEqual([]);
+  });
+
+  it('a request with no requestId is dropped, like the page host drops it', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { versionId: 9001 });
+    post('SET_USER_CHECKPOINT', { requestId: '', versionId: 9001 });
+    // POSITIVE CONTROL, posted last: a routable request IS answered, so the
+    // single reply below is the guard's decision and not a dead harness.
+    post('SET_USER_CHECKPOINT', { requestId: 'r-routable', versionId: 9001 });
+    await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+
+    expect(
+      inbound.messages
+        .filter((m) => m.type === 'USER_CHECKPOINT_SET')
+        .map((m) => m.payload?.requestId),
+    ).toEqual(['r-routable']);
+  });
+});
+
+describe('createLiveHost — a type outside the protocol', () => {
+  it('gets no reply even with a requestId, as on the real host', async () => {
+    // INVARIANT GUARD, green before and after the page-refusal change. The real
+    // host's `unsupported on this host` reply is built only for a request type
+    // its inventory declares; an undeclared type gets nothing.
+    const inbound = collectInbound();
+    const fetchMock = vi.fn(async (url: string) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    const uninstall = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).install();
+    try {
+      await waitForMessage(inbound, 'BLOCK_INIT');
+      const before = inbound.messages.length;
+
+      post('NOT_A_PROTOCOL_MESSAGE', { requestId: 'r-unknown' });
+      // POSITIVE CONTROL, posted AFTER it: a declared request is answered.
+      post('REQUEST_TOKEN', { requestId: 'r-known' });
+      await waitForMessage(inbound, 'TOKEN_REFRESH_RESPONSE');
+
+      expect(
+        inbound.messages.slice(before).map((m) => [m.type, m.payload?.requestId]),
+      ).toEqual([['TOKEN_REFRESH_RESPONSE', 'r-known']]);
+      expect(fetchMock.mock.calls).toEqual([]);
+    } finally {
+      uninstall();
+      inbound.stop();
+    }
+  });
+});
+
+describe('pollWaitSecondsForWire', () => {
+  // Same steps as the server's own resolver, except the cap: this one stops at
+  // the 60 the procedure's input schema accepts and leaves the lower policy
+  // ceiling to the server.
+  it.each([
+    [1, 1],
+    [9, 9],
+    [15, 15],
+    [16, 16],
+    [12.9, 12],
+    [60, 60],
+    [61, 60],
+    [3600, 60],
+  ])('%s → %s', (sent, forwarded) => {
+    expect(pollWaitSecondsForWire(sent)).toBe(forwarded);
+  });
+
+  it.each([
+    [0],
+    [0.9],
+    [-3],
+    [Number.NaN],
+    [Number.POSITIVE_INFINITY],
+    ['15'],
+    [null],
+    [undefined],
+    [{}],
+  ])('%s → no hold (undefined)', (sent) => {
+    expect(pollWaitSecondsForWire(sent)).toBeUndefined();
   });
 });
 

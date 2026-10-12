@@ -1560,6 +1560,15 @@ if (isModelSlotContext(context) && context.checkpoint) {
 }
 ```
 
+🔴 **`persist()` works on a model slot only. On a page it always rejects.** A
+full-page app (`app.page`) is bound to no model, so the host has nowhere to write
+the override: it answers every `persist()`, including `persist(null)`, with
+`ok: false`, and the promise rejects with `page blocks cannot persist a
+checkpoint override (no model binding)`. A page app keeps the checkpoint `open()`
+returned in its own state (or in `useAppStorage()`). Both dev hosts refuse it the
+same way: `createMockHost` / `Harness` and `dev:live` default to a page context,
+so pass a `ModelSlotContext` as `context` to exercise a block that persists.
+
 ### `useResourcePicker()`
 
 Drive the platform resource picker for page blocks — `'Checkpoint' | 'LORA'`.
@@ -2719,6 +2728,19 @@ is about consent drives it: estimate, see the refusal, call
 `requestConsent({ scopes: ['ai:write:budgeted'] })`, wait for
 `useBlockToken().scopes` to include it, estimate again.
 
+🔴 **On a page, the mock refuses `useCheckpointPicker().persist()`, as the host
+does.** The default `context` is a page (`app.page`), and the page host answers
+every `SET_USER_CHECKPOINT` with `ok: false` and `page blocks cannot persist a
+checkpoint override (no model binding)`. The mock used to answer `ok: true`
+there, so a page app's `persist()` passed locally and rejected in production.
+
+**Migrating a test:** one that expects `persist()` to resolve under the default
+context was asserting something a page app never gets. If the block really runs
+in a model slot, pass that slot — `createMockHost({ context: { slotId:
+'model.sidebar_top', modelId, modelVersionId, modelName, modelType,
+modelNsfwLevel } })` — and it resolves as before. If the block is a page app,
+drop the `persist()` call: keep the picked checkpoint in the app's own state.
+
 ### Testing overlay elements
 
 `<civitai-menu>`, and anything else that opens a panel, live in an environment
@@ -2862,6 +2884,19 @@ const options: LiveHostOptions = {
 const host = createLiveHost(options);
 const uninstall = host.install();
 ```
+
+Three things `dev:live` does the way the production host does:
+
+- **`useCheckpointPicker().persist()` is refused on a page**, with no backend
+  call: `ok: false` and `page blocks cannot persist a checkpoint override (no
+  model binding)`. The default `context` is a page, because a dev token is a page
+  token. With a `ModelSlotContext` as `context` the call is forwarded to the
+  server.
+- **`submit()`'s `idempotencyKey` reaches the server.** A retry with the same key
+  is deduplicated there, and a key in a format the server refuses fails the
+  submit with the server's message.
+- **`watch()`'s `waitSeconds` reaches the server**, so a poll is held open
+  instead of answered at once. The server decides the actual hold.
 
 ### Stability of `/live`
 

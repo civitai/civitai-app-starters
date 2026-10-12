@@ -224,7 +224,9 @@ test('no routability or wire-shape decision is open-coded outside the helper', (
  * file that had none.
  */
 const HELPER_CALL_LEDGER = {
-  'internal/liveHost.ts': 18, // +1 OPEN_RESOURCE_PICKER { multiple } refusal reply, +1 ESTIMATE_WORKFLOW_BATCH
+  // +1 OPEN_RESOURCE_PICKER { multiple } refusal reply, +1 ESTIMATE_WORKFLOW_BATCH,
+  // +1 SET_USER_CHECKPOINT page refusal
+  'internal/liveHost.ts': 19,
   // +1 SAVE_IMAGE (#583), +1 OPEN_IMAGE_UPLOAD { bytes } (#582), +1 ESTIMATE_WORKFLOW_BATCH
   'internal/mockHost.ts': 19,
   'transport/iframeTransport.ts': 2,
