@@ -153,6 +153,10 @@ export function triggerBlock(text) {
 }
 
 export const LANES_JOB = 'lanes';
+export const ALERT_JOB = 'advisory-alert';
+/** Jobs that are not in the ledger because they ARE the lane machinery. */
+const STRUCTURAL = [LANES_JOB, ALERT_JOB];
+export const ALERT_CONDITION = "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
 export const laneCondition = (id) => `\${{ !cancelled() && needs.${LANES_JOB}.outputs.${id} != 'false' }}`;
 /** The job-level condition of a step-gated job: the status function and nothing else. */
 export const STEP_GATED_JOB_CONDITION = '${{ !cancelled() }}';
@@ -181,7 +185,7 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     out.push(`[lanes-missing] ci.yml has no \`${LANES_JOB}\` job; every lane condition then reads an empty output`);
   }
 
-  const inWorkflow = jobs.map((j) => j.id).filter((id) => id !== LANES_JOB);
+  const inWorkflow = jobs.map((j) => j.id).filter((id) => !STRUCTURAL.includes(id));
   for (const id of inWorkflow.filter((id) => !ledgerIds.includes(id))) {
     out.push(
       `[job-not-in-ledger] ci.yml job \`${id}\` is not in JOBS (scripts/ci-lanes.mjs). ` +
@@ -196,7 +200,7 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
   }
 
   for (const job of jobs) {
-    if (job.id === LANES_JOB) continue;
+    if (STRUCTURAL.includes(job.id)) continue;
     const want = stepGated.includes(job.id) ? STEP_GATED_JOB_CONDITION : laneCondition(job.id);
     if (!job.needs.includes(LANES_JOB)) {
       out.push(
@@ -267,7 +271,35 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     }
   }
 
+  const alert = byId.get(ALERT_JOB);
+  if (!alert) {
+    out.push(`[alert-missing] ci.yml has no \`${ALERT_JOB}\` job; a red advisory job on main notifies nobody`);
+  } else {
+    const advisory = ledgerIds.filter((id) => ledger[id] === 'advisory');
+    const want = [LANES_JOB, ...advisory];
+    for (const id of want.filter((id) => !alert.needs.includes(id))) {
+      out.push(`[alert-needs-missing] \`${ALERT_JOB}\` does not need \`${id}\`, so a red \`${id}\` on main is never reported`);
+    }
+    for (const id of alert.needs.filter((id) => !want.includes(id))) {
+      out.push(`[alert-needs-unknown] \`${ALERT_JOB}\` needs \`${id}\`, which is not an advisory job`);
+    }
+    if (alert.if !== ALERT_CONDITION) {
+      out.push(`[alert-condition] \`${ALERT_JOB}\` has \`if: ${alert.if}\`; expected exactly \`if: ${ALERT_CONDITION}\` (push to main only, and still running when an advisory job failed)`);
+    }
+    const body = alert.body.join('\n');
+    for (const id of advisory) {
+      if (!body.includes(`needs.${id}.result`)) {
+        out.push(`[alert-result-unread] \`${ALERT_JOB}\` never reads \`needs.${id}.result\`, so it cannot report that job`);
+      }
+    }
+  }
+
   const on = triggerBlock(text);
+  for (const l of on) {
+    if (/^\s*schedule:/.test(l)) {
+      out.push('[schedule-trigger] ci.yml has a `schedule:` trigger; the script has no scheduled lane, so it would run EVERY job on the cron');
+    }
+  }
   for (const l of on) {
     if (/^\s*(paths|paths-ignore):/.test(l)) {
       out.push(

@@ -23,14 +23,19 @@
  *
  * THE LANES
  *   full       every `core` job, plus the `advisory` jobs whose inputs the PR
- *              touches. `push` (to main) and `workflow_dispatch` run everything.
- *   scheduled  the daily cron: the `advisory` jobs only. They compare the tree
- *              against something LIVE, so they can go red with no commit at all
- *              and need a run that no PR triggers.
+ *              touches. `push` (to main) and `workflow_dispatch` run everything,
+ *              and so does any other event (there is no `schedule` trigger).
  *
- * ADVISORY jobs are the five non-required, live-dependency jobs. Each compares
- * the tree against something fetched at run time, so on a PR that does not touch
- * what the job reads its verdict is a fact about the live service, not the PR.
+ * In this lane set no core job is ever off; the per-job outputs for core jobs
+ * and the `starter` matrix's step gating exist for the lanes that turn core
+ * jobs off (the release-PR lane and the push-to-main tested-tree skip). They
+ * are not dead code.
+ *
+ * ADVISORY jobs are the five non-required jobs that depend on something outside
+ * the tree at run time (a published schema, the npm registry, the orchestrator
+ * spec, a live civitai/civitai checkout, a browser install), so on a PR that
+ * does not touch what the job reads its verdict is mostly a fact about that
+ * outside thing, not the PR.
  * On a PR they run only when the diff touches their inputs (`RULES` below).
  *
  * 🔴 A PATH THE TABLE DOES NOT KNOW RUNS EVERY ADVISORY JOB. `RULES` classifies
@@ -56,9 +61,8 @@ import { fileURLToPath } from 'node:url';
  * ci.yml's job set and this map differ in EITHER direction, so a job cannot be
  * added, removed or renamed without deciding its lane here.
  *
- *   core      runs on every pull_request, push and workflow_dispatch; off on
- *             the scheduled run.
- *   advisory  path-scoped on pull_request; always on push, dispatch and schedule.
+ *   core      runs on every pull_request, push and workflow_dispatch.
+ *   advisory  path-scoped on pull_request; always on push and dispatch.
  */
 export const JOBS = Object.freeze({
   sdk: 'core',
@@ -144,7 +148,9 @@ export const RULES = Object.freeze([
 
   // design-system-drift-guard builds and tests @civitai/theme against a live
   // civitai/civitai checkout. design-system-cross-browser builds theme, sdk and
-  // components and drives the elements in three downloaded engines.
+  // components and runs the elements' contract in three browser engines.
+  // (How those engines are provisioned is that job's business; the inputs
+  // listed here are what it builds from this tree.)
   { glob: 'packages/civitai-theme/**', jobs: INSTALLERS },
   { glob: 'packages/civitai-sdk/**', jobs: ['design-system-cross-browser'] },
   { glob: 'packages/civitai-components/**', jobs: ['design-system-cross-browser'] },
@@ -221,13 +227,6 @@ const everyJob = (value) => Object.fromEntries(Object.keys(JOBS).map((id) => [id
  * @returns {{ lane: string, reason: string, jobs: Record<string, boolean> }}
  */
 export function decide({ event, files, filesError } = {}) {
-  if (event === 'schedule') {
-    return {
-      lane: 'scheduled',
-      reason: 'schedule: the advisory live-dependency jobs only',
-      jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, JOBS[id] === 'advisory'])),
-    };
-  }
   if (event !== 'pull_request') {
     // push, workflow_dispatch, and any event this file has never heard of.
     return { lane: 'full', reason: `${event || 'unknown event'}: every job`, jobs: everyJob(true) };
