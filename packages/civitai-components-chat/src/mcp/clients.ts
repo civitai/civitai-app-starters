@@ -16,10 +16,7 @@ export interface McpProgress {
 
 export interface McpCallOptions {
   signal?: AbortSignal;
-  /** How long to wait for an answer; with `onProgress`, counted again from each progress notification. */
   timeoutMs?: number;
-  /** The most a call may take however much progress it reports; unlimited unless set. */
-  maxTotalTimeoutMs?: number;
   onProgress?: (progress: McpProgress) => void;
 }
 
@@ -97,7 +94,6 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
           (await client.callTool({ name, arguments: args }, undefined, {
             signal: opts.signal,
             timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-            ...(opts.maxTotalTimeoutMs !== undefined ? { maxTotalTimeout: opts.maxTotalTimeoutMs } : {}),
             resetTimeoutOnProgress: opts.onProgress !== undefined,
             onprogress: opts.onProgress,
           })) as CallToolResult,

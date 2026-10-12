@@ -9,8 +9,6 @@ import type { ServerTools } from '../mcp/servers.js';
  * A little over the ten minutes long-running tools (a command in a sandbox) may take.
  */
 export const EXTRA_TOOL_TIMEOUT_MS = 610_000;
-/** The most any call may take, however much progress it reports. */
-export const EXTRA_TOOL_MAX_MS = 30 * 60_000;
 
 const FAILED_NOTE = 'This tool failed. Tell the user in plain words; do not call it again this turn unless they ask.';
 
@@ -37,7 +35,6 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
           const options: McpCallOptions = {
             signal: abortSignal,
             timeoutMs: EXTRA_TOOL_TIMEOUT_MS,
-            maxTotalTimeoutMs: EXTRA_TOOL_MAX_MS,
             // Asking for progress is what makes the server send it, and each one restarts the timeout.
             onProgress: () => undefined,
           };

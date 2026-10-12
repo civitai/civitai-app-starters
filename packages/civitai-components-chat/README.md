@@ -142,9 +142,8 @@ chat.mcpServers = [
   whose `url` changed; a call still running on a closed server fails. The conversation stays as it
   is. An array equal in `id` and `url` to the current one changes nothing:
   `token` and `label` changes apply without reconnecting.
-- **Long calls.** Calls ask for MCP progress notifications. Each one restarts a 610 s timeout, and
-  no call runs longer than 30 minutes, so a tool that reports progress (a build, a test run) is not
-  cut off.
+- **Long calls.** Calls ask for MCP progress notifications, and each one restarts a 610 s timeout,
+  so a tool that keeps reporting progress (a build, a test run) is not cut off however long it runs.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply.
