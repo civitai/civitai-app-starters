@@ -46,6 +46,9 @@ jobs:
   # `skipped`, which satisfies a required context; a workflow-level `paths:`
   # filter leaves required contexts pending forever.
   #
+  # The lanes themselves (`full`, `scheduled`, and `release` for a Version
+  # Packages PR that is only a version bump) are defined in the script's header.
+  #
   # NOT a required context, and it must not become one: nothing depends on it
   # succeeding. `tests/guards/ci-lanes-ledger.test.mjs` pins this job's outputs
   # and every job's condition against the ledger in the script.
