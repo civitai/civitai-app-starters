@@ -237,6 +237,13 @@ export interface UseRunConfirmedStep {
  * most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000 Buzz). A variable or
  * metered price, or no price at all, gets no quote and cannot be run this way.
  *
+ * 🔴 ESTIMATE THE BODY ON ITS OWN. A batch estimate (`useBatchEstimate()`) never
+ * carries a `stepQuote`. And where a quote would be granted, the estimate
+ * REJECTS instead for a training `$type` (`training` / `imageResourceTraining` —
+ * use `kind: 'training'`) and for an `input` that is not plain JSON (a `Date`,
+ * `Map`, `Set`, `BigInt`, `NaN`, …). Both are server messages with no code; see
+ * `BlockWorkflowSnapshot.stepQuote` for the exact text.
+ *
  * 🔴 THE CONFIRM IS CIVITAI'S, AND IT IS THE CHARGE. The price on it is read back
  * from the server's stored quote — never from your body. A quote is single-use
  * and expires 15 minutes after the estimate; the server prices the job again at

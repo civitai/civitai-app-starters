@@ -1920,6 +1920,29 @@ export interface BlockWorkflowSnapshot {
    * Absent is therefore not an error — it is also what every host that
    * predates civitai/civitai#5786 sends.
    *
+   * 🔴 ONLY A SINGLE ESTIMATE CARRIES IT. A batch estimate
+   * (`ESTIMATE_WORKFLOW_BATCH`, `useBatchEstimate()`) stores nothing, so its
+   * cells never have a `stepQuote`, whatever they cost. Price a grid in a batch,
+   * then estimate the one body you want to run on its own.
+   *
+   * 🔴 TWO BODIES MAKE THAT ESTIMATE FAIL INSTEAD OF RETURNING A PRICE — only
+   * where a quote would otherwise have been granted (so not below the budget,
+   * and not in a batch). The reply is the failure snapshot `{ workflowId:
+   * 'failed', status: 'failed', error }`, which `estimate()` rejects with; the
+   * same text arrives as `CONFIRMED_STEP_RESULT`'s `error` if such a body is
+   * run. Neither has an {@link BlockWorkflowSnapshot.errorCode}; they are
+   * server messages, so match on the text and keep a generic branch:
+   *  - `a training step type cannot run as a confirmed step — use
+   *    kind:'training'` — `$type` is `training` or `imageResourceTraining`.
+   *    Training has its own kind ({@link WorkflowBodyTraining}).
+   *  - `a confirmed step needs plain JSON input (objects, arrays, strings,
+   *    finite numbers, booleans, null) — <path> is <what>` — `input` holds a
+   *    `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity` or an
+   *    `undefined` array element. The quote is bound to the exact body, so the
+   *    body must be exactly representable. The part after the dash names the
+   *    offending path (`body.input.when is a Date`) and varies: match on the
+   *    text BEFORE the dash.
+   *
    * `total` is the price the viewer confirms and is charged. 🔴 It can differ
    * from `cost.total` on the same snapshot, which stays what an UNCONFIRMED
    * submit would reserve (`max(maxBuzz, quote)`); show `stepQuote.total` on a

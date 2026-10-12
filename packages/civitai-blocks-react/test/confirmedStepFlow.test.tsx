@@ -13,9 +13,11 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { useAppWorkflows } from '../src/hooks/useAppWorkflows.js';
+import { useBatchEstimate } from '../src/hooks/useBatchEstimate.js';
 import {
   CONFIRMED_STEP_BODY_SUBMIT_REFUSAL,
   useBuzzWorkflow,
+  WorkflowEstimateError,
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import {
@@ -32,7 +34,9 @@ import {
   MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB,
   MOCK_SPEND_SCOPE_ERROR,
   MOCK_STEP_BODY_MISMATCH_ERROR,
+  MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX,
   MOCK_STEP_NOT_CONFIRMED_ERROR,
+  MOCK_STEP_TRAINING_TYPE_ERROR,
   MOCK_STEP_QUOTE_GONE_ERROR,
   type MockHostOptions,
 } from '../src/internal/mockHost.js';
@@ -538,15 +542,17 @@ describe('confirmed step — estimate → run → watch', () => {
         MOCK_STEP_BODY_MISMATCH_ERROR,
       );
     }
-    // Control: the unchanged body, key order shuffled, runs.
+    // Control: the unchanged body, key order shuffled AT EVERY DEPTH, runs — the
+    // binding is over the values, as the server's canonical form is.
     const { quoted } = await quote(result);
     const shuffled = {
       quoteId: quoted.quoteId,
       maxBuzz: quoted.maxBuzz,
-      input: quoted.input,
+      input: { quality: 'high', prompt: 'a low-poly chair' },
       $type: quoted.$type,
       kind: quoted.kind,
     } as QuotedStepBody;
+    expect(Object.keys(shuffled.input)).not.toEqual(Object.keys(quoted.input));
     expect((await settle(() => result.current.run.runConfirmedStep(shuffled))).error).toBeUndefined();
   });
 
@@ -653,6 +659,204 @@ describe('confirmed step — estimate → run → watch', () => {
     expect((r.error as RunConfirmedStepError).message).toBe(MOCK_SPEND_SCOPE_ERROR);
     expect(sent(m.outbound, 'RUN_CONFIRMED_STEP')).toHaveLength(1);
     expect(sent(m.outbound, 'REQUEST_CONSENT')).toHaveLength(0);
+  });
+});
+
+/**
+ * The server's own strings, as LITERALS — the mock's constants are compared to
+ * these, never the other way round, so a mock that drifted from the host's text
+ * fails here. Copied from civitai/civitai#5786 (`blocks.router.ts`).
+ */
+const SERVER_TRAINING_TYPE_ERROR =
+  "a training step type cannot run as a confirmed step — use kind:'training'";
+const SERVER_NON_JSON_PREFIX =
+  'a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ';
+
+describe('confirmed step — what the server refuses to quote', () => {
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = undefined;
+    resetTransport();
+    vi.restoreAllMocks();
+  });
+
+  it('the mock refusal strings ARE the server strings', () => {
+    expect(MOCK_STEP_TRAINING_TYPE_ERROR).toBe(SERVER_TRAINING_TYPE_ERROR);
+    expect(MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX).toBe(SERVER_NON_JSON_PREFIX);
+  });
+
+  it('a BATCH estimate never carries stepQuote; the same body estimated on its own does', async () => {
+    const m = install();
+    uninstall = m.uninstall;
+    const { result } = renderHook(() => ({ wf: useBuzzWorkflow(), batch: useBatchEstimate() }));
+    await ready();
+
+    const other: WorkflowBodyPassThroughStep = { ...BODY, input: { prompt: 'a cup' } };
+    const batch = await settle(() => result.current.batch.estimateBatch([BODY, other]));
+    expect(batch.error).toBeUndefined();
+    expect(batch.value!.cells).toHaveLength(2);
+    for (const cell of batch.value!.cells) {
+      // Priced exactly as a single estimate prices it…
+      expect(cell.ok).toBe(true);
+      if (!cell.ok) continue;
+      expect(cell.cost.total).toBe(PRICE);
+      // …with no confirmable quote.
+      expect('stepQuote' in cell.snapshot).toBe(false);
+    }
+
+    // Positive control, same host, same body: the single estimate IS quoted.
+    const single = await settle(() => result.current.wf.estimate(BODY));
+    expect(single.value!.stepQuote?.total).toBe(PRICE);
+  });
+
+  for (const $type of ['training', 'imageResourceTraining']) {
+    it(`an over-budget estimate of a "${$type}" step REJECTS with the server's message instead of a price`, async () => {
+      const m = install();
+      uninstall = m.uninstall;
+      const { result } = hooks();
+      await ready();
+      const trainingStep: WorkflowBodyPassThroughStep = { ...BODY, $type };
+
+      const over = await settle(() => result.current.wf.estimate(trainingStep));
+      expect(over.value).toBeUndefined();
+      const e = over.error as WorkflowEstimateError;
+      expect(e).toBeInstanceOf(WorkflowEstimateError);
+      expect(e.code).toBe('failed');
+      expect(e.snapshot.error).toBe(SERVER_TRAINING_TYPE_ERROR);
+      expect('cost' in e.snapshot).toBe(false);
+
+      // Control: WITHIN the budget no quote would be granted, so nothing is
+      // refused — the ordinary estimate, exactly as before.
+      m.host.setScenario({ generation: { costPerGen: BUDGET } });
+      const within = await settle(() => result.current.wf.estimate(trainingStep));
+      expect(within.error).toBeUndefined();
+      expect(within.value!.cost?.total).toBe(BUDGET);
+      expect('stepQuote' in within.value!).toBe(false);
+    });
+  }
+
+  it('a training step is refused only where a quote would be granted: not in a batch', async () => {
+    uninstall = install().uninstall;
+    const { result } = renderHook(() => ({ batch: useBatchEstimate() }));
+    await ready();
+    const batch = await settle(() =>
+      result.current.batch.estimateBatch([{ ...BODY, $type: 'training' }]),
+    );
+    const cell = batch.value!.cells[0]!;
+    expect(cell.ok).toBe(true);
+    if (cell.ok) expect(cell.cost.total).toBe(PRICE);
+  });
+
+  const NON_JSON: Array<[string, () => Record<string, unknown>, string]> = [
+    ['a Date', () => ({ prompt: 'x', when: new Date(7) }), 'body.input.when is a Date'],
+    ['a Map', () => ({ opts: new Map([[1, 2]]) }), 'body.input.opts is a Map'],
+    ['a Set', () => ({ tags: new Set([3]) }), 'body.input.tags is a Set'],
+    ['a BigInt', () => ({ seed: BigInt(5) }), 'body.input.seed is a bigint'],
+    ['NaN', () => ({ scale: Number.NaN }), 'body.input.scale is the non-finite number NaN'],
+    [
+      'Infinity',
+      () => ({ scale: Number.POSITIVE_INFINITY }),
+      'body.input.scale is the non-finite number Infinity',
+    ],
+    [
+      'an undefined array element',
+      () => ({ list: [9, undefined] }),
+      'body.input.list[1] is undefined',
+    ],
+    [
+      'a nested class instance',
+      () => ({ a: [{ b: new URL('https://example.com/10') }] }),
+      'body.input.a[0].b is a URL',
+    ],
+  ];
+
+  for (const [label, input, where] of NON_JSON) {
+    it(`an over-budget estimate whose input holds ${label} REJECTS, naming the path`, async () => {
+      const m = install();
+      uninstall = m.uninstall;
+      const { result } = hooks();
+      await ready();
+      const body: WorkflowBodyPassThroughStep = { ...BODY, input: input() };
+
+      const over = await settle(() => result.current.wf.estimate(body));
+      expect(over.value).toBeUndefined();
+      const e = over.error as WorkflowEstimateError;
+      expect(e).toBeInstanceOf(WorkflowEstimateError);
+      expect(e.snapshot.error).toBe(`${SERVER_NON_JSON_PREFIX}${where}`);
+      // The documented way to recognise it: the fixed prefix.
+      expect(e.snapshot.error!.startsWith(SERVER_NON_JSON_PREFIX)).toBe(true);
+
+      // Control: within the budget the same body is an ordinary estimate.
+      m.host.setScenario({ generation: { costPerGen: BUDGET } });
+      const within = await settle(() => result.current.wf.estimate(body));
+      expect(within.error).toBeUndefined();
+      expect(within.value!.cost?.total).toBe(BUDGET);
+    });
+  }
+
+  it('plain JSON of every kind IS quoted, and an undefined object key is ignored', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    const { stepQuote } = await quote(result, {
+      ...BODY,
+      input: { s: 'x', n: 1.5, t: true, z: null, list: [1, 'a', false, null, { k: [] }], gone: undefined },
+    });
+    expect(stepQuote.total).toBe(PRICE);
+  });
+
+  it('RUN: a training $type is refused with the server message and the quote is KEPT', async () => {
+    const m = install();
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await ready();
+    const { quoted } = await quote(result);
+
+    const r = await settle(() =>
+      result.current.run.runConfirmedStep({ ...quoted, $type: 'imageResourceTraining' }),
+    );
+    const e = r.error as RunConfirmedStepError;
+    expect(e).toBeInstanceOf(RunConfirmedStepError);
+    expect(e.message).toBe(SERVER_TRAINING_TYPE_ERROR);
+    // A server refusal string: no code, no money flag — like useRunTraining's.
+    expect(e.code).toBeUndefined();
+    expect([e.declined, e.dailyLimitExceeded, e.unconfirmed, e.refused, e.signInRequired]).toEqual(
+      [false, false, false, false, false],
+    );
+    // Refused before the quote was touched: the quoted body still runs.
+    expect((await settle(() => result.current.run.runConfirmedStep(quoted))).error).toBeUndefined();
+  });
+
+  it('RUN: non-plain-JSON input is refused naming the path, and the quote is CONSUMED', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await ready();
+    const { quoted } = await quote(result);
+
+    const r = await settle(() =>
+      result.current.run.runConfirmedStep({
+        ...quoted,
+        input: { prompt: 'a low-poly chair', quality: 'high', when: new Date(7) },
+      }),
+    );
+    const e = r.error as RunConfirmedStepError;
+    expect(e.message).toBe(`${SERVER_NON_JSON_PREFIX}body.input.when is a Date`);
+    expect(e.code).toBeUndefined();
+    expect([e.declined, e.dailyLimitExceeded, e.unconfirmed, e.refused]).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    const again = await settle(() => result.current.run.runConfirmedStep(quoted));
+    expect(again.value, 'the quote survived a refused non-JSON run').toBeUndefined();
+    expect((again.error as RunConfirmedStepError).message).toBe(MOCK_STEP_QUOTE_GONE_ERROR);
   });
 });
 

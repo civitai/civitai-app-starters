@@ -737,7 +737,9 @@ export interface UseBuzzWorkflow {
    * `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId:
    * stepQuote.quoteId })`, which has the viewer confirm `stepQuote.total`. No
    * `stepQuote` means the ordinary rules apply — it is also what a host without
-   * the feature sends.
+   * the feature sends. Where a quote would be granted, this REJECTS instead for
+   * a training `$type` or an `input` that is not plain JSON (see
+   * {@link BlockWorkflowSnapshot.stepQuote} for the two messages).
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**

@@ -642,6 +642,10 @@ const PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS: ReadonlySet<string> = new Set(
   RUN_CONFIRMED_STEP_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
 );
 
+/** The orchestrator's training `$type`s, which never run as a confirmed step. */
+const isTrainingStepTypeName = (stepType: string): boolean =>
+  stepType === 'training' || stepType === 'imageResourceTraining';
+
 /**
  * The orchestrator `$type` of a PASS-THROUGH step body, else `undefined`. Keyed
  * on the VALUE of `step`, as the host keys it — a registered step names a
@@ -655,12 +659,92 @@ const passThroughStepType = (body: WorkflowBody): string | undefined => {
 };
 
 /**
- * What the server binds a step quote to: the body WITHOUT its `quoteId` (the
- * server excludes it from the body hash). Key order is fixed here so two bodies
- * with the same fields compare equal however they were written.
+ * The real server's refusal for a TRAINING `$type` (`training`,
+ * `imageResourceTraining`) on the confirmed-step path — at the estimate, where a
+ * quote would otherwise be granted, and at the confirmed submit. Training runs
+ * have their own kind.
  */
-const stepBodyFingerprint = (body: Record<string, unknown>): string =>
-  JSON.stringify([body.kind, body.$type, body.input, body.maxBuzz]);
+export const MOCK_STEP_TRAINING_TYPE_ERROR =
+  "a training step type cannot run as a confirmed step — use kind:'training'";
+/**
+ * The fixed PREFIX of the real server's refusal for a confirmed-step body whose
+ * `input` is not plain JSON. The full message continues with the offending path
+ * and what was found there (`body.input.when is a Date`), which varies — match on
+ * this prefix.
+ */
+export const MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX =
+  'a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ';
+
+/** Thrown by {@link canonicalStepJson} for a value that is not plain JSON. */
+class NonJsonStepBodyError extends Error {}
+
+/** How the server names a non-JSON value in its refusal. */
+const describeNonJson = (value: unknown): string => {
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'number') return `the non-finite number ${String(value)}`;
+  if (typeof value === 'object' && value !== null) {
+    const name = (Object.getPrototypeOf(value) as { constructor?: { name?: string } } | null)
+      ?.constructor?.name;
+    return name ? `a ${name}` : 'a non-plain object';
+  }
+  return `a ${typeof value}`;
+};
+
+/**
+ * The canonical form the server hashes a quoted body in, mirrored: JSON with
+ * object keys sorted at EVERY depth, so two bodies with the same values compare
+ * equal however they were written. EXACT, OR IT THROWS — only plain objects,
+ * arrays, strings, finite numbers, booleans and `null` are accepted. A `Date`,
+ * `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity` or an `undefined`
+ * array element throws {@link NonJsonStepBodyError} naming the path, because a
+ * looser form would give two different such values the same bytes. An object
+ * key whose value is `undefined` is skipped, as JSON drops it.
+ */
+const canonicalStepJson = (value: unknown, path: string): string => {
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry, i) => canonicalStepJson(entry, `${path}[${i}]`)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value) as unknown;
+    if (proto !== Object.prototype && proto !== null) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((k) => record[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalStepJson(record[k], `${path}.${k}`)}`);
+    return `{${entries.join(',')}}`;
+  }
+  throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+};
+
+/**
+ * What the server binds a step quote to: the body WITHOUT its `quoteId` (the one
+ * field the run adds), in canonical form. Returns the fingerprint, or the
+ * server's refusal message when the body is not plain JSON.
+ */
+const stepBodyFingerprint = (
+  body: Record<string, unknown>,
+): { fingerprint: string } | { refusal: string } => {
+  const { quoteId: _quoteId, ...rest } = body;
+  try {
+    return { fingerprint: canonicalStepJson(rest, 'body') };
+  } catch (e) {
+    if (e instanceof NonJsonStepBodyError) {
+      return { refusal: `${MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX}${e.message}` };
+    }
+    throw e;
+  }
+};
 
 /**
  * BUZZ scenario controls — simulate a viewer who runs out of Buzz. The mock host
@@ -1234,7 +1318,12 @@ export interface MockHostOptions {
    * ({@link MockGenerationScenario.costPerGen}, or `cost`) is above the token's
    * per-call budget ({@link MockHostOptions.buzzBudget}, default 200) and at most
    * 5,000, for a signed-in viewer. So `generation: { costPerGen: 800 }` is all it
-   * takes to reach this path.
+   * takes to reach this path. ONLY a single `ESTIMATE_WORKFLOW` quotes one: a
+   * batch-estimate cell never carries `stepQuote`, as on the server. And where a
+   * quote would be granted, two bodies make the estimate FAIL instead, with the
+   * server's message: a training `$type` (`training`, `imageResourceTraining`),
+   * and an `input` that is not plain JSON (a `Date`, `Map`, `Set`, `BigInt`,
+   * `NaN`, …).
    *
    * Whether the QUOTE survives follows the real flow: the host's own gate,
    * dialog and daily-limit codes settle before the server claims the quote, so
@@ -2762,7 +2851,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
          * ESTIMATE_WORKFLOW and ESTIMATE_WORKFLOW_BATCH so a batch cell is priced
          * exactly as a single estimate of the same body.
          */
-        const estimateSnapshotFor = (body: WorkflowBody): BlockWorkflowSnapshot => {
+        const estimateSnapshotFor = (
+          body: WorkflowBody,
+          // TRUE only from the single ESTIMATE_WORKFLOW. The server's batch
+          // estimate persists nothing, so a batch cell never stores a
+          // confirmed-step quote and never carries a `stepQuote`.
+          opts: { storeQuotes: boolean },
+        ): BlockWorkflowSnapshot => {
           // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
           // the two real producers byte-for-byte so a block's `catch` around
           // `estimate()` is exercisable locally — see the knob's docs for why
@@ -2853,15 +2948,29 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           const stepType = passThroughStepType(body);
           const stepPrice = stepType === undefined ? 0 : costFor(body);
           if (
+            opts.storeQuotes &&
             stepType !== undefined &&
             viewer !== null &&
             stepPrice > buzzBudget &&
             stepPrice <= MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB
           ) {
+            // From here a quote WOULD be granted, so the two bodies that must
+            // never get one are refused out loud, as the server refuses them: it
+            // throws `BAD_REQUEST`, which the page host catches into
+            // `failureSnapshot(err)` — so `estimate()` rejects instead of
+            // returning a price. Below the budget (or in a batch) neither check
+            // runs and the estimate is the ordinary one.
+            if (isTrainingStepTypeName(stepType)) {
+              return { workflowId: 'failed', status: 'failed', error: MOCK_STEP_TRAINING_TYPE_ERROR };
+            }
+            const bound = stepBodyFingerprint(body as unknown as Record<string, unknown>);
+            if ('refusal' in bound) {
+              return { workflowId: 'failed', status: 'failed', error: bound.refusal };
+            }
             const quoteId = trainingHandle('sq_');
             const expiresAtMs = Date.now() + STEP_QUOTE_TTL_MS;
             stepQuotes.set(quoteId, {
-              fingerprint: stepBodyFingerprint(body as unknown as Record<string, unknown>),
+              fingerprint: bound.fingerprint,
               total: stepPrice,
               expiresAtMs,
               spent: false,
@@ -2999,7 +3108,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
-              payload: { requestId, snapshot: estimateSnapshotFor(body) },
+              payload: { requestId, snapshot: estimateSnapshotFor(body, { storeQuotes: true }) },
             });
             return;
           }
@@ -3071,7 +3180,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   error: MOCK_TRAINING_IN_BATCH_ERROR,
                 };
               }
-              return estimateSnapshotFor(cell ?? ({} as WorkflowBody));
+              return estimateSnapshotFor(cell ?? ({} as WorkflowBody), { storeQuotes: false });
             });
             // The server's aggregate rule: the cells that priced, i.e. not
             // `'failed'` and carrying a numeric `cost.total`.
@@ -3891,8 +4000,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               }
               return reply({ error: runConfirmedStepError });
             }
+            // The submit's preflight refuses a training `$type` BEFORE it touches
+            // the quote, so the quote is kept.
+            if (isTrainingStepTypeName(b.$type)) {
+              return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
+            }
             quote.spent = true;
-            if (stepBodyFingerprint(b) !== quote.fingerprint) {
+            // The body is hashed AFTER the claim, so a body the server cannot bind
+            // (non-plain-JSON input) and a body that differs both consume the quote.
+            const bound = stepBodyFingerprint(b);
+            if ('refusal' in bound) return reply({ error: bound.refusal });
+            if (bound.fingerprint !== quote.fingerprint) {
               return reply({ error: MOCK_STEP_BODY_MISMATCH_ERROR });
             }
             // The server's cap refusals RESOLVE (refunded, no job started) — after

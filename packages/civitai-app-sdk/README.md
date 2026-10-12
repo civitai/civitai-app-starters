@@ -216,7 +216,13 @@ or metered) above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_
 (5,000), the `estimate` reply carries `snapshot.stepQuote` (`quoteId`, `total`, `stepType`,
 `expiresAt`). Send the same body back with that `quoteId` on the `RUN_CONFIRMED_STEP` bridge
 (`CONFIRMED_STEP_RESULT`); a `quoteId` body sent as an ordinary submit is refused. A quote is
-single-use and expires after 15 minutes. Each confirmation is its own job, so a
+single-use and expires after 15 minutes. Only a **single** estimate carries `stepQuote` — a
+batch estimate stores nothing, so its cells never do. Where a quote would be granted, the
+estimate **fails instead** (`{ workflowId: 'failed', status: 'failed', error }`) for a training
+`$type` (`a training step type cannot run as a confirmed step — use kind:'training'`) and for an
+`input` that is not plain JSON (`a confirmed step needs plain JSON input (objects, arrays,
+strings, finite numbers, booleans, null) — <path> is <what>`; the suffix varies, so match on
+the text before the dash). Each confirmation is its own job, so a
 `submission-unconfirmed` result — the outcome is unknown — must never be retried automatically:
 a retry is a new, separately charged job. Page apps only, `ai:write:budgeted`, behind the host
 flag `app-blocks-confirmed-step` (off by default), and refused for development, dev-tunnel and

@@ -577,6 +577,11 @@ resolves with one cell per body, in order, plus the run total. Returns
   `WorkflowEstimateError`, and the other cells still price.
 - **`kind: 'training'` bodies are refused per cell.** Estimate a training run
   with `useBuzzWorkflow().estimate()`.
+- **A cell never carries a `stepQuote`.** A batch stores nothing, so a
+  pass-through step priced above the per-call budget comes back with its cost and
+  no confirmable quote. To run it with
+  [`useRunConfirmedStep()`](#userunconfirmedstep--one-job-above-the-per-call-budget),
+  estimate that one body with `useBuzzWorkflow().estimate()`.
 - **Estimate only.** Nothing is submitted and no Buzz is held or spent. There is
   no batch submit. Submit each cell with
   `useBuzzWorkflow().submit()`, which asks the viewer and checks the budget per
@@ -1254,6 +1259,22 @@ they are charged, so a price that may move, or no price at all, gets no quote.
 `stepQuote.total` can differ from `cost.total` on the same snapshot (which stays
 what an unconfirmed submit would reserve) — put `stepQuote.total` on your button.
 
+🔴 **Estimate it on its own.** Only a single `estimate()` returns a `stepQuote`.
+A batch estimate (`useBatchEstimate()`) stores nothing, so its cells never carry
+one: price the grid in a batch, then estimate the one body you want to run.
+
+🔴 **Two bodies make the estimate reject instead of returning a price.** Only
+where a quote would otherwise be granted, so not below the budget and not in a
+batch. `estimate()` rejects with a `WorkflowEstimateError` whose
+`snapshot.error` is the server's message; the same text is the
+`RunConfirmedStepError`'s `message` if such a body is run. Neither has a code or
+a flag — they are server messages, so match on the text:
+
+| `snapshot.error` / `err.message` | cause | fix |
+|---|---|---|
+| `a training step type cannot run as a confirmed step — use kind:'training'` | `$type` is `training` or `imageResourceTraining` | train with [`kind: 'training'`](#usepreparetrainingdataset-and-useruntraining--lora-training), which has its own dataset and checks |
+| starts with `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ` and ends with the offending path, e.g. `body.input.when is a Date` | `input` holds something that is not plain JSON: a `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, or an `undefined` array element. The quote is bound to the exact body, so the body must be exactly representable | send plain JSON (an ISO string for a date, an array for a set). The suffix varies, so match on the part **before the dash** |
+
 🔴 **Single-use, and it expires.** A quote is good for one run and for **15
 minutes** (`stepQuote.expiresAt`). The server prices the job again at submit and
 refuses a higher price. Estimate again to get a new one.
@@ -1288,7 +1309,7 @@ before saying anything about money:
 | `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the app's daily spend or rate limit). Refunded: **no job, nothing charged**; the quote is used up | show `err.message` (the server's reason); a retry needs a new estimate and usually a later time |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
 | `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid confirmed step request` / `no block token`) | show or ignore per case |
-| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, changed price, the flag is off) | estimate again, then retry |
+| `err.code === undefined`, no flag | a server refusal with no job started (expired or used quote, changed body, changed price, a training `$type`, non-plain-JSON `input`, the flag is off) | fix the body if the message names it, estimate again, then retry |
 
 ```tsx
 const { estimate, submit, watch } = useBuzzWorkflow();
@@ -1328,10 +1349,13 @@ async function generate3d(prompt: string) {
 exercised before a production host has it. A pass-through `step` estimate carries
 a `stepQuote` whenever the mock's price for it (`generation.costPerGen`, or
 `cost`) is above the token's per-call budget (`buzzBudget`, default 200) and at
-most 5,000, for a signed-in viewer; there is no separate switch. The mock holds
-the quotes it stored and refuses an unknown, expired or already-run one, a body
-that differs from the quoted one, and a plain `SUBMIT_WORKFLOW` carrying a
-`quoteId`. How the run settles is `runConfirmedStepError`:
+most 5,000, for a signed-in viewer; there is no separate switch. As on the
+server, a batch-estimate cell never carries one, and where a quote would be
+granted the estimate fails instead, with the server's message, for a training
+`$type` and for non-plain-JSON `input`. The mock holds the quotes it stored and
+refuses an unknown, expired or already-run one, a body that differs from the
+quoted one, and a plain `SUBMIT_WORKFLOW` carrying a `quoteId`. How the run
+settles is `runConfirmedStepError`:
 
 | `runConfirmedStepError` | URL | outcome |
 |---|---|---|
