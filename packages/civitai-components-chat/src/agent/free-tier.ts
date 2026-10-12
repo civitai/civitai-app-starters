@@ -117,55 +117,89 @@ export function freeTierFetch(inner: typeof fetch, air: string, freeTier: FreeTi
     if (!useFree || !freeTier.modelFor(air)) return inner(input, init);
     if (!freeTier.available(air)) return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
 
+    // The free attempt can be cut short on its own (slow to start) and must also stop with the caller.
     const abort = new AbortController();
-    const signal = init?.signal ? AbortSignal.any([init.signal, abort.signal]) : abort.signal;
+    const release = follow(init?.signal, abort);
     const headers = new Headers(init?.headers);
     headers.set('X-Civitai-Tier', 'free');
-    const response = await inner(input, { ...init, headers, signal });
-    if (response.status === 429) {
-      freeTier.exhausted(air, Number(response.headers.get('Retry-After')) || undefined);
-      return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
-    }
-    // Browsers only see RateLimit when the server exposes it; otherwise ask for the count.
-    if (!freeTier.note(response.headers)) void freeTier.refresh();
+    try {
+      const response = await inner(input, { ...init, headers, signal: abort.signal });
+      if (response.status === 429) {
+        release();
+        freeTier.exhausted(air, Number(response.headers.get('Retry-After')) || undefined);
+        return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
+      }
+      // Browsers only see RateLimit when the server exposes it; otherwise ask for the count.
+      if (!freeTier.note(response.headers)) void freeTier.refresh();
 
-    if (!response.ok || !response.body || !payWhenOut) return response;
-
-    const first = await firstChunk(response.body, startMs);
-    if (first === 'slow') {
-      abort.abort();
-      return inner(input, init);
+      if (!response.ok || !response.body) {
+        release();
+        return response;
+      }
+      const reader = response.body.getReader();
+      const first = payWhenOut ? await firstChunk(reader, startMs) : undefined;
+      if (first === 'slow') {
+        abort.abort();
+        release();
+        return inner(input, init);
+      }
+      // The caller can still stop the reply while it streams, so its listener stays until the stream ends.
+      return new Response(passOn(reader, first, release), { status: response.status, statusText: response.statusText, headers: response.headers });
+    } catch (error) {
+      release();
+      throw error;
     }
-    return new Response(first.stream, { status: response.status, statusText: response.statusText, headers: response.headers });
   };
 }
 
-async function firstChunk(body: ReadableStream<Uint8Array>, ms: number): Promise<'slow' | { stream: ReadableStream<Uint8Array> }> {
-  const reader = body.getReader();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const read = reader.read();
-  const outcome = await Promise.race([read, new Promise<'slow'>((resolve) => (timer = setTimeout(() => resolve('slow'), ms)))]);
-  clearTimeout(timer);
-  if (outcome === 'slow') {
-    void reader.cancel().catch(() => undefined);
-    return 'slow';
+/**
+ * Aborts `abort` when `outer` does, and returns how to stop following it. By hand rather than with
+ * `AbortSignal.any`, which Safari before 17.4, Chrome before 116 and Firefox before 124 lack.
+ */
+function follow(outer: AbortSignal | null | undefined, abort: AbortController): () => void {
+  if (!outer) return () => undefined;
+  if (outer.aborted) {
+    abort.abort(outer.reason);
+    return () => undefined;
   }
-  return {
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (outcome.done) controller.close();
-        else controller.enqueue(outcome.value);
-      },
-      async pull(controller) {
-        const { value, done } = await reader.read();
-        if (done) controller.close();
-        else controller.enqueue(value);
-      },
-      cancel(reason) {
-        return reader.cancel(reason);
-      },
-    }),
+  const onAbort = () => abort.abort(outer.reason);
+  outer.addEventListener('abort', onAbort, { once: true });
+  return () => outer.removeEventListener('abort', onAbort);
+}
+
+async function firstChunk(reader: ReadableStreamDefaultReader<Uint8Array>, ms: number): Promise<'slow' | ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([reader.read(), new Promise<'slow'>((resolve) => (timer = setTimeout(() => resolve('slow'), ms)))]);
+  clearTimeout(timer);
+  if (outcome === 'slow') void reader.cancel().catch(() => undefined);
+  return outcome;
+}
+
+/** The rest of the body, after `first` if it was already read; `settled` runs once it ends, fails or is cancelled. */
+function passOn(reader: ReadableStreamDefaultReader<Uint8Array>, first: ReadableStreamReadResult<Uint8Array> | undefined, settled: () => void): ReadableStream<Uint8Array> {
+  const push = (controller: ReadableStreamDefaultController<Uint8Array>, { value, done }: ReadableStreamReadResult<Uint8Array>) => {
+    if (done) {
+      settled();
+      controller.close();
+    } else controller.enqueue(value);
   };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (first) push(controller, first);
+    },
+    async pull(controller) {
+      try {
+        push(controller, await reader.read());
+      } catch (error) {
+        settled();
+        throw error;
+      }
+    },
+    cancel(reason) {
+      settled();
+      return reader.cancel(reason);
+    },
+  });
 }
 
 // A 400, so the AI SDK does not retry it as it would a 429.
