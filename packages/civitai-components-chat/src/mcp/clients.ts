@@ -16,7 +16,10 @@ export interface McpProgress {
 
 export interface McpCallOptions {
   signal?: AbortSignal;
+  /** How long to wait for an answer; with `onProgress`, counted again from each progress notification. */
   timeoutMs?: number;
+  /** The most a call may take however much progress it reports; unlimited unless set. */
+  maxTotalTimeoutMs?: number;
   onProgress?: (progress: McpProgress) => void;
 }
 
@@ -30,7 +33,7 @@ export interface McpConnection {
 export interface McpConnectionOptions {
   url: string;
   /** Omitted for servers whose browse tools are anonymous. */
-  token?: () => Promise<string>;
+  token?: () => string | Promise<string>;
   fetch?: typeof fetch;
 }
 
@@ -38,7 +41,7 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(globalThis) }: McpConnectionOptions): McpConnection {
   const endpoint = new URL(url, typeof location === 'undefined' ? 'http://localhost/' : location.href);
-  let pending: Promise<Client> | null = null;
+  let pending: Promise<{ client: Client; transport: StreamableHTTPClientTransport }> | null = null;
 
   const authedFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
@@ -49,19 +52,26 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
   const connect = (): Promise<Client> => {
     pending ??= (async () => {
       const client = new Client({ name: 'chat-cvt', version: '0.1.0' });
-      await client.connect(new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch }));
-      return client;
+      const transport = new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch });
+      await client.connect(transport);
+      return { client, transport };
     })().catch((error: unknown) => {
       pending = null;
       throw error;
     });
-    return pending;
+    return pending.then(({ client }) => client);
   };
 
-  const reset = async () => {
+  // `end` also tells the server the session is over, so it can free what it holds for it.
+  const reset = async (end = false) => {
     const stale = pending;
     pending = null;
-    await stale?.then((client) => client.close()).catch(() => undefined);
+    await stale
+      ?.then(async ({ client, transport }) => {
+        if (end) await transport.terminateSession().catch(() => undefined);
+        await client.close();
+      })
+      .catch(() => undefined);
   };
 
   // A server restart forgets the session; the next call starts a new one.
@@ -94,10 +104,11 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
           (await client.callTool({ name, arguments: args }, undefined, {
             signal: opts.signal,
             timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(opts.maxTotalTimeoutMs !== undefined ? { maxTotalTimeout: opts.maxTotalTimeoutMs } : {}),
             resetTimeoutOnProgress: opts.onProgress !== undefined,
             onprogress: opts.onProgress,
           })) as CallToolResult,
       ),
-    close: reset,
+    close: () => reset(true),
   };
 }

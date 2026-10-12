@@ -12,7 +12,8 @@ import { modelName, parseCommand, resolveCommands, resolveModel, type ChatComman
 import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
-import type { ChatSession, PendingUpload } from '../session.js';
+import type { ChatMcpServer } from '../mcp/servers.js';
+import type { ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
 import { applyTheme } from '../settings.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
@@ -55,6 +56,7 @@ export class CivitaiChat extends LitElement {
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
     mcp: { attribute: false },
+    mcpServers: { attribute: false },
     scope: {},
     panelLinkBase: { attribute: 'panel-link-base' },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
@@ -97,6 +99,13 @@ export class CivitaiChat extends LitElement {
   declare systemPrompt?: string | ((defaults: string) => string);
   /** Switches the assistant's Civitai tool servers: `orchestration` makes things, `site` finds Civitai models. */
   declare mcp: { orchestration?: boolean; site?: boolean };
+  /**
+   * More MCP servers whose tools the assistant may use, e.g. ones made for this viewer whose address is
+   * known only at runtime. Each tool is offered as `${id}__${tool}`. A new array opens the servers it adds
+   * and closes the ones it drops (or whose `url` changed), keeping the conversation; an array equal in
+   * value to the current one changes nothing.
+   */
+  declare mcpServers?: ReadonlyArray<ChatMcpServer>;
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
   /**
@@ -187,6 +196,7 @@ export class CivitaiChat extends LitElement {
       this.#startedWith = this.app;
       void this.#start(this.app);
     }
+    if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
 
   /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
@@ -262,6 +272,7 @@ export class CivitaiChat extends LitElement {
 
   async #start(app: AppClient): Promise<void> {
     this.#session?.agent.abort();
+    this.#session?.mcpServers.close();
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
     if (this.app !== app) return;
@@ -273,7 +284,7 @@ export class CivitaiChat extends LitElement {
       hostTools: () => this.tools,
       hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
       systemPrompt: () => this.systemPrompt,
-      mcp: () => this.mcp,
+      mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
       // While a reply is still coming the message waits in the box instead of being dropped.
       ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
       compose: (message, refs) => this.#composeWith(message, refs),
@@ -287,6 +298,10 @@ export class CivitaiChat extends LitElement {
     }
     session.addEventListener('settings-change', this.#rerender);
     session.freeTier.addEventListener('change', this.#rerender);
+    session.addEventListener('mcp-server-error', (event) => {
+      const { server, error } = (event as CustomEvent<McpServerErrorDetail>).detail;
+      this.#toast(`Could not reach ${server.label?.trim() || server.id}; its tools are off for now.`, error);
+    });
     session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
@@ -303,6 +318,7 @@ export class CivitaiChat extends LitElement {
         .catch(() => undefined);
     void session.store.refreshList().catch((error: unknown) => this.#toast('Could not load your chats.', error));
     void session.catalog().catch((error: unknown) => this.#toast('Could not reach Civitai tools; some things may not work.', error));
+    session.syncMcpServers();
 
     const resume = this.fullPage ? takeResume() : null;
     const target = resume?.conversationId ?? settings.lastConversationId;
@@ -847,7 +863,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

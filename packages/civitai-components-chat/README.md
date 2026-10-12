@@ -98,6 +98,7 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
 | `mcp` | `{ orchestration?: boolean, site?: boolean }`, both on by default: making media, and Civitai model search. |
+| `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
 | `scope` | Set before `app`. Keeps the page's chats and preferences apart from every other page's. |
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
@@ -108,6 +109,48 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `ad
 
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.
+
+## More MCP servers
+
+`mcpServers` adds MCP servers beside the built-in two, for per-user servers whose address is known
+only at runtime, such as a viewer's own workspace:
+
+```ts
+import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+
+const workspace = await startWorkspace(); // your code: { mcpUrl, token }
+chat.mcpServers = [
+  {
+    id: 'workspace', // [a-z0-9-]+
+    url: workspace.mcpUrl, // a Streamable HTTP endpoint
+    token: () => workspace.token, // sent as a bearer token; the app's own when omitted
+    label: 'Workspace', // shown while one of its tools runs, and to the assistant
+  },
+] satisfies ChatMcpServer[];
+```
+
+- **Names.** Every tool of an added server is offered as `${id}__${tool}`, e.g.
+  `workspace__run_command`, whether or not anything else uses the name. So a tool's name never
+  depends on what else is loaded, and saved conversations keep pointing at the same tool. A tool
+  whose full name is not 1-64 letters, digits, `_` or `-`, or that a built-in tool already has, is
+  left out with a console warning. Use the full name in `toolViews` and in `instructions`.
+- **Connections.** Each server uses the same client as the built-in ones, including a new session
+  when the server forgets the old one (a 404 or 400). `token` is asked for on every request and may
+  return a string or a promise. Without `token` the server gets the viewer's Civitai token
+  (`app.getToken()`), so leave it out only for a server you trust with that token.
+- **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
+  whose `url` changed, ending their MCP session (an HTTP `DELETE`, when the server named one). The
+  conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:
+  `token` and `label` changes apply without reconnecting.
+- **Long calls.** Calls ask for MCP progress notifications. Each one restarts a 610 s timeout, and
+  no call runs longer than 30 minutes, so a tool that reports progress (a build, a test run) is not
+  cut off.
+- **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
+  tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
+  chat and every other server carry on. The chat tries again at the next reply.
+- **Inputs.** Arguments go to the server as the assistant wrote them, except that a chat file id
+  (like `up1-1`) given as a whole value becomes the file's URL. Results go back to the assistant as
+  text, up to 4,000 characters.
 
 ## Configuration
 
