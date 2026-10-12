@@ -139,18 +139,21 @@ chat.mcpServers = [
   request, and may return a string or a promise. The chat never sends an added server the viewer's
   Civitai token: an entry without `token` is skipped with a console warning.
 - **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
-  whose `url` changed; a call still running on a closed server fails. The conversation stays as it
-  is. An array equal in `id` and `url` to the current one changes nothing:
+  whose `url` changed. A call still running on a closed server fails, and so does any later call
+  to it: a closed server is never reopened. The conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:
   `token` and `label` changes apply without reconnecting.
 - **Long calls.** Calls ask for MCP progress notifications, and each one restarts a 610 s timeout,
   so a tool that keeps reporting progress (a build, a test run) is not cut off however long it runs.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
-  chat and every other server carry on. The chat tries again at the next reply.
+  chat and every other server carry on. The chat tries again at the next reply, on a new connection,
+  so a request that hung does not hold up later replies.
 - **Inputs.** Arguments go to the server exactly as the assistant wrote them. Unlike Civitai's own
   tools and the page's `tools`, a chat file id (like `up1-1`) is not swapped for the file's signed
-  URL, so a third-party server never gets a link to the viewer's files. Results go back to the
-  assistant as text, up to 4,000 characters.
+  URL, so a third-party server never gets a link to the viewer's files.
+- **Results.** A reply goes back to the assistant as text. A long one keeps its first 2,000 and last
+  6,000 characters with a note of how many were left out between, since a build or a test run prints
+  its errors last. (Civitai's own tools keep the first 4,000.)
 
 ## Configuration
 
