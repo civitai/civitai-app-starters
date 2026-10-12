@@ -371,7 +371,7 @@ export class ChatSession extends EventTarget {
   async toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
-    const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai, resolveArgs: (args) => this.resolveArgs(args) }) };
+    const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai }) };
     const host = hostToolSet(this.#options.hostTools?.() ?? {}, builtIn, {
       conversationId: turn.conversationId,
       findAttachment: (id) => this.findAttachment(id),

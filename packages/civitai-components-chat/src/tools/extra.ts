@@ -15,10 +15,13 @@ const FAILED_NOTE = 'This tool failed. Tell the user in plain words; do not call
 export interface ExtraToolDeps {
   /** Tools already offered; an added server's tool never replaces one. */
   taken: ToolSet;
-  resolveArgs(args: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-/** The added servers' tools, each named `${serverId}__${tool}` and passed straight through. */
+/**
+ * The added servers' tools, each named `${serverId}__${tool}` and passed straight through. Arguments go
+ * as the assistant wrote them: a chat file id is not swapped for its signed URL, which would hand a
+ * third-party server a link to the viewer's file.
+ */
 export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolSet {
   const tools: ToolSet = {};
   for (const { server, connection, tools: serverTools } of servers) {
@@ -31,7 +34,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
         description: `[${server.label?.trim() || server.id}] ${tool.description ?? ''}`.trim(),
         inputSchema: jsonSchema(objectSchema(tool.inputSchema)),
         execute: async (input, { abortSignal }) => {
-          const args = await deps.resolveArgs((input ?? {}) as Record<string, unknown>);
+          const args = (input ?? {}) as Record<string, unknown>;
           const options: McpCallOptions = {
             signal: abortSignal,
             timeoutMs: EXTRA_TOOL_TIMEOUT_MS,

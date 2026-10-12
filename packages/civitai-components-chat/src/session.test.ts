@@ -208,6 +208,19 @@ describe('ChatSession with added MCP servers', () => {
     expect(errors.map((detail) => detail.server.id)).toEqual(['broken']);
   });
 
+  it('passes arguments to an added server as the assistant wrote them, never swapping a chat file id for its signed URL', async () => {
+    const calls: unknown[] = [];
+    const { session } = setup({ [SANDBOX]: [{ name: 'run_command', run: (args) => (calls.push(args), { content: [{ type: 'text', text: 'ok' }] }) }] }, () => [
+      { id: 'sandbox', url: SANDBOX, token: () => 'tok' },
+    ]);
+    session.store.startNew();
+    session.store.appendUserTurn('use this picture', [{ id: 'up1-1', kind: 'image', source: { type: 'upload', blobId: 'b1' }, url: 'https://files.example/signed.png?sig=secret' }]);
+
+    await run(await session.toolSet(turn), 'sandbox__run_command', { file: 'up1-1', nested: { files: ['up1-1'] } });
+
+    expect(calls).toEqual([{ file: 'up1-1', nested: { files: ['up1-1'] } }]);
+  });
+
   it("shows a running tool under its server's label, or its id without one", async () => {
     const { session } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('ping') }, () => [
       { id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' },

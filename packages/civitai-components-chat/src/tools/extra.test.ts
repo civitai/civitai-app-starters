@@ -38,7 +38,7 @@ describe('extraToolSet', () => {
     const seen: McpCallOptions[] = [];
     const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async (_name: string, _args: unknown, options: McpCallOptions = {}) => (seen.push(options), toolResult(undefined, 'ok'))) } as McpConnection;
     const tool = { name: 'run_command', description: 'Runs a shell command.', inputSchema: { type: 'object', properties: { command: { type: 'string' } } } };
-    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {}, resolveArgs: async (args) => args });
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
 
     expect(set.sandbox__run_command!.description).toBe('[Sandbox] Runs a shell command.');
     await set.sandbox__run_command!.execute!({ command: 'npm test' }, { toolCallId: 'c', messages: [] });
@@ -54,7 +54,7 @@ describe('extraToolSet', () => {
     const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, 'exit 1', true)) } as McpConnection;
     const tool = { name: 'run_command', inputSchema: { type: 'object' } };
     const taken = { sandbox__taken: {} as never };
-    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }, { name: 'sandbox__taken', tool }] }], { taken, resolveArgs: async (args) => args });
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }, { name: 'sandbox__taken', tool }] }], { taken });
 
     expect(Object.keys(set)).toEqual(['sandbox__run_command']);
     expect(await set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [] })).toMatchObject({ error: 'exit 1' });

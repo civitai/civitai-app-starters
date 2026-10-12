@@ -147,9 +147,10 @@ chat.mcpServers = [
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply.
-- **Inputs.** Arguments go to the server as the assistant wrote them, except that a chat file id
-  (like `up1-1`) given as a whole value becomes the file's URL. Results go back to the assistant as
-  text, up to 4,000 characters.
+- **Inputs.** Arguments go to the server exactly as the assistant wrote them. Unlike Civitai's own
+  tools and the page's `tools`, a chat file id (like `up1-1`) is not swapped for the file's signed
+  URL, so a third-party server never gets a link to the viewer's files. Results go back to the
+  assistant as text, up to 4,000 characters.
 
 ## Configuration
 
