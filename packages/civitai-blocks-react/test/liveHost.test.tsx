@@ -8,7 +8,7 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
-import { decodeBlockTokenPayload, pollWaitSecondsForWire } from '../src/internal/liveHost.js';
+import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
@@ -546,11 +546,9 @@ describe('createLiveHost — workflow forwarding', () => {
   });
 
   it.each([
-    ['a whole number of seconds', 9, 9],
-    ['a fraction, floored', 12.9, 12],
-    ['above the wire bound, capped at it', 600, 60],
-    ['exactly the wire bound', 60, 60],
-  ])('POLL_WORKFLOW forwards waitSeconds: %s', async (_label, sent, forwarded) => {
+    ['a whole number of seconds', 7, 7],
+    ['a value the server will cap, sent as-is', 90, 90],
+  ])('POLL_WORKFLOW forwards waitSeconds unchanged: %s', async (_label, sent, forwarded) => {
     installWithFetch(async (url) => {
       if (url.endsWith('blocks.pollWorkflow')) {
         return trpcOk({ workflowId: 'wf_1', status: 'processing' });
@@ -569,14 +567,10 @@ describe('createLiveHost — workflow forwarding', () => {
 
   it.each([
     ['absent', {}],
-    ['zero', { waitSeconds: 0 }],
-    ['a fraction below one', { waitSeconds: 0.9 }],
-    ['negative', { waitSeconds: -3 }],
-    ['not a number', { waitSeconds: '15' }],
-    ['not finite', { waitSeconds: Number.POSITIVE_INFINITY }],
+    ['NaN', { waitSeconds: Number.NaN }],
   ])('POLL_WORKFLOW sends NO waitSeconds field when it is %s', async (_label, extra) => {
-    // "No hold" is an absent field, never `waitSeconds: 0`, so a block that
-    // does not long-poll makes the request it always made.
+    // The production hosts forward only a finite number; anything else is no
+    // field at all, so the request is the plain read it always was.
     installWithFetch(async (url) => {
       if (url.endsWith('blocks.pollWorkflow')) {
         return trpcOk({ workflowId: 'wf_1', status: 'processing' });
@@ -1889,38 +1883,6 @@ describe('createLiveHost — SET_USER_CHECKPOINT on a PAGE (refused, as the page
         .filter((m) => m.type === 'USER_CHECKPOINT_SET')
         .map((m) => m.payload?.requestId),
     ).toEqual(['r-routable']);
-  });
-});
-
-describe('pollWaitSecondsForWire', () => {
-  // Same steps as the server's own resolver, except the cap: this one stops at
-  // the 60 the procedure's input schema accepts and leaves the lower policy
-  // ceiling to the server.
-  it.each([
-    [1, 1],
-    [9, 9],
-    [15, 15],
-    [16, 16],
-    [12.9, 12],
-    [60, 60],
-    [61, 60],
-    [3600, 60],
-  ])('%s → %s', (sent, forwarded) => {
-    expect(pollWaitSecondsForWire(sent)).toBe(forwarded);
-  });
-
-  it.each([
-    [0],
-    [0.9],
-    [-3],
-    [Number.NaN],
-    [Number.POSITIVE_INFINITY],
-    ['15'],
-    [null],
-    [undefined],
-    [{}],
-  ])('%s → no hold (undefined)', (sent) => {
-    expect(pollWaitSecondsForWire(sent)).toBeUndefined();
   });
 });
 

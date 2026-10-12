@@ -10,7 +10,7 @@
 
 **`dev:live` forwards `idempotencyKey` on `SUBMIT_WORKFLOW`.** It was dropped, so the server never saw the key `submit()` sent: a retry with the same key was a second submit, and a key in a format the server refuses was never refused. It is now forwarded as the production hosts forward it, only when it is a non-empty string.
 
-**`dev:live` forwards `waitSeconds` on `POLL_WORKFLOW`.** It was dropped, so `watch()` could not hold a poll open in `dev:live`. The value is floored, a value of `0` or less (or a non-number) sends no field, and anything above 60 is sent as 60, which is the most the server's input accepts. The server decides the actual hold. This matches the production hosts as of civitai/civitai#5798; a production host without that change drops the field, so there a poll is answered at once.
+**`dev:live` forwards `waitSeconds` on `POLL_WORKFLOW`.** It was dropped, so `watch()` could not hold a poll open in `dev:live`. A finite number is sent unchanged and anything else sends no field; the server owns every bound (it floors the value, treats `0` or less as no hold, and caps the hold). This matches the production hosts as of civitai/civitai#5798; a production host without that change drops the field, so there a poll is answered at once.
 
 **Migration.** A test that expects `persist()` to resolve under the default mock context now sees a rejection. If the block runs in a model slot, pass that slot as `context` (a complete `ModelSlotContext`) and it resolves as before. If the block is a page app, the test was asserting something production never does: remove the `persist()` call and keep the picked checkpoint in the app's own state.
 

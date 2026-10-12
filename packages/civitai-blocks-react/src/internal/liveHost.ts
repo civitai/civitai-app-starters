@@ -239,37 +239,6 @@ export interface LiveHostOptions {
   manifest?: unknown;
 }
 
-/**
- * The largest `waitSeconds` the server's `blocks.pollWorkflow` input accepts
- * (`z.number().int().min(0).max(60)`, civitai/civitai `main` at `c1fffa4d1f`).
- * This is the WIRE bound, not the hold the server grants: it clamps again to
- * its own, lower, ceiling. See {@link pollWaitSecondsForWire}.
- */
-const POLL_WAIT_SECONDS_WIRE_MAX = 60;
-
-/**
- * The `waitSeconds` to put on a `blocks.pollWorkflow` call for the value a block
- * sent on `POLL_WORKFLOW`, or `undefined` to send none (a plain read).
- *
- * The block's value is forwarded so the server can long-poll; the server decides
- * the actual hold. It is normalised first, because the procedure's input schema
- * REJECTS what its own resolver would merely have clamped (a fraction, a value
- * above {@link POLL_WAIT_SECONDS_WIRE_MAX}, a negative), and a rejected poll
- * would reach the block as a failed workflow over a tuning value.
- *
- * Same steps, same order, as the server's `resolveBlockPollWaitSeconds`: a
- * non-number or non-finite value is no hold; floor; `<= 0` is no hold. Only the
- * last step differs — this caps at the wire bound and leaves the policy ceiling
- * to the server — so the hold the orchestrator sees is the one the server would
- * have computed from the raw value.
- */
-export function pollWaitSecondsForWire(waitSeconds: unknown): number | undefined {
-  if (typeof waitSeconds !== 'number' || !Number.isFinite(waitSeconds)) return undefined;
-  const floored = Math.floor(waitSeconds);
-  if (floored <= 0) return undefined;
-  return Math.min(floored, POLL_WAIT_SECONDS_WIRE_MAX);
-}
-
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
 
@@ -700,9 +669,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
    * `snapshot` OR a still-transient error — the caller turns the latter into a
    * keep-polling `processing` reply, never a fabricated terminal `failed`.
    *
-   * `waitSeconds` is the block's long-poll hint, already normalised by
-   * {@link pollWaitSecondsForWire}; `undefined` sends none, which keeps the
-   * request byte-identical to a plain read.
+   * `waitSeconds` is the block's long-poll hint, passed through unchanged;
+   * `undefined` sends none, which keeps the request byte-identical to a plain
+   * read.
    */
   async function pollWithRetry(workflowId: string, waitSeconds?: number): Promise<TrpcCallResult> {
     let last: TrpcCallResult = { error: 'poll failed', transient: true };
@@ -1165,8 +1134,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
             // The long-poll hint is forwarded (it was dropped here, so
-            // `watch()` could never hold a poll open in `dev:live`).
-            const waitSeconds = pollWaitSecondsForWire(typed.payload?.waitSeconds);
+            // `watch()` could never hold a poll open in `dev:live`), with the
+            // production hosts' rule as of civitai/civitai#5798: a finite
+            // number is sent UNCHANGED, anything else sends no field. The
+            // server owns every bound (floor, `<= 0` is no hold, the cap).
+            const rawWaitSeconds = typed.payload?.waitSeconds;
+            const waitSeconds =
+              typeof rawWaitSeconds === 'number' && Number.isFinite(rawWaitSeconds)
+                ? rawWaitSeconds
+                : undefined;
             void pollWithRetry(workflowId, waitSeconds).then((r) => {
               // Snapshot present (incl. a genuine terminal `failed` from the
               // backend) — forward it as-is.
