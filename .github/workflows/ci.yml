@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     # A checkout and a few API calls. A hang here holds every other job, and a
     # timed-out `lanes` fails open (empty outputs: everything runs).
-    timeout-minutes: 5
+    timeout-minutes: 1
     permissions:
       contents: read
       pull-requests: read
@@ -86,6 +86,9 @@ jobs:
 
       # The runner's preinstalled node is enough (built-ins only), which keeps
       # this job, and so the start of every job behind it, to a few seconds.
+      # THROWAWAY: outlive the job timeout on purpose.
+      - run: sleep 120
+
       - id: decide
         run: node scripts/ci-lanes.mjs
         env:
