@@ -87,7 +87,7 @@ describe('ChatSession with added MCP servers', () => {
   it("adds each server's tools to the built-in ones, every one named `${id}__${tool}`, and calls them on that server", async () => {
     const calls: unknown[] = [];
     const { session } = setup({ [SANDBOX]: [{ name: 'run_command', run: (args) => (calls.push(args), { content: [{ type: 'text', text: 'listed 3 files' }] }) }, { name: 'read_file' }] }, () => [
-      { id: 'sandbox', url: SANDBOX },
+      { id: 'sandbox', url: SANDBOX, token: () => 'tok' },
     ]);
 
     const set = await session.toolSet(turn);
@@ -103,8 +103,8 @@ describe('ChatSession with added MCP servers', () => {
     const tagged = (server: string, ...names: string[]): FakeTool[] =>
       names.map((name) => ({ name, run: () => (ran.push(`${server}:${name}`), { content: [{ type: 'text', text: `${server} ${name}` }] }) }));
     const { session } = setup({ [SANDBOX]: tagged('a', 'run_command', 'run_step'), [OTHER]: tagged('b', 'run_command') }, () => [
-      { id: 'a', url: SANDBOX },
-      { id: 'b', url: OTHER },
+      { id: 'a', url: SANDBOX, token: () => 'tok' },
+      { id: 'b', url: OTHER, token: () => 'tok' },
     ]);
 
     const set = await session.toolSet(turn);
@@ -118,24 +118,35 @@ describe('ChatSession with added MCP servers', () => {
     expect(ran).toEqual(['a:run_step', 'a:run_command', 'b:run_command']);
   });
 
-  it("sends each server its own token, and the app's where it brings none", async () => {
+  it('sends each server its own token, and never the viewer\'s Civitai token to a server that brings none', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const THIRD = 'https://third.example/mcp';
+    const tokenless = { id: 'c', url: THIRD } as ChatMcpServer;
     const { session, servers } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('ping'), [THIRD]: tools('ping') }, () => [
       { id: 'a', url: SANDBOX, token: () => 'tok-a' },
       { id: 'b', url: OTHER, token: async () => 'tok-b' },
-      { id: 'c', url: THIRD },
+      tokenless,
     ]);
 
     const set = await session.toolSet(turn);
     await run(set, 'a__run_command');
     await run(set, 'b__ping');
-    await run(set, 'c__ping');
 
     // initialize, initialized, tools/list, tools/call
-    for (const url of [SANDBOX, OTHER, THIRD]) expect(servers[url]!.authorizations).toHaveLength(4);
+    for (const url of [SANDBOX, OTHER]) expect(servers[url]!.authorizations).toHaveLength(4);
     expect(new Set(servers[SANDBOX]!.authorizations)).toEqual(new Set(['Bearer tok-a']));
     expect(new Set(servers[OTHER]!.authorizations)).toEqual(new Set(['Bearer tok-b']));
-    expect(new Set(servers[THIRD]!.authorizations)).toEqual(new Set(['Bearer app-token']));
+    // Left out, uncontacted: a missing token is a page bug, not a reason to hand over the viewer's.
+    expect(Object.keys(set).filter((name) => name.startsWith('c__'))).toEqual([]);
+    expect(servers[THIRD]!.initializes).toBe(0);
+    expect(servers[THIRD]!.authorizations).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('MCP server "c" is skipped: it has no token'));
+  });
+
+  it('requires a token in the type', () => {
+    // @ts-expect-error `token` is required: the chat never sends a server the viewer's own token.
+    const server: ChatMcpServer = { id: 'c', url: 'https://third.example/mcp' };
+    expect(server.id).toBe('c');
   });
 
   it('opens a new server and closes the old one when the list changes, keeping the conversation; an equal list changes nothing', async () => {
@@ -157,7 +168,7 @@ describe('ChatSession with added MCP servers', () => {
     expect(servers[SANDBOX]!.authorizations.at(-1)).toBe('Bearer new');
 
     // A new url: the old session is ended at once, before any reply.
-    list = [{ id: 'sandbox', url: OTHER }];
+    list = [{ id: 'sandbox', url: OTHER, token: () => 'new' }];
     session.syncMcpServers();
     await vi.waitFor(() => expect(servers[SANDBOX]!.deletes).toBe(1));
     const swapped = await session.toolSet(turn);
@@ -177,8 +188,8 @@ describe('ChatSession with added MCP servers', () => {
   it('leaves out a server it cannot reach, reports it once, and keeps the built-in tools and the other servers', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { session } = setup({ [SANDBOX]: 'down', [OTHER]: tools('run_command') }, () => [
-      { id: 'broken', url: SANDBOX, label: 'Broken box' },
-      { id: 'ok', url: OTHER },
+      { id: 'broken', url: SANDBOX, label: 'Broken box', token: () => 'tok' },
+      { id: 'ok', url: OTHER, token: () => 'tok' },
     ]);
     const errors: McpServerErrorDetail[] = [];
     session.addEventListener('mcp-server-error', (event) => errors.push((event as CustomEvent<McpServerErrorDetail>).detail));
@@ -194,8 +205,8 @@ describe('ChatSession with added MCP servers', () => {
 
   it("shows a running tool under its server's label, or its id without one", async () => {
     const { session } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('ping') }, () => [
-      { id: 'sandbox', url: SANDBOX, label: 'Sandbox' },
-      { id: 'other', url: OTHER },
+      { id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' },
+      { id: 'other', url: OTHER, token: () => 'tok' },
     ]);
     await session.toolSet(turn);
     expect(session.mcpServerViews()).toEqual({ sandbox__run_command: { activity: 'Sandbox: run_command…' }, other__ping: { activity: 'other: ping…' } });
@@ -204,8 +215,8 @@ describe('ChatSession with added MCP servers', () => {
   it('skips a server whose id is not lowercase letters, digits and -', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { session, servers } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('run_command') }, () => [
-      { id: 'Bad_Id', url: SANDBOX },
-      { id: 'good', url: OTHER },
+      { id: 'Bad_Id', url: SANDBOX, token: () => 'tok' },
+      { id: 'good', url: OTHER, token: () => 'tok' },
     ]);
     const set = await session.toolSet(turn);
     expect(Object.keys(set).filter((name) => name.includes('__'))).toEqual(['good__run_command']);

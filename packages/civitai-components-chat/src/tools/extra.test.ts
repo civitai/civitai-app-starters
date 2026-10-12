@@ -38,7 +38,7 @@ describe('long-running MCP calls', () => {
 });
 
 describe('extraToolSet', () => {
-  const server = { id: 'sandbox', url: URL, label: 'Sandbox' };
+  const server = { id: 'sandbox', url: URL, label: 'Sandbox', token: () => 'tok' };
 
   it('calls with progress on, a timeout each progress restarts, and a generous most', async () => {
     const seen: McpCallOptions[] = [];

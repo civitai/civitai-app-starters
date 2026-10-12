@@ -98,7 +98,6 @@ export class ChatSession extends EventTarget {
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
     this.mcpServers = new McpServerPool({
-      token: () => app.getToken(),
       onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
     });
     // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.

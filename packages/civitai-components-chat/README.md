@@ -123,7 +123,7 @@ chat.mcpServers = [
   {
     id: 'workspace', // [a-z0-9-]+
     url: workspace.mcpUrl, // a Streamable HTTP endpoint
-    token: () => workspace.token, // sent as a bearer token; the app's own when omitted
+    token: () => workspace.token, // required; sent as a bearer token
     label: 'Workspace', // shown while one of its tools runs, and to the assistant
   },
 ] satisfies ChatMcpServer[];
@@ -135,9 +135,9 @@ chat.mcpServers = [
   whose full name is not 1-64 letters, digits, `_` or `-`, or that a built-in tool already has, is
   left out with a console warning. Use the full name in `toolViews` and in `instructions`.
 - **Connections.** Each server uses the same client as the built-in ones, including a new session
-  when the server forgets the old one (a 404 or 400). `token` is asked for on every request and may
-  return a string or a promise. Without `token` the server gets the viewer's Civitai token
-  (`app.getToken()`), so leave it out only for a server you trust with that token.
+  when the server forgets the old one (a 404 or 400). `token` is required, is asked for on every
+  request, and may return a string or a promise. The chat never sends an added server the viewer's
+  Civitai token: an entry without `token` is skipped with a console warning.
 - **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
   whose `url` changed, ending their MCP session (an HTTP `DELETE`, when the server named one). The
   conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:

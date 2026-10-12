@@ -6,8 +6,11 @@ export interface ChatMcpServer {
   id: string;
   /** Its Streamable HTTP endpoint. */
   url: string;
-  /** Its bearer token; the app's own (`app.getToken()`) when omitted. Asked for on every request. */
-  token?: () => string | Promise<string>;
+  /**
+   * Its bearer token, asked for on every request. Required: the chat never sends a server the viewer's
+   * own Civitai token, and an entry without one is skipped.
+   */
+  token: () => string | Promise<string>;
   /** What the chat calls it while one of its tools runs, e.g. "Sandbox"; the id when omitted. */
   label?: string;
 }
@@ -52,8 +55,6 @@ interface Entry {
 }
 
 export interface McpServerPoolDeps {
-  /** The token for servers that bring none. */
-  token(): string | Promise<string>;
   /** A server could not be reached or would not list its tools; its tools are left out. */
   onError(server: ChatMcpServer, error: unknown): void;
 }
@@ -79,6 +80,8 @@ export class McpServerPool {
     for (const server of servers) {
       if (typeof server?.id !== 'string' || !MCP_SERVER_ID.test(server.id)) {
         console.warn(`[chat-cvt] MCP server "${String(server?.id)}" is skipped: ids are lowercase letters, digits and - only`);
+      } else if (typeof server.token !== 'function') {
+        console.warn(`[chat-cvt] MCP server "${server.id}" is skipped: it has no token, and the chat does not send it the viewer's`);
       } else if (next.has(server.id)) {
         console.warn(`[chat-cvt] MCP server "${server.id}" is listed twice; the first one is used`);
       } else next.set(server.id, server);
@@ -98,7 +101,7 @@ export class McpServerPool {
   #open(server: ChatMcpServer): Entry {
     const entry: Entry = { server, connection: null, tools: null, named: [], failing: false };
     try {
-      entry.connection = createMcpConnection({ url: server.url, token: () => (entry.server.token ?? this.#deps.token)() });
+      entry.connection = createMcpConnection({ url: server.url, token: () => entry.server.token() });
     } catch (error) {
       // An unusable URL: reported when its tools are first asked for, like any other failure.
       entry.tools = Promise.reject(error);

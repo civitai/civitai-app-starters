@@ -29,18 +29,18 @@ describe('<civitai-chat> mcpServers', () => {
     vi.stubGlobal('fetch', fake.fetch);
     const chat = document.createElement('civitai-chat');
     chat.mcp = { orchestration: false, site: false };
-    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox' }];
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' }];
     chat.app = fakeApp();
     document.body.append(chat);
     await vi.waitFor(() => expect(fake.servers[SANDBOX]!.initializes).toBe(1));
 
-    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox' }];
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' }];
     await chat.updateComplete;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fake.servers[SANDBOX]!.initializes).toBe(1);
     expect(fake.servers[SANDBOX]!.deletes).toBe(0);
 
-    chat.mcpServers = [{ id: 'sandbox', url: OTHER }];
+    chat.mcpServers = [{ id: 'sandbox', url: OTHER, token: () => 'tok' }];
     await vi.waitFor(() => expect(fake.servers[SANDBOX]!.deletes).toBe(1));
     await vi.waitFor(() => expect(fake.servers[OTHER]!.initializes).toBe(1));
   });
@@ -50,7 +50,7 @@ describe('<civitai-chat> mcpServers', () => {
     vi.stubGlobal('fetch', fakeMcpServers({ [SANDBOX]: 'down' }).fetch);
     const chat = document.createElement('civitai-chat');
     chat.mcp = { orchestration: false, site: false };
-    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Your sandbox' }];
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Your sandbox', token: () => 'tok' }];
     chat.app = fakeApp();
     document.body.append(chat);
     const root = chat.shadowRoot!;
