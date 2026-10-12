@@ -118,7 +118,11 @@ export function freeTierFetch(inner: typeof fetch, air: string, freeTier: FreeTi
     if (!freeTier.available(air)) return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
 
     const abort = new AbortController();
-    const signal = init?.signal ? AbortSignal.any([init.signal, abort.signal]) : abort.signal;
+    // Linked by hand: AbortSignal.any is missing in Safari before 17.4, Chrome before 116, Firefox before 124.
+    const outer = init?.signal;
+    if (outer?.aborted) abort.abort(outer.reason);
+    else outer?.addEventListener('abort', () => abort.abort(outer.reason), { once: true });
+    const signal = abort.signal;
     const headers = new Headers(init?.headers);
     headers.set('X-Civitai-Tier', 'free');
     const response = await inner(input, { ...init, headers, signal });
