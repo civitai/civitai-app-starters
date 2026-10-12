@@ -33,7 +33,7 @@
  *
  * ADVISORY jobs are the five non-required jobs that depend on something outside
  * the tree at run time (a published schema, the npm registry, the orchestrator
- * spec, a live civitai/civitai checkout, a browser install), so on a PR that
+ * spec, a live civitai/civitai checkout, three browser engines), so on a PR that
  * does not touch what the job reads its verdict is mostly a fact about that
  * outside thing, not the PR.
  * On a PR they run only when the diff touches their inputs (`RULES` below).

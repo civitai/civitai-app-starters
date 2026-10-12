@@ -9,8 +9,12 @@ on:
   # There is deliberately NO `schedule:` here. Every push to main runs all five
   # advisory jobs, which is what notices drift nobody's PR caused (push runs
   # landed on 28 of the 31 days 2026-09-12..10-12), and two of them have their own re-sync crons
-  # (`revendor-canonical-schema.yml`, `sync-orchestrator-catalogs.yml`). A red
-  # one on main is surfaced by the `advisory-alert` job at the bottom.
+  # (`revendor-canonical-schema.yml`, `sync-orchestrator-catalogs.yml`).
+  #
+  # WHERE A RED ADVISORY JOB SHOWS UP NOW, exactly: on main's commit status
+  # (the push run is red), and, for schema and catalog drift, as the PR the
+  # re-sync workflow above opens. Nothing else: no issue, no notification, and
+  # no pull request unless it touches that job's inputs.
   workflow_dispatch: {}
 
 concurrency:
@@ -788,87 +792,3 @@ jobs:
       - run: pnpm check:public-types:selftest
 
       - run: pnpm check:public-types
-
-  # A RED ADVISORY JOB ON MAIN NOTIFIES SOMEONE. Since the lanes, the advisory
-  # jobs no longer redden every pull request when a live dependency drifts; the
-  # red lands on main's push runs, where nobody is looking. This opens ONE
-  # tracking issue (de-duplicated by its label), comments on it for each later
-  # red push, and closes it on the first push where all five are green again.
-  # Same shape as `published-starter-smoke.yml`'s failure surfacing.
-  #
-  # `needs:` every advisory job, so it sees their results; `lanes` only for the
-  # ledger's uniformity. Runs on push to main ONLY: a PR's red advisory job is
-  # already in front of its author. `tests/guards/ci-lanes-ledger.test.mjs`
-  # pins both.
-  #
-  # The token is the run's own GITHUB_TOKEN with `issues: write` at job level,
-  # NOT the CHANGESETS_TOKEN fallback the smoke workflow uses: that workflow
-  # never runs on pull_request, this file does, and a PAT referenced here would
-  # be one edit away from any same-repository PR's run. Opening issues needs no
-  # more than this token.
-  advisory-alert:
-    name: Advisory drift alert (main only)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      issues: write
-    needs:
-      - lanes
-      - schema-drift
-      - starter-pins
-      - orchestrator-catalog-drift
-      - design-system-cross-browser
-      - design-system-drift-guard
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    steps:
-      - name: Open, update or close the advisory tracking issue
-        # A failure here must not turn main red on its own.
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          LABEL: ci-advisory-red-on-main
-          RESULTS: >-
-            schema-drift=${{ needs.schema-drift.result }}
-            starter-pins=${{ needs.starter-pins.result }}
-            orchestrator-catalog-drift=${{ needs.orchestrator-catalog-drift.result }}
-            design-system-cross-browser=${{ needs.design-system-cross-browser.result }}
-            design-system-drift-guard=${{ needs.design-system-drift-guard.result }}
-        run: |
-          set -euo pipefail
-          red=""; green=0
-          for pair in ${RESULTS}; do
-            case "${pair#*=}" in
-              success) green=$((green + 1)) ;;
-              failure|cancelled) red="${red}- \`${pair%%=*}\`: ${pair#*=}
-          " ;;
-            esac
-          done
-          NUM="$(gh issue list --state open --label "${LABEL}" --json number --jq '.[0].number // empty')"
-          if [ -n "${red}" ]; then
-            cat > /tmp/advisory-issue-body.md <<EOF
-          An ADVISORY live-dependency job in \`ci.yml\` is red on a push to \`main\`:
-
-          ${red}
-          Run: ${RUN_URL}
-
-          These jobs compare the tree against something outside it (a published
-          schema, the npm registry, the orchestrator spec, a live civitai/civitai
-          checkout, downloaded browsers). They are not required checks and block
-          nothing; pull requests run them only when they touch their inputs, so
-          main's push runs are where this shows up. The schema and catalog drifts
-          have scheduled re-sync workflows that open a PR. This issue closes itself
-          on the first push to main where all five are green.
-          EOF
-            if [ -n "${NUM}" ]; then
-              gh issue comment "${NUM}" --body-file /tmp/advisory-issue-body.md
-            else
-              # `|| true` only for "already exists"; any other failure resurfaces
-              # in `issue create`, which rejects an unknown label.
-              gh label create "${LABEL}" --description 'An advisory ci.yml job is red on main' --color B60205 || true
-              gh issue create --title 'Advisory CI job red on main' --label "${LABEL}" --body-file /tmp/advisory-issue-body.md
-            fi
-          elif [ "${green}" -eq 5 ] && [ -n "${NUM}" ]; then
-            gh issue close "${NUM}" --comment "All five advisory jobs green again on main. ${RUN_URL}"
-          fi

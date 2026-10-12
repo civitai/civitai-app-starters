@@ -157,11 +157,20 @@ describe('every file an advisory job reads selects that job', () => {
   /** Repo-relative FILE paths a script spells as a literal beside the repo root. */
   function dataPaths(rel) {
     const abs = join(REPO_ROOT, rel);
-    if (!existsSync(abs)) return [];
-    const src = readFileSync(abs, 'utf8');
+    return existsSync(abs) ? dataPathsIn(readFileSync(abs, 'utf8')) : [];
+  }
+  function dataPathsIn(src) {
     const out = [];
-    for (const m of src.matchAll(/\b(?:resolve|join)\(\s*REPO_ROOT\s*,\s*((?:['"][^'"]*['"]\s*,?\s*)+)\)/g)) {
-      out.push([...m[1].matchAll(/['"]([^'"]*)['"]/g)].map((x) => x[1]).join('/'));
+    // Two passes, on purpose: find the call's argument text with ONE negated
+    // class (`[^)]*`), then pull the quoted segments out of it. A single
+    // pattern with a quantified group around quote-comma-whitespace backtracks
+    // exponentially on a long argument list.
+    for (const m of src.matchAll(/\b(?:resolve|join)\(\s*REPO_ROOT\s*,([^)]*)\)/g)) {
+      const segments = [...m[1].matchAll(/'([^']*)'|"([^"]*)"/g)].map((x) => x[1] ?? x[2]);
+      // A non-literal argument (a variable, a template) means the path is not
+      // spelled here; that is the known limit above, not a path to guess at.
+      const literalOnly = m[1].replace(/'[^']*'|"[^"]*"/g, '').replace(/[\s,]/g, '') === '';
+      if (segments.length && literalOnly) out.push(segments.join('/'));
     }
     for (const m of src.matchAll(/\$\{?REPO_ROOT\}?\/([\w./-]+)/g)) out.push(m[1]);
     // A file has an extension; a directory literal is walked at run time and is
@@ -186,6 +195,21 @@ describe('every file an advisory job reads selects that job', () => {
     ]) {
       assert.ok(data.includes(known), `data-path extraction did not find ${known}; found ${JSON.stringify(data)}`);
     }
+  });
+
+  test('the three literal forms are read, a non-literal one is not, and a long argument list is linear', () => {
+    assert.deepEqual(dataPathsIn("x = resolve(REPO_ROOT, 'a/b.json');"), ['a/b.json']);
+    assert.deepEqual(dataPathsIn('x = join(\n  REPO_ROOT,\n  "a",\n  \'b\',\n  "c.ts",\n);'), ['a/b/c.ts']);
+    assert.deepEqual(dataPathsIn('V="$REPO_ROOT/a/b.json"\nW="${REPO_ROOT}/c/d.sh"'), ['a/b.json', 'c/d.sh']);
+    // A directory literal and a path built from a variable are the known limit.
+    assert.deepEqual(dataPathsIn("join(REPO_ROOT, 'starters'); join(REPO_ROOT, dir, 'package.json');"), []);
+    // The previous single-pattern form took ~227 ms at 24 arguments and
+    // doubled per argument. 5000 arguments with no closing parenthesis is the
+    // worst case for it; this must stay far inside a second.
+    const hostile = `join(REPO_ROOT, ${"'a', ".repeat(5000)}`;
+    const t0 = process.hrtime.bigint();
+    assert.deepEqual(dataPathsIn(hostile), []);
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 500, 'the argument-list scan is no longer linear');
   });
 
   for (const job of jobs) {
@@ -309,25 +333,6 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
       'always-step-conditional',
     ]);
     assert.deepEqual(tags(mutate(step, '')), ['always-step-missing']);
-  });
-
-  test('the advisory alert: an advisory job dropped from its needs, or a needs it should not have', () => {
-    assert.deepEqual(tags(mutate('      - design-system-drift-guard\n    if: ${{ !cancelled() && github.event_name ==', "    if: ${{ !cancelled() && github.event_name ==")), [
-      'alert-needs-missing',
-    ]);
-    assert.deepEqual(tags(mutate('      - design-system-drift-guard\n    if: ${{ !cancelled() && github.event_name ==', "      - design-system-drift-guard\n      - sdk\n    if: ${{ !cancelled() && github.event_name ==")), [
-      'alert-needs-unknown',
-    ]);
-  });
-
-  test('the advisory alert running on pull requests, or skipped when an advisory job failed', () => {
-    const cond = "    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}\n";
-    assert.deepEqual(tags(mutate(cond, "    if: ${{ !cancelled() }}\n")), ['alert-condition']);
-    assert.deepEqual(tags(mutate(cond, "    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}\n")), ['alert-condition']);
-  });
-
-  test('the advisory alert not reading one job result', () => {
-    assert.deepEqual(tags(mutate('            starter-pins=${{ needs.starter-pins.result }}\n', '')), ['alert-result-unread']);
   });
 
   test('a schedule trigger put back', () => {
