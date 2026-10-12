@@ -32,6 +32,12 @@ export const MOCK_WORKFLOW_BOUNDS = {
   maxInputBytes: 262_144,
   /** Characters of a step `$type`, and of a step `name` on the wire. */
   maxTypeChars: 64,
+  /**
+   * Iterations of one top-level `repeat` step, nested repeats MULTIPLIED. A
+   * COPY of `@civitai/app-sdk/blocks`'s `BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`,
+   * held to it by the same test as `maxSteps`.
+   */
+  maxRepeatIterations: 16,
 } as const;
 
 /**
@@ -63,7 +69,11 @@ const DENIED_LOOKUP = new Set(MOCK_WORKFLOW_DENIED_STEP_TYPES.map((t) => t.toLow
 /** A refused body: the reply's `error` and, where one is defined, its `errorCode`. */
 export interface MockWorkflowRefusal {
   error: string;
-  errorCode?: 'workflow_step_denied' | 'workflow_ref_invalid' | 'workflow_too_many_steps';
+  errorCode?:
+    | 'workflow_step_denied'
+    | 'workflow_ref_invalid'
+    | 'workflow_too_many_steps'
+    | 'workflow_repeat_unbounded';
 }
 
 const ARGUMENTS_REF = '$arguments';
@@ -85,22 +95,139 @@ const isRepeat = (stepType: unknown): boolean =>
 export const mockWorkflowStepName = (step: { name?: unknown }, index: number): string =>
   typeof step.name === 'string' ? step.name : `$${index}`;
 
+const isMerge = (stepType: unknown): boolean =>
+  typeof stepType === 'string' && stepType.toLowerCase() === 'merge';
+
+const hasOnlyKeys = (object: Record<string, unknown>, allowed: readonly string[]): boolean =>
+  Object.keys(object).every((key) => allowed.includes(key));
+
+type RepeatInput = {
+  forClause: { $ref: string; path: string; as: string };
+  template: { $type: string; name?: string; input?: unknown };
+};
+
+/**
+ * A `repeat` step's input, or `null` unless it is EXACTLY
+ * `{ for: { $ref, path, as }, template: { $type, name?, input? } }` with string
+ * `$ref` / `path` / `as` / `$type` (and `name`, when present). Fail-closed on
+ * shape, every key spelled exactly, as the host reads it.
+ */
+function readRepeatInput(input: unknown): RepeatInput | null {
+  if (!isPlainObject(input) || !hasOnlyKeys(input, ['for', 'template'])) return null;
+  const { for: forClause, template } = input;
+  if (!isPlainObject(forClause) || !hasOnlyKeys(forClause, ['$ref', 'path', 'as'])) return null;
+  if (
+    typeof forClause.$ref !== 'string' ||
+    typeof forClause.path !== 'string' ||
+    typeof forClause.as !== 'string'
+  ) {
+    return null;
+  }
+  if (!isPlainObject(template) || !hasOnlyKeys(template, ['$type', 'name', 'input'])) return null;
+  if (typeof template.$type !== 'string') return null;
+  if (template.name !== undefined && typeof template.name !== 'string') return null;
+  return { forClause: forClause as RepeatInput['forClause'], template: template as RepeatInput['template'] };
+}
+
+/** The refusal for a `repeat` whose shape or nesting the mock cannot follow. */
+export const MOCK_REPEAT_SHAPE_ERROR =
+  'a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, ' +
+  `nested at most ${MOCK_WORKFLOW_BOUNDS.maxRepeatNesting} deep`;
+
+/** The refusal for a `merge` whose sources the mock cannot read. */
+export const MOCK_MERGE_SHAPE_ERROR =
+  'a merge step needs a "fields" object whose entries each carry a string "$ref" and a "reduce"';
+
+/** The array a `for` path names in `arguments`, by exact own keys, or `null`. */
+function readArgumentsArray(args: unknown, path: string): unknown[] | null {
+  let current: unknown = args;
+  for (const part of path.split('.')) {
+    if (!isPlainObject(current) || !Object.prototype.hasOwnProperty.call(current, part)) return null;
+    current = current[part];
+  }
+  return Array.isArray(current) ? current : null;
+}
+
+/**
+ * THE REPEAT BOUND. A refusal message, or `null` when the step is not a
+ * `repeat` or its loop is bounded: it iterates an array in the body's own
+ * `arguments` (so its length is fixed in the submitted body), and the count,
+ * nested repeats multiplied, is at most `maxRepeatIterations`.
+ */
+function repeatUnboundedProblem(
+  stepType: unknown,
+  input: unknown,
+  args: unknown,
+  outerIterations = 1,
+): string | null {
+  if (!isRepeat(stepType)) return null;
+  const repeat = readRepeatInput(input);
+  if (!repeat) return MOCK_REPEAT_SHAPE_ERROR;
+  const { forClause, template } = repeat;
+  if (forClause.$ref !== ARGUMENTS_REF) {
+    return (
+      `a repeat may only iterate over the workflow's own arguments ("$ref": "${ARGUMENTS_REF}"), ` +
+      `not ${JSON.stringify(forClause.$ref)} — pass the list in "arguments" instead`
+    );
+  }
+  const items = readArgumentsArray(args, forClause.path);
+  if (!items) return `repeat "for" path ${JSON.stringify(forClause.path)} does not name an array in "arguments"`;
+  const iterations = outerIterations * items.length;
+  if (iterations > MOCK_WORKFLOW_BOUNDS.maxRepeatIterations) {
+    return (
+      `a repeat may run at most ${MOCK_WORKFLOW_BOUNDS.maxRepeatIterations} iterations, nested repeats ` +
+      `multiplied (got ${iterations})`
+    );
+  }
+  return repeatUnboundedProblem(template.$type, template.input, args, iterations);
+}
+
+/**
+ * How many generations a step runs: 1, or a `repeat`'s iteration count with
+ * nested repeats multiplied (never less than 1). Only meaningful for a body
+ * {@link mockWorkflowBodyRefusal} accepted.
+ */
+export function mockWorkflowStepGenerations(stepType: string, input: unknown, args: unknown): number {
+  if (!isRepeat(stepType)) return 1;
+  const repeat = readRepeatInput(input);
+  const items = repeat ? readArgumentsArray(args, repeat.forClause.path) : null;
+  if (!repeat || !items) return 1;
+  return Math.max(1, items.length * mockWorkflowStepGenerations(repeat.template.$type, repeat.template.input, args));
+}
+
+/** The source each `merge` field reads, or `null` when that cannot be read for certain. */
+function readMergeSources(input: unknown): string[] | null {
+  if (!isPlainObject(input)) return null;
+  if (Object.keys(input).some((key) => key !== 'fields' && key.toLowerCase() === 'fields')) return null;
+  const { fields } = input;
+  if (!isPlainObject(fields)) return null;
+  const sources: string[] = [];
+  for (const field of Object.values(fields)) {
+    if (!isPlainObject(field)) return null;
+    if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) return null;
+    // Without `reduce` the entry is a plain reference, which the orchestrator
+    // replaces with what it points at before the merge reads it.
+    if (typeof field.$ref !== 'string' || !('reduce' in field)) return null;
+    sources.push(field.$ref);
+  }
+  return sources;
+}
+
 /**
  * Every `$type` a step can run: its own and, for a `repeat`, its template's.
- * `null` when `repeat` templates nest deeper than the bound.
+ * `null` for a `repeat` whose shape it cannot follow, or nested past the bound.
  */
 function collectStepTypes(stepType: string, input: unknown): string[] | null {
   const types: string[] = [];
-  let currentType: unknown = stepType;
-  let currentInput: unknown = input;
+  let currentType = stepType;
+  let currentInput = input;
   for (let depth = 0; depth <= MOCK_WORKFLOW_BOUNDS.maxRepeatNesting; depth += 1) {
-    if (typeof currentType !== 'string') return types;
     types.push(currentType);
-    if (!isRepeat(currentType) || !isPlainObject(currentInput)) return types;
-    const template = currentInput.template;
-    if (!isPlainObject(template)) return types;
-    currentType = template.$type;
-    currentInput = template.input;
+    if (!isRepeat(currentType)) return types;
+    const repeat = readRepeatInput(currentInput);
+    if (!repeat) return null;
+    currentType = repeat.template.$type;
+    currentInput = repeat.template.input;
   }
   return null;
 }
@@ -115,7 +242,7 @@ function isRefObject(value: Record<string, unknown>): boolean {
   return Object.keys(value).every((key) => REF_KEYS.has(key));
 }
 
-type WalkState = { refs: number };
+type WalkState = { refs: number; loopVars: Set<string> };
 
 function checkSource(source: string, sources: ReadonlySet<string>, state: WalkState): string | null {
   state.refs += 1;
@@ -167,9 +294,9 @@ function checkValue(
 }
 
 /**
- * Check one step's input. `repeat` is the one shape with structure: its `for`
- * clause names what to iterate (with an extra `as` key, so it is not a
- * reference object), and inside its `template` the `as` name is a legal source.
+ * Check one step's input. Two step types name their sources outside a reference
+ * object and are read by shape: `repeat` (its `for` clause, with the `as` name a
+ * legal source inside its template) and `merge` (its fields).
  */
 function checkStepInput(
   stepType: unknown,
@@ -177,41 +304,28 @@ function checkStepInput(
   depth: number,
   sources: ReadonlySet<string>,
   state: WalkState,
-  repeatDepth: number,
 ): string | null {
-  if (!isRepeat(stepType) || !isPlainObject(input)) return checkValue(input, depth, sources, state);
-  if (repeatDepth >= MOCK_WORKFLOW_BOUNDS.maxRepeatNesting) {
-    return `repeat steps may nest at most ${MOCK_WORKFLOW_BOUNDS.maxRepeatNesting} deep`;
+  if (isMerge(stepType)) {
+    const mergeSources = readMergeSources(input);
+    if (!mergeSources) return MOCK_MERGE_SHAPE_ERROR;
+    for (const source of mergeSources) {
+      // A merge waits on its sources as STEPS, so a loop variable is not one.
+      if (state.loopVars.has(source)) {
+        return `a merge field cannot read the repeat variable ${JSON.stringify(source)}`;
+      }
+      const problem = checkSource(source, sources, state);
+      if (problem) return problem;
+    }
+    return checkValue(input, depth, sources, state);
   }
-  const forClause = input.for;
-  let templateSources = sources;
-  if (isPlainObject(forClause)) {
-    if (typeof forClause.$ref === 'string') {
-      const problem = checkSource(forClause.$ref, sources, state);
-      if (problem) return problem;
-    }
-    for (const entry of Object.values(forClause)) {
-      const problem = checkValue(entry, depth + 2, sources, state);
-      if (problem) return problem;
-    }
-    if (typeof forClause.as === 'string') templateSources = new Set([...sources, forClause.as]);
-  }
-  for (const [key, entry] of Object.entries(input)) {
-    if (key === 'for' && isPlainObject(entry)) continue;
-    if (key !== 'template' || !isPlainObject(entry)) {
-      const problem = checkValue(entry, depth + 1, sources, state);
-      if (problem) return problem;
-      continue;
-    }
-    for (const [templateKey, templateEntry] of Object.entries(entry)) {
-      const problem =
-        templateKey === 'input'
-          ? checkStepInput(entry.$type, templateEntry, depth + 2, templateSources, state, repeatDepth + 1)
-          : checkValue(templateEntry, depth + 2, templateSources, state);
-      if (problem) return problem;
-    }
-  }
-  return null;
+  if (!isRepeat(stepType)) return checkValue(input, depth, sources, state);
+  const repeat = readRepeatInput(input);
+  if (!repeat) return MOCK_REPEAT_SHAPE_ERROR;
+  const { forClause, template } = repeat;
+  const sourceProblem = checkSource(forClause.$ref, sources, state);
+  if (sourceProblem) return sourceProblem;
+  state.loopVars.add(forClause.as);
+  return checkStepInput(template.$type, template.input, depth + 2, new Set([...sources, forClause.as]), state);
 }
 
 /** The host's wire schema, mirrored: exact keys, types and sizes. No `errorCode`. */
@@ -248,11 +362,16 @@ function isWellFormedBody(body: unknown): body is {
  *
  *  1. the wire shape — no `errorCode`, the host's schema rejection;
  *  2. the step cap — `workflow_too_many_steps`;
- *  3. step by step, the name rules and the reference graph —
- *     `workflow_ref_invalid`. A name is `[a-z][a-z0-9_-]{0,31}` (or the step's
- *     own `$<index>`), unique, and not `block-step`; a reference names
- *     `$arguments` or an EARLIER step;
- *  4. the step-type denylist on every step and on the step a `repeat` runs —
+ *  3. step by step: the name rules and a `repeat`'s exact shape and nesting
+ *     (`workflow_ref_invalid`); the repeat bound — only over an array in
+ *     `arguments`, at most 16 iterations with nested repeats multiplied
+ *     (`workflow_repeat_unbounded`); then the reference graph
+ *     (`workflow_ref_invalid`). A name is `[a-z][a-z0-9_-]{0,31}` (or the
+ *     step's own `$<index>`), unique, and not `block-step`; every source — a
+ *     reference, a `repeat`'s `for`, a `merge` field — names `$arguments` or an
+ *     EARLIER step, and a `merge` field never names a repeat variable;
+ *  4. a repeat `as` name that is also a step name — `workflow_ref_invalid`;
+ *  5. the step-type denylist on every step and on the step a `repeat` runs —
  *     `workflow_step_denied`.
  */
 export function mockWorkflowBodyRefusal(body: unknown): MockWorkflowRefusal | null {
@@ -271,7 +390,7 @@ export function mockWorkflowBodyRefusal(body: unknown): MockWorkflowRefusal | nu
 
   const earlier = new Set<string>([ARGUMENTS_REF]);
   const taken = new Set<string>();
-  const state: WalkState = { refs: 0 };
+  const state: WalkState = { refs: 0, loopVars: new Set() };
   const stepTypes: string[][] = [];
   for (const [index, step] of steps.entries()) {
     const positional = `$${index}`;
@@ -286,15 +405,27 @@ export function mockWorkflowBodyRefusal(body: unknown): MockWorkflowRefusal | nu
     if (taken.has(name)) return invalid(index, `name ${JSON.stringify(name)} is used twice`);
 
     const types = collectStepTypes(step.$type, step.input);
-    if (types === null) {
-      return invalid(index, `repeat steps may nest at most ${MOCK_WORKFLOW_BOUNDS.maxRepeatNesting} deep`);
+    if (types === null) return invalid(index, MOCK_REPEAT_SHAPE_ERROR);
+    const unbounded = repeatUnboundedProblem(step.$type, step.input, body.arguments);
+    if (unbounded !== null) {
+      return { error: `workflow step ${index}: ${unbounded}`, errorCode: 'workflow_repeat_unbounded' };
     }
-    const problem = checkStepInput(step.$type, step.input, 0, earlier, state, 0);
+    const problem = checkStepInput(step.$type, step.input, 0, earlier, state);
     if (problem) return invalid(index, problem);
 
     taken.add(name);
     earlier.add(name);
     stepTypes.push(types);
+  }
+  // A repeat variable that is also a step name (or `$arguments`) would make a
+  // template reference ambiguous between the two.
+  for (const loopVar of state.loopVars) {
+    if (earlier.has(loopVar)) {
+      return {
+        error: `a repeat "as" name ${JSON.stringify(loopVar)} is also a step name or "${ARGUMENTS_REF}"`,
+        errorCode: 'workflow_ref_invalid',
+      };
+    }
   }
 
   for (const [index, types] of stepTypes.entries()) {

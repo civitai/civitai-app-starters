@@ -1249,6 +1249,9 @@ export type WorkflowBodyStep = {
  *    checkpoint itself.
  *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
  *    (256 KB) serialized. Both REJECT; neither truncates.
+ *  - **`repeat` is refused on this arm**, outright: a `repeat` may only
+ *    iterate an array in a body's own `arguments`, and this arm has none. Use
+ *    a `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) to repeat a step.
  *  - `maxBuzz` is the app's spend knob, and the host's quote can raise the
  *    reservation above it — see its own note below.
  *
@@ -1343,6 +1346,14 @@ export type WorkflowBodyPassThroughStep = {
 export const BLOCK_WORKFLOW_MAX_STEPS = 8;
 
 /**
+ * The most times one top-level `repeat` step of a `kind: 'workflow'` body may
+ * run its template, NESTED REPEATS MULTIPLIED (a 4-item repeat inside a 4-item
+ * repeat is 16). The host refuses more with
+ * `errorCode: 'workflow_repeat_unbounded'`.
+ */
+export const BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS = 16;
+
+/**
  * A REFERENCE inside a `kind: 'workflow'` step's `input` — the orchestrator's
  * own mechanism for feeding one step's result into a later step. Put it
  * anywhere a value would go, at any depth.
@@ -1415,8 +1426,25 @@ export type WorkflowBodyWorkflowStep = {
    * resolved against any allowlist: it is refused only when it names a
    * platform-internal type (scanners, moderation classifiers, hashing, web
    * scrape/search, and the retired `textToImage` step type), with
-   * `errorCode: 'workflow_step_denied'`. `repeat` is allowed, and the `$type`
-   * its template runs is held to the same rule. 1…64 characters.
+   * `errorCode: 'workflow_step_denied'`. 1…64 characters.
+   *
+   * Two step types are read by shape, because they name their sources outside
+   * a {@link WorkflowStepRef}:
+   *  - **`repeat` — over `arguments` only, at most
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} iterations.** Its input must
+   *    be exactly `{ for: { $ref, path, as }, template: { $type, name?, input? } }`
+   *    with `for.$ref === '$arguments'` and `path` naming an ARRAY in the body's
+   *    `arguments`; its length is the iteration count, nested repeats
+   *    multiplied. A repeat over another step's output, a missing or non-array
+   *    path, or too many iterations is refused with
+   *    `errorCode: 'workflow_repeat_unbounded'`; a wrong shape, or repeats nested
+   *    more than 4 deep, with `workflow_ref_invalid`. Inside the template the
+   *    `as` name is a source a reference may name; it may not equal a step name.
+   *    The template's `$type` is held to the denylist too.
+   *  - **`merge`** — every entry of `input.fields` needs a string `$ref` and a
+   *    `reduce`, and each `$ref` must name `$arguments` or an EARLIER step,
+   *    never a repeat variable. Each counts toward the 64-reference cap.
+   *    Otherwise `workflow_ref_invalid`.
    */
   $type: string;
   /**
@@ -1454,9 +1482,18 @@ export type WorkflowBodyWorkflowStep = {
  *     values are known and charges the difference. Show the estimate as an
  *     estimate; never as "you will pay at most".
  *  2. **A workflow the host cannot price still proceeds.** It is reserved at
- *     the ceiling above instead of at a quote.
- *  3. **One author fee per workflow**, not one per step. The estimate's
- *     `cost.authorFee` is that single fee, already inside `cost.total`.
+ *     the ceiling above instead of at a quote — unless it contains a training
+ *     step, which is refused without a quote exactly as on the single-step arm
+ *     (a `training-quote-*` `errorCode`), or a `repeat` step at any depth,
+ *     which is refused without a quote too, before any reservation.
+ *  3. **One author fee per workflow**, not one per step, computed on the
+ *     QUOTED base. The estimate's `cost.authorFee` is that single fee, already
+ *     inside `cost.total`. If the workflow bills more than the quote, the fee
+ *     charged is held to the fee shown. A workflow that does not succeed has
+ *     its WHOLE fee reversed, even when earlier steps delivered output.
+ *
+ * The app's velocity limit counts one unit per step, and a `repeat` step one
+ * per iteration (nested repeats multiplied) instead of one.
  *
  * 🔴 A FAILED WORKFLOW CAN STILL HAVE COST AND IMAGES. Steps that succeeded
  * before the failing one stay charged, so a `failed` snapshot can carry
@@ -1829,6 +1866,10 @@ export interface BlockWorkflowSnapshot {
    *    `error` names the step by its position.
    *  - `'workflow_too_many_steps'` — more than
    *    {@link BLOCK_WORKFLOW_MAX_STEPS} steps.
+   *  - `'workflow_repeat_unbounded'` — a `repeat` step iterates something other
+   *    than an array in the body's `arguments`, or more than
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} times, nested repeats
+   *    multiplied.
    *
    * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
    * inbound validator accepts any string here. Handle an unrecognised code as a
@@ -2143,7 +2184,8 @@ export type KnownBlockWorkflowErrorCode =
   | 'training-quote-unpriced'
   | 'workflow_step_denied'
   | 'workflow_ref_invalid'
-  | 'workflow_too_many_steps';
+  | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {

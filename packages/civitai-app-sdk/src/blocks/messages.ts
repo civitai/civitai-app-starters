@@ -1243,7 +1243,7 @@ export type BlockToParentMessage =
   // by the one workflow id the host returns. There is no separate message for
   // it. Its replies carry `snapshot.steps`; a refused body carries
   // `snapshot.errorCode` (`workflow_step_denied`, `workflow_ref_invalid`,
-  // `workflow_too_many_steps`).
+  // `workflow_too_many_steps`, `workflow_repeat_unbounded`).
   //
   // 🔴 A `kind: 'workflow'` ESTIMATE IS NOT A MAXIMUM: the orchestrator
   // re-prices a step once the values it references are known and charges the

@@ -2,7 +2,10 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BLOCK_WORKFLOW_MAX_STEPS } from '@civitai/app-sdk/blocks';
+import {
+  BLOCK_WORKFLOW_MAX_STEPS,
+  BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS,
+} from '@civitai/app-sdk/blocks';
 import type {
   BlockWorkflowSnapshot,
   WorkflowBody,
@@ -18,6 +21,8 @@ import {
 import { useWorkflowBatch } from '../src/hooks/useWorkflowBatch.js';
 import { MOCK_SPEND_SCOPE_ERROR, type MockWorkflowStepInfo } from '../src/internal/mockHost.js';
 import {
+  MOCK_MERGE_SHAPE_ERROR,
+  MOCK_REPEAT_SHAPE_ERROR,
   MOCK_WORKFLOW_BOUNDS,
   MOCK_WORKFLOW_DENIED_STEP_TYPES,
   mockWorkflowBodyRefusal,
@@ -124,6 +129,8 @@ describe('createMockHost — kind: workflow', () => {
   it('holds its step cap to the SDK constant', () => {
     expect(MOCK_WORKFLOW_BOUNDS.maxSteps).toBe(BLOCK_WORKFLOW_MAX_STEPS);
     expect(BLOCK_WORKFLOW_MAX_STEPS).toBe(8);
+    expect(MOCK_WORKFLOW_BOUNDS.maxRepeatIterations).toBe(BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS);
+    expect(BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS).toBe(16);
   });
 
   it('denies exactly the host platform-internal list plus promptModeration', () => {
@@ -282,21 +289,23 @@ describe('createMockHost — kind: workflow', () => {
 
     it('refuses a denied $type hidden in a repeat template', async () => {
       const { estimate } = await setup();
-      const body = workflow([
-        step('frames'),
-        step(
-          'each',
-          {
-            for: { $ref: 'frames', path: 'output.frames', as: 'frame' },
-            template: { $type: 'webScrape', input: { url: { $ref: 'frame', path: 'url' } } },
-          },
-          { $type: 'repeat' },
-        ),
-      ]);
+      const body = workflow(
+        [
+          step(
+            'each',
+            {
+              for: { $ref: '$arguments', path: 'urls', as: 'u' },
+              template: { $type: 'webScrape', input: { url: { $ref: 'u', path: '' } } },
+            },
+            { $type: 'repeat' },
+          ),
+        ],
+        { urls: ['https://a', 'https://b'] },
+      );
       expectEstimateRefusal(await estimate(body), 'workflow_step_denied');
     });
 
-    it.each([['imageGen'], ['repeat'], ['training'], ['ageClassification'], ['aStepTypeNobodyHasHeardOf']])(
+    it.each([['imageGen'], ['imageUpscaler'], ['training'], ['ageClassification'], ['aStepTypeNobodyHasHeardOf']])(
       'accepts $type %s — a denylist, not an allowlist',
       async ($type) => {
         const { estimate } = await setup({ generation: { costPerGen: 4 } });
@@ -409,53 +418,196 @@ describe('createMockHost — kind: workflow', () => {
       });
     });
 
-    describe('repeat', () => {
-      const repeat = (forRef: string, templateRef: string) =>
-        workflow([
-          step('frames'),
-          step(
-            'each',
-            {
-              for: { $ref: forRef, path: 'output.frames', as: 'frame' },
-              template: { $type: 'imageUpscaler', input: { image: { $ref: templateRef, path: 'url' } } },
-            },
-            { $type: 'repeat' },
-          ),
-          step('after'),
-        ]);
+    describe('merge', () => {
+      const merge = (fields: unknown) => step('m', { fields }, { $type: 'merge' });
+      const field = (src: unknown) => ({ $ref: src, reduce: 'concat' });
 
-      it('lets the template read its own iteration variable', async () => {
+      it('accepts fields reading $arguments and earlier steps', async () => {
         const { estimate } = await setup({ generation: { costPerGen: 2 } });
-        expect(((await estimate(repeat('frames', 'frame'))) as BlockWorkflowSnapshot).cost?.total).toBe(6);
+        const body = workflow([step('a'), merge({ x: field('a'), y: field('$arguments') })], { k: 1 });
+        expect(((await estimate(body)) as BlockWorkflowSnapshot).cost?.total).toBe(4);
       });
 
-      it('refuses a `for` clause that iterates a later step', async () => {
+      it.each([
+        ['a field reading a LATER step', [merge({ x: field('z') }), step('z')], 'workflow step 0: "$ref": "z" does not name "$arguments" or an earlier step'],
+        ['a field reading ITSELF', [step('a'), merge({ x: field('m') })], 'workflow step 1: "$ref": "m" does not name "$arguments" or an earlier step'],
+        ['a field with no reduce', [step('a'), merge({ x: { $ref: 'a' } })], `workflow step 1: ${MOCK_MERGE_SHAPE_ERROR}`],
+        ['a field with a non-string $ref', [step('a'), merge({ x: field(1) })], `workflow step 1: ${MOCK_MERGE_SHAPE_ERROR}`],
+        ['fields that is not an object', [step('a'), merge([field('a')])], `workflow step 1: ${MOCK_MERGE_SHAPE_ERROR}`],
+        ['a re-cased fields key', [step('a'), step('m', { Fields: { x: field('a') } }, { $type: 'merge' })], `workflow step 1: ${MOCK_MERGE_SHAPE_ERROR}`],
+      ])('refuses %s', async (_, steps, error) => {
         const { estimate } = await setup();
-        const snapshot = expectEstimateRefusal(
-          await estimate(repeat('after', 'frame')),
+        const snapshot = expectEstimateRefusal(await estimate(workflow(steps)), 'workflow_ref_invalid');
+        expect(snapshot.error).toBe(error);
+      });
+
+      it('refuses a field reading a repeat variable', async () => {
+        const { estimate } = await setup();
+        const body = workflow(
+          [
+            step(
+              'each',
+              {
+                for: { $ref: '$arguments', path: 'xs', as: 'x' },
+                template: { $type: 'merge', input: { fields: { f: field('x') } } },
+              },
+              { $type: 'repeat' },
+            ),
+          ],
+          { xs: [1, 2] },
+        );
+        const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_ref_invalid');
+        expect(snapshot.error).toBe('workflow step 0: a merge field cannot read the repeat variable "x"');
+      });
+
+      it('counts merge sources toward the 64-reference cap', async () => {
+        const { estimate } = await setup({ generation: { costPerGen: 2 } });
+        const fields = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, k) => [`f${k}`, field('a')]));
+        const over = expectEstimateRefusal(
+          await estimate(workflow([step('a'), merge(fields(65))])),
           'workflow_ref_invalid',
         );
-        expect(snapshot.error).toBe(`workflow step 1: ${missing('after')}`);
+        expect(over.error).toBe('workflow step 1: a workflow may hold at most 64 references');
+        expect(((await estimate(workflow([step('a'), merge(fields(64))]))) as BlockWorkflowSnapshot).cost?.total).toBe(4);
       });
+    });
 
-      it('refuses a template reference that is neither the variable nor an earlier step', async () => {
+    describe('repeat shape', () => {
+      it.each([
+        ['an extra input key', { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template: { $type: 'echo' }, extra: 1 }],
+        ['an extra for key', { for: { $ref: '$arguments', path: 'xs', as: 'x', limit: 2 }, template: { $type: 'echo' } }],
+        ['a missing as', { for: { $ref: '$arguments', path: 'xs' }, template: { $type: 'echo' } }],
+        ['an extra template key', { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template: { $type: 'echo', timeout: '1s' } }],
+        ['a non-string template name', { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template: { $type: 'echo', name: 3 } }],
+        ['no template', { for: { $ref: '$arguments', path: 'xs', as: 'x' } }],
+      ])('refuses %s', async (_, input) => {
         const { estimate } = await setup();
-        expectEstimateRefusal(await estimate(repeat('frames', 'after')), 'workflow_ref_invalid');
-      });
-
-      it('refuses repeat templates nested more than 4 deep', async () => {
-        const { estimate } = await setup();
-        const nest = (levels: number): Record<string, unknown> =>
-          levels === 0
-            ? { $type: 'echo', input: {} }
-            : { $type: 'repeat', input: { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template: nest(levels - 1) } };
-        const deep = nest(5);
         const snapshot = expectEstimateRefusal(
-          await estimate(workflow([{ name: 'r', $type: 'repeat', input: deep.input as Record<string, unknown> }])),
+          await estimate(workflow([step('r', input, { $type: 'repeat' })], { xs: [1] })),
           'workflow_ref_invalid',
         );
-        expect(snapshot.error).toBe('workflow step 0: repeat steps may nest at most 4 deep');
+        expect(snapshot.error).toBe(`workflow step 0: ${MOCK_REPEAT_SHAPE_ERROR}`);
       });
+
+      const nest = (levels: number): { $type: string; input: Record<string, unknown> } =>
+        levels === 0
+          ? { $type: 'echo', input: {} }
+          : { $type: 'repeat', input: { for: { $ref: '$arguments', path: 'xs', as: `x${levels}` }, template: nest(levels - 1) } };
+
+      it('refuses repeats nested 5 deep and accepts 4', async () => {
+        const { estimate } = await setup({ generation: { costPerGen: 2 } });
+        const deep = expectEstimateRefusal(
+          await estimate(workflow([{ name: 'r', ...nest(5) }], { xs: [1] })),
+          'workflow_ref_invalid',
+        );
+        expect(deep.error).toBe(`workflow step 0: ${MOCK_REPEAT_SHAPE_ERROR}`);
+        expect(((await estimate(workflow([{ name: 'r', ...nest(4) }], { xs: [1] }))) as BlockWorkflowSnapshot).cost?.total).toBe(2);
+      });
+
+      it('refuses an `as` name that is also a step name', async () => {
+        const { estimate } = await setup();
+        const body = workflow(
+          [
+            step('a'),
+            step('r', { for: { $ref: '$arguments', path: 'xs', as: 'a' }, template: { $type: 'echo' } }, { $type: 'repeat' }),
+          ],
+          { xs: [1] },
+        );
+        const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_ref_invalid');
+        expect(snapshot.error).toBe('a repeat "as" name "a" is also a step name or "$arguments"');
+      });
+
+      it('lets the template read its own iteration variable, and refuses a later step', async () => {
+        const { estimate } = await setup({ generation: { costPerGen: 2 } });
+        const body = (templateRef: string) =>
+          workflow(
+            [
+              step('r', {
+                for: { $ref: '$arguments', path: 'xs', as: 'x' },
+                template: { $type: 'imageUpscaler', input: { image: { $ref: templateRef, path: 'url' } } },
+              }, { $type: 'repeat' }),
+              step('after'),
+            ],
+            { xs: [1, 2, 3] },
+          );
+        // 3 iterations × 2 + the plain step's 2.
+        expect(((await estimate(body('x'))) as BlockWorkflowSnapshot).cost?.total).toBe(8);
+        expectEstimateRefusal(await estimate(body('after')), 'workflow_ref_invalid');
+      });
+    });
+  });
+
+  describe('workflow_repeat_unbounded', () => {
+    const repeatOver = (forClause: Record<string, unknown>, template: Record<string, unknown> = { $type: 'echo' }) =>
+      step('r', { for: { as: 'x', ...forClause }, template }, { $type: 'repeat' });
+
+    it.each([
+      [
+        'a repeat over an EARLIER step’s output',
+        workflow([step('frames'), repeatOver({ $ref: 'frames', path: 'output.frames' })]),
+        `workflow step 1: a repeat may only iterate over the workflow's own arguments ("$ref": "$arguments"), not "frames" — pass the list in "arguments" instead`,
+      ],
+      [
+        'a path missing from arguments',
+        workflow([repeatOver({ $ref: '$arguments', path: 'nope' })], { xs: [1] }),
+        'workflow step 0: repeat "for" path "nope" does not name an array in "arguments"',
+      ],
+      [
+        'a path naming a non-array',
+        workflow([repeatOver({ $ref: '$arguments', path: 'xs' })], { xs: 'abc' }),
+        'workflow step 0: repeat "for" path "xs" does not name an array in "arguments"',
+      ],
+      [
+        'a body with no arguments at all',
+        workflow([repeatOver({ $ref: '$arguments', path: 'xs' })]),
+        'workflow step 0: repeat "for" path "xs" does not name an array in "arguments"',
+      ],
+      [
+        '17 iterations',
+        workflow([repeatOver({ $ref: '$arguments', path: 'xs' })], { xs: Array.from({ length: 17 }, (_, k) => k) }),
+        'workflow step 0: a repeat may run at most 16 iterations, nested repeats multiplied (got 17)',
+      ],
+      [
+        'nested repeats whose product exceeds 16 (5 × 4)',
+        workflow(
+          [repeatOver({ $ref: '$arguments', path: 'outer' }, {
+            $type: 'repeat',
+            input: { for: { $ref: '$arguments', path: 'inner', as: 'y' }, template: { $type: 'echo' } },
+          })],
+          { outer: [1, 2, 3, 4, 5], inner: [1, 2, 3, 4] },
+        ),
+        'workflow step 0: a repeat may run at most 16 iterations, nested repeats multiplied (got 20)',
+      ],
+    ])('refuses %s', async (_, body, error) => {
+      const { estimate } = await setup();
+      const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_repeat_unbounded');
+      expect(snapshot.error).toBe(error);
+    });
+
+    it('accepts 16 iterations, nested repeats multiplied (4 × 4), and prices every child', async () => {
+      const { estimate } = await setup({ generation: { costPerGen: 3, authorFee: FEE } });
+      const body = workflow(
+        [repeatOver({ $ref: '$arguments', path: 'outer' }, {
+          $type: 'repeat',
+          input: { for: { $ref: '$arguments', path: 'inner', as: 'y' }, template: { $type: 'echo' } },
+        })],
+        { outer: [1, 2, 3, 4], inner: [1, 2, 3, 4] },
+      );
+      expect(((await estimate(body)) as BlockWorkflowSnapshot).cost).toEqual({ total: 16 * 3 + 7, authorFee: 7 });
+    });
+
+    it('accepts a dotted path into arguments', async () => {
+      const { estimate } = await setup({ generation: { costPerGen: 1 } });
+      const body = workflow([repeatOver({ $ref: '$arguments', path: 'set.items' })], { set: { items: [1, 2] } });
+      expect(((await estimate(body)) as BlockWorkflowSnapshot).cost?.total).toBe(2);
+    });
+
+    it('is refused on submit too, before anything is debited', async () => {
+      const { host, submit } = await setup({ buzz: { balance: 500 } });
+      const out = await submit(workflow([step('frames'), repeatOver({ $ref: 'frames', path: 'output' })]));
+      expect(out).toBeInstanceOf(WorkflowSubmitError);
+      expect((out as WorkflowSubmitError).snapshot.errorCode).toBe('workflow_repeat_unbounded');
+      expect(host.buzz.getBalance()).toBe(500);
     });
   });
 

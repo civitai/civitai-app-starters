@@ -154,6 +154,7 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'workflow_step_denied'
   | 'workflow_ref_invalid'
   | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded'
 >();
 // The host's refusal assigns; so does a code a later host adds (open string).
 const refusal: BlockWorkflowSnapshot = {

@@ -22,7 +22,10 @@ import type {
   WorkflowBodyWorkflowStep,
   WorkflowStepRef,
 } from '../../src/blocks/index.js';
-import { BLOCK_WORKFLOW_MAX_STEPS } from '../../src/blocks/index.js';
+import {
+  BLOCK_WORKFLOW_MAX_STEPS,
+  BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS,
+} from '../../src/blocks/index.js';
 
 // --- the member is in the union, extracted by its discriminant ---
 expectTypeOf<Extract<WorkflowBody, { kind: 'workflow' }>>().toEqualTypeOf<WorkflowBodyWorkflow>();
@@ -31,6 +34,24 @@ expectTypeOf<WorkflowBodyWorkflow['arguments']>().toEqualTypeOf<
   Record<string, unknown> | undefined
 >();
 expectTypeOf<typeof BLOCK_WORKFLOW_MAX_STEPS>().toEqualTypeOf<8>();
+expectTypeOf<typeof BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS>().toEqualTypeOf<16>();
+
+// --- a bounded repeat over `arguments`, and a merge, are ordinary steps to the type ---
+const repeatOverArguments: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompts: ['a', 'b'] },
+  steps: [
+    {
+      name: 'each',
+      $type: 'repeat',
+      input: {
+        for: { $ref: '$arguments', path: 'prompts', as: 'p' },
+        template: { $type: 'imageGen', input: { prompt: { $ref: 'p', path: '' } } },
+      },
+    },
+  ],
+};
+void repeatOverArguments;
 
 // --- a two-step body: an image step whose output the second step consumes ---
 const chained: WorkflowBody = {
@@ -164,6 +185,12 @@ const badStatus: BlockWorkflowSnapshot = {
 void badStatus;
 
 // The refusal codes assign without a cast.
+const unbounded: BlockWorkflowSnapshot = {
+  workflowId: 'failed',
+  status: 'failed',
+  errorCode: 'workflow_repeat_unbounded',
+};
+void unbounded;
 const refused: BlockWorkflowSnapshot = {
   workflowId: 'failed',
   status: 'failed',

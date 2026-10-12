@@ -938,8 +938,12 @@ export interface UseBuzzWorkflow {
  *  - `estimate()`'s `cost.total` is NOT a maximum: the orchestrator re-prices a
  *    step once the values it references are known and charges the difference;
  *  - a workflow the host cannot price still proceeds on `submit()`, reserved at
- *    the app's per-generation budget × the number of steps;
- *  - one author fee applies to the whole workflow, not one per step;
+ *    the app's per-generation budget × the number of steps (one with a training
+ *    step, or with a `repeat` step at any depth, is refused instead);
+ *  - one author fee applies to the whole workflow, not one per step, and it is
+ *    reversed whole if the workflow does not succeed;
+ *  - `repeat` iterates only an array in the body's `arguments`, at most 16
+ *    times, nested repeats multiplied;
  *  - a `failed` result can carry `cost.total > 0` and usable `imageUrls`, because
  *    steps that succeeded before the failing one stay charged — read
  *    `result.steps`.

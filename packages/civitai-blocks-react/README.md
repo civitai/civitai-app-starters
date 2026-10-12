@@ -614,16 +614,28 @@ showImages(done.imageUrls ?? []);
 - **Limits**: 64 references per body, inputs nested at most 32 levels, `repeat`
   templates nested at most 4 deep, a `$type` of at most 64 characters, and 256
   KB (262144 bytes) for every step's `input` plus `arguments` together. An
-  unknown key on the body or on a step is rejected.
+  unknown key on the body or on a step is rejected. The app's velocity limit
+  counts one unit per step, and a `repeat` step one per iteration instead.
 - `suppressOutput: true` marks an intermediate step. Its images are left out of
   `snapshot.imageUrls` and out of its own `steps[i].imageUrls`. It still runs
   and is still charged.
 - There is **no `maxBuzz`**. The spend ceiling is the app's per-generation
   budget × the number of steps, enforced by the host.
-- Any orchestrator `$type` is accepted (`repeat` included) except the
-  platform-internal ones: scanners, moderation classifiers, hashing, web
-  scrape/search, and the retired `textToImage` step type. The step a `repeat`
-  runs is held to the same rule.
+- Any orchestrator `$type` is accepted except the platform-internal ones:
+  scanners, moderation classifiers, hashing, web scrape/search, and the retired
+  `textToImage` step type.
+- **`repeat` over `arguments` only, at most 16 iterations**
+  (`BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`, nested repeats multiplied). Its input
+  is exactly `{ for: { $ref: '$arguments', path, as }, template: { $type,
+  name?, input? } }`, where `path` names an array in `arguments`. Inside the
+  template, `as` is a source a reference may name; it may not equal a step
+  name. The template's `$type` is held to the denylist too. A `repeat` over
+  another step's output is refused, because its length is unknown until that
+  step has run. The single-step pass-through `kind: 'step'` arm refuses
+  `repeat` outright.
+- **`merge`**: every entry of `input.fields` needs a string `$ref` (`$arguments`
+  or an earlier step, never a repeat variable) and a `reduce`; each counts
+  toward the 64-reference limit.
 - `WithWorkflowStepRefs<T>` (from `@civitai/app-sdk/blocks`) types an input you
   already have a type for while still allowing references in it.
 
@@ -633,9 +645,15 @@ showImages(done.imageUrls ?? []);
    the orchestrator re-prices it once those values are known and charges the
    difference. Never show the estimate as "you will pay at most".
 2. **A workflow the host cannot price still proceeds.** `submit()` reserves the
-   ceiling above instead of a quote.
-3. **One author fee per workflow**, not one per step. The estimate's
-   `cost.authorFee` is that single fee, already inside `cost.total`.
+   ceiling above instead of a quote. Two exceptions are refused without a
+   quote, before any reservation: a workflow with a training step (a
+   `training-quote-*` `errorCode`, as on the single-step arm), and a workflow
+   with a `repeat` step at any depth.
+3. **One author fee per workflow**, not one per step, on the quoted base. The
+   estimate's `cost.authorFee` is that single fee, already inside `cost.total`.
+   If the workflow bills more than the quote, the fee charged is held to the
+   fee shown. A workflow that does not succeed has its **whole** fee reversed,
+   even if earlier steps delivered output.
 
 **The result**
 
@@ -649,7 +667,8 @@ fields keep their meaning: `status` and `cost` are the whole workflow's, and
 🔴 **A `failed` workflow is not an empty one.** Steps that succeeded before the
 failing step stay charged and keep their results, so a snapshot with `status:
 'failed'` can carry `cost.total > 0` and usable `imageUrls`. Show what did
-finish, and do not tell the viewer nothing was charged.
+finish, and do not tell the viewer nothing was charged — though the app fee is
+reversed for any workflow that does not succeed.
 
 **Refusals**
 
@@ -662,17 +681,21 @@ A body the host will not run is refused before anything is priced or reserved:
 |---|---|
 | `'workflow_too_many_steps'` | more than 8 steps |
 | `'workflow_step_denied'` | a step names a platform-internal `$type` |
-| `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; or a step name breaks the rules above. `error` names the step by position |
+| `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; a step name breaks the rules above; a `repeat` or `merge` is malformed; or a repeat `as` name is also a step name |
+| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied) |
 
 - **Requires a host that knows the kind.** An older host refuses the body.
 - **Test it locally.** The mock host prices each step with
   `generation.costPerGen` (a function gets the step as its second argument) and
-  adds `generation.authorFee` once; refuses with the three codes above; reports
+  multiplies it by a `repeat` step's iteration count, then adds
+  `generation.authorFee` once; refuses with the four codes above, in the host's
+  order; reports
   `steps` on every poll, finishing them in order; and
   `generation.failWorkflowStep: '<name>'` (`'$<index>'` for an unnamed step)
   makes one step fail, so you can render a partial failure. The mock checks
   where a reference points, not whether its `path` exists; it never re-prices;
-  and it does not expand a `repeat` step into generated steps.
+  it does not expand a `repeat` step into generated `<name>.<n>` steps; and it
+  never refuses an unquoted training step, because it always quotes.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The

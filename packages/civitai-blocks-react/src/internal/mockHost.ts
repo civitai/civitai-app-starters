@@ -109,7 +109,11 @@ import {
   resolveUploadBytesRequest,
   type UploadBytesWindowEntry,
 } from './uploadBytes.js';
-import { mockWorkflowBodyRefusal, mockWorkflowStepName } from './mockWorkflowGraph.js';
+import {
+  mockWorkflowBodyRefusal,
+  mockWorkflowStepGenerations,
+  mockWorkflowStepName,
+} from './mockWorkflowGraph.js';
 import { BATCH_ESTIMATE_CELL_TIMEOUT_ERROR } from '../hooks/useBatchEstimate.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
@@ -274,8 +278,9 @@ export interface MockGenerationScenario {
    *
    * A `kind: 'workflow'` body is priced PER STEP: this is called once for each
    * step (a function receives the step as its second argument, see
-   * {@link MockWorkflowStepInfo}) and the results are summed, so a plain number
-   * prices an N-step workflow at N times it.
+   * {@link MockWorkflowStepInfo}), multiplied by that step's generations (a
+   * `repeat` counts its iterations, nested repeats multiplied), and summed, so a
+   * plain number prices an N-step workflow with no `repeat` at N times it.
    */
   costPerGen?: CostSpec;
   /**
@@ -2348,19 +2353,25 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     return typeof spec === 'function' ? spec(body) : (spec ?? legacyCost);
   };
 
-  /** `costPerGen`, called once per step of a `kind: 'workflow'` body. */
+  /**
+   * `costPerGen`, called once per step of a `kind: 'workflow'` body and
+   * multiplied by that step's generations — 1, or a `repeat`'s iteration count —
+   * because the orchestrator's quote prices every child of a bounded repeat.
+   */
   const workflowStepCosts = (body: MockWorkflowBody): number[] => {
     const spec: CostSpec = gen.costPerGen ?? legacyCost;
-    return (Array.isArray(body.steps) ? body.steps : []).map((step, index) =>
-      typeof spec === 'function'
-        ? spec(body, {
-            index,
-            name: mockWorkflowStepName(step, index),
-            $type: step.$type,
-            input: step.input,
-          })
-        : spec,
-    );
+    return (Array.isArray(body.steps) ? body.steps : []).map((step, index) => {
+      const each =
+        typeof spec === 'function'
+          ? spec(body, {
+              index,
+              name: mockWorkflowStepName(step, index),
+              $type: step.$type,
+              input: step.input,
+            })
+          : spec;
+      return each * mockWorkflowStepGenerations(step.$type, step.input, body.arguments);
+    });
   };
 
   // `null` = this quote is not itemised (a fee-less kind, or `authorFee: false`).
