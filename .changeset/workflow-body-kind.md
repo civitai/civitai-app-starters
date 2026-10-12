@@ -3,7 +3,7 @@
 '@civitai/blocks-react': minor
 ---
 
-RELEASE HOLD: do not release this until the host change in civitai/civitai (branch `zach/app-blocks-workflow-kind`) is merged and deployed to civitai.com. A host that predates it refuses a `kind: 'workflow'` body, so `estimate()` and `submit()` reject for every app that sends one.
+RELEASE HOLD: do not release this until civitai/civitai#5795 (branch `zach/app-blocks-workflow-kind`) is merged and deployed to civitai.com. A host that predates it refuses a `kind: 'workflow'` body, so `estimate()` and `submit()` reject for every app that sends one.
 
 **A new `WorkflowBody` kind, `kind: 'workflow'`: several orchestrator steps submitted as one workflow, where a later step can consume an earlier step's result.**
 
