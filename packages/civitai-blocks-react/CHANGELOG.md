@@ -1,5 +1,23 @@
 # @civitai/blocks-react
 
+## 0.70.0
+
+### Minor Changes
+
+- be14f9b: **The mock host now enforces `ai:write:budgeted` on estimate, batch estimate and submit, as the real server does (#608).**
+
+  civitai's `estimateWorkflow`, `estimateWorkflowBatch` and `submitWorkflow` refuse a token without the spend scope with `FORBIDDEN 'block lacks ai:write:budgeted scope'`, before any pricing. `createMockHost` / `Harness` used to check that only on the training paths, so the refusal → `requestConsent()` → `TOKEN_REFRESH` → retry loop could not be exercised in `pnpm dev` or in a test. While `consentGranted` is `false` (the default, because production's first token lacks the scope), the mock now refuses all three, each in the shape the page host sends:
+
+  - `ESTIMATE_WORKFLOW` → `ESTIMATE_RESULT { snapshot: { workflowId: 'failed', status: 'failed', error } }` (no `cost`). `estimate()` rejects `WorkflowEstimateError` code `'failed'`.
+  - `ESTIMATE_WORKFLOW_BATCH` → `ESTIMATE_BATCH_RESULT { requestId, error }`, the whole call. `estimateBatch()` rejects `BatchEstimateError` code `'failed'` with the text on `hostError`.
+  - `SUBMIT_WORKFLOW` → `WORKFLOW_SUBMITTED { snapshot: { workflowId: 'failed', status: 'failed', error } }` (no `cost`). `submit()` still resolves by default: its consent prompt-and-retry asks, the mock grants and pushes a refreshed token, and the retry re-sends the same idempotency key, so the viewer is charged once. With `consentGrantable: false` it rejects with code `'exception'`.
+
+  The host's own gates that run before the server (the batch request-shape checks and the idempotency-key format) still answer first, and the `failEstimate` / `failSubmitException` knobs still win over the refusal, so a forced failure shows what the knob asked for.
+
+  **Migration.** A test or harness that estimates or submits against the default mock and is not about consent now needs `consentGranted: true` (or `?consent=granted` in the dev harness). Without it, `estimate()` and `estimateBatch()` reject, and `submit()` makes an extra consent round-trip before it resolves. A test that IS about consent can now drive the whole loop: estimate, see the refusal, `requestConsent({ scopes: ['ai:write:budgeted'] })`, wait for the scope on `useBlockToken().scopes`, estimate again.
+
+  The internal `MOCK_TRAINING_SCOPE_ERROR` constant is renamed `MOCK_SPEND_SCOPE_ERROR`, since every money path now uses it (it was never exported from a public subpath).
+
 ## 0.69.1
 
 ### Patch Changes
@@ -461,15 +479,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                        single measurements on one machine.
+                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2289,10 +2307,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                      after    @civitai/theme       0.3.1                   — 1 copy
-                                                               @civitai/components  0.4.2                   — 1 copy
+                                                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                        after    @civitai/theme       0.3.1                   — 1 copy
+                                                                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
