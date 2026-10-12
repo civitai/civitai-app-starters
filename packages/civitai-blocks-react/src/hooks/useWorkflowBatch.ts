@@ -234,7 +234,7 @@ function summarise(cells: readonly WorkflowBatchCell[]): WorkflowBatchSummary {
 /**
  * Watch a set of already-submitted workflows as one batch, with per-cell status,
  * a summary, and cancel-all. For grid apps that submit N workflows one by one
- * with `useBuzzWorkflow().submit()` (each with its own confirmation) and then
+ * with `useBuzzWorkflow().submit()` (one submit per cell) and then
  * have to follow all N.
  *
  * 🔴 THE APP OWNS THE LIST, AND THE LIST IS THE BATCH. Pass the workflow ids as
