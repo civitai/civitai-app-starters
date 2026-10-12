@@ -1245,7 +1245,7 @@ export type BlockToParentMessage =
   //
   // 🔴 ESTIMATE ONLY. Nothing is submitted, no Buzz is held or spent, and the
   // host issues no id for the list. Each cell is still submitted through
-  // SUBMIT_WORKFLOW with its own confirmation.
+  // SUBMIT_WORKFLOW, which the host does not confirm with a dialog.
   //
   // At most 16 bodies per message; the host refuses a longer list for the whole
   // call. `kind: 'training'` bodies are refused per cell — estimate a training

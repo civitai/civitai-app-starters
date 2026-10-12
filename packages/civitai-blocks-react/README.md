@@ -716,7 +716,7 @@ rather than `'unsupported'`.
 
 Watch a set of already-submitted workflows as one batch: per-cell status, a
 summary, and cancel-all. Built for grid apps that submit each cell with
-`useBuzzWorkflow().submit()` (each with its own confirmation, unchanged) and
+`useBuzzWorkflow().submit()` (one submit per cell, unchanged) and
 then have to follow all of them. `useWorkflowBatch(workflowIds, options?)`
 returns `{ cells, summary, cancelAll, rewatch }`.
 
