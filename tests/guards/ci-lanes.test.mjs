@@ -123,12 +123,14 @@ describe('FAIL OPEN: anything that is not a clean classification runs every job'
   });
 });
 
-describe('schedule: the advisory jobs and nothing else', () => {
-  test('all five advisory jobs run and every core job is off', () => {
+describe('there is no scheduled lane', () => {
+  test('a `schedule` event is treated like any non-PR event: every job', () => {
+    // ci.yml has no `schedule:` trigger (the ledger guard pins that). If one is
+    // ever added, this is what it gets until somebody writes a lane for it.
     const d = decide({ event: 'schedule' });
+    assert.equal(d.lane, 'full');
     assert.deepEqual(advisoryRun(d), [...ALL_FIVE].sort());
-    assert.deepEqual(coreRun(d), []);
-    assert.equal(d.lane, 'scheduled');
+    assert.deepEqual(coreRun(d), CORE_JOBS);
   });
 });
 
@@ -216,11 +218,10 @@ describe('the command, as the workflow runs it', () => {
   }
 
   test('it writes `lane` plus one true/false per ledger job', () => {
-    const { outputs } = run({ vars: { GITHUB_EVENT_NAME: 'schedule' } });
+    const { outputs } = run({ vars: { GITHUB_EVENT_NAME: 'push' } });
     assert.deepEqual(Object.keys(outputs), ['lane', ...Object.keys(JOBS)]);
-    assert.equal(outputs.lane, 'scheduled');
-    assert.equal(outputs.sdk, 'false');
-    assert.equal(outputs['schema-drift'], 'true');
+    assert.equal(outputs.lane, 'full');
+    for (const id of Object.keys(JOBS)) assert.equal(outputs[id], 'true');
   });
 
   test('an unreachable API on a pull request exits 0 with every job on, and warns', () => {

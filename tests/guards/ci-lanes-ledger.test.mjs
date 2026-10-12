@@ -6,8 +6,8 @@
  * ci.yml's jobs each read one output of the `lanes` job. That is a RELATIONSHIP
  * between two files, and each half can drift alone:
  *
- *   - a job added to ci.yml with no condition runs in every lane (the scheduled
- *     run included) and nobody decided that;
+ *   - a job added to ci.yml with no condition runs in every lane and nobody
+ *     decided that;
  *   - a job added to the ledger with no `lanes` output reads an empty string,
  *     so the script "skips" it and it runs anyway;
  *   - a condition rewritten to `== 'true'`, or to one with no status function,
@@ -126,7 +126,16 @@ describe('ci.yml agrees with the lane ledger', () => {
 describe('every file an advisory job reads selects that job', () => {
   // The table in ci-lanes.mjs says, with `scripts/**` and several package
   // directories, that NO advisory job reads them. That is only true while the
-  // advisory jobs' own steps agree, so read the steps.
+  // advisory jobs' own steps agree, so read the steps: the scripts they run,
+  // the relative modules those import, the DATA FILES those open by a literal
+  // repo-relative path, the packages they `--filter`, and the install inputs.
+  //
+  // KNOWN LIMIT: a data path is found only when it is spelled as a literal next
+  // to the repo root (`resolve(REPO_ROOT, 'a/b.json')`, `join(REPO_ROOT, 'a',
+  // 'b.json')`, `"$REPO_ROOT/a/b.json"`). A directory walked at run time
+  // (`check-starter-pins.mjs` reads every `starters/**/package.json`) or a path
+  // built from a variable is invisible here; those are covered by the RULES
+  // rows the table tests pin, not by this derivation.
   const jobs = parseJobs(text).filter((j) => ADVISORY_JOBS.includes(j.id));
   const packageDirs = Object.fromEntries(
     readdirSync(join(REPO_ROOT, 'packages'), { withFileTypes: true })
@@ -145,21 +154,50 @@ describe('every file an advisory job reads selects that job', () => {
     return out;
   }
 
+  /** Repo-relative FILE paths a script spells as a literal beside the repo root. */
+  function dataPaths(rel) {
+    const abs = join(REPO_ROOT, rel);
+    if (!existsSync(abs)) return [];
+    const src = readFileSync(abs, 'utf8');
+    const out = [];
+    for (const m of src.matchAll(/\b(?:resolve|join)\(\s*REPO_ROOT\s*,\s*((?:['"][^'"]*['"]\s*,?\s*)+)\)/g)) {
+      out.push([...m[1].matchAll(/['"]([^'"]*)['"]/g)].map((x) => x[1]).join('/'));
+    }
+    for (const m of src.matchAll(/\$\{?REPO_ROOT\}?\/([\w./-]+)/g)) out.push(m[1]);
+    // A file has an extension; a directory literal is walked at run time and is
+    // the known limit above.
+    return out.filter((p) => /\.[A-Za-z0-9]+$/.test(p.split('/').pop()));
+  }
+
   test('POSITIVE CONTROL: the advisory jobs reference scripts and packages at all', () => {
     assert.equal(jobs.length, 5);
     const all = jobs.flatMap((j) => j.body.join('\n').match(/scripts\/[\w./-]+/g) ?? []);
     assert.ok(all.length >= 3, `found ${all.length} script references in the advisory jobs, expected >= 3`);
     assert.ok(Object.keys(packageDirs).includes('@civitai/theme'), 'packages/*/package.json names were not read');
+    // The data-path extraction must see the three data files the drift scripts
+    // are known to open; zero would be a reader wired to nothing.
+    const data = jobs.flatMap((j) =>
+      [...new Set(j.body.filter((l) => !/^\s*#/.test(l)).join('\n').match(/scripts\/[\w./-]+/g) ?? [])].flatMap(dataPaths),
+    );
+    for (const known of [
+      'packages/civitai-app-sdk/schemas/app-block/v1.json',
+      'packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json',
+      'packages/civitai-app-sdk/src/orchestrator/index.ts',
+    ]) {
+      assert.ok(data.includes(known), `data-path extraction did not find ${known}; found ${JSON.stringify(data)}`);
+    }
   });
 
   for (const job of jobs) {
-    test(`${job.id}: its scripts and filtered packages classify to it`, () => {
+    test(`${job.id}: its scripts, their imports and data files, and its filtered packages classify to it`, () => {
       // Comment lines describe; only live step lines say what the job runs.
       const live = job.body.filter((l) => !/^\s*#/.test(l)).join('\n');
       const scripts = [...new Set(live.match(/scripts\/[\w./-]+/g) ?? [])].flatMap(scriptClosure);
+      const data = [...new Set(scripts.flatMap(dataPaths))];
       const filtered = [...live.matchAll(/--filter\s+(@[\w./-]+)/g)].map((m) => m[1]);
       const paths = [
         ...scripts,
+        ...data,
         ...filtered.flatMap((name) => {
           assert.ok(packageDirs[name], `job ${job.id} filters ${name}, which is not a workspace package`);
           return [`packages/${packageDirs[name]}/package.json`, `packages/${packageDirs[name]}/src/any/file.ts`];
@@ -271,6 +309,29 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
       'always-step-conditional',
     ]);
     assert.deepEqual(tags(mutate(step, '')), ['always-step-missing']);
+  });
+
+  test('the advisory alert: an advisory job dropped from its needs, or a needs it should not have', () => {
+    assert.deepEqual(tags(mutate('      - design-system-drift-guard\n    if: ${{ !cancelled() && github.event_name ==', "    if: ${{ !cancelled() && github.event_name ==")), [
+      'alert-needs-missing',
+    ]);
+    assert.deepEqual(tags(mutate('      - design-system-drift-guard\n    if: ${{ !cancelled() && github.event_name ==', "      - design-system-drift-guard\n      - sdk\n    if: ${{ !cancelled() && github.event_name ==")), [
+      'alert-needs-unknown',
+    ]);
+  });
+
+  test('the advisory alert running on pull requests, or skipped when an advisory job failed', () => {
+    const cond = "    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}\n";
+    assert.deepEqual(tags(mutate(cond, "    if: ${{ !cancelled() }}\n")), ['alert-condition']);
+    assert.deepEqual(tags(mutate(cond, "    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}\n")), ['alert-condition']);
+  });
+
+  test('the advisory alert not reading one job result', () => {
+    assert.deepEqual(tags(mutate('            starter-pins=${{ needs.starter-pins.result }}\n', '')), ['alert-result-unread']);
+  });
+
+  test('a schedule trigger put back', () => {
+    assert.deepEqual(tags(mutate('  workflow_dispatch: {}\n', "  workflow_dispatch: {}\n  schedule:\n    - cron: '17 5 * * *'\n")), ['schedule-trigger']);
   });
 
   test('the lanes job made conditional, or no longer running the script', () => {

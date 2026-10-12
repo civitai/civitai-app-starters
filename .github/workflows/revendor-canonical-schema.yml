@@ -23,9 +23,10 @@ on:
     # "the mirror was re-vendored" is this cron firing. Until it does, the guard
     # is red wherever it runs and nothing clears it but a human noticing and
     # dispatching this workflow by hand. Since `ci.yml` grew lanes, "wherever it
-    # runs" is: every push to main, ci.yml's daily scheduled run, and the PRs
-    # that touch the vendored schema, its check script, ci.yml or
-    # `scripts/ci-lanes.mjs` (the classifier there decides) -- NOT every PR.
+    # runs" is: every push to main, and the PRs that touch the vendored schema,
+    # its check script, ci.yml or `scripts/ci-lanes.mjs` (the classifier there
+    # decides) -- NOT every PR. A red run on main opens ci.yml's
+    # `advisory-alert` tracking issue.
     #
     # The concrete case this was raised for: civitai PR #4314 added an optional
     # `repository` property to the canonical manifest schema and merged to
@@ -90,14 +91,16 @@ jobs:
       # a manual `workflow_dispatch`, so there is no override. If the canonical
       # drifts again while that PR sits open, the PR's bytes are stale and merging
       # it does NOT restore parity; `ci.yml`'s `schema-drift` job is a hard fail
-      # wherever it runs (every push to main, the daily scheduled run, and the PRs
-      # `scripts/ci-lanes.mjs` routes to it) until a later run re-vendors. That is
-      # the escalation — loud, within ~6 hours — but it points at the wrong
-      # object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT and the next run
-      # re-vendors. An open-but-abandoned PR blocks every future re-vendor for as
-      # long as it stays open. The old behaviour kept re-vendoring instead, and
-      # destroyed reviewer commits silently to do it; a visible stall was chosen
-      # over a silent clobber deliberately.
+      # wherever it runs (every push to main, and the PRs `scripts/ci-lanes.mjs`
+      # routes to it) until a later run re-vendors. That is NOT loud any more:
+      # most PRs no longer run that job, so the escalation is the single tracking
+      # issue ci.yml's `advisory-alert` job opens on a red push to main, and it
+      # points at the wrong object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT
+      # and the next run re-vendors. An open-but-abandoned PR blocks every future
+      # re-vendor for as long as it stays open. The old behaviour kept
+      # re-vendoring instead, and destroyed reviewer commits silently to do it; a
+      # stall was chosen over a silent clobber, and the stall is only as visible
+      # as that issue.
       - name: Refuse to clobber an open re-vendor PR
         id: guard
         env:
