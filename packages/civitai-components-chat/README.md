@@ -98,6 +98,7 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
 | `mcp` | `{ orchestration?: boolean, site?: boolean }`, both on by default: making media, and Civitai model search. |
+| `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
 | `scope` | Set before `app`. Keeps the page's chats and preferences apart from every other page's. |
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
@@ -108,6 +109,52 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `ad
 
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.
+
+## More MCP servers
+
+`mcpServers` adds MCP servers beside the built-in two, for per-user servers whose address is known
+only at runtime, such as a viewer's own workspace:
+
+```ts
+import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+
+const workspace = await startWorkspace(); // your code: { mcpUrl, token }
+chat.mcpServers = [
+  {
+    id: 'workspace', // [a-z0-9-]+
+    url: workspace.mcpUrl, // a Streamable HTTP endpoint
+    token: () => workspace.token, // required; sent as a bearer token
+    label: 'Workspace', // shown while one of its tools runs, and to the assistant
+  },
+] satisfies ChatMcpServer[];
+```
+
+- **Names.** Every tool of an added server is offered as `${id}__${tool}`, e.g.
+  `workspace__run_command`, whether or not anything else uses the name. So a tool's name never
+  depends on what else is loaded, and saved conversations keep pointing at the same tool. A tool
+  whose full name is not 1-64 letters, digits, `_` or `-`, or that a built-in tool already has, is
+  left out with a console warning. Use the full name in `toolViews` and in `instructions`.
+- **Connections.** Each server uses the same client as the built-in ones, including a new session
+  when the server forgets the old one (a 404 or 400). `token` is required, is asked for on every
+  request, and may return a string or a promise. The chat never sends an added server the viewer's
+  Civitai token: an entry without `token` is skipped with a console warning.
+- **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
+  whose `url` changed. A call still running on a closed connection fails, and so does any later
+  call through it (a tool built before the change): a closed connection never reconnects. Listing
+  the same `id` and `url` again opens a new connection. The conversation stays as it is. An array equal in `id` and `url` to the current one changes nothing:
+  `token` and `label` changes apply without reconnecting.
+- **Long calls.** Calls ask for MCP progress notifications, and each one restarts a 610 s timeout,
+  so a tool that keeps reporting progress (a build, a test run) is not cut off however long it runs.
+- **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
+  tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
+  chat and every other server carry on. The chat tries again at the next reply, on a new connection,
+  so a request that hung does not hold up later replies.
+- **Inputs.** Arguments go to the server exactly as the assistant wrote them. Unlike Civitai's own
+  tools and the page's `tools`, a chat file id (like `up1-1`) is not swapped for the file's signed
+  URL, so a third-party server never gets a link to the viewer's files.
+- **Results.** A reply goes back to the assistant as text. A long one keeps its first 2,000 and last
+  6,000 characters with a note of how many were left out between, since a build or a test run prints
+  its errors last. (Civitai's own tools keep the first 4,000.)
 
 ## Configuration
 

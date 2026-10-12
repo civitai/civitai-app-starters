@@ -7,6 +7,7 @@ import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { createAssistantModel } from './agent/provider.js';
 import { chatConfig } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
+import { McpServerPool, type ChatMcpOptions, type ChatMcpServer } from './mcp/servers.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
 import { toolInfo, type GenerationJob, type JobState, type JobToolInfo } from './orchestration/job.js';
@@ -27,7 +28,8 @@ import type { Attachment, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
-import { hostToolSet, type ChatTool } from './tools/host.js';
+import { extraToolSet } from './tools/extra.js';
+import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { voiceLanguage } from './voice/languages.js';
 import { transcribe } from './voice/transcribe.js';
@@ -49,8 +51,11 @@ export interface SessionOptions {
   /** Tools the embedding page offers; read at the start of every reply. */
   hostTools?(): Record<string, ChatTool>;
   hostInstructions?(): string | undefined;
-  /** Which MCP servers the assistant may use; both are on unless switched off. */
-  mcp?(): { orchestration?: boolean; site?: boolean };
+  /**
+   * Which MCP servers the assistant may use: the built-in two are on unless switched off, and
+   * `mcpServers` adds more. Read at every reply; `syncMcpServers()` applies a change at once.
+   */
+  mcp?(): ChatMcpOptions;
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
@@ -66,6 +71,8 @@ export class ChatSession extends EventTarget {
   readonly freeTier: FreeTier;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
+  /** The servers added through `mcp().mcpServers`. */
+  readonly mcpServers: McpServerPool;
   readonly jobs: JobManager;
   readonly posts: PostManager;
   readonly panels: PanelManager;
@@ -90,6 +97,10 @@ export class ChatSession extends EventTarget {
     this.freeTier = new FreeTier(() => this.api.getFreeTier());
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    this.mcpServers = new McpServerPool({
+      onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
+      onListed: () => this.dispatchEvent(new Event('mcp-servers-change')),
+    });
     // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
     const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
     this.posts = new PostManager({
@@ -130,7 +141,7 @@ export class ChatSession extends EventTarget {
       store: this.store,
       jobs: this.jobs,
       posts: this.posts,
-      toolSet: (turn) => this.#toolSet(turn),
+      toolSet: (turn) => this.toolSet(turn),
       attachments: () => this.attachments(),
       customInstructions: () => this.settings.customInstructions,
       hostInstructions: () => this.#options.hostInstructions?.(),
@@ -138,6 +149,23 @@ export class ChatSession extends EventTarget {
       panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
     });
+  }
+
+  /**
+   * Opens the added servers the options now list and closes the ones they no longer do, without
+   * touching the conversation, then starts listing the new ones' tools. A list equal in value to the
+   * current one changes nothing.
+   */
+  syncMcpServers(): void {
+    this.mcpServers.sync(this.#options.mcp?.().mcpServers);
+    void this.mcpServers.tools();
+  }
+
+  /** How the added servers' tools show while they run: under the server's label. */
+  mcpServerViews(): Record<string, ChatToolView> {
+    return Object.fromEntries(
+      this.mcpServers.loaded().flatMap(({ server, tools }) => tools.map(({ name, tool }) => [name, { activity: `${server.label?.trim() || server.id}: ${tool.name}…` }])),
+    );
   }
 
   /** Read at every turn, so switching a server on or off applies from the next reply. */
@@ -340,8 +368,11 @@ export class ChatSession extends EventTarget {
     turn.assistant.status = 'done';
   }
 
-  async #toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
-    const builtIn = await this.#builtInTools(turn);
+  /** The assistant's tools for one reply: built-in, then the added servers', then the page's. */
+  async toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
+    this.mcpServers.sync(this.#options.mcp?.().mcpServers);
+    const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
+    const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai }) };
     const host = hostToolSet(this.#options.hostTools?.() ?? {}, builtIn, {
       conversationId: turn.conversationId,
       findAttachment: (id) => this.findAttachment(id),
@@ -416,6 +447,11 @@ export class ChatSession extends EventTarget {
       }
     }
   }
+}
+
+export interface McpServerErrorDetail {
+  server: ChatMcpServer;
+  error: unknown;
 }
 
 function restoredState(status: unknown, recent: boolean): JobState {

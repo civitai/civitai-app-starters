@@ -17,7 +17,8 @@ it('registers only the chat up front and the rest of it once the chat has a sign
     orchestration: { queryWorkflows: async () => ({ items: [], next: '' }), submitWorkflow: vi.fn() },
   } as never;
   document.body.append(chat);
-  await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-sidebar')).not.toBeNull());
+  // The first import of the whole runtime, cold and beside every other test file: past 1 s under load.
+  await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-sidebar')).not.toBeNull(), { timeout: 10_000 });
   expect(customElements.get('civitai-chat-thread')).toBeDefined();
 });
 

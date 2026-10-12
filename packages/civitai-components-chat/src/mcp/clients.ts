@@ -24,23 +24,38 @@ export interface McpConnection {
   readonly url: string;
   listTools(): Promise<McpTool[]>;
   callTool(name: string, args: Record<string, unknown>, opts?: McpCallOptions): Promise<CallToolResult>;
+  /** Ends every request in flight; after it, every call is refused rather than opening a new session. */
   close(): Promise<void>;
 }
 
 export interface McpConnectionOptions {
   url: string;
   /** Omitted for servers whose browse tools are anonymous. */
-  token?: () => Promise<string>;
+  token?: () => string | Promise<string>;
   fetch?: typeof fetch;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** A call on a connection the chat closed, e.g. to a server the page removed. */
+export class McpConnectionClosedError extends Error {
+  constructor(url: string) {
+    super(`The MCP server at ${url} was removed from the chat.`);
+    this.name = 'McpConnectionClosedError';
+  }
+}
+
 export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(globalThis) }: McpConnectionOptions): McpConnection {
   const endpoint = new URL(url, typeof location === 'undefined' ? 'http://localhost/' : location.href);
   let pending: Promise<Client> | null = null;
+  let closed = false;
+  // Kept from before the connect finishes, so close() can end a connect that hangs: closing the transport
+  // aborts every request it has in flight (each carries its signal) and rejects what waits on them.
+  let transport: StreamableHTTPClientTransport | null = null;
 
+  // Every request passes here, so this one check refuses all of them once the connection is closed.
   const authedFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    if (closed) throw new McpConnectionClosedError(endpoint.toString());
     const headers = new Headers(init?.headers);
     if (token) headers.set('Authorization', `Bearer ${await token()}`);
     return doFetch(input, { ...init, headers });
@@ -49,7 +64,8 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
   const connect = (): Promise<Client> => {
     pending ??= (async () => {
       const client = new Client({ name: 'chat-cvt', version: '0.1.0' });
-      await client.connect(new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch }));
+      transport = new StreamableHTTPClientTransport(endpoint, { fetch: authedFetch });
+      await client.connect(transport);
       return client;
     })().catch((error: unknown) => {
       pending = null;
@@ -98,6 +114,12 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
             onprogress: opts.onProgress,
           })) as CallToolResult,
       ),
-    close: reset,
+    close: async () => {
+      closed = true;
+      pending = null;
+      const current = transport;
+      transport = null;
+      await current?.close().catch(() => undefined);
+    },
   };
 }
