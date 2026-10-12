@@ -119,6 +119,8 @@ const TESTING_TYPES = [
   'MockSharedScenario',
   'MockSharedSeed',
   'MockStorageScenario',
+  // The second argument of a `CostSpec` function for a `kind: 'workflow'` body.
+  'MockWorkflowStepInfo',
   // `installPopoverShim`'s own two: the options bag it takes and the handle it
   // returns. A consumer asserting `handle.slottedClicksReachSlots` in a helper of
   // their own has to be able to name the handle's type.

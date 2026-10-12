@@ -304,6 +304,56 @@ describe('isValidWorkflowSnapshot', () => {
   ])('rejects %s', (_, extra) => {
     expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(false);
   });
+
+  // ---- `steps`: the per-step view of a `kind: 'workflow'` run ----
+  const step = { name: 'draw', $type: 'imageGen', status: 'succeeded' };
+
+  it.each([
+    ['an empty list', []],
+    ['the minimal step', [step]],
+    ['every optional field', [{ ...step, imageUrls: ['https://x/a.png'], output: { any: 1 }, error: 'e' }]],
+    ['output of any shape', [{ ...step, output: null }, { ...step, output: 'text' }, { ...step, output: [1] }]],
+    ['each of the six statuses', ['pending', 'processing', 'succeeded', 'failed', 'expired', 'canceled'].map((status) => ({ ...step, status }))],
+    ['a $type the SDK has never heard of', [{ ...step, $type: 'someFutureStep' }]],
+  ])('accepts steps: %s', (_, steps) => {
+    expect(isValidWorkflowSnapshot({ ...base, steps })).toBe(true);
+  });
+
+  it('accepts a FAILED workflow that still carries cost, images and steps', () => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'w',
+        status: 'failed',
+        cost: { total: 12 },
+        imageUrls: ['https://x/a.png'],
+        steps: [
+          { ...step, imageUrls: ['https://x/a.png'] },
+          { name: 'cutout', $type: 'imageBackgroundRemoval', status: 'failed', error: 'boom' },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['steps not an array', { 0: step }],
+    ['steps a bare step', step],
+    ['an entry that is not an object', [step, 'draw']],
+    ['a null entry', [null]],
+    ['name missing', [{ $type: 'imageGen', status: 'succeeded' }]],
+    ['name not a string', [{ ...step, name: 0 }]],
+    ['$type missing', [{ name: 'draw', status: 'succeeded' }]],
+    ['$type not a string', [{ ...step, $type: 7 }]],
+    ['status missing', [{ name: 'draw', $type: 'imageGen' }]],
+    // The step status is a CLOSED union, held to the snapshot's own set.
+    ['a status outside the six', [{ ...step, status: 'unassigned' }]],
+    ['a status of the wrong case', [{ ...step, status: 'Succeeded' }]],
+    ['imageUrls a bare string', [{ ...step, imageUrls: 'https://x/a.png' }]],
+    ['imageUrls containing a non-string', [{ ...step, imageUrls: ['https://x/a.png', 3] }]],
+    ['error not a string', [{ ...step, error: { message: 'boom' } }]],
+    ['one malformed step after a good one', [step, { ...step, status: 'done' }]],
+  ])('rejects steps: %s', (_, steps) => {
+    expect(isValidWorkflowSnapshot({ ...base, steps })).toBe(false);
+  });
 });
 
 describe('isValidEstimateBatchResult', () => {

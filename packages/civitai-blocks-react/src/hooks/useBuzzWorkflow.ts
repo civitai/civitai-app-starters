@@ -8,6 +8,7 @@ import type {
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
   WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
   WorkflowStatus,
 } from '@civitai/app-sdk/blocks';
 import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
@@ -62,7 +63,8 @@ type WorkflowBodyArms =
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
   | WorkflowBodyPassThroughStep
-  | WorkflowBodyTraining;
+  | WorkflowBodyTraining
+  | WorkflowBodyWorkflow;
 
 /** `[A] extends [B]` — bracketed so a union is compared whole, not distributed. */
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -929,6 +931,18 @@ export interface UseBuzzWorkflow {
  * instinct, and concluded the capability did not exist. That is the SAME defect
  * the paragraph above records, one member over: an incomplete description of a
  * union, trusted because it read as authoritative.
+ *
+ * 🔴 A MULTI-STEP `kind: 'workflow'` BODY CHANGES WHAT THE PRICE MEANS — again a
+ * capability claim, so it is stated here. `WorkflowBodyWorkflow` submits several
+ * orchestrator steps as one workflow through these same calls, and:
+ *  - `estimate()`'s `cost.total` is NOT a maximum: the orchestrator re-prices a
+ *    step once the values it references are known and charges the difference;
+ *  - a workflow the host cannot price still proceeds on `submit()`, reserved at
+ *    the app's per-generation budget × the number of steps;
+ *  - one author fee applies to the whole workflow, not one per step;
+ *  - a `failed` result can carry `cost.total > 0` and usable `imageUrls`, because
+ *    steps that succeeded before the failing one stay charged — read
+ *    `result.steps`.
  *
  * @returns `{ estimate, submit, poll, watch, cancel, status, result, error }`.
  *

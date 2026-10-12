@@ -148,7 +148,12 @@ void wrong;
 // --- the training-quote errorCode: OPTIONAL, an OPEN string with known values ---
 expectTypeOf(snapshot.errorCode).toEqualTypeOf<KnownBlockWorkflowErrorCode | (string & {}) | undefined>();
 expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
-  'training-quote-rejected' | 'training-quote-unavailable' | 'training-quote-unpriced'
+  | 'training-quote-rejected'
+  | 'training-quote-unavailable'
+  | 'training-quote-unpriced'
+  | 'workflow_step_denied'
+  | 'workflow_ref_invalid'
+  | 'workflow_too_many_steps'
 >();
 // The host's refusal assigns; so does a code a later host adds (open string).
 const refusal: BlockWorkflowSnapshot = {

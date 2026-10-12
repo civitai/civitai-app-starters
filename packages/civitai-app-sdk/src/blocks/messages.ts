@@ -1237,6 +1237,17 @@ export type BlockToParentMessage =
       type: 'SUBMIT_WORKFLOW';
       payload: { requestId: string; body: WorkflowBody; idempotencyKey?: string };
     }
+  // `body` may be ANY `WorkflowBody` member, including the multi-step
+  // `kind: 'workflow'` (`WorkflowBodyWorkflow`): several steps travel as ONE
+  // body on this message and on SUBMIT_WORKFLOW, and are polled and cancelled
+  // by the one workflow id the host returns. There is no separate message for
+  // it. Its replies carry `snapshot.steps`; a refused body carries
+  // `snapshot.errorCode` (`workflow_step_denied`, `workflow_ref_invalid`,
+  // `workflow_too_many_steps`).
+  //
+  // 🔴 A `kind: 'workflow'` ESTIMATE IS NOT A MAXIMUM: the orchestrator
+  // re-prices a step once the values it references are known and charges the
+  // difference. A workflow the host cannot price still proceeds on submit.
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
   // ESTIMATE_WORKFLOW for a LIST of bodies, for an app that prices one
   // generation per grid cell. Each body is exactly what ESTIMATE_WORKFLOW
@@ -1249,7 +1260,8 @@ export type BlockToParentMessage =
   //
   // At most 16 bodies per message; the host refuses a longer list for the whole
   // call. `kind: 'training'` bodies are refused per cell — estimate a training
-  // run with ESTIMATE_WORKFLOW.
+  // run with ESTIMATE_WORKFLOW. A `kind: 'workflow'` body is ONE cell, however
+  // many steps it has.
   //
   // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT. The host's generic
   // `unsupported on this host` reply exists only for message types the host

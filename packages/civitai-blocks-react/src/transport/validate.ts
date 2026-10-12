@@ -327,6 +327,34 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
   if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
   if (s.trainingQuote !== undefined && !isValidTrainingQuote(s.trainingQuote)) return false;
+  if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
+  return true;
+}
+
+/**
+ * Shape check for `steps` — the per-step view of a `kind: 'workflow'` run.
+ * OPTIONAL like its neighbours, and a PRESENT but malformed value rejects the
+ * snapshot: the block reads `name`, `$type`, `status` and `imageUrls` off every
+ * entry.
+ *
+ * `status` is checked against the SAME closed set as the snapshot's own
+ * `status`, unlike the open string unions above: it is typed as that closed
+ * union and a block `switch`es on it, so a snapshot carrying any other value is
+ * dropped rather than handed over. `output` is `unknown` by contract and is not
+ * inspected.
+ */
+function isValidWorkflowSteps(steps: unknown): boolean {
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
+    if (!isObject(step)) return false;
+    if (typeof step.name !== 'string' || typeof step.$type !== 'string') return false;
+    if (typeof step.status !== 'string' || !WORKFLOW_STATUSES.has(step.status)) return false;
+    if (step.imageUrls !== undefined) {
+      if (!Array.isArray(step.imageUrls)) return false;
+      if (!step.imageUrls.every((u): u is string => typeof u === 'string')) return false;
+    }
+    if (step.error !== undefined && typeof step.error !== 'string') return false;
+  }
   return true;
 }
 

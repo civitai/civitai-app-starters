@@ -482,7 +482,7 @@ if (quote.cost) showPrice(priceLine(quote.cost));
 
 | `cost.authorFee` | Means | Where |
 |---|---|---|
-| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage` or registered-`step` body, and the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price |
+| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage`, registered-`step` or `workflow` body (one fee for the whole workflow), and the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price |
 | `0` | a fee was looked up and none applies to this request | the same replies |
 | absent | the total is **not itemised** | a host that predates the field; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost with the fee charged separately; the registered-`step` `submit()` refusal for a missing orchestrator price quote, which refuses before any fee is looked up; and `customComfy`, pass-through `step` and `training` quotes, which price no fee |
 
@@ -541,6 +541,138 @@ try {
   (`KnownBlockWorkflowErrorCode | (string & {})`), the host may add codes, and
   the inbound validator accepts any string. Keep a `default` branch.
 - The `kind: 'training'` arm does not set it.
+- A refused `kind: 'workflow'` body sets its own three codes, in the same
+  shape — see the next section.
+
+#### Several steps as one workflow: `kind: 'workflow'`
+
+A `kind: 'workflow'` body submits **several orchestrator steps as one
+workflow**, where a later step can consume an earlier step's result. It goes
+through the hooks you already use: `useBuzzWorkflow().estimate / submit /
+watch / cancel`, a `useBatchEstimate()` cell, and `useWorkflowBatch()`. There
+is no new hook and no new message.
+
+```tsx
+import { useBuzzWorkflow } from '@civitai/blocks-react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const { estimate, submit, watch } = useBuzzWorkflow();
+
+// Step 1 draws an image; step 2 removes the background from step 1's result.
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        // Read from `arguments` above.
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      // An intermediate step: its image is not surfaced.
+      suppressOutput: true,
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      // Read from the EARLIER step named `draw`.
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+
+const quote = await estimate(body);
+showPrice(`About ${quote.cost?.total} Buzz`); // an estimate, not a maximum
+
+const submitted = await submit(body);
+const done = await watch(submitted.workflowId);
+
+for (const step of done.steps ?? []) {
+  if (step.status === 'failed') showError(`${step.name} failed`);
+}
+// Even when `done.status === 'failed'`, earlier steps may have left images.
+showImages(done.imageUrls ?? []);
+```
+
+**The body**
+
+- `steps`: 1 to 8 (`BLOCK_WORKFLOW_MAX_STEPS`). Each is `{ name?, $type, input,
+  suppressOutput? }`, where `$type` is an orchestrator step type and `input` is
+  that step's own input.
+- **A step `name`** is optional. It is a lowercase letter followed by up to 31
+  of `a-z`, `0-9`, `_` or `-`, unique within the body, and not `block-step`
+  (reserved). A step you do not name is named by its position: `$0`, `$1`, ….
+- **A reference** is `{ $ref, path, default?, format? }` and may stand in for
+  any value in `input`, at any depth. `$ref` is `'$arguments'`, the `name` of an
+  **earlier** step, or — for an earlier step you did not name — its position
+  (`'$0'` is the first step). A step can never reference itself or a later
+  step. An object is a reference only when it has both `$ref` and `path` and no
+  other key but `default` / `format`.
+- **Limits**: 64 references per body, inputs nested at most 32 levels, `repeat`
+  templates nested at most 4 deep, a `$type` of at most 64 characters, and 256
+  KB (262144 bytes) for every step's `input` plus `arguments` together. An
+  unknown key on the body or on a step is rejected.
+- `suppressOutput: true` marks an intermediate step. Its images are left out of
+  `snapshot.imageUrls` and out of its own `steps[i].imageUrls`. It still runs
+  and is still charged.
+- There is **no `maxBuzz`**. The spend ceiling is the app's per-generation
+  budget × the number of steps, enforced by the host.
+- Any orchestrator `$type` is accepted (`repeat` included) except the
+  platform-internal ones: scanners, moderation classifiers, hashing, web
+  scrape/search, and the retired `textToImage` step type. The step a `repeat`
+  runs is held to the same rule.
+- `WithWorkflowStepRefs<T>` (from `@civitai/app-sdk/blocks`) types an input you
+  already have a type for while still allowing references in it.
+
+**🔴 Three things about the price**
+
+1. **The estimate is not a maximum.** When a step reads from an earlier step,
+   the orchestrator re-prices it once those values are known and charges the
+   difference. Never show the estimate as "you will pay at most".
+2. **A workflow the host cannot price still proceeds.** `submit()` reserves the
+   ceiling above instead of a quote.
+3. **One author fee per workflow**, not one per step. The estimate's
+   `cost.authorFee` is that single fee, already inside `cost.total`.
+
+**The result**
+
+`snapshot.steps` lists every step in order, as `{ name, $type, status,
+imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+`cancel()`; do not rely on it being on the `submit()` reply. The steps a
+`repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
+fields keep their meaning: `status` and `cost` are the whole workflow's, and
+`imageUrls` is the union of the steps that did not set `suppressOutput`.
+
+🔴 **A `failed` workflow is not an empty one.** Steps that succeeded before the
+failing step stay charged and keep their results, so a snapshot with `status:
+'failed'` can carry `cost.total > 0` and usable `imageUrls`. Show what did
+finish, and do not tell the viewer nothing was charged.
+
+**Refusals**
+
+A body the host will not run is refused before anything is priced or reserved:
+`estimate()` rejects with `WorkflowEstimateError`, `submit()` with
+`WorkflowSubmitError`, and a batch estimate returns it as that cell. Branch on
+`err.snapshot.errorCode`:
+
+| `errorCode` | Means |
+|---|---|
+| `'workflow_too_many_steps'` | more than 8 steps |
+| `'workflow_step_denied'` | a step names a platform-internal `$type` |
+| `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; or a step name breaks the rules above. `error` names the step by position |
+
+- **Requires a host that knows the kind.** An older host refuses the body.
+- **Test it locally.** The mock host prices each step with
+  `generation.costPerGen` (a function gets the step as its second argument) and
+  adds `generation.authorFee` once; refuses with the three codes above; reports
+  `steps` on every poll, finishing them in order; and
+  `generation.failWorkflowStep: '<name>'` (`'$<index>'` for an unnamed step)
+  makes one step fail, so you can render a partial failure. The mock checks
+  where a reference points, not whether its `path` exists; it never re-prices;
+  and it does not expand a `repeat` step into generated steps.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
@@ -2665,6 +2797,7 @@ MockHostScenarioPatch
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario
+MockWorkflowStepInfo
 PopoverShimHandle
 PopoverShimOptions
 ```
