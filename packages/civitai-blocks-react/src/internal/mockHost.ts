@@ -355,6 +355,32 @@ export interface MockGenerationScenario {
    */
   batchEstimateTimedOutCells?: number[];
   /**
+   * Make `CANCEL_WORKFLOW` answer the way the real host answers a cancel it
+   * REFUSED because the estimate allowance is used up: `{ workflowId, status:
+   * 'processing' }`. The cancel is not applied, so later polls keep reporting
+   * the workflow as running. `true` refuses every cancel; an array refuses only
+   * those workflow ids. Use it to test a cancel button's "not cancelled, try
+   * again" path, including `useWorkflowBatch().cancelAll()`'s `refused` and
+   * `notAttempted` lists.
+   *
+   * Live-tunable via `setScenario({ generation: { cancelRefused } })`. Default:
+   * unset (every cancel applies).
+   */
+  cancelRefused?: boolean | readonly string[];
+  /**
+   * The terminal status each polled workflow ends with, so a grid can be tested
+   * with a mix of outcomes. Called once per workflow, on the poll that finishes
+   * it, with the workflow id and the body it was submitted with (`undefined`
+   * for an id this mock did not submit, such as one restored after a reload).
+   *
+   * `'failed'` and `'expired'` reply `{ workflowId, status, error }` with no
+   * `cost` and no images. Default: every workflow `'succeeded'`.
+   */
+  workflowOutcome?: (
+    workflowId: string,
+    body: WorkflowBody | undefined,
+  ) => 'succeeded' | 'failed' | 'expired';
+  /**
    * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
    * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
    * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
@@ -2349,7 +2375,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     let tokenSerial = 0;
     let submitCount = 0;
     // body + cost remembered per workflow so the succeeded snapshot can echo them.
-    const workflows = new Map<string, { polls: number; cost: number; body: WorkflowBody }>();
+    // `body` is absent for an id this mock never submitted (a workflow id an app
+    // restored after a reload). `canceled` is set by `CANCEL_WORKFLOW`, so later
+    // polls keep answering `canceled` instead of resuming the countdown.
+    const workflows = new Map<
+      string,
+      { polls: number; cost: number; body?: WorkflowBody; canceled?: boolean }
+    >();
     // Training: datasets this install prepared (id → admitted count) and the
     // quotes its estimates stored (id → what a run is checked against).
     const trainingDatasets = new Map<string, number>();
@@ -3041,10 +3073,36 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            const wf = workflows.get(workflowId);
-            const polls = (wf?.polls ?? 0) + 1;
-            if (wf) wf.polls = polls;
-            if (polls >= pollsUntilDone) {
+            // An id this mock did not submit (e.g. restored from storage after a
+            // reload) gets a record on its first poll, so it counts down to done
+            // like any other instead of answering `processing` forever.
+            let wf = workflows.get(workflowId);
+            if (!wf) {
+              wf = { polls: 0, cost: legacyCost };
+              workflows.set(workflowId, wf);
+            }
+            if (wf.canceled) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: { workflowId, status: 'canceled' as const } },
+              });
+              return;
+            }
+            const polls = wf.polls + 1;
+            wf.polls = polls;
+            const outcome =
+              polls >= pollsUntilDone ? (gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded') : null;
+            if (outcome === 'failed' || outcome === 'expired') {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: {
+                  requestId,
+                  snapshot: { workflowId, status: outcome, error: `mock: workflow ${outcome}` },
+                },
+              });
+              return;
+            }
+            if (outcome === 'succeeded') {
               // Apply synthetic latency on the terminal (succeeded) poll only.
               const delay = latencyFor();
               if (delay > 0) {
@@ -3071,7 +3129,36 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'CANCEL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            workflows.delete(workflowId);
+            const refused = gen.cancelRefused;
+            if (refused === true || (Array.isArray(refused) && refused.includes(workflowId))) {
+              // The real host's answer when the estimate allowance is used up: a
+              // NON-terminal snapshot, and the cancel is not sent.
+              dispatchToBlock({
+                type: 'WORKFLOW_CANCELED',
+                payload: { requestId, snapshot: { workflowId, status: 'processing' } },
+              });
+              return;
+            }
+            const wf = workflows.get(workflowId);
+            if (wf && !wf.canceled && wf.polls >= pollsUntilDone) {
+              // Already finished: like the real host, report the real terminal
+              // status rather than pretending the cancel took.
+              const outcome = gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded';
+              dispatchToBlock({
+                type: 'WORKFLOW_CANCELED',
+                payload: {
+                  requestId,
+                  snapshot:
+                    outcome === 'succeeded'
+                      ? succeededSnapshot(workflowId)
+                      : { workflowId, status: outcome, error: `mock: workflow ${outcome}` },
+                },
+              });
+              return;
+            }
+            // Keep the record, marked canceled, so later polls answer `canceled`
+            // rather than counting down to `succeeded`.
+            workflows.set(workflowId, { ...(wf ?? { polls: 0, cost: legacyCost }), canceled: true });
             dispatchToBlock({
               type: 'WORKFLOW_CANCELED',
               payload: { requestId, snapshot: { workflowId, status: 'canceled' } },

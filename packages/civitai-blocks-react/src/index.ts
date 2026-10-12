@@ -74,6 +74,16 @@ export type {
   EstimateBatchOptions,
   UseBatchEstimate,
 } from './hooks/useBatchEstimate.js';
+export { WORKFLOW_BATCH_MAX_CELLS, useWorkflowBatch } from './hooks/useWorkflowBatch.js';
+export type {
+  UseWorkflowBatch,
+  WorkflowBatchCancelResult,
+  WorkflowBatchCancelState,
+  WorkflowBatchCell,
+  WorkflowBatchCellPhase,
+  WorkflowBatchOptions,
+  WorkflowBatchSummary,
+} from './hooks/useWorkflowBatch.js';
 export { useEntitlements } from './hooks/useEntitlements.js';
 export type { UseEntitlements, Entitlement } from './hooks/useEntitlements.js';
 export { useGoodPurchase, GoodPurchaseRefusal } from './hooks/useGoodPurchase.js';
