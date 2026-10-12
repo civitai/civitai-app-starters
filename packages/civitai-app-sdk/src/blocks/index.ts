@@ -232,6 +232,7 @@ export type {
   BlockEstimateBatchAggregate,
   BlockModelSubstitution,
   ModelSubstitutionReason,
+  KnownBlockWorkflowErrorCode,
   BlockStepToolCall,
   BlockTrainedEpoch,
   BlockPublishedModel,

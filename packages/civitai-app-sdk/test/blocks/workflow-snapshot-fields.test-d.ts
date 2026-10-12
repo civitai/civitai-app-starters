@@ -20,6 +20,7 @@ import type {
   BlockStepToolCall,
   BlockTrainedEpoch,
   BlockWorkflowSnapshot,
+  KnownBlockWorkflowErrorCode,
   ModelSubstitutionReason,
 } from '../../src/blocks/index.js';
 
@@ -143,3 +144,25 @@ void notItemised;
 // @ts-expect-error — the fee is a number, never a string
 const wrong: BlockWorkflowSnapshot['cost'] = { total: 49, authorFee: '37' };
 void wrong;
+
+// --- the training-quote errorCode: OPTIONAL, an OPEN string with known values ---
+expectTypeOf(snapshot.errorCode).toEqualTypeOf<KnownBlockWorkflowErrorCode | (string & {}) | undefined>();
+expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
+  'training-quote-rejected' | 'training-quote-unavailable' | 'training-quote-unpriced'
+>();
+// The host's refusal assigns; so does a code a later host adds (open string).
+const refusal: BlockWorkflowSnapshot = {
+  workflowId: 'failed',
+  status: 'failed',
+  error: 'Training needs a price quote and none could be obtained; try again.',
+  errorCode: 'training-quote-unavailable',
+};
+const futureCode: BlockWorkflowSnapshot = { workflowId: 'failed', status: 'failed', errorCode: 'some-later-code' };
+void refusal;
+void futureCode;
+// A plain string read compiles without a cast.
+const code: string | undefined = snapshot.errorCode;
+void code;
+// @ts-expect-error — the code is a string, never a number
+const wrongCode: BlockWorkflowSnapshot = { workflowId: 'failed', status: 'failed', errorCode: 42 };
+void wrongCode;

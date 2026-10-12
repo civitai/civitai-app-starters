@@ -844,6 +844,56 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.status).toBe('failed');
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // `errorCode` — the machine-readable companion to `error` that the host sets
+  // on the refusal for a pass-through TRAINING step it could not price. These
+  // drive the WHOLE inbound path a real reply takes: `postMessage` → origin
+  // check → `isValidWorkflowReply` → `projectInboundPayload` → the hook → the
+  // rejected error's `.snapshot`. The fixtures are the host's real reply shape:
+  // no `cost`, the `'failed'` sentinel id, and the host's own sentences.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it.each([
+    ['training-quote-rejected', 'Training could not be priced: dataset entry 3 has no caption'],
+    ['training-quote-unavailable', 'Training needs a price quote and none could be obtained; try again.'],
+    ['training-quote-unpriced', 'Training needs a price quote and none could be obtained; try again.'],
+  ])('estimate() delivers errorCode %s on the rejected error’s snapshot', async (errorCode, error) => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error, errorCode });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err).toBeInstanceOf(WorkflowEstimateError);
+    expect(err.snapshot.errorCode).toBe(errorCode);
+    expect(err.snapshot.error).toBe(error);
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.result?.errorCode).toBe(errorCode);
+  });
+
+  it('submit() delivers errorCode on the rejected error’s snapshot', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Training could not be priced: the learning rate is out of range',
+      errorCode: 'training-quote-rejected',
+    });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    expect(err).toBeInstanceOf(WorkflowSubmitError);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.errorCode).toBe('training-quote-rejected');
+  });
+
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 

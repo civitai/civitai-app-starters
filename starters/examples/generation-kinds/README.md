@@ -169,6 +169,7 @@ gate, and `?theme=light` switches to the light theme.
 
 `npm run dev:live` runs against the real backend and **spends your own Buzz**.
 See [the examples README](../README.md#against-the-real-backend-devlive). A dev
-token takes this manifest's `page.buzzBudgetPerGen`, capped at 250
-(`src/server/services/blocks/dev-scoped-mint.service.ts:71`). That still covers
-the recipe's ceiling of 90.
+token takes this manifest's `page.buzzBudgetPerGen`, capped at 1000, the same
+per-call cap as a production token (`DEV_BUZZ_BUDGET_CAP` in civitai's
+`src/server/services/blocks/dev-scoped-mint.service.ts`). That covers the
+recipe's ceiling of 90.

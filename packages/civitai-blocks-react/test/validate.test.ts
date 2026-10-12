@@ -174,6 +174,33 @@ describe('isValidWorkflowSnapshot', () => {
       }),
     ).toBe(false);
   });
+  it.each([
+    ['training-quote-rejected'],
+    ['training-quote-unavailable'],
+    ['training-quote-unpriced'],
+    // Open string: a code a later host adds must not drop the reply.
+    ['some-later-code'],
+  ])('accepts errorCode %s', (errorCode) => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Training needs a price quote and none could be obtained; try again.',
+        errorCode,
+      }),
+    ).toBe(true);
+  });
+  it.each([
+    ['a number', 42],
+    ['null', null],
+    ['an object', { code: 'training-quote-rejected' }],
+    ['an array', ['training-quote-rejected']],
+    ['a boolean', true],
+  ])('rejects a present but non-string errorCode — %s', (_label, errorCode) => {
+    expect(
+      isValidWorkflowSnapshot({ workflowId: 'failed', status: 'failed', errorCode }),
+    ).toBe(false);
+  });
   it('accepts a snapshot carrying a well-formed autoClaim (dailyBoost)', () => {
     expect(
       isValidWorkflowSnapshot({
