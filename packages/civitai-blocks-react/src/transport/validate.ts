@@ -256,6 +256,11 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
     if (!s.imageUrls.every((u): u is string => typeof u === 'string')) return false;
   }
   if (s.error !== undefined && typeof s.error !== 'string') return false;
+  // OPTIONAL: set only on the refusals that define a code (today the training
+  // price-quote refusal), absent everywhere else. Checked as a STRING, not
+  // against today's codes — the open-ended-union rule below: a host adding a
+  // code must not turn into a dropped reply in every shipped bundle.
+  if (s.errorCode !== undefined && typeof s.errorCode !== 'string') return false;
   if (s.autoClaim !== undefined) {
     if (!isObject(s.autoClaim)) return false;
     if (typeof s.autoClaim.type !== 'string' || !AUTO_CLAIM_TYPES.has(s.autoClaim.type)) {

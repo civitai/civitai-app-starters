@@ -1620,6 +1620,35 @@ export interface BlockWorkflowSnapshot {
   imageUrls?: string[];
   error?: string;
   /**
+   * A stable, machine-readable companion to {@link error}, for a block to
+   * branch on instead of matching the prose. OPTIONAL: set only on the refusals
+   * that define a code, absent everywhere else (and on every reply from a host
+   * that predates the field).
+   *
+   * WHERE IT APPEARS today: the refusal for a pass-through `step` body
+   * ({@link WorkflowBodyPassThroughStep}) whose `$type` is a training type
+   * (`'training'` or `'imageResourceTraining'`) when the host could not get a
+   * price quote for it. That refusal is `{ workflowId: 'failed', status:
+   * 'failed', error, errorCode }` with no `cost`, and it is the reply to
+   * `estimate()` (which rejects with `WorkflowEstimateError`), to `submit()`
+   * (which rejects with `WorkflowSubmitError`, before anything is reserved or
+   * charged), and to that body's cell in a batch estimate. Read it from the
+   * error's `.snapshot.errorCode`. The `kind: 'training'` arm does NOT set it.
+   *
+   * The values the host sends today ({@link KnownBlockWorkflowErrorCode}):
+   *  - `'training-quote-rejected'` — the orchestrator refused the request
+   *    itself; resending the same body will not help. `error` then reads
+   *    `Training could not be priced: <reason>` when the reason is safe to show.
+   *  - `'training-quote-unavailable'` — no usable answer (an outage, a timeout,
+   *    a rate limit, insufficient funds, …). Retrying later may succeed.
+   *  - `'training-quote-unpriced'` — the orchestrator answered without a price.
+   *
+   * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
+   * inbound validator accepts any string here. Handle an unrecognised code as a
+   * generic failure and show `error`.
+   */
+  errorCode?: KnownBlockWorkflowErrorCode | (string & {});
+  /**
    * The Buzz pool that was the PRIMARY FUNDER of this generation — i.e. the
    * account with the LARGEST debit, which the host stamps onto the workflow
    * snapshot server-side. This is NOT necessarily "the paid account": a
@@ -1868,6 +1897,20 @@ export interface BlockTrainingQuote {
  * generic substitution rather than assuming the list is closed.
  */
 export type ModelSubstitutionReason = 'wrong-workflow' | 'unrecognized' | 'gated';
+
+/**
+ * The {@link BlockWorkflowSnapshot.errorCode} values the host sends today — see
+ * that field for what each means and which replies carry it.
+ *
+ * NOT a closed list: the field itself is typed `KnownBlockWorkflowErrorCode |
+ * (string & {})` (the union is an autocomplete nudge), the host may add codes,
+ * and the SDK's inbound validator accepts any string. Handle an unrecognised
+ * code as a generic failure.
+ */
+export type KnownBlockWorkflowErrorCode =
+  | 'training-quote-rejected'
+  | 'training-quote-unavailable'
+  | 'training-quote-unpriced';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {
