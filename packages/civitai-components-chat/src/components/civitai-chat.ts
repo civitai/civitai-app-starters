@@ -196,6 +196,7 @@ export class CivitaiChat extends LitElement {
       this.#startedWith = this.app;
       void this.#start(this.app);
     }
+    // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
 
@@ -297,6 +298,8 @@ export class CivitaiChat extends LitElement {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
     session.addEventListener('settings-change', this.#rerender);
+    // A server's tools carry its label in the thread once they are listed.
+    session.addEventListener('mcp-servers-change', this.#rerender);
     session.freeTier.addEventListener('change', this.#rerender);
     session.addEventListener('mcp-server-error', (event) => {
       const { server, error } = (event as CustomEvent<McpServerErrorDetail>).detail;

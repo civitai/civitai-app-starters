@@ -56,4 +56,68 @@ describe('<civitai-chat> mcpServers', () => {
     await vi.waitFor(() => expect(root.querySelector('civitai-toast-region')?.textContent).toContain('Could not reach Your sandbox'));
     expect(root.querySelector('civitai-chat-composer')).not.toBeNull();
   });
+
+  it("shows an added server's tool call under the server's label, once its tools are listed", async () => {
+    vi.stubGlobal('fetch', fakeMcpServers({ [SANDBOX]: [{ name: 'run_command' }] }).fetch);
+    const turnWithFailedCall = {
+      seq: 1,
+      createdAt: '2026-10-11T00:00:00Z',
+      user: { content: 'run the tests', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'sandbox__run_command', input: {} }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'sandbox__run_command', output: { type: 'json', value: { error: 'exit 1' } } }] },
+        ],
+      },
+    };
+    const head = {
+      id: '7-1',
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', 'cvt:conv:CONV1'],
+      metadata: { v: 2, app: 'chat-cvt', conversationId: 'CONV1', title: 'Tests', titleSource: 'llm', createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z', turns: [turnWithFailedCall] },
+    };
+    localStorage.setItem('cvt:settings', JSON.stringify({ lastConversationId: 'CONV1' }));
+    const app = fakeApp() as { orchestration: { queryWorkflows: unknown } };
+    app.orchestration.queryWorkflows = async () => ({ items: [head], next: '' });
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, label: 'Sandbox', token: () => 'tok' }];
+    chat.app = app as never;
+    document.body.append(chat);
+
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-step-failed summary')?.textContent).toBe("Sandbox: run_command didn't work"));
+  });
+
+  it('closes the old servers when it gets a new app, ending a request still waiting on them', async () => {
+    const fake = fakeMcpServers({ [SANDBOX]: [{ name: 'run_command' }] });
+    fake.servers[SANDBOX]!.hang = 1;
+    vi.stubGlobal('fetch', fake.fetch);
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, token: () => 'tok' }];
+    chat.app = fakeApp();
+    document.body.append(chat);
+    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.initializes).toBe(1));
+
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.aborted).toBe(1));
+  });
+
+  it('opens a server changed together with the app once, in the new session only', async () => {
+    const fake = fakeMcpServers({ [SANDBOX]: [{ name: 'run_command' }], [OTHER]: [{ name: 'run_command' }] });
+    vi.stubGlobal('fetch', fake.fetch);
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.mcpServers = [{ id: 'sandbox', url: SANDBOX, token: () => 'tok' }];
+    chat.app = fakeApp();
+    document.body.append(chat);
+    await vi.waitFor(() => expect(fake.servers[SANDBOX]!.initializes).toBe(1));
+
+    chat.app = fakeApp();
+    chat.mcpServers = [{ id: 'sandbox', url: OTHER, token: () => 'tok' }];
+    await vi.waitFor(() => expect(fake.servers[OTHER]!.initializes).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fake.servers[OTHER]!.initializes).toBe(1);
+  });
 });

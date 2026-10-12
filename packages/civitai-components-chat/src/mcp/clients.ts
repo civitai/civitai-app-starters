@@ -24,6 +24,7 @@ export interface McpConnection {
   readonly url: string;
   listTools(): Promise<McpTool[]>;
   callTool(name: string, args: Record<string, unknown>, opts?: McpCallOptions): Promise<CallToolResult>;
+  /** Ends every request in flight; after it, every call is refused rather than opening a new session. */
   close(): Promise<void>;
 }
 
@@ -36,14 +37,28 @@ export interface McpConnectionOptions {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** A call on a connection the chat closed, e.g. to a server the page removed. */
+export class McpConnectionClosedError extends Error {
+  constructor(url: string) {
+    super(`The MCP server at ${url} was removed from the chat.`);
+    this.name = 'McpConnectionClosedError';
+  }
+}
+
 export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(globalThis) }: McpConnectionOptions): McpConnection {
   const endpoint = new URL(url, typeof location === 'undefined' ? 'http://localhost/' : location.href);
   let pending: Promise<Client> | null = null;
+  let closed = false;
+  // Aborted by close(), so a request that hangs (a connect, a listing) does not outlive the connection.
+  const lifetime = new AbortController();
 
+  // Every request passes here, so this one check refuses all of them once the connection is closed.
   const authedFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    if (closed) throw new McpConnectionClosedError(endpoint.toString());
     const headers = new Headers(init?.headers);
     if (token) headers.set('Authorization', `Bearer ${await token()}`);
-    return doFetch(input, { ...init, headers });
+    const signal = init?.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal;
+    return doFetch(input, { ...init, headers, signal });
   };
 
   const connect = (): Promise<Client> => {
@@ -98,6 +113,10 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
             onprogress: opts.onProgress,
           })) as CallToolResult,
       ),
-    close: reset,
+    close: () => {
+      closed = true;
+      lifetime.abort();
+      return reset();
+    },
   };
 }

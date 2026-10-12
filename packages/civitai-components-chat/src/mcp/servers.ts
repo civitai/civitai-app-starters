@@ -57,6 +57,10 @@ interface Entry {
 export interface McpServerPoolDeps {
   /** A server could not be reached or would not list its tools; its tools are left out. */
   onError(server: ChatMcpServer, error: unknown): void;
+  /** A server listed its tools, so what the chat shows for them may change. */
+  onListed?(): void;
+  /** How long a server may take to list its tools; `LIST_TIMEOUT_MS` unless set. */
+  listTimeoutMs?: number;
 }
 
 /**
@@ -66,6 +70,8 @@ export interface McpServerPoolDeps {
 export class McpServerPool {
   #entries = new Map<string, Entry>();
   #deps: McpServerPoolDeps;
+  /** Closed with its session: nothing opens again, so a late sync cannot revive a discarded chat's servers. */
+  #closed = false;
 
   constructor(deps: McpServerPoolDeps) {
     this.#deps = deps;
@@ -76,6 +82,7 @@ export class McpServerPool {
   }
 
   sync(servers: ReadonlyArray<ChatMcpServer> | undefined = []): void {
+    if (this.#closed) return;
     const next = new Map<string, ChatMcpServer>();
     for (const server of servers) {
       if (typeof server?.id !== 'string' || !MCP_SERVER_ID.test(server.id)) {
@@ -101,13 +108,17 @@ export class McpServerPool {
   #open(server: ChatMcpServer): Entry {
     const entry: Entry = { server, connection: null, tools: null, named: [], failing: false };
     try {
-      entry.connection = createMcpConnection({ url: server.url, token: () => entry.server.token() });
+      entry.connection = this.#connect(entry);
     } catch (error) {
       // An unusable URL: reported when its tools are first asked for, like any other failure.
       entry.tools = Promise.reject(error);
       entry.tools.catch(() => undefined);
     }
     return entry;
+  }
+
+  #connect(entry: Entry): McpConnection {
+    return createMcpConnection({ url: entry.server.url, token: () => entry.server.token() });
   }
 
   /** Every reachable server's tools; a failing one adds none and is reported through `onError`. */
@@ -120,8 +131,9 @@ export class McpServerPool {
     const { connection } = entry;
     try {
       // Named once per listing, so a skipped tool is warned about once, not at every reply.
-      entry.tools ??= withTimeout(connection!.listTools(), LIST_TIMEOUT_MS, 'the server did not list its tools in time').then((tools) => {
+      entry.tools ??= withTimeout(connection!.listTools(), this.#deps.listTimeoutMs ?? LIST_TIMEOUT_MS, 'the server did not list its tools in time').then((tools) => {
         entry.named = this.#named(entry.server, tools);
+        this.#deps.onListed?.();
         return tools;
       });
       await entry.tools;
@@ -131,8 +143,13 @@ export class McpServerPool {
       return { server: entry.server, connection: connection!, tools: entry.named };
     } catch (error) {
       if (this.#entries.get(entry.server.id) !== entry) return null;
-      // Asked again next reply, as the built-in servers are.
-      if (connection) entry.tools = null;
+      // Asked again next reply, as the built-in servers are, on a new connection: the old one may still
+      // be waiting on a request that hung, and every later reply would wait on it too.
+      if (connection && entry.connection === connection) {
+        void connection.close();
+        entry.connection = this.#connect(entry);
+        entry.tools = null;
+      }
       if (!entry.failing) {
         entry.failing = true;
         console.warn(`[chat-cvt] MCP server "${entry.server.id}" is unreachable; its tools are left out`, error);
@@ -157,6 +174,7 @@ export class McpServerPool {
   }
 
   close(): void {
+    this.#closed = true;
     for (const entry of this.#entries.values()) void entry.connection?.close();
     this.#entries.clear();
   }

@@ -190,6 +190,21 @@ describe('ChatSession with added MCP servers', () => {
     expect(session.store.current!.turns.map((t) => t.user.content)).toEqual(['build me a site']);
   });
 
+  it('refuses a tool kept from before a swap, instead of reopening the old server with the old token', async () => {
+    let list: ChatMcpServer[] = [{ id: 'sandbox', url: SANDBOX, token: () => 'old-token' }];
+    const { session, servers } = setup({ [SANDBOX]: tools('run_command'), [OTHER]: tools('run_command') }, () => list);
+    const stale = await session.toolSet(turn);
+    await run(stale, 'sandbox__run_command');
+    const before = { initializes: servers[SANDBOX]!.initializes, requests: servers[SANDBOX]!.authorizations.length };
+
+    list = [{ id: 'sandbox', url: OTHER, token: () => 'new-token' }];
+    session.syncMcpServers();
+    await expect(run(stale, 'sandbox__run_command')).rejects.toThrow(/removed from the chat/);
+
+    expect(servers[SANDBOX]!.initializes).toBe(before.initializes);
+    expect(servers[SANDBOX]!.authorizations).toHaveLength(before.requests);
+  });
+
   it('leaves out a server it cannot reach, reports it once, and keeps the built-in tools and the other servers', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { session } = setup({ [SANDBOX]: 'down', [OTHER]: tools('run_command') }, () => [

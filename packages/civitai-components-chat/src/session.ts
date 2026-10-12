@@ -99,6 +99,7 @@ export class ChatSession extends EventTarget {
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
     this.mcpServers = new McpServerPool({
       onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
+      onListed: () => this.dispatchEvent(new Event('mcp-servers-change')),
     });
     // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
     const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));

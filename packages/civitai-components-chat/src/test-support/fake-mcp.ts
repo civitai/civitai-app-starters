@@ -17,6 +17,12 @@ export interface FakeMcpServer {
   /** `initialize` requests: one per new session. */
   initializes: number;
   tools: FakeTool[];
+  /** Unreachable while set: every request fails as a network error would. */
+  down: boolean;
+  /** The next this many POSTs hang until the client aborts them. */
+  hang: number;
+  /** Hung requests the client aborted. */
+  aborted: number;
 }
 
 /**
@@ -26,18 +32,29 @@ export interface FakeMcpServer {
 export function fakeMcpServers(servers: Record<string, FakeTool[] | 'down'>): { fetch: typeof fetch; servers: Record<string, FakeMcpServer> } {
   const seen: Record<string, FakeMcpServer> = {};
   for (const [url, tools] of Object.entries(servers)) {
-    seen[url] = { url, authorizations: [], initializes: 0, tools: tools === 'down' ? [] : tools };
+    seen[url] = { url, authorizations: [], initializes: 0, tools: tools === 'down' ? [] : tools, down: tools === 'down', hang: 0, aborted: 0 };
   }
 
   const handle = async (request: Request): Promise<Response> => {
     const url = request.url;
     const server = seen[url];
     if (!server) return new Response('no route', { status: 599 });
-    if (servers[url] === 'down') throw new TypeError('fetch failed');
+    if (server.down) throw new TypeError('fetch failed');
     if (request.method === 'GET') return new Response(null, { status: 405 });
     server.authorizations.push(request.headers.get('authorization'));
     const body = (await request.clone().json()) as { method?: string };
     if (body.method === 'initialize') server.initializes++;
+    if (server.hang > 0) {
+      server.hang--;
+      return new Promise<Response>((_, reject) => {
+        const abort = () => {
+          server.aborted++;
+          reject(new DOMException('aborted', 'AbortError'));
+        };
+        if (request.signal.aborted) abort();
+        else request.signal.addEventListener('abort', abort, { once: true });
+      });
+    }
 
     const mcp = new Server({ name: 'fake', version: '1.0.0' }, { capabilities: { tools: {} } });
     mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
