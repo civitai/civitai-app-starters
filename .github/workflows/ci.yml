@@ -51,6 +51,8 @@ jobs:
   # and every job's condition against the ledger in the script.
   lanes:
     name: CI lanes (which jobs this run needs)
+    # THROWAWAY: skip the classifier job on purpose to observe fail-open.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,9 +78,6 @@ jobs:
 
       # The runner's preinstalled node is enough (built-ins only), which keeps
       # this job, and so the start of every job behind it, to a few seconds.
-      # THROWAWAY: break the classifier job on purpose to observe fail-open.
-      - run: exit 1
-
       - id: decide
         run: node scripts/ci-lanes.mjs
         env:
