@@ -1537,7 +1537,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     vi.restoreAllMocks();
   });
 
-  it('APP_STORAGE_GET → apps.storage.get (POST body, token out of the URL) → value', async () => {
+  it('APP_STORAGE_GET → apps.storage.get {blockToken, key} → value', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.get')) return trpcData({ value: { theme: 'dark' } });
       throw new Error(`unexpected ${url}`);
@@ -1550,11 +1550,8 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.value).toEqual({ theme: 'dark' });
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.get'))!;
-    // A token-bearing query: POST (tRPC query method override), input in the
-    // body, nothing in the querystring.
-    expect((call[1] as RequestInit).method).toBe('POST');
-    expect(String(call[0])).toBe('https://civitai.com/api/trpc/apps.storage.get');
-    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
+    // Wire form (POST, bare URL, token out of the URL) is pinned once, in the
+    // "token-bearing queries go out as POST" block; here only the input shape.
     expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN, key: 'prefs' } });
   });
 
@@ -1635,7 +1632,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.deleted).toBe(false);
   });
 
-  it('APP_STORAGE_LIST → apps.storage.list (POST body) → keys (ISO updatedAt) + nextCursor', async () => {
+  it('APP_STORAGE_LIST → apps.storage.list → keys (ISO updatedAt) + nextCursor', async () => {
     const updated = new Date('2026-06-27T12:00:00.000Z');
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.list')) {
@@ -1655,7 +1652,6 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.nextCursor).toBe('Y3Vyc29y');
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.list'))!;
-    expect((call[1] as RequestInit).method).toBe('POST');
     // limit clamped + prefix/cursor included as strings.
     expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, limit: 10, prefix: 'pre', cursor: 'cur' },
@@ -1677,7 +1673,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN, limit: 200 } });
   });
 
-  it('APP_STORAGE_QUOTA → apps.storage.getQuota (POST body) → the 4 numbers', async () => {
+  it('APP_STORAGE_QUOTA → apps.storage.getQuota → the 4 numbers', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.getQuota')) {
         return trpcData({ usedBytes: 12, rowCount: 3, limitBytes: 50_000_000, limitRows: 1000 });
@@ -1696,7 +1692,6 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
       limitRows: 1000,
     });
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.getQuota'))!;
-    expect((call[1] as RequestInit).method).toBe('POST');
     expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN } });
   });
 
@@ -2334,8 +2329,8 @@ describe('createLiveHost — token-bearing queries go out as POST (block token n
     vi.restoreAllMocks();
   });
 
-  // Every tRPC QUERY the live host sends with the block token in its input.
-  // Literal list on purpose — not imported from the implementation.
+  // Every tRPC QUERY the live host sends (each carries the block token in its
+  // input). Literal list on purpose — not derived from the implementation.
   const CASES: Array<{
     procedure: string;
     message: string;
@@ -2470,7 +2465,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     vi.restoreAllMocks();
   });
 
-  it('SHARED_LIST → apps.shared.list (POST body) → items with ISO dates', async () => {
+  it('SHARED_LIST → apps.shared.list → items with ISO dates', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.list')) {
         return trpcData({
@@ -2501,13 +2496,12 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(payload.nextCursor).toBe('bmV4dA==');
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.list'))!;
-    expect((call[1] as RequestInit).method).toBe('POST');
     expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, limit: 5, prefix: 'req:' },
     });
   });
 
-  it('SHARED_GET_COUNT → apps.shared.getCount (POST body) → count', async () => {
+  it('SHARED_GET_COUNT → apps.shared.getCount → count', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.getCount')) return trpcData({ count: 42 });
       throw new Error(`unexpected ${url}`);
@@ -2518,7 +2512,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(payload.count).toBe(42);
   });
 
-  it('SHARED_GET_COUNTS → apps.shared.getCounts (POST body) → counts map', async () => {
+  it('SHARED_GET_COUNTS → apps.shared.getCounts → counts map', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.getCounts')) return trpcData({ counts: { a: 1, b: 0 } });
       throw new Error(`unexpected ${url}`);
@@ -2608,7 +2602,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
   // assertions below timed out instead of failing: the block sat for the full
   // 30s protocol timeout and then threw a generic RequestTimeoutError, while
   // the identical call resolved under dev:mock.
-  it('SHARED_GET → apps.shared.get (POST body) → the row, ISO-normalized (#386)', async () => {
+  it('SHARED_GET → apps.shared.get → the row, ISO-normalized (#386)', async () => {
     installWithFetch(async (url) => {
       if (url.endsWith('apps.shared.get')) {
         return trpcData({
@@ -2640,7 +2634,6 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(item.viewerVoted).toBe(true);
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.get'))!;
-    expect((call[1] as RequestInit).method).toBe('POST');
     expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, key: 'req:1' },
     });
