@@ -545,11 +545,16 @@ const HEX40 = /^[0-9a-f]{40}$/;
  * can upload an artifact under any name without testing anything, a
  * same-repository branch just as easily as a fork. Excluding forks (3) removes
  * the people without write access; it does not make a same-repository run
- * honest. (5) is what does: a run may vouch only if the workflow and classifier
- * on its head are byte-for-byte the ones on the pushed commit, i.e. the record
- * was produced by the definition main is about to trust. The run actually
- * executed its MERGE commit's copies; where those differ from its head's, they
- * came from main as it was then.
+ * honest. (5) narrows that, and only that: a run may vouch only if the workflow
+ * and classifier on its head are byte-for-byte the ones on the pushed commit,
+ * so the record was uploaded by the DEFINITION main is about to trust (the real
+ * `record-tree` condition and its real tree computation), not by an edited
+ * copy. It binds the workflow definition to the pushed commit. It does NOT
+ * bind the artifact's name to the tree the run tested by any independent
+ * means: that the name carries the tested tree is a property of that trusted
+ * definition, and is as good as it is. The run actually executed its MERGE
+ * commit's copies; where those differ from its head's, they came from main as
+ * it was then.
  */
 export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetch, now = Date.now() }) {
   const no = (reason) => ({ skip: false, reason });
