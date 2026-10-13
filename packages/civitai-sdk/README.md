@@ -390,7 +390,7 @@ if (!(await confirmSpend(estimate.cost?.total))) throw new Error('Not confirmed.
 const idempotencyKey = crypto.randomUUID();
 const submitted = await app.workflows.submit(body, { idempotencyKey });
 if (submitted.status === 'failed') {
-  throw new Error(submitted.error ?? 'This workflow was not started.');
+  throw new Error(submitted.error ?? 'This workflow failed.');
 }
 
 // 3. Follow it to a final status.
@@ -439,10 +439,12 @@ Three things follow from that shape:
   does not predict a refused submit: the same body can still be submitted, and
   is then reserved at the app's per-generation budget for each step.
 - **A `failed` snapshot from `submit` is one of two things, told apart by
-  `workflowId`.** The placeholder id `'failed'` means it was refused before
-  anything ran, and nothing was charged; a budget or spending-cap refusal
-  carries the `cost.total` it would not charge. A real id means a run was
-  created and came back failed, and Buzz may have been spent.
+  `workflowId`.** The placeholder id `'failed'` means the host refused *this
+  request* before submitting it; a budget or spending-cap refusal carries the
+  `cost.total` it would not charge. On the first attempt for a press, that
+  means nothing was charged. It says nothing about an earlier attempt for the
+  same press that ended unknown (below). A real id means a run was created and
+  came back failed, and Buzz may have been spent.
 - **A `failed` workflow from `wait` can still have `cost` and `imageUrls`.**
   Steps that finished before the failing one stay charged and keep their output.
 
@@ -478,14 +480,21 @@ was called, and nothing in the reply says which it was. So treat every rejected
 
 Do **one of two things, and never mint a new key for that press**:
 
-1. **Retry `submit` with the same `idempotencyKey`.** The host derives the
-   run's identity on the orchestrator from the key, so that a repeat can be
-   matched to a run the first attempt created instead of starting a second
-   one. A new key cannot be matched to anything. After a `409`, wait before
+1. **Retry `submit` with the same `idempotencyKey`.** Except for the two body
+   kinds named below, the host derives the run's identity on the orchestrator
+   from the key, so that a repeat can be matched to a run the first attempt
+   created. A new key cannot be matched to anything. After a `409`, wait before
    retrying: the first attempt is still running. A request the host cannot
    parse simply answers `400` again.
 2. **Or look for the run** with `app.workflows.list()` before treating the
    press as failed.
+
+🔴 **For a `kind: 'training'` body and a step body carrying a `quoteId`, the
+key is not the run's identity.** The host does not use the client key on those
+two; the run is identified by the confirmed quote (a step) or by the training
+run itself. A submit that names a **new** quote is a new run, whatever key it
+carries. So after an unknown outcome on one of these, check
+`app.workflows.list()` **before** asking the viewer to confirm another quote.
 
 What this client can promise stops there. Matching a repeated key to an
 existing run is done by the host and the orchestrator, not here; it is not
@@ -498,18 +507,25 @@ import { ApiError, SubmissionUnconfirmedError } from '@civitai/sdk';
 
 // One key for this press. It outlives the call: a retry reuses it.
 const idempotencyKey = crypto.randomUUID();
+// Has any attempt for this press ended without a known outcome?
+let outcomeUnknown = false;
 
 async function submitOnce() {
   try {
     const submitted = await app.workflows.submit(body, { idempotencyKey });
     if (submitted.status !== 'failed') {
       track(submitted.workflowId); // started: follow it with wait()
-    } else if (submitted.workflowId === 'failed') {
-      showMessage('This could not start. Nothing was charged.');
-    } else {
+    } else if (submitted.workflowId !== 'failed') {
       showMessage('This run failed. Check your history before trying again.');
+    } else if (outcomeUnknown) {
+      // THIS attempt was refused, but an earlier one may have started a run.
+      const { workflows } = await app.workflows.list(); // look for it first
+      showMessage('We could not confirm this started. Check your history.');
+    } else {
+      showMessage('This could not start. Nothing was charged.'); // first attempt only
     }
   } catch (error) {
+    outcomeUnknown = true;
     if (error instanceof SubmissionUnconfirmedError) {
       // The run MAY be running and MAY have been charged. Do not resubmit.
       showMessage('We could not confirm this run. It may still be running.');
@@ -547,12 +563,14 @@ server text — log it and show your own copy.
 
 `submit` spends Buzz, so it requires an `idempotencyKey` and refuses to send
 without one. The key is what lets the host recognise a submit that was sent
-twice — a retry after a dropped connection, a double press — as one request.
+twice — a retry after a dropped connection, a double press — as one request
+(for a `kind: 'training'` body or a step with a `quoteId`, see the note above:
+there the quote, not the key, identifies the run).
 
 - Mint it **once per thing the viewer asked for**, keep it until that press has
   a known outcome, and reuse it on every retry. A key minted inside the retry
   loop, or a fresh key for "try again" after an error, protects nothing: to the
-  host that is a new generation, and it is charged as one.
+  host that is a new generation.
 - Letters, digits, `_` and `-`, 1 to 64 characters, **no colons**.
   `crypto.randomUUID()` fits. The host answers `400` for anything else, and this
   client sends the key exactly as given.

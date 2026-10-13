@@ -421,7 +421,7 @@ export interface StorageClient {
  *
  * 🔴 This is not a refusal, and it must not be handled like one: do not tell
  * the viewer nothing was spent, and do not submit again blindly — a second
- * submit can start, and charge for, a second run. Tell the viewer the outcome
+ * submit may start a second run. Tell the viewer the outcome
  * is unknown, then look for the run with {@link WorkflowsClient.list} before
  * offering a retry.
  *
@@ -449,8 +449,8 @@ export interface WorkflowCallOptions {
 
 export interface WorkflowSubmitOptions extends WorkflowCallOptions {
     /**
-     * 🔴 REQUIRED. A submit spends the viewer's Buzz, and this key is what makes
-     * sending it twice charge once. Mint it ONCE per thing the viewer asked for —
+     * 🔴 REQUIRED. A submit spends the viewer's Buzz, and this key is what lets
+     * the host recognise a repeat of it. Mint it ONCE per thing the viewer asked for —
      * `crypto.randomUUID()` when they press the button — and send the SAME key on
      * every retry of that submit. A key minted inside a retry loop protects
      * nothing.
@@ -531,9 +531,11 @@ export interface WorkflowsClient {
      *
      * 🔴 A resolved `status: 'failed'` is one of TWO things, told apart by
      * `workflowId`:
-     * - the placeholder id `'failed'`: refused before anything ran (a budget, a
-     *   spending cap, a body the host will not run). Nothing was charged. A
-     *   budget or cap refusal carries the `cost.total` it would not charge.
+     * - the placeholder id `'failed'`: the host refused THIS request before
+     *   submitting it (a budget, a spending cap, a body it will not run). A
+     *   budget or cap refusal carries the `cost.total` it would not charge. On a
+     *   first attempt nothing was charged; it says nothing about an EARLIER
+     *   attempt for the same viewer action that ended unknown (below).
      * - a real id: a run was created and came back failed. Buzz may have been
      *   spent.
      *
@@ -551,13 +553,19 @@ export interface WorkflowsClient {
      *   record was lost). That attempt may yet succeed.
      * - no answer (a dropped connection, a timeout): unknown.
      *
-     * Retry with the SAME `idempotencyKey` — the host derives the run's identity
-     * on the orchestrator from it, so that a repeat can be matched to an existing
-     * run — or look for the run with {@link WorkflowsClient.list}. Never mint a
-     * new key for the same viewer action: a new key is a new generation and a
-     * second charge. That matching is the host's and the orchestrator's, is not
-     * guaranteed, and is not something this client can verify; `list` is the
-     * check that does not depend on it.
+     * Retry with the SAME `idempotencyKey` — except for the two kinds below, the
+     * host derives the run's identity on the orchestrator from it, so that a
+     * repeat can be matched to an existing run — or look for the run with
+     * {@link WorkflowsClient.list}. Never mint a new key for the same viewer
+     * action: to the host a new key is a new generation. That matching is the
+     * host's and the orchestrator's, is not guaranteed, and is not something
+     * this client can verify; `list` is the check that does not depend on it.
+     *
+     * 🔴 For a `kind: 'training'` body and a step body carrying a `quoteId` the
+     * key is NOT the run's identity: the host does not use it there, and
+     * identifies the run by the confirmed quote or the training run. A submit
+     * naming a new quote is a new run. After an unknown outcome on one of
+     * these, check `list` before asking the viewer to confirm another quote.
      *
      * This client does not retry a failed submit itself; it only re-sends once
      * after refreshing an expired token, as every call does.
