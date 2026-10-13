@@ -151,6 +151,7 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'training-quote-rejected'
   | 'training-quote-unavailable'
   | 'training-quote-unpriced'
+  | 'daily-limit-exceeded'
   | 'workflow_step_denied'
   | 'workflow_ref_invalid'
   | 'workflow_too_many_steps'

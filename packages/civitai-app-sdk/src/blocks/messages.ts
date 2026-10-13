@@ -41,6 +41,7 @@ import type {
   BlockTrainingDatasetItem,
   BlockTrainingDatasetResult,
   WorkflowBodyTraining,
+  WorkflowBodyPassThroughStep,
 } from './types.js';
 
 // ============================================================
@@ -775,6 +776,27 @@ export type ParentToBlockMessage =
       };
     }
   | {
+      // Reply to RUN_CONFIRMED_STEP. On success `snapshot` is the submitted
+      // workflow (poll it with POLL_WORKFLOW / `useBuzzWorkflow().watch()`).
+      //
+      // 🔴 `error` IS FREE TEXT, SHAPE-CHECKED ONLY — same reason as
+      // TRAINING_RESULT, and the same TEN-MINUTE consent bound a dropped reply
+      // would leave running. Three host codes carry money meaning (see
+      // `BlockRunConfirmedStepHostError`): `declined` and `daily-limit-exceeded`
+      // GUARANTEE no job was submitted; `submission-unconfirmed` means the job
+      // MAY be running and charged.
+      //
+      // 🔴 A `snapshot` IS NOT ALWAYS A RUN. The server's spend-cap refusals
+      // (refunded, nothing started) resolve as `{ workflowId: 'failed', status:
+      // 'failed', cost, error }` in this field, exactly as on TRAINING_RESULT.
+      type: 'CONFIRMED_STEP_RESULT';
+      payload: {
+        requestId: string;
+        snapshot?: BlockWorkflowSnapshot;
+        error?: string;
+      };
+    }
+  | {
       // Reply to GET_IMAGES_BY_IDS. On success `result.images` is the per-viewer
       // gated projection (`BlockGatedImage[]`; unresolvable ids omitted). On host-
       // side failure `error` is a FREE-TEXT string and `result` is absent.
@@ -1446,6 +1468,31 @@ export type BlockToParentMessage =
       payload: { requestId: string; body: WorkflowBodyTraining };
     }
   | {
+      // Ask the PAGE host to RUN one pass-through `kind: 'step'` body whose
+      // FIXED price exceeds the token's per-call budget. The body carries the
+      // `quoteId` its estimate returned (`snapshot.stepQuote.quoteId`). The host
+      // reads the quote back from the server, shows the viewer that price in
+      // ITS chrome — never a number from this body — records the confirmation
+      // (signed-in session only) and only then submits. Replies
+      // `CONFIRMED_STEP_RESULT`. (civitai/civitai#5786.)
+      //
+      // 🔴 THIS IS THE ONLY WAY SUCH A JOB STARTS. The server refuses a
+      // confirmed submit whose quote no signed-in session confirmed, so the same
+      // body sent as SUBMIT_WORKFLOW is refused.
+      //
+      // 🔴 EVERY CONFIRMATION IS ITS OWN JOB. The orchestrator id is derived
+      // from the confirmed quote, so there is no idempotency key to carry and a
+      // second confirmation of an identical body is a second charge.
+      //
+      // Page host only (the model slot NACKs it with a `CONFIRMED_STEP_RESULT`
+      // error); scope `ai:write:budgeted`; flag `app-blocks-confirmed-step`.
+      // Refused for development, dev-tunnel and review tokens.
+      //
+      // Consent-gated ⇒ `'human'` timeout bucket.
+      type: 'RUN_CONFIRMED_STEP';
+      payload: { requestId: string; body: WorkflowBodyPassThroughStep };
+    }
+  | {
       // Ask the host for per-VIEWER gated display data for a set of image ids
       // (the ids a benchmark grid stored via shared storage). The host applies
       // the REQUESTING VIEWER's browsing-level clamp server-side and returns a
@@ -1886,6 +1933,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'CREATE_POST_FROM_APP',
   'PREPARE_TRAINING_DATASET',
   'RUN_TRAINING',
+  'RUN_CONFIRMED_STEP',
   'GET_IMAGES_BY_IDS',
   'CANCEL_APP_WORKFLOW',
   'OPEN_CHECKPOINT_PICKER',

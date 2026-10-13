@@ -63,7 +63,9 @@ import {
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
   type AppWorkflow,
+  type BlockModel3dOutput,
   type BlockPublishedModel,
+  type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
   type BlockWorkflowSnapshot,
   type BlockGatedImage,
@@ -119,6 +121,10 @@ import {
   mockWorkflowStepName,
 } from './mockWorkflowGraph.js';
 import { BATCH_ESTIMATE_CELL_TIMEOUT_ERROR } from '../hooks/useBatchEstimate.js';
+import {
+  RUN_CONFIRMED_STEP_ERROR_CODES,
+  STEP_QUOTE_ID_PATTERN,
+} from '../hooks/useRunConfirmedStep.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
@@ -560,6 +566,22 @@ export interface MockGenerationScenario {
    * `appWorkflows`.
    */
   trainingPublishedModel?: BlockPublishedModel;
+  /**
+   * The 3D models a succeeded PASS-THROUGH step reports on
+   * {@link BlockWorkflowSnapshot.model3dOutputs} — what a `polyGen` job returns.
+   * As on the real host, every labelled `url` is ALSO in the snapshot's
+   * `imageUrls`: when set, the mock answers with exactly these urls there, in
+   * this order, unless {@link images} / {@link image} say otherwise (then the
+   * labels are sent as given and it is on you to keep the two consistent).
+   *
+   * Applies only to a pass-through `{ kind: 'step', $type }` body — the only arm
+   * the host labels. Default: unset, and the field is OMITTED, as the host omits
+   * it for a workflow that produced no 3D model.
+   *
+   * Snapshot-only, like {@link trainedEpochs}: for the app-queue read put
+   * `model3dOutputs` on the rows you pass as {@link MockHostOptions.appWorkflows}.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
 }
 
 /**
@@ -671,6 +693,162 @@ const MOCK_TRAINING_IN_BATCH_ERROR =
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
 const TRAINING_QUOTE_TTL_MS = 15 * 60_000;
+
+/**
+ * The per-job ceiling of a confirmed step — a COPY of `@civitai/app-sdk/blocks`'s
+ * `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, not value-imported for the reason
+ * given on {@link MOCK_TRAINING_BOUNDS}. Pinned to the SDK's value by
+ * `test/confirmedStepFlow.test.tsx`, which imports both.
+ */
+export const MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+/** The real quote lifetime (`BLOCK_QUOTE_GRANT_TTL_SECONDS`, 15 min) — the training quote's, shared. */
+const STEP_QUOTE_TTL_MS = TRAINING_QUOTE_TTL_MS;
+/**
+ * The real server's refusal when the host reads back a step quote it does not
+ * hold — unknown, expired, or already used by an earlier run. This is the
+ * PREVIEW's message, which is the one `RUN_CONFIRMED_STEP` reaches first.
+ */
+export const MOCK_STEP_QUOTE_GONE_ERROR = 'step quote not found or expired';
+/** The real server's refusal for a confirmed run whose body is not the quoted one. */
+export const MOCK_STEP_BODY_MISMATCH_ERROR =
+  'the step body differs from the one that was quoted — estimate again';
+/**
+ * The real server's refusal for a `quoteId` body sent as a plain
+ * `SUBMIT_WORKFLOW`: nothing but `RUN_CONFIRMED_STEP`'s dialog records the
+ * viewer's confirmation.
+ */
+export const MOCK_STEP_NOT_CONFIRMED_ERROR =
+  'this step has not been confirmed by the viewer in this session';
+/**
+ * The forced `RUN_CONFIRMED_STEP` errors that settle BEFORE the server claims
+ * (and so consumes) the quote: the host's own gate, dialog and daily-limit
+ * codes. Derived from the host-code list — every code except
+ * `submission-unconfirmed`, which the host emits only after a submit was sent.
+ */
+const PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS: ReadonlySet<string> = new Set(
+  RUN_CONFIRMED_STEP_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
+);
+
+/**
+ * The orchestrator's training `$type`s, which never run as a confirmed step —
+ * matched CASE-INSENSITIVELY, as the server refuses a caller-supplied `$type`
+ * (`isTrainingStepTypeIgnoringCase`): `Training` or `IMAGERESOURCETRAINING` is
+ * refused like the canonical spelling. Only for refusing a submitted `$type`;
+ * the trained-epochs simulation keys on the exact spelling, as the host does.
+ */
+const TRAINING_STEP_TYPES_FOLDED: ReadonlySet<string> = new Set([
+  'training',
+  'imageresourcetraining',
+]);
+const isTrainingStepTypeName = (stepType: string): boolean =>
+  TRAINING_STEP_TYPES_FOLDED.has(stepType.toLowerCase());
+
+/**
+ * The orchestrator `$type` of a PASS-THROUGH step body, else `undefined`. Keyed
+ * on the VALUE of `step`, as the host keys it — a registered step names a
+ * `step` id and is a different arm.
+ */
+const passThroughStepType = (body: WorkflowBody): string | undefined => {
+  const b = body as { kind?: unknown; step?: unknown; $type?: unknown };
+  return b.kind === 'step' && b.step === undefined && typeof b.$type === 'string'
+    ? b.$type
+    : undefined;
+};
+
+/**
+ * The real server's refusal for a TRAINING `$type` (`training`,
+ * `imageResourceTraining`) on the confirmed-step path — at the estimate, where a
+ * quote would otherwise be granted, and at the confirmed submit. Training runs
+ * have their own kind.
+ */
+export const MOCK_STEP_TRAINING_TYPE_ERROR =
+  "a training step type cannot run as a confirmed step — use kind:'training'";
+/**
+ * The fixed PREFIX of the real server's refusal for a confirmed-step body whose
+ * `input` is not plain JSON. The full message continues with the offending path
+ * and what was found there (`body.input.when is a Date`), which varies — match on
+ * this prefix.
+ */
+export const MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX =
+  'a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ';
+
+/** Thrown by {@link canonicalStepJson} for a value that is not plain JSON. */
+class NonJsonStepBodyError extends Error {}
+
+/** How the server names a non-JSON value in its refusal. */
+const describeNonJson = (value: unknown): string => {
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'number') return `the non-finite number ${String(value)}`;
+  if (typeof value === 'object' && value !== null) {
+    const name = (Object.getPrototypeOf(value) as { constructor?: { name?: string } } | null)
+      ?.constructor?.name;
+    return name ? `a ${name}` : 'a non-plain object';
+  }
+  return `a ${typeof value}`;
+};
+
+/**
+ * The canonical form the server hashes a quoted body in, mirrored: JSON with
+ * object keys sorted at EVERY depth, so two bodies with the same values compare
+ * equal however they were written. EXACT, OR IT THROWS — only plain objects,
+ * arrays, strings, finite numbers, booleans and `null` are accepted. A `Date`,
+ * `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an `undefined`
+ * array element or an empty slot in a sparse array throws {@link NonJsonStepBodyError} naming the path, because a
+ * looser form would give two different such values the same bytes. An object
+ * key whose value is `undefined` is skipped, as JSON drops it.
+ */
+const canonicalStepJson = (value: unknown, path: string): string => {
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    // BY INDEX, not `map`: `map` and `join` skip a hole, so a sparse array would
+    // bind as if its empty slots were not there. The server refuses a hole.
+    const entries: string[] = [];
+    for (let i = 0; i < value.length; i += 1) {
+      if (!(i in value)) throw new NonJsonStepBodyError(`${path}[${i}] is an empty array slot`);
+      entries.push(canonicalStepJson(value[i], `${path}[${i}]`));
+    }
+    return `[${entries.join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value) as unknown;
+    if (proto !== Object.prototype && proto !== null) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((k) => record[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalStepJson(record[k], `${path}.${k}`)}`);
+    return `{${entries.join(',')}}`;
+  }
+  throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+};
+
+/**
+ * What the server binds a step quote to: the body WITHOUT its `quoteId` (the one
+ * field the run adds), in canonical form. Returns the fingerprint, or the
+ * server's refusal message when the body is not plain JSON.
+ */
+const stepBodyFingerprint = (
+  body: Record<string, unknown>,
+): { fingerprint: string } | { refusal: string } => {
+  const { quoteId: _quoteId, ...rest } = body;
+  try {
+    return { fingerprint: canonicalStepJson(rest, 'body') };
+  } catch (e) {
+    if (e instanceof NonJsonStepBodyError) {
+      return { refusal: `${MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX}${e.message}` };
+    }
+    throw e;
+  }
+};
 
 /**
  * BUZZ scenario controls — simulate a viewer who runs out of Buzz. The mock host
@@ -1229,6 +1407,51 @@ export interface MockHostOptions {
    */
   runTrainingCapRefusal?: string;
   /**
+   * Force `RUN_CONFIRMED_STEP` to reply with an `error` instead of starting the
+   * job — a {@link BlockRunConfirmedStepHostError} or any other string for a
+   * server message. Absent → the viewer "confirms" and the job starts.
+   *
+   *  - `'declined'` — the viewer dismissed the confirm. No job.
+   *  - `'daily-limit-exceeded'` — the job would exceed the viewer's own daily
+   *    Buzz limit for the app. No job; the real host explains it in its chrome.
+   *  - `'submission-unconfirmed'` — the job MAY exist.
+   *
+   * A CONFIRMED STEP IS QUOTED BY THE ESTIMATE, with no knob of its own: a
+   * pass-through `{ kind: 'step', $type }` estimate carries
+   * {@link BlockWorkflowSnapshot.stepQuote} whenever the mock's price for it
+   * ({@link MockGenerationScenario.costPerGen}, or `cost`) is above the token's
+   * per-call budget ({@link MockHostOptions.buzzBudget}, default 200) and at most
+   * 5,000, for a signed-in viewer. So `generation: { costPerGen: 800 }` is all it
+   * takes to reach this path. ONLY a single `ESTIMATE_WORKFLOW` quotes one: a
+   * batch-estimate cell never carries `stepQuote`, as on the server. And where a
+   * quote would be granted, two bodies make the estimate FAIL instead, with the
+   * server's message: a training `$type` (`training`, `imageResourceTraining`,
+   * in any casing), and an `input` that is not plain JSON (a `Date`, `Map`,
+   * `Set`, `BigInt`, `NaN`, an empty slot in a sparse array, …).
+   *
+   * Whether the QUOTE survives follows the real flow: the host's own gate,
+   * dialog and daily-limit codes settle before the server claims the quote, so
+   * it stays runnable; `submission-unconfirmed` and any server message settle
+   * after the claim, so it is used up — running it again gets the quote-gone
+   * error. Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   * URL: `?confirmedStep=declined|daily-limit|unconfirmed`.
+   *
+   * 🔴 Same real gap as {@link runTrainingError}: the confirm is HOST chrome, so
+   * the mock settles immediately where the real host waits on a click. The mock
+   * also prices every estimate as FIXED — the real host gives a variable or
+   * metered price no `stepQuote` at all.
+   */
+  runConfirmedStepError?: BlockRunConfirmedStepHostError | string;
+  /**
+   * Make `RUN_CONFIRMED_STEP` resolve the server's spend-cap refusal instead of
+   * a job: a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total:
+   * <quote> }, error: <this string> }` (refunded, no job).
+   * `useRunConfirmedStep()` rejects it with `.refused`. 🔴 The quote is CONSUMED,
+   * as on the server. Absent → the job starts. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  runConfirmedStepCapRefusal?: string;
+  /**
    * Force `SAVE_IMAGE` to reply with this `error` instead of saving — any of
    * the host's free-text refusals (`'image url is not allowed'`,
    * `'image is not available'`, `'busy'`, …), or
@@ -1515,6 +1738,8 @@ export type MockHostScenarioPatch = Pick<
   | 'trainingQuoteTotal'
   | 'runTrainingError'
   | 'runTrainingCapRefusal'
+  | 'runConfirmedStepError'
+  | 'runConfirmedStepCapRefusal'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -2002,6 +2227,8 @@ function jsonByteSize(value: unknown): number {
  * map onto the new scenario groups so a dev can flip out-of-Buzz /
  * failures / latency without editing code. `?capRefusal=1` (or `=<text>`) sets
  * {@link MockGenerationScenario.submitCapRefusal}.
+ * `?confirmedStep=declined|daily-limit|unconfirmed` sets
+ * {@link MockHostOptions.runConfirmedStepError}.
  *
  * Returns a partial overlay applied ON TOP of explicit {@link MockHostOptions}
  * (URL wins — it's the interactive dev knob). No-op outside a browser.
@@ -2111,6 +2338,15 @@ export function readMockHostUrlOptions(
     generation.submitCapRefusal =
       capRefusal === '1' || capRefusal === 'true' ? true : capRefusal;
   }
+
+  // ?confirmedStep=declined|daily-limit|unconfirmed → how RUN_CONFIRMED_STEP
+  // settles (see `runConfirmedStepError`). Absent, or any other value: the viewer
+  // "confirms" and the job starts. Pair it with a `?costPerGen=` above the
+  // per-call budget, which is what makes the estimate quote a confirmed step.
+  const confirmedStep = params.get('confirmedStep');
+  if (confirmedStep === 'declined') out.runConfirmedStepError = 'declined';
+  else if (confirmedStep === 'daily-limit') out.runConfirmedStepError = 'daily-limit-exceeded';
+  else if (confirmedStep === 'unconfirmed') out.runConfirmedStepError = 'submission-unconfirmed';
 
   if (Object.keys(generation).length > 0) out.generation = generation;
   if (Object.keys(buzz).length > 0) out.buzz = buzz;
@@ -2276,6 +2512,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // image is never added: production leaves it unstamped, so it is not postable.
   const postableImageIds = new Set<number>(options.postableImageIds ?? []);
   let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
+  // Confirmed step: forced-refusal knobs. The quotes themselves live per install.
+  let runConfirmedStepError: string | undefined = options.runConfirmedStepError;
+  let runConfirmedStepCapRefusal: string | undefined = options.runConfirmedStepCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -2540,9 +2779,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       string,
       { datasetId: string; total: number; expiresAtMs: number; spent: boolean }
     >();
+    // Confirmed steps: the quotes this install's estimates stored (id → what a
+    // run is checked against). Same serial as the training handles, so every
+    // handle this install mints is distinct.
+    const stepQuotes = new Map<
+      string,
+      { fingerprint: string; total: number; expiresAtMs: number; spent: boolean }
+    >();
     let trainingSerial = 0;
     /** `<prefix>` + 32 hex characters — the real handles' shape. */
-    const trainingHandle = (prefix: 'tds_' | 'tq_'): string => {
+    const trainingHandle = (prefix: 'tds_' | 'tq_' | 'sq_'): string => {
       trainingSerial += 1;
       return `${prefix}${trainingSerial.toString(16).padStart(32, '0')}`;
     };
@@ -2702,12 +2948,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           spentAccountType: primaryFunder(buzzBalance),
         };
       }
+      // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
+      const model3d =
+        gen.model3dOutputs && gen.model3dOutputs.length > 0 && passThroughStepType(body)
+          ? gen.model3dOutputs.map((m) => ({ ...m }))
+          : undefined;
       return {
         ...trainingFields(body),
+        ...(model3d ? { model3dOutputs: model3d } : {}),
         workflowId,
         status: 'succeeded' as const,
         cost: { total: cost },
-        imageUrls: imagesFor(workflowId, body),
+        // Every labelled model url is also an `imageUrls` entry on the real host.
+        imageUrls:
+          model3d && !gen.images && !gen.image
+            ? model3d.map((m) => m.url)
+            : imagesFor(workflowId, body),
         // Pick-aware APPROXIMATION of the real backend's
         // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
         // LARGEST realized debit (`primaryDebitedAccountType`), and its currency
@@ -2849,7 +3105,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
          * ESTIMATE_WORKFLOW and ESTIMATE_WORKFLOW_BATCH so a batch cell is priced
          * exactly as a single estimate of the same body.
          */
-        const estimateSnapshotFor = (body: WorkflowBody): BlockWorkflowSnapshot => {
+        const estimateSnapshotFor = (
+          body: WorkflowBody,
+          // TRUE only from the single ESTIMATE_WORKFLOW. The server's batch
+          // estimate persists nothing, so a batch cell never stores a
+          // confirmed-step quote and never carries a `stepQuote`.
+          opts: { storeQuotes: boolean },
+        ): BlockWorkflowSnapshot => {
           // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
           // the two real producers byte-for-byte so a block's `catch` around
           // `estimate()` is exercisable locally — see the knob's docs for why
@@ -2927,6 +3189,54 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 quoteId,
                 total,
                 imageCount,
+                expiresAt: new Date(expiresAtMs).toISOString(),
+              },
+            };
+          }
+          // CONFIRMED-STEP QUOTE — kind-faithful, like the training arm above. A
+          // pass-through step whose (fixed) price is above the token's per-call
+          // budget and within the per-job ceiling gets a stored, viewer-
+          // confirmable quote beside its ordinary estimate; every other estimate
+          // is exactly what it was. The server grants it only to a signed-in
+          // viewer's page token, which is what `viewer !== null` stands for here.
+          const stepType = passThroughStepType(body);
+          const stepPrice = stepType === undefined ? 0 : costFor(body);
+          if (
+            opts.storeQuotes &&
+            stepType !== undefined &&
+            viewer !== null &&
+            stepPrice > buzzBudget &&
+            stepPrice <= MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB
+          ) {
+            // From here a quote WOULD be granted, so the two bodies that must
+            // never get one are refused out loud, as the server refuses them: it
+            // throws `BAD_REQUEST`, which the page host catches into
+            // `failureSnapshot(err)` — so `estimate()` rejects instead of
+            // returning a price. Below the budget (or in a batch) neither check
+            // runs and the estimate is the ordinary one.
+            if (isTrainingStepTypeName(stepType)) {
+              return { workflowId: 'failed', status: 'failed', error: MOCK_STEP_TRAINING_TYPE_ERROR };
+            }
+            const bound = stepBodyFingerprint(body as unknown as Record<string, unknown>);
+            if ('refusal' in bound) {
+              return { workflowId: 'failed', status: 'failed', error: bound.refusal };
+            }
+            const quoteId = trainingHandle('sq_');
+            const expiresAtMs = Date.now() + STEP_QUOTE_TTL_MS;
+            stepQuotes.set(quoteId, {
+              fingerprint: bound.fingerprint,
+              total: stepPrice,
+              expiresAtMs,
+              spent: false,
+            });
+            return {
+              workflowId: 'wf_estimate',
+              status: 'pending',
+              cost: quotedCost(body),
+              stepQuote: {
+                quoteId,
+                total: stepPrice,
+                stepType,
                 expiresAt: new Date(expiresAtMs).toISOString(),
               },
             };
@@ -3068,7 +3378,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
-              payload: { requestId, snapshot: estimateSnapshotFor(body) },
+              payload: { requestId, snapshot: estimateSnapshotFor(body, { storeQuotes: true }) },
             });
             return;
           }
@@ -3140,7 +3450,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   error: MOCK_TRAINING_IN_BATCH_ERROR,
                 };
               }
-              return estimateSnapshotFor(cell ?? ({} as WorkflowBody));
+              return estimateSnapshotFor(cell ?? ({} as WorkflowBody), { storeQuotes: false });
             });
             // The server's aggregate rule: the cells that priced, i.e. not
             // `'failed'` and carrying a numeric `cost.total`.
@@ -3232,6 +3542,29 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                     status: 'failed',
                     error:
                       'this training run has not been confirmed by the viewer in this session',
+                  },
+                },
+              });
+              return;
+            }
+            // A pass-through body naming a `quoteId` asks to be charged against a
+            // viewer-confirmed quote, and only RUN_CONFIRMED_STEP's dialog records
+            // that confirmation — so as a plain submit the server refuses it. Its
+            // own message, in the host's `failureSnapshot` shape.
+            // (`useBuzzWorkflow().submit()` refuses before sending; this covers a
+            // raw transport send.)
+            if (
+              body.kind === 'step' &&
+              (body as { quoteId?: unknown }).quoteId !== undefined
+            ) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: MOCK_STEP_NOT_CONFIRMED_ERROR,
                   },
                 },
               });
@@ -3937,6 +4270,85 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 },
               });
             }
+            submitCount += 1;
+            const workflowId = `wf_${submitCount}_${Date.now()}`;
+            workflows.set(workflowId, {
+              polls: 0,
+              cost: quote.total,
+              body: raw as WorkflowBody,
+            });
+            return reply({ snapshot: { workflowId, status: 'pending' } });
+          }
+
+          case 'RUN_CONFIRMED_STEP': {
+            // The host's gate (`runConfirmedStepGate.ts`): no requestId → drop;
+            // signed-out → `sign in to run`; not a pass-through `kind:'step'`
+            // body naming an `sq_`-shaped `quoteId` → `invalid confirmed step
+            // request`. Then the server: the spend scope, then the quote the host
+            // reads back for its dialog (unknown, expired or already spent).
+            if (!isRoutableRequestId(requestId)) return;
+            const reply = (payload: Record<string, unknown>) =>
+              dispatchToBlock({
+                type: 'CONFIRMED_STEP_RESULT',
+                payload: { requestId, ...payload },
+              });
+            if (viewer === null) return reply({ error: 'sign in to run' });
+            const raw = typed.payload?.body as unknown;
+            const b =
+              raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? (raw as Record<string, unknown>)
+                : null;
+            if (
+              !b ||
+              b.kind !== 'step' ||
+              typeof b.$type !== 'string' ||
+              typeof b.quoteId !== 'string' ||
+              !STEP_QUOTE_ID_PATTERN.test(b.quoteId)
+            ) {
+              return reply({ error: 'invalid confirmed step request' });
+            }
+            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
+            const quote = stepQuotes.get(b.quoteId);
+            if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
+              return reply({ error: MOCK_STEP_QUOTE_GONE_ERROR });
+            }
+            // Which outcomes consume the quote — the same split as RUN_TRAINING
+            // above: the host's gate, its daily-limit explanation and its confirm
+            // come first (quote kept); the submit then claims the quote before any
+            // of its own checks, so every server outcome consumes it.
+            if (runConfirmedStepError !== undefined) {
+              if (!PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS.has(runConfirmedStepError)) {
+                quote.spent = true;
+              }
+              return reply({ error: runConfirmedStepError });
+            }
+            // The submit's preflight refuses a training `$type` BEFORE it touches
+            // the quote, so the quote is kept.
+            if (isTrainingStepTypeName(b.$type)) {
+              return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
+            }
+            quote.spent = true;
+            // The body is hashed AFTER the claim, so a body the server cannot bind
+            // (non-plain-JSON input) and a body that differs both consume the quote.
+            const bound = stepBodyFingerprint(b);
+            if ('refusal' in bound) return reply({ error: bound.refusal });
+            if (bound.fingerprint !== quote.fingerprint) {
+              return reply({ error: MOCK_STEP_BODY_MISMATCH_ERROR });
+            }
+            // The server's cap refusals RESOLVE (refunded, no job started) — after
+            // the quote was consumed above.
+            if (runConfirmedStepCapRefusal !== undefined) {
+              return reply({
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: quote.total },
+                  error: runConfirmedStepCapRefusal,
+                },
+              });
+            }
+            // Every confirmation is its own job: the charge is the confirmed
+            // price, never `maxBuzz`.
             submitCount += 1;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
             workflows.set(workflowId, {
@@ -4836,6 +5248,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     }
     if ('uploadImageBytesError' in patch) uploadImageBytesError = patch.uploadImageBytesError;
     if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
+    if ('runConfirmedStepError' in patch) runConfirmedStepError = patch.runConfirmedStepError;
+    if ('runConfirmedStepCapRefusal' in patch) {
+      runConfirmedStepCapRefusal = patch.runConfirmedStepCapRefusal;
+    }
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

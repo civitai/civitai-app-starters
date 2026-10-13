@@ -82,6 +82,7 @@ import type {
   useRequestConsent,
   useRequestSignIn,
   useResourcePicker,
+  useRunConfirmedStep,
   useRunTraining,
   useSaveImage,
   useSharedStorage,
@@ -127,6 +128,7 @@ import type {
   UseRequestConsent,
   UseRequestSignIn,
   UseResourcePicker,
+  UseRunConfirmedStep,
   UseRunTraining,
   UseSaveImage,
   UseSharedStorage,
@@ -213,6 +215,9 @@ type _usePublishGenerationOutputs = Assert<
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
+type _useRunConfirmedStep = Assert<
+  Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>
+>;
 type _useRunTraining = Assert<Exact<ReturnType<typeof useRunTraining>, UseRunTraining>>;
 type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>>;
 type _useSharedStorage = Assert<Exact<ReturnType<typeof useSharedStorage>, UseSharedStorage>>;

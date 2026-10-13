@@ -143,6 +143,21 @@ dialog, and `useBuzzWorkflow().submit()` refuses the body. It is left out of the
 code. The SDK's `WorkflowBodyTraining` doc comment describes the flow for when
 it opens up.
 
+## Not usable by a third-party app today: a confirmed step (and labelled 3D outputs)
+
+A pass-through job priced above the token's per-call budget can run once the
+viewer confirms its exact price in Civitai's own dialog: the estimate carries
+`stepQuote`, and `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId })`
+runs it. That needs a host carrying civitai/civitai#5786 with the per-viewer flag
+`app-blocks-confirmed-step` on, and the flag ships off. It is refused for dev,
+dev-tunnel and review tokens, so `dev:live` cannot reach it either; only the mock
+host can exercise it. `polyGen`, the 3D step whose price is what makes this
+relevant, reports its models on `snapshot.model3dOutputs` (`{ url, format,
+variant }`) from the same host version.
+
+It is left out of the code, like training. The flow, the error flags and a 3D
+snippet are in the `@civitai/blocks-react` README under `useRunConfirmedStep()`.
+
 ## Mock host vs production
 
 `npm run dev:harness` uses the SDK mock host. Where it diverges from production,
