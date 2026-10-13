@@ -16,3 +16,5 @@ export const CivitaiReaction = createComponent({
     onReact: 'react' as EventName<CustomEvent<ReactionDetail>>,
   },
 });
+
+export type { ReactionDetail };
