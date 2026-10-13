@@ -45,6 +45,54 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
+export type {
+  WorkflowCallOptions,
+  WorkflowGetOptions,
+  WorkflowListQuery,
+  WorkflowListResult,
+  WorkflowSubmitOptions,
+  WorkflowWatchOptions,
+  WorkflowsClient,
+} from './workflows/index.js';
+// The block workflow contract: the body `app.workflows` sends and the snapshot
+// it resolves. Every name in the generated copy, pinned as a set by
+// `test/workflows/seam.test.ts`.
+export type {
+  AiToolkitLrScheduler,
+  AiToolkitOptimizerType,
+  AiToolkitPlainEcosystem,
+  AiToolkitTrainingParams,
+  AiToolkitTrainingParamsBase,
+  AppWorkflow,
+  AppWorkflowImage,
+  BlockModel3dOutput,
+  BlockModelSubstitution,
+  BlockPublishedModel,
+  BlockSourceImage,
+  BlockStepQuote,
+  BlockStepToolCall,
+  BlockTextToImageParams,
+  BlockTrainedEpoch,
+  BlockTrainingQuote,
+  BlockWorkflowSnapshot,
+  BlockWorkflowStepSnapshot,
+  BuzzAccountType,
+  InlineComfyNode,
+  KnownBlockWorkflowErrorCode,
+  ModelSubstitutionReason,
+  WithWorkflowStepRefs,
+  WorkflowBody,
+  WorkflowBodyCustomComfy,
+  WorkflowBodyCustomComfyInline,
+  WorkflowBodyCustomComfyRecipe,
+  WorkflowBodyPassThroughStep,
+  WorkflowBodyStep,
+  WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
+  WorkflowBodyWorkflowStep,
+  WorkflowStepRef,
+} from './workflows/types.generated.js';
 export { isTerminal, isTerminalStatus } from './orchestration/index.js';
 export type {
   OrchestrationClient,

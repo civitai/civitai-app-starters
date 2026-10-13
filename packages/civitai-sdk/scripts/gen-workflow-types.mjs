@@ -1,0 +1,153 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// The block workflow contract types — the request body a block submits and the
+// snapshot the host answers with — are DEFINED in `@civitai/app-sdk/blocks`.
+// `@civitai/sdk` does not depend on that package (see `src/safe-storage/index.ts`
+// for why the two stay independent), so it carries a COPY. This script is what
+// keeps the copy a copy: it extracts the declarations from app-sdk's source,
+// docs included, and `--check` fails when the committed file differs.
+//
+// It is a text extractor, not a parser (the TypeScript in this workspace ships
+// no JS compiler API). Every assumption it makes about the source's shape is
+// asserted below and fails loudly rather than emitting a partial file.
+
+export const SOURCE = 'packages/civitai-app-sdk/src/blocks/types.ts';
+export const OUT = 'packages/civitai-sdk/src/workflows/types.generated.ts';
+
+/** Everything reachable from these is copied; nothing else is. */
+export const ROOTS = [
+  'WorkflowBody',
+  'WithWorkflowStepRefs',
+  'BlockWorkflowSnapshot',
+  'AppWorkflow',
+];
+
+const DECLARATION = /^(export\s+)?(?:declare\s+)?(type|interface|const|let|var|function|class|enum)\s+([A-Za-z_$][\w$]*)/;
+
+/** Comments and string/template literals blanked, so names inside them are not references. */
+function codeOnly(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+}
+
+/**
+ * Splits a module into its top-level declarations. A declaration starts on a
+ * column-0 keyword line, owns the comment block directly above it, and runs
+ * until the next column-0 line that is not a closing bracket.
+ */
+export function topLevelDeclarations(source) {
+  const lines = source.split('\n');
+  const starts = [];
+  for (let i = 0; i < lines.length; i++) {
+    const match = DECLARATION.exec(lines[i]);
+    if (match) starts.push({ line: i, exported: Boolean(match[1]), keyword: match[2], name: match[3] });
+  }
+
+  return starts.map((start) => {
+    // Body: up to the next column-0 line that opens something new.
+    let end = start.line + 1;
+    while (end < lines.length && !/^[A-Za-z_$/]/.test(lines[end])) end++;
+    while (end > start.line + 1 && lines[end - 1].trim() === '') end--;
+
+    // Leading doc: a `/** … */` block ending on the line directly above.
+    let begin = start.line;
+    if (begin > 0 && lines[begin - 1].trimEnd().endsWith('*/')) {
+      let open = begin - 1;
+      while (open >= 0 && !lines[open].startsWith('/**')) open--;
+      if (open >= 0) begin = open;
+    }
+
+    const code = lines.slice(start.line, end).join('\n');
+    return { ...start, doc: lines.slice(begin, start.line).join('\n'), code };
+  });
+}
+
+function assertBalanced(declaration) {
+  const stripped = codeOnly(declaration.code);
+  for (const [open, close] of ['{}', '()', '[]']) {
+    const opened = stripped.split(open).length - 1;
+    const closed = stripped.split(close).length - 1;
+    if (opened !== closed) {
+      throw new Error(
+        `${declaration.name}: unbalanced ${open}${close} (${opened} vs ${closed}) — the extractor ` +
+          `mis-split ${SOURCE}; its shape changed.`,
+      );
+    }
+  }
+}
+
+/** The generated module's text, from app-sdk's `blocks/types.ts` source text. */
+export function renderWorkflowTypes(source, roots = ROOTS) {
+  const declarations = topLevelDeclarations(source);
+  const byName = new Map();
+  for (const declaration of declarations) {
+    if (byName.has(declaration.name)) {
+      throw new Error(`${declaration.name} is declared twice at the top level of ${SOURCE}.`);
+    }
+    byName.set(declaration.name, declaration);
+  }
+
+  const wanted = new Set();
+  const visit = (name, from) => {
+    if (wanted.has(name)) return;
+    const declaration = byName.get(name);
+    if (!declaration) throw new Error(`${name} is not declared in ${SOURCE} (wanted by ${from}).`);
+    if (declaration.keyword !== 'type' && declaration.keyword !== 'interface') {
+      throw new Error(
+        `${name} is a ${declaration.keyword}, reached from ${from}. This file copies TYPES only; ` +
+          'a value would be a second runtime definition of a host rule.',
+      );
+    }
+    if (!declaration.exported) {
+      throw new Error(`${name} (reached from ${from}) is not exported by ${SOURCE}.`);
+    }
+    assertBalanced(declaration);
+    wanted.add(name);
+    for (const [word] of codeOnly(declaration.code).matchAll(/[A-Za-z_$][\w$]*/g)) {
+      if (word !== name && byName.has(word)) visit(word, name);
+    }
+  };
+  for (const root of roots) visit(root, 'ROOTS');
+
+  const body = declarations
+    .filter((declaration) => wanted.has(declaration.name))
+    .map((declaration) => (declaration.doc ? `${declaration.doc}\n` : '') + declaration.code)
+    .join('\n\n');
+
+  return (
+    `// Generated by scripts/gen-workflow-types.mjs from ${SOURCE}. Do not edit.\n` +
+    '//\n' +
+    '// A copy of the block workflow contract types `@civitai/app-sdk/blocks` defines,\n' +
+    '// so a workflow body can be written against `@civitai/sdk` alone. The doc\n' +
+    '// comments are the source\'s own: where one names a React hook or a constant,\n' +
+    '// that lives in `@civitai/blocks-react` / `@civitai/app-sdk/blocks`.\n\n' +
+    `${body}\n`
+  );
+}
+
+/** The names the generated module exports, in source order. */
+export function workflowTypeNames(generated) {
+  return topLevelDeclarations(generated).map((declaration) => declaration.name);
+}
+
+const repoFile = (path) => fileURLToPath(new URL(`../../../${path}`, import.meta.url));
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const text = renderWorkflowTypes(readFileSync(repoFile(SOURCE), 'utf8'));
+  const count = workflowTypeNames(text).length;
+  if (process.argv.includes('--check')) {
+    if (readFileSync(repoFile(OUT), 'utf8') !== text) {
+      console.error(`${OUT} is stale. Run \`pnpm --filter @civitai/sdk gen:workflow-types\` and commit the result.`);
+      process.exit(1);
+    }
+    console.log(`${OUT} is up to date (${count} types).`);
+  } else {
+    writeFileSync(repoFile(OUT), text);
+    console.log(`Wrote ${OUT} (${count} types).`);
+  }
+}

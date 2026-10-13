@@ -23,6 +23,7 @@ import {
 } from '../shared-storage/index.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
+import { createWorkflowsClient, type WorkflowsClient } from '../workflows/index.js';
 
 /** Long enough for a slow host page; short enough that a block opened on its own says so. */
 const DEFAULT_INIT_TIMEOUT_MS = 10_000;
@@ -61,12 +62,24 @@ export interface AppClient {
    */
   readonly sharedStorage: SharedStorageClient;
   /**
+   * Generation for a BLOCK: estimate, submit, watch and cancel through the
+   * host's `blocks/workflows/*` routes, which price, budget and attribute the
+   * work before it reaches the orchestrator. Multi-step `kind: 'workflow'`
+   * bodies included.
+   *
+   * 🔴 Requires the block token the host mints, like {@link AppClient.storage}.
+   * It is NOT {@link AppClient.orchestration}: that one calls the orchestrator
+   * directly with an OAuth access token and applies none of those controls.
+   */
+  readonly workflows: WorkflowsClient;
+  /**
    * The orchestrator's workflows, as the viewer.
    *
    * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
    * {@link AppClient.site} this destination IS known ahead of the call: a block
    * holding one is refused here up front, with the manifest fix, rather than
-   * spending a request to be told.
+   * spending a request to be told. A block generates through
+   * {@link AppClient.workflows} instead.
    */
   readonly orchestration: OrchestrationClient;
   /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
@@ -192,19 +205,21 @@ function createAppClient(
   holdsBlockTokenNow: () => boolean = () => false,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
-  // One instance for all three site-hosted surfaces: the two storage clients'
-  // routes live under the same base URL, so a `siteUrl` override redirects them
-  // together.
+  // One instance for all four site-hosted surfaces: the storage and workflows
+  // clients' routes live under the same base URL, so a `siteUrl` override
+  // redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. Neither storage client needs an exemption of its own:
-  // their routes are `blocks/app-storage/*` and `blocks/shared-storage/*`, which
-  // that namespace already excludes, and `test/storage/seam.test.ts` plus
-  // `test/shared-storage/seam.test.ts` pin both `BASE` values there textually.
+  // diagnosis applies. None of the three `blocks/*` clients needs an exemption
+  // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`
+  // and `blocks/workflows/*`, which that namespace already excludes, and
+  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts` and
+  // `test/workflows/seam.test.ts` pin the three `BASE` values there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   return {
     site: createSiteClient(siteHttp),
     storage: createStorageClient(siteHttp),
     sharedStorage: createSharedStorageClient(siteHttp),
+    workflows: createWorkflowsClient(siteHttp),
     orchestration: createOrchestrationClient(
       refuseBlockToken(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL), holdsBlockTokenNow),
     ),
@@ -226,7 +241,8 @@ function refuseBlockToken(http: Http, holdsBlockTokenNow: () => boolean): Http {
           new CivitaiError(
             'The orchestrator does not accept a block-scoped token, and this block holds one. ' +
               `To run workflows as the viewer, ${OAUTH_OPT_IN} so the host mints an OAuth ` +
-              'access token; the block token reaches the `blocks/*` API routes and app storage only.',
+              'access token; the block token reaches the `blocks/*` API routes and app storage only. ' +
+              'To generate with the block token, use `app.workflows`.',
           ),
         )
       : http(method, path, opts);
