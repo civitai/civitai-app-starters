@@ -109,6 +109,7 @@ export const UNGATED_STEPS = Object.freeze([
   'actions/setup-node',
   'pnpm test:guards',
   'node scripts/check-starter-workspace-overrides.mjs',
+  'node scripts/check-generated-version.mjs',
 ]);
 
 /** The head branch `changesets/action` (release.yml) force-pushes the Version Packages PR to. */
@@ -119,17 +120,23 @@ export const RELEASE_BRANCH = 'changeset-release/main';
  * `starter` is not here, so its heavy steps are off; its every-lane steps
  * (`UNGATED_STEPS`, which include both release guards) still run in all five legs.
  *
- * THE TRADE, AS IT ACTUALLY IS. A version bump cannot itself break a core job
- * in this repo: the root `pnpm.overrides` pin every `@civitai/*` workspace
- * package to `workspace:*`, so the starters and packages build against the
- * same local code whatever the carets say. What the lane drops is the release
- * PR RE-TESTING MAIN'S CODE right before a publish. `release.yml` publishes on
+ * THE TRADE, AS IT ACTUALLY IS. A version bump does not change what any job
+ * BUILDS against: the root `pnpm.overrides` pin every `@civitai/*` workspace
+ * package to `workspace:*`, so the starters and packages resolve the same
+ * local code whatever the carets say. It can still break a job that READS a
+ * version. The one known case is a `version.generated.ts` left behind its
+ * package.json, which `design-system` (off in this lane) is the only job to
+ * check; that check therefore also runs as an every-lane step
+ * (`UNGATED_STEPS`). No other version-reading check in a dropped job is known,
+ * and none is covered here if one exists. What the lane drops beyond that is
+ * the release PR RE-TESTING MAIN'S CODE right before a publish. `release.yml` publishes on
  * the merge push and does not wait for CI, so if main ever carries a red core
  * job, a green release-lane PR can merge and publish it. The full-suite run on
  * the release PR was the last thing that would have been red in front of
  * whoever merges. Measured exposure when this was written: 0 of 100 recent
- * push-to-main runs were red on a core job, and 0 of 17 release-PR runs with a
- * core failure failed on a step this lane drops.
+ * push-to-main runs were red on a core job, and 2 of 17 release-PR runs with a
+ * core failure failed on a step this lane drops: both were `playwright install
+ * --with-deps` in dropped jobs, and 0 were a typecheck, test or build step.
  */
 export const RELEASE_LANE_JOBS = Object.freeze(['packaging', 'starter-pins']);
 
@@ -353,11 +360,10 @@ export async function checkReleaseContent(files, { fetchBlob, workspaceNames }) 
       if (base.replace(versionConstant(base), '<v>') !== head.replace(headVersion, '<v>')) {
         return `${f.filename} changes more than its VERSION constant`;
       }
-      const pkgPath = f.filename.replace(/src\/version\.generated\.ts$/, 'package.json');
-      const pkgVersion = JSON.parse(await fetchBlob(pkgPath, 'head')).version;
-      if (pkgVersion !== headVersion) {
-        return `${f.filename} stamps ${headVersion} but ${pkgPath} is ${pkgVersion} (the drift check:generated-version exists for)`;
-      }
+      // Whether the stamped version MATCHES package.json is not decided here.
+      // A drifted module is most often one that was not regenerated, so it is
+      // absent from the diff and no file walk can see it; the every-lane step
+      // `node scripts/check-generated-version.mjs` reads the tree instead.
     }
   }
   return null;

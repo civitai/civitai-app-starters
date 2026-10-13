@@ -16,8 +16,10 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { promisify } from 'node:util';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -301,8 +303,8 @@ describe('release lane: the Version Packages PR, when it is ONLY a version bump'
   test('POSITIVE CONTROL: the clean world is a release, and its blobs were actually read', async () => {
     const w = world();
     assert.equal(await check(RELEASE_FILES_SEEN, w), null);
-    // 4 package.json x 2 sides + the version module x 2 + its package.json once.
-    assert.equal(w.reads(), 11);
+    // 4 package.json x 2 sides + the version module x 2.
+    assert.equal(w.reads(), 10);
     const d = await releaseDecision(RELEASE_FILES_SEEN);
     assert.equal(d.lane, 'release');
     assert.deepEqual(on(d), ['starter-pins', 'packaging']);
@@ -323,7 +325,6 @@ describe('release lane: the Version Packages PR, when it is ONLY a version bump'
     ['a workspace dependency moved to workspace:*', { blob: ['starters/next-app/package.json', pkg('0.0.0', { '@civitai/app-sdk': '^1.2.0' }), pkg('0.0.0', { '@civitai/app-sdk': 'workspace:*' })] }, /sets dependencies\.@civitai\/app-sdk to "workspace:\*"/],
     ['a version that is not a version', { blob: ['packages/civitai-app-sdk/package.json', pkg('1.2.0'), pkg('latest')] }, /sets version to "latest"/],
     ['a package.json that does not parse', { blob: ['packages/civitai-app-sdk/package.json', pkg('1.2.0'), '{'] }, /does not parse/],
-    ['a version module stamping the wrong version', { blob: ['packages/civitai-components/src/version.generated.ts', vmod('2.0.0'), vmod('2.0.2')] }, /stamps 2\.0\.2 but packages\/civitai-components\/package\.json is 2\.0\.1/],
     ['a version module carrying more than the constant', { blob: ['packages/civitai-components/src/version.generated.ts', vmod('2.0.0'), vmod('2.0.1') + 'export const X = 1;\n'] }, /changes more than its VERSION constant/],
   ];
   for (const [label, change, problem] of NOT_A_BUMP) {
@@ -418,5 +419,185 @@ describe('the blob fetcher', () => {
     const get = blobFetcher({ api: 'x', repo: 'o/r', shas: { base: 'main' }, fetchImpl: async () => assert.fail('fetched') });
     await assert.rejects(get('a', 'base'), /no base sha/);
     await assert.rejects(get('a', 'head'), /no head sha/);
+  });
+});
+
+describe('release lane: the generated-version drift the file walk cannot see', () => {
+  // A `@civitai/components` bump whose `src/version.generated.ts` was NOT
+  // regenerated leaves that file out of the diff, so the classifier sees a
+  // clean version bump. `design-system` is the only job that runs
+  // `check:generated-version` and the release lane turns it off, so the check
+  // is also an every-lane step of the starter legs. This runs that step's
+  // command over a drifted tree and a correct one.
+  const CHECK = join(REPO_ROOT, 'scripts', 'check-generated-version.mjs');
+  /** A minimal tree: the real script, one package with the given two versions. */
+  function runOver(pkgVersion, stamped) {
+    const dir = mkdtempSync(join(tmpdir(), 'genver-'));
+    try {
+      mkdirSync(join(dir, 'scripts'));
+      cpSync(CHECK, join(dir, 'scripts', 'check-generated-version.mjs'));
+      mkdirSync(join(dir, 'packages', 'widgets', 'src'), { recursive: true });
+      writeFileSync(join(dir, 'packages', 'widgets', 'package.json'), JSON.stringify({ name: '@x/widgets', version: pkgVersion }));
+      writeFileSync(join(dir, 'packages', 'widgets', 'src', 'version.generated.ts'), `export const VERSION = "${stamped}";\n`);
+      try {
+        const out = execFileSync(process.execPath, [join(dir, 'scripts', 'check-generated-version.mjs')], { encoding: 'utf8', stdio: 'pipe' });
+        return { code: 0, out };
+      } catch (err) {
+        return { code: err.status, out: `${err.stdout}${err.stderr}` };
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('POSITIVE CONTROL: a tree whose module matches its package.json passes', () => {
+    assert.equal(runOver('2.0.1', '2.0.1').code, 0);
+  });
+
+  test('a bumped package.json with the module left behind FAILS the every-lane step', () => {
+    const r = runOver('2.0.1', '2.0.0');
+    assert.equal(r.code, 1);
+    assert.match(r.out, /2\.0\.0/);
+    assert.match(r.out, /2\.0\.1/);
+  });
+
+  test('that same drift is a clean release to the classifier, which is why the step exists', async () => {
+    // The diff of the drifted release: package.json bumped, the module absent.
+    const files = [{ filename: 'packages/civitai-components/package.json', status: 'modified' }];
+    const pkg = (v) => JSON.stringify({ name: '@civitai/components', version: v });
+    const fetchBlob = async (_path, side) => pkg(side === 'base' ? '2.0.0' : '2.0.1');
+    const problem = await checkReleaseContent(files, { fetchBlob, workspaceNames: new Set(['@civitai/components']) });
+    assert.equal(problem, null);
+    assert.equal(decide({ event: 'pull_request', files, release: { problem } }).lane, 'release');
+  });
+});
+
+describe('release lane, END TO END: the real command against a loopback API', () => {
+  // Everything above calls the exported functions. What decides a real run is
+  // main()'s WIRING of them: which list it walks, what it does with a failed
+  // fetch, whether it asks who the head belongs to, and whether it runs the
+  // content check at all. Each of those can be broken with every unit test
+  // still green, so this drives `node scripts/ci-lanes.mjs` itself.
+  const run = promisify(execFile);
+  const REPO = 'civitai/civitai-app-starters';
+  const BASE = 'b'.repeat(40);
+  const HEAD = 'c'.repeat(40);
+  // Real workspace names: main() reads them from this checkout's packages/.
+  const pkg = (version, sdk) => JSON.stringify({ name: 'x', version, dependencies: { '@civitai/app-sdk': sdk, zod: '^3.0.0' } }, null, 2);
+  const CLEAN = {
+    files: [
+      { filename: '.changeset/quiet-owls-nap.md', status: 'removed' },
+      { filename: 'packages/civitai-app-sdk/CHANGELOG.md', status: 'modified' },
+      { filename: 'packages/civitai-blocks-react/package.json', status: 'modified' },
+      { filename: 'starters/next-app/package.json', status: 'modified' },
+    ],
+    blobs: {
+      [`packages/civitai-blocks-react/package.json@${BASE}`]: pkg('1.0.0', '^0.5.0'),
+      [`packages/civitai-blocks-react/package.json@${HEAD}`]: pkg('1.0.1', '^0.6.0'),
+      [`starters/next-app/package.json@${BASE}`]: pkg('0.0.0', '^0.5.0'),
+      [`starters/next-app/package.json@${HEAD}`]: pkg('0.0.0', '^0.6.0'),
+    },
+  };
+
+  /** Runs the command against a stub serving `world`; returns outputs + what was requested. */
+  async function drive(world, { headRepo = REPO, headRef = 'changeset-release/main' } = {}) {
+    const requests = [];
+    const server = createServer((req, res) => {
+      const url = new URL(req.url, 'http://x');
+      requests.push(url.pathname + url.search);
+      const files = url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/pulls\/7\/files$/);
+      const blob = url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/contents\/(.+)$/);
+      if (files) {
+        res.setHeader('content-type', 'application/json');
+        return res.end(JSON.stringify(url.searchParams.get('page') === '1' ? world.files : []));
+      }
+      const body = blob ? world.blobs[`${decodeURIComponent(blob[1])}@${url.searchParams.get('ref')}`] : undefined;
+      if (body === undefined) {
+        res.statusCode = 500;
+        return res.end('{}');
+      }
+      return res.end(body);
+    });
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const dir = mkdtempSync(join(tmpdir(), 'ci-lanes-e2e-'));
+    try {
+      const out = join(dir, 'out');
+      writeFileSync(out, '');
+      const event = join(dir, 'event.json');
+      writeFileSync(
+        event,
+        JSON.stringify({
+          pull_request: { number: 7, head: { ref: headRef, sha: HEAD, repo: { full_name: headRepo } }, base: { ref: 'main', sha: BASE } },
+        }),
+      );
+      const { stdout } = await run(process.execPath, [SCRIPT], {
+        env: {
+          PATH: process.env.PATH,
+          GITHUB_OUTPUT: out,
+          GITHUB_EVENT_PATH: event,
+          GITHUB_EVENT_NAME: 'pull_request',
+          GITHUB_REPOSITORY: REPO,
+          GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`,
+        },
+      });
+      const outputs = Object.fromEntries(
+        readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
+      );
+      return { outputs, stdout, requests, blobRequests: requests.filter((r) => r.includes('/contents/')) };
+    } finally {
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const on = (outputs) => Object.keys(JOBS).filter((id) => outputs[id] === 'true');
+
+  test('POSITIVE CONTROL: a clean Version Packages PR takes the release lane, after reading its blobs', async () => {
+    // The stub's world must name real workspace packages or nothing is masked.
+    assert.ok(readdirSync(join(REPO_ROOT, 'packages')).includes('civitai-app-sdk'));
+    const r = await drive(CLEAN);
+    assert.equal(r.outputs.lane, 'release', r.stdout);
+    assert.deepEqual(on(r.outputs), ['starter-pins', 'packaging']);
+    assert.equal(r.blobRequests.length, 4, 'both sides of both package.json files must be fetched');
+  });
+
+  test('a #535-shaped diff (a test file on the release branch) gets the full suite', async () => {
+    // Red if main() walks an empty list, or never runs the content check.
+    const r = await drive({ ...CLEAN, files: [...CLEAN.files, { filename: 'tests/guards/x.test.mjs', status: 'modified' }] });
+    assert.equal(r.outputs.lane, 'full', r.stdout);
+    assert.deepEqual(CORE_JOBS.filter((id) => r.outputs[id] !== 'true'), []);
+    assert.match(r.stdout, /tests\/guards\/x\.test\.mjs is not release machinery/);
+  });
+
+  test('a package.json that changed more than versions gets the full suite', async () => {
+    // Also red if the walk is empty or the check never runs: this one is only
+    // visible in a BLOB, not in the file list.
+    const blobs = { ...CLEAN.blobs, [`starters/next-app/package.json@${HEAD}`]: pkg('0.0.0', '^0.6.0').replace('"zod": "^3.0.0"', '"zod": "^4.0.0"') };
+    const r = await drive({ ...CLEAN, blobs });
+    assert.equal(r.outputs.lane, 'full', r.stdout);
+    assert.match(r.stdout, /starters\/next-app\/package\.json changes something other than/);
+  });
+
+  test('a blob that cannot be fetched gets the full suite', async () => {
+    // Red if main() turns a failed fetch into "no problem".
+    const blobs = { ...CLEAN.blobs };
+    delete blobs[`starters/next-app/package.json@${HEAD}`];
+    const r = await drive({ ...CLEAN, blobs });
+    assert.equal(r.outputs.lane, 'full', r.stdout);
+    assert.deepEqual(CORE_JOBS.filter((id) => r.outputs[id] !== 'true'), []);
+    assert.match(r.stdout, /the release content check failed \(contents starters\/next-app\/package\.json@head answered HTTP 500\)/);
+  });
+
+  test('the same clean diff from a FORK with the release branch name gets the ordinary lane', async () => {
+    // Red if main() stops asking whose branch the head is.
+    const r = await drive(CLEAN, { headRepo: 'someone/civitai-app-starters' });
+    assert.equal(r.outputs.lane, 'full', r.stdout);
+    assert.deepEqual(CORE_JOBS.filter((id) => r.outputs[id] !== 'true'), []);
+    assert.equal(r.blobRequests.length, 0, 'a fork head must not even reach the content check');
+  });
+
+  test('the same clean diff on another branch of this repository gets the ordinary lane', async () => {
+    const r = await drive(CLEAN, { headRef: 'feature/looks-like-a-release' });
+    assert.equal(r.outputs.lane, 'full', r.stdout);
+    assert.equal(r.blobRequests.length, 0);
   });
 });

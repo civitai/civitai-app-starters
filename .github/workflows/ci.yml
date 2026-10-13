@@ -573,6 +573,15 @@ jobs:
       # asserts a floor on how many pins it covers.
       - run: node scripts/check-starter-workspace-overrides.mjs
 
+      # THE COMMITTED `version.generated.ts` AGAINST ITS package.json, IN EVERY
+      # LANE. `design-system` runs the same check (before its build, see there),
+      # but the release lane turns that job off, and the release PR is exactly
+      # where this drifts: a `@civitai/components` bump whose module was not
+      # regenerated leaves the file OUT of the diff, so no file classifier can
+      # see it. Reads two files as text; no install, and it must stay ahead of
+      # any build step in this job, because a build regenerates the module.
+      - run: node scripts/check-generated-version.mjs
+
       - run: pnpm install --frozen-lockfile
         if: ${{ needs.lanes.outputs.starter != 'false' }}
 

@@ -97,6 +97,7 @@ describe('ci.yml agrees with the lane ledger', () => {
       'actions/setup-node',
       'pnpm test:guards',
       'node scripts/check-starter-workspace-overrides.mjs',
+      'node scripts/check-generated-version.mjs',
     ]);
   });
 
@@ -120,6 +121,8 @@ describe('ci.yml agrees with the lane ledger', () => {
     // running when the release lane turns the matrix's heavy steps off.
     assert.ok(UNGATED_STEPS.includes('node scripts/check-starter-workspace-overrides.mjs'));
     assert.ok(UNGATED_STEPS.includes('pnpm test:guards'));
+    // design-system, the only other job running it, is off in the release lane.
+    assert.ok(UNGATED_STEPS.includes('node scripts/check-generated-version.mjs'));
     assert.ok(!RELEASE_LANE_JOBS.includes('starter'), 'starter is step-gated; listing it would run its heavy steps');
   });
 
