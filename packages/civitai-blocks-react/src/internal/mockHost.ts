@@ -87,6 +87,7 @@ import {
   isKnownBlockScope,
   resolveUngrantableConsentNotice,
 } from './consent.js';
+import { PAGE_CHECKPOINT_PERSIST_ERROR, emulatesPageHost } from './hostSurface.js';
 import {
   requiredStorageScope,
   storageResultType,
@@ -1393,6 +1394,9 @@ export interface MockHostOptions {
    * shape carries the field, so a context you pass WITHOUT a `theme` key still
    * gets the harness theme (and still follows a later `setTheme`). Only a slot
    * this SDK has no shape for is left alone — there is no `theme` field to set.
+   *
+   * The slot also decides `SET_USER_CHECKPOINT`, as in production: refused on
+   * `app.page` (the default), persisted on a model slot.
    */
   context?: BlockContext;
   /**
@@ -4619,12 +4623,26 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SET_USER_CHECKPOINT': {
-            // Persist the checkpoint override (mirrors the real host's
-            // block_user_settings write). Accept a numeric versionId OR an
-            // explicit null (clear); anything else is a bad-input NACK, same as
-            // the real IframeHost. Without this reply `useCheckpointPicker().
-            // persist()` hung to its 30s timeout under the mock host.
+            // Without a reply `useCheckpointPicker().persist()` hung to its 30s
+            // timeout under the mock host.
             if (!isRoutableRequestId(requestId)) return;
+            // 🔴 A PAGE REFUSES, ALWAYS — and the default context is a page.
+            // The page host has nowhere to write the override (a page token is
+            // bound to no model), so it answers every request with this exact
+            // reply, whatever `versionId` was sent. Until this branch the mock
+            // answered `ok: true` on a page, so a page app's `persist()` passed
+            // here and failed in production. See ./hostSurface.ts.
+            if (emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: { requestId, ok: false, error: PAGE_CHECKPOINT_PERSIST_ERROR },
+              });
+              return;
+            }
+            // MODEL SLOT: persist the checkpoint override (mirrors the real
+            // host's block_user_settings write). Accept a numeric versionId OR
+            // an explicit null (clear); anything else is a bad-input NACK, same
+            // as the real IframeHost.
             const rawVersionId = typed.payload?.versionId;
             const versionId =
               rawVersionId === null
@@ -4647,6 +4665,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           default:
+            // No reply, as in production. What reaches here is a type with no
+            // reply channel (BLOCK_READY, NAVIGATE, TRACK_EVENT, …) or a type
+            // this protocol does not declare. The real host's `unsupported on
+            // this host` reply is built only for a request type it KNOWS and
+            // has no handler for; a type it does not know gets nothing.
             return;
         }
       },

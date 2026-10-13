@@ -1718,6 +1718,20 @@ if (isModelSlotContext(context) && context.checkpoint) {
 }
 ```
 
+🔴 **`persist()` works on a model slot only. On a page it always rejects.** A
+full-page app (`app.page`) is bound to no model, so the host has nowhere to write
+the override: it answers every `persist()`, including `persist(null)`, with
+`ok: false`, and the promise rejects with `page blocks cannot persist a
+checkpoint override (no model binding)`. A page app keeps the checkpoint `open()`
+returned in its own state (or in `useAppStorage()`).
+
+Both dev hosts (`createMockHost` / `Harness` and `dev:live`) refuse it the same
+way, and both default to a page context. Pass a complete `ModelSlotContext` as
+`context` to exercise a block that persists. A test that expected `persist()` to
+resolve under the default mock context was asserting something a page app never
+gets: give it the model slot the block really runs in, or, for a page app, drop
+the `persist()` call.
+
 ### `useResourcePicker()`
 
 Drive the platform resource picker for page blocks — `'Checkpoint' | 'LORA'`.
@@ -3021,6 +3035,21 @@ const options: LiveHostOptions = {
 const host = createLiveHost(options);
 const uninstall = host.install();
 ```
+
+What `dev:live` forwards, and how it answers the one call it does not:
+
+- **`useCheckpointPicker().persist()` on a page** is refused with no backend
+  call, as the page host refuses it (see
+  [`useCheckpointPicker()`](#usecheckpointpicker)). The default `context` is a
+  page, because a dev token is a page token.
+- **`submit()`'s `idempotencyKey` reaches the server**, as it does from the
+  production hosts. A retry with the same key is deduplicated there, and a key in
+  a format the server refuses fails the submit with the server's message.
+- **`watch()`'s `waitSeconds` reaches the server**, so a poll is held open
+  instead of answered at once, and the server decides the actual hold. This
+  matches the production hosts as of
+  [civitai/civitai#5798](https://github.com/civitai/civitai/pull/5798); a
+  production host without that change drops the field and answers at once.
 
 ### Stability of `/live`
 

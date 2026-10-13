@@ -61,6 +61,8 @@ export interface UseCheckpointPicker {
  * host. Pass `null` to clear the override and fall back to the publisher
  * default at next mount. Throws on host-side validation failure (e.g.
  * "wrong-ecosystem") — surface the message to the user; don't retry blindly.
+ * MODEL SLOTS ONLY: on a page (`app.page`) the host refuses every `persist`,
+ * so it always throws there; a page app keeps the pick in its own state.
  *
  * Both flows are host-mediated: the block never touches the picker UI or
  * the user-settings table directly. Same trust model as useBuzzPurchase /
