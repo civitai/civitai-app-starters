@@ -1200,7 +1200,19 @@ export type BlockToParentMessage =
   // payload is empty: it discloses nothing a parent frame cannot already infer
   // from the URL it framed.
   | { type: 'BLOCK_HELLO'; payload?: undefined }
-  | { type: 'BLOCK_READY'; payload: { height: number } }
+  // `sdkName` + `sdkVersion` are INFORMATIONAL: which package's transport sent
+  // this message, and that package's plain semver (no package name, no `v`),
+  // so a host can count which SDK versions are in the wild.
+  // `sdkName` is a closed set — `'blocks-react'` for `@civitai/blocks-react`,
+  // `'sdk'` for `@civitai/sdk` — because the two packages version
+  // independently and a bare semver cannot tell them apart; a host treats any
+  // other value as unknown. Neither is a protocol version and nothing is
+  // negotiated on them. Optional in both directions: blocks built before they
+  // existed omit them, and a host must never require them.
+  | {
+      type: 'BLOCK_READY';
+      payload: { height: number; sdkVersion?: string; sdkName?: 'blocks-react' | 'sdk' };
+    }
   | { type: 'BLOCK_ERROR'; payload: { message: string; fatal: boolean } }
   // The block's transport REFUSED an inbound host message at its trust boundary
   // and dropped it. Fire-and-forget, no `requestId`, no reply: it reports a drop
