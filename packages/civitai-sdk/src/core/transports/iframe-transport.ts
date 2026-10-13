@@ -15,6 +15,7 @@ import {
 } from '../transport.js';
 import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
 import { OriginMatcher } from '../origin-matcher.js';
+import { VERSION } from '../../version.generated.js';
 
 /**
  * How this bridge frames one call: a correlation id, and a result or a failure.
@@ -350,7 +351,9 @@ export class IframeTransport implements BlockTransport {
         this.#emit();
         this.#flushOutbound();
         // height 0 is a placeholder; the real measurement follows once the app mounts.
-        this.#dispatch('BLOCK_READY', { height: 0 });
+        // `sdkName`/`sdkVersion` are informational: the host counts which SDK
+        // versions are in the wild. Nothing is negotiated on them.
+        this.#dispatch('BLOCK_READY', { height: 0, sdkName: 'sdk', sdkVersion: VERSION });
       }
       return;
     }

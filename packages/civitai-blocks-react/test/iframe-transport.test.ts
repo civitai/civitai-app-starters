@@ -539,7 +539,7 @@ describe('IframeTransport', () => {
     );
     expect(postMessageMock).toHaveBeenNthCalledWith(
       3,
-      { type: 'BLOCK_READY', payload: { height: 0, sdkVersion: PACKAGE_VERSION } },
+      { type: 'BLOCK_READY', payload: { height: 0, sdkName: 'blocks-react', sdkVersion: PACKAGE_VERSION } },
       PARENT_ORIGIN,
     );
     transport.dispose();
@@ -664,23 +664,24 @@ describe('IframeTransport', () => {
     // BLOCK_READY is the first outbound — the platform's 10s ready timeout
     // depends on this; useBlockResize follows with real measurements.
     expect(postMessageMock).toHaveBeenCalledWith(
-      { type: 'BLOCK_READY', payload: { height: 0, sdkVersion: PACKAGE_VERSION } },
+      { type: 'BLOCK_READY', payload: { height: 0, sdkName: 'blocks-react', sdkVersion: PACKAGE_VERSION } },
       PARENT_ORIGIN,
     );
     transport.dispose();
   });
 
-  it('reports this package\'s version as sdkVersion in BLOCK_READY', async () => {
+  it('reports this package\'s name and version as sdkName / sdkVersion in BLOCK_READY', async () => {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
     await transport.waitForInit();
     const ready = postMessageMock.mock.calls
-      .map((c) => c[0] as { type: string; payload?: { sdkVersion?: unknown } })
+      .map((c) => c[0] as { type: string; payload?: { sdkName?: unknown; sdkVersion?: unknown } })
       .filter((m) => m.type === 'BLOCK_READY');
     expect(ready).toHaveLength(1);
     // Plain semver: no package-name prefix, no leading `v`.
     expect(PACKAGE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
     expect(ready[0]!.payload?.sdkVersion).toBe(PACKAGE_VERSION);
+    expect(ready[0]!.payload?.sdkName).toBe('blocks-react');
     transport.dispose();
   });
 

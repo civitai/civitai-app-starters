@@ -1,6 +1,15 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { HOST, init, mountTransport } from '../support/iframe-host.js';
+
+// Read from package.json, NOT from `src/version.generated.ts`: the expectation
+// must not come from the constant the transport sends, or a stale constant
+// would agree with itself.
+const PACKAGE_VERSION = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
 
 describe('IframeTransport handshake', () => {
   it('announces itself to each exact allowed origin', () => {
@@ -21,6 +30,17 @@ describe('IframeTransport handshake', () => {
 
     expect(sentTypes()).toEqual(['BLOCK_HELLO', 'RESIZE_IFRAME', 'RESIZE_IFRAME', 'BLOCK_READY']);
     expect(posted.slice(1).every((p) => p.origin === HOST)).toBe(true);
+  });
+
+  it('reports its package name and version in BLOCK_READY', () => {
+    const { posted, deliver } = mountTransport();
+    deliver(init());
+
+    // Plain semver: no package-name prefix, no leading `v`.
+    expect(PACKAGE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
+    expect(posted.filter((p) => p.msg.type === 'BLOCK_READY').map((p) => p.msg.payload)).toEqual([
+      { height: 0, sdkName: 'sdk', sdkVersion: PACKAGE_VERSION },
+    ]);
   });
 
   it('publishes the snapshot and tells subscribers once', () => {

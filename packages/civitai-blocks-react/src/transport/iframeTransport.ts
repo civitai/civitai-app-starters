@@ -745,9 +745,9 @@ export class IframeTransport implements BlockTransport {
         // block's root element mounts. Queued because the iframe's React
         // tree hasn't rendered yet at this point — the postMessage goes
         // out on the next microtask via the standard dispatch path.
-        // `sdkVersion` is informational (the host counts versions in the
-        // wild); nothing is negotiated on it and older blocks omit it.
-        this.dispatch('BLOCK_READY', { height: 0, sdkVersion: VERSION });
+        // `sdkName`/`sdkVersion` are informational (the host counts versions
+        // in the wild); nothing is negotiated on them and older blocks omit them.
+        this.dispatch('BLOCK_READY', { height: 0, sdkName: 'blocks-react', sdkVersion: VERSION });
         this.resolveInit(data.payload);
       }
       return;
