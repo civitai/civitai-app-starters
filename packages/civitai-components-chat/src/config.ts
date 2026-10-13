@@ -21,6 +21,8 @@ export interface ChatConfig {
   siteMcpUrl: string;
   /** New viewers' "ask before spending more than" limit, in Buzz; 0 asks every time. */
   autoRunLimit: number;
+  /** Whether the assistant may search the web and read pages; each search or page costs the viewer 1 Buzz. */
+  webSearch: boolean;
 }
 
 export const chatConfig: ChatConfig = {
@@ -29,6 +31,7 @@ export const chatConfig: ChatConfig = {
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
   autoRunLimit: 100,
+  webSearch: true,
   models: [],
 };
 

@@ -10,7 +10,8 @@ import { panelTools } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
-import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
+import { chatConfig } from '../config.js';
+import { isJobTool, WEB_TOOLS, withoutControls, type ToolCatalog } from './catalog.js';
 import { FALLBACK_SEARCH_SCHEMA, searchModelsViaApi, type FallbackSearchArgs } from './site-fallback.js';
 
 export interface TurnToolContext {
@@ -47,6 +48,7 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
   let jobCount = 0;
 
   for (const mcpTool of catalog.orchestration) {
+    if (!chatConfig.webSearch && WEB_TOOLS.has(mcpTool.name)) continue;
     if (isJobTool(mcpTool.name)) {
       const info = toolInfo(mcpTool.name, mcpTool.inputSchema);
       tools[mcpTool.name] = dynamicTool({
