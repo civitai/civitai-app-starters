@@ -110,6 +110,12 @@ import {
   resolveUploadBytesRequest,
   type UploadBytesWindowEntry,
 } from './uploadBytes.js';
+import {
+  mockUnpricedWorkflowRefusal,
+  mockWorkflowBodyRefusal,
+  mockWorkflowStepGenerations,
+  mockWorkflowStepName,
+} from './mockWorkflowGraph.js';
 import { BATCH_ESTIMATE_CELL_TIMEOUT_ERROR } from '../hooks/useBatchEstimate.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
@@ -154,6 +160,9 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     // A training body names no pool either: the host's `blockTrainingBodySchema`
     // is `.strict()` with no `accountType`.
     case 'training':
+      return undefined;
+    // Nor does a multi-step body: the kind has no `accountType` field.
+    case 'workflow':
       return undefined;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
@@ -235,7 +244,24 @@ export type MockCannedImageScan =
  * A per-generation cost: a fixed number, or a function of the submitted
  * {@link WorkflowBody} (so a dev can vary cost by model / step count).
  */
-export type CostSpec = number | ((req: WorkflowBody) => number);
+export type CostSpec =
+  | number
+  | ((req: WorkflowBody, step?: MockWorkflowStepInfo) => number);
+
+/**
+ * The step a {@link CostSpec} function is pricing, passed as its SECOND
+ * argument when the body is `kind: 'workflow'`: the mock calls
+ * {@link MockGenerationScenario.costPerGen} once per step and sums the results.
+ * `undefined` for every other kind, which is priced with one call.
+ */
+export interface MockWorkflowStepInfo {
+  /** Zero-based position in the body's `steps`. */
+  index: number;
+  /** The step's `name`, or `'$<index>'` for an unnamed step. */
+  name: string;
+  $type: string;
+  input: Record<string, unknown>;
+}
 
 /**
  * A result image url: a fixed string, or a function of the submitted body
@@ -251,6 +277,12 @@ export interface MockGenerationScenario {
   /**
    * Cost reported on `ESTIMATE_RESULT` + the succeeded snapshot. A number, or
    * a `(body) => number`. Overrides the legacy top-level `cost`. Default `8`.
+   *
+   * A `kind: 'workflow'` body is priced PER STEP: this is called once for each
+   * step (a function receives the step as its second argument, see
+   * {@link MockWorkflowStepInfo}), multiplied by that step's generations (a
+   * `repeat` counts its iterations, nested repeats multiplied), and summed, so a
+   * plain number prices an N-step workflow with no `repeat` at N times it.
    */
   costPerGen?: CostSpec;
   /**
@@ -260,9 +292,10 @@ export interface MockGenerationScenario {
    * real host does. A number, or a `(body) => number`. Default `0`, which is
    * reported as `authorFee: 0` ("no fee on this request").
    *
-   * Like the real host, only a `textToImage` or registered-`step` body is
-   * itemised; `customComfy`, pass-through `step` and `training` quotes carry no
-   * `authorFee`. The succeeded snapshot's `cost.total` stays {@link costPerGen}
+   * Like the real host, only a `textToImage`, registered-`step` or `workflow`
+   * body is itemised; `customComfy`, pass-through `step` and `training` quotes
+   * carry no `authorFee`. A `workflow` body is charged this ONCE, however many
+   * steps it has. The succeeded snapshot's `cost.total` stays {@link costPerGen}
    * (a submitted workflow reports the generation's own cost), while a simulated
    * {@link MockBuzzScenario.balance} is debited `costPerGen + authorFee`.
    *
@@ -428,7 +461,44 @@ export interface MockGenerationScenario {
    * Default: unset.
    */
   submitCapRefusal?: string | true;
-  /** A single result image url (or `(body) => url`). */
+  /**
+   * Make ONE step of a `kind: 'workflow'` run fail, so a block can exercise a
+   * PARTIAL failure. Name the step as its snapshot entry names it: its `name`,
+   * or `'$<index>'` for a step the body left unnamed. The poll that finishes
+   * the workflow then answers `status: 'failed'` with:
+   *  - `steps`: every step before it `'succeeded'`, the named step `'failed'`
+   *    with an `error`, every step after it `'canceled'`;
+   *  - `cost.total`: the sum of the steps that succeeded (they stay charged), so
+   *    it is `> 0` unless the FIRST step is the one that fails;
+   *  - `imageUrls`: the images of the succeeded steps that did not set
+   *    `suppressOutput`.
+   *
+   * What the real orchestrator reports for the steps AFTER a failed one is its
+   * own business; `'canceled'` here is the mock's stand-in for "did not run".
+   *
+   * Ignored by every other kind, and when no step matches. Takes precedence
+   * over {@link workflowOutcome} for the workflow it applies to. Live-tunable
+   * via `setScenario({ generation: { failWorkflowStep } })`. Default: unset.
+   */
+  failWorkflowStep?: string;
+  /**
+   * Simulate the host getting NO price quote for a `kind: 'workflow'` body. The
+   * host then refuses, before any reservation, a workflow with a training step
+   * (`errorCode: 'training-quote-unavailable'`) or a `repeat` step at any depth
+   * (`'workflow_repeat_unbounded'`); any other workflow proceeds reserved at the
+   * CEILING — {@link MockHostOptions.buzzBudget} × the number of steps — which
+   * the estimate reports as `cost.total`, with `authorFee: 0` (no quote, no
+   * fee base). Ignored by every other kind. Live-tunable via
+   * `setScenario({ generation: { workflowUnpriced } })`. Default: unset (every
+   * workflow is quoted at its per-step `costPerGen`).
+   */
+  workflowUnpriced?: boolean;
+  /**
+   * A single result image url (or `(body) => url`). For a `kind: 'workflow'`
+   * run this (and {@link images}) is the LAST step that did not set
+   * `suppressOutput`; each earlier visible step gets its own labelled
+   * placeholder.
+   */
   image?: ImageSpec;
   /**
    * Multiple result image urls (or `(body) => url[]`). Takes precedence over
@@ -570,6 +640,8 @@ export const MOCK_TRAINING_NONE_IMPORTED_ERROR =
 const PRE_CLAIM_RUN_TRAINING_ERRORS: ReadonlySet<string> = new Set(
   RUN_TRAINING_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
 );
+
+type MockWorkflowBody = Extract<WorkflowBody, { kind: 'workflow' }>;
 
 /**
  * The host's cell cap for one `ESTIMATE_WORKFLOW_BATCH` (civitai/civitai
@@ -2291,9 +2363,34 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   });
 
   // Resolve a per-gen cost from the scenario (or legacy `cost`).
+  // A `kind: 'workflow'` body is the SUM of its steps — see `workflowStepCosts`.
   const costFor = (body: WorkflowBody): number => {
+    if (body.kind === 'workflow') return workflowStepCosts(body).reduce((sum, c) => sum + c, 0);
     const spec: CostSpec | undefined = gen.costPerGen ?? legacyCost;
     return typeof spec === 'function' ? spec(body) : (spec ?? legacyCost);
+  };
+
+  /**
+   * `costPerGen`, called once per step of a `kind: 'workflow'` body and
+   * multiplied by that step's generations — 1, or a `repeat`'s iteration count —
+   * because the orchestrator's quote prices every child of a bounded repeat.
+   */
+  const workflowStepCosts = (body: MockWorkflowBody): number[] => {
+    // Unpriced: reserved at the ceiling, one per-generation budget per step.
+    if (gen.workflowUnpriced === true) return body.steps.map(() => buzzBudget);
+    const spec: CostSpec = gen.costPerGen ?? legacyCost;
+    return (Array.isArray(body.steps) ? body.steps : []).map((step, index) => {
+      const each =
+        typeof spec === 'function'
+          ? spec(body, {
+              index,
+              name: mockWorkflowStepName(step, index),
+              $type: step.$type,
+              input: step.input,
+            })
+          : spec;
+      return each * mockWorkflowStepGenerations(step.$type, step.input, body.arguments);
+    });
   };
 
   // `null` = this quote is not itemised (a fee-less kind, or `authorFee: false`).
@@ -2302,9 +2399,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // A REGISTERED step is keyed on the VALUE of `step`, as the host keys it —
     // never `'step' in body`: `{ kind: 'step', step: undefined, ... }` is a legal
     // pass-through body, and a pass-through quote prices no fee.
+    // A `workflow` body quotes ONE fee for the whole workflow: this function is
+    // called once per body and never per step.
     const quotesFee =
-      body.kind === 'textToImage' || (body.kind === 'step' && typeof body.step === 'string');
+      body.kind === 'textToImage' ||
+      body.kind === 'workflow' ||
+      (body.kind === 'step' && typeof body.step === 'string');
     if (!quotesFee) return null;
+    // An unpriced workflow has no quoted base, so no fee is priced on it.
+    if (body.kind === 'workflow' && gen.workflowUnpriced === true) return 0;
     const spec = gen.authorFee ?? 0;
     return typeof spec === 'function' ? spec(body) : spec;
   };
@@ -2400,7 +2503,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // polls keep answering `canceled` instead of resuming the countdown.
     const workflows = new Map<
       string,
-      { polls: number; cost: number; body?: WorkflowBody; canceled?: boolean }
+      {
+        polls: number;
+        cost: number;
+        body?: WorkflowBody;
+        canceled?: boolean;
+        /** Per-step prices of a `kind: 'workflow'` run, fixed at submit. */
+        stepCosts?: number[];
+      }
     >();
     // Training: datasets this install prepared (id → admitted count) and the
     // quotes its estimates stored (id → what a run is checked against).
@@ -2465,10 +2575,112 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       };
     };
 
+    /**
+     * The `steps` (and the top-level `imageUrls` they add up to) of a
+     * `kind: 'workflow'` run, given each step's status. A step reports images
+     * only once it has `'succeeded'` and only if it did not set
+     * `suppressOutput`; the top-level list is the union of those, in step order.
+     */
+    const workflowStepsView = (
+      workflowId: string,
+      body: MockWorkflowBody,
+      statusOf: (index: number) => BlockWorkflowSnapshot['status'],
+      failedError?: string,
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+      const lastVisible = body.steps.reduce((last, s, i) => (s.suppressOutput === true ? last : i), -1);
+      const steps = body.steps.map((step, index) => {
+        const status = statusOf(index);
+        const name = mockWorkflowStepName(step, index);
+        const visible = status === 'succeeded' && step.suppressOutput !== true;
+        return {
+          name,
+          $type: step.$type,
+          status,
+          ...(visible
+            ? {
+                imageUrls:
+                  index === lastVisible
+                    ? imagesFor(workflowId, body)
+                    : [
+                        `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
+                          name,
+                        )}`,
+                      ],
+              }
+            : {}),
+          ...(status === 'failed' && failedError !== undefined ? { error: failedError } : {}),
+        };
+      });
+      const imageUrls = steps.flatMap((s) => s.imageUrls ?? []);
+      return { steps, ...(imageUrls.length > 0 ? { imageUrls } : {}) };
+    };
+
+    /** A RUNNING `kind: 'workflow'` run after `polls` polls: steps finish in order. */
+    const workflowProgressView = (
+      workflowId: string,
+      body: MockWorkflowBody,
+      polls: number,
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+      const total = body.steps.length;
+      const failing = failingWorkflowStep(body);
+      const done = Math.min(
+        Math.floor((total * polls) / Math.max(1, pollsUntilDone)),
+        total - 1,
+        failing === -1 ? total - 1 : failing,
+      );
+      return workflowStepsView(workflowId, body, (i) =>
+        i < done ? 'succeeded' : i === done ? 'processing' : 'pending',
+      );
+    };
+
+    /** Index of the step `generation.failWorkflowStep` names, or `-1`. */
+    const failingWorkflowStep = (body: MockWorkflowBody): number => {
+      const target = gen.failWorkflowStep;
+      if (target === undefined) return -1;
+      return body.steps.findIndex((s, i) => mockWorkflowStepName(s, i) === target);
+    };
+
+    /**
+     * The terminal snapshot of a `kind: 'workflow'` run whose step
+     * `generation.failWorkflowStep` names failed, or `null` when none does.
+     * Earlier steps stay `'succeeded'` and CHARGED, so `cost.total` is their sum
+     * and their visible images are still there.
+     */
+    const workflowPartialFailure = (workflowId: string): BlockWorkflowSnapshot | null => {
+      const wf = workflows.get(workflowId);
+      const body = wf?.body;
+      if (!wf || body?.kind !== 'workflow') return null;
+      const failing = failingWorkflowStep(body);
+      if (failing === -1) return null;
+      const error = `mock: step "${mockWorkflowStepName(body.steps[failing]!, failing)}" failed`;
+      const charged = (wf.stepCosts ?? []).slice(0, failing).reduce((sum, c) => sum + c, 0);
+      return {
+        workflowId,
+        status: 'failed',
+        cost: { total: charged },
+        error,
+        ...workflowStepsView(
+          workflowId,
+          body,
+          (i) => (i < failing ? 'succeeded' : i === failing ? 'failed' : 'canceled'),
+          error,
+        ),
+      };
+    };
+
     const succeededSnapshot = (workflowId: string) => {
       const wf = workflows.get(workflowId);
       const cost = wf?.cost ?? legacyCost;
       const body = wf?.body ?? ({} as WorkflowBody);
+      if (body.kind === 'workflow') {
+        return {
+          workflowId,
+          status: 'succeeded' as const,
+          cost: { total: cost },
+          ...workflowStepsView(workflowId, body, () => 'succeeded'),
+          spentAccountType: primaryFunder(buzzBalance),
+        };
+      }
       return {
         ...trainingFields(body),
         workflowId,
@@ -2697,6 +2909,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 expiresAt: new Date(expiresAtMs).toISOString(),
               },
             };
+          }
+          // MULTI-STEP — the second kind-faithful arm: the host refuses a body
+          // it will not run BEFORE pricing it, with an `errorCode`, in the
+          // `failureSnapshot` shape (no `cost`). A body that passes is priced
+          // below like any other: `quotedCost` sums the steps and adds ONE fee.
+          if (body.kind === 'workflow') {
+            const refusal =
+              mockWorkflowBodyRefusal(body) ??
+              (gen.workflowUnpriced === true ? mockUnpricedWorkflowRefusal(body) : null);
+            if (refusal !== null) return { workflowId: 'failed', status: 'failed', ...refusal };
           }
           return {
             workflowId: 'wf_estimate',
@@ -2988,6 +3210,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // A `kind: 'workflow'` body the host will not run is refused here,
+            // before any cap, balance or debit — the same refusal, with the same
+            // `errorCode`, the estimate gives. No `cost`, so `submit()` rejects.
+            if (body.kind === 'workflow') {
+              const refusal =
+                mockWorkflowBodyRefusal(body) ??
+                (gen.workflowUnpriced === true ? mockUnpricedWorkflowRefusal(body) : null);
+              if (refusal !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_SUBMITTED',
+                  payload: {
+                    requestId,
+                    snapshot: { workflowId: 'failed', status: 'failed', ...refusal },
+                  },
+                });
+                return;
+              }
+            }
             const cost = costFor(body);
             // What the viewer pays: the generation plus the app fee.
             const charged = cost + (authorFeeFor(body) ?? 0);
@@ -3140,7 +3380,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // Success path: debit the simulated balance + remember body/cost.
             if (balanceSimulated) buzz.balance = (buzz.balance as number) - charged;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
-            workflows.set(workflowId, { polls: 0, cost, body });
+            workflows.set(workflowId, {
+              polls: 0,
+              cost,
+              body,
+              ...(body.kind === 'workflow' ? { stepCosts: workflowStepCosts(body) } : {}),
+            });
             dispatchToBlock({
               type: 'WORKFLOW_SUBMITTED',
               payload: { requestId, snapshot: { workflowId, status: 'pending' } },
@@ -3167,6 +3412,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
             const polls = wf.polls + 1;
             wf.polls = polls;
+            // A `kind: 'workflow'` run with a step told to fail ends `failed`
+            // with its earlier steps intact (`generation.failWorkflowStep`).
+            const partialFailure = polls >= pollsUntilDone ? workflowPartialFailure(workflowId) : null;
+            if (partialFailure !== null) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: partialFailure },
+              });
+              return;
+            }
             const outcome =
               polls >= pollsUntilDone ? (gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded') : null;
             if (outcome === 'failed' || outcome === 'expired') {
@@ -3198,7 +3453,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             } else {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: { requestId, snapshot: { workflowId, status: 'processing' as const } },
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId,
+                    status: 'processing' as const,
+                    // A multi-step run reports how far its steps have got.
+                    ...(wf.body?.kind === 'workflow'
+                      ? workflowProgressView(workflowId, wf.body, polls)
+                      : {}),
+                  },
+                },
               });
             }
             return;
@@ -3220,6 +3485,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (wf && !wf.canceled && wf.polls >= pollsUntilDone) {
               // Already finished: like the real host, report the real terminal
               // status rather than pretending the cancel took.
+              const partialFailure = workflowPartialFailure(workflowId);
+              if (partialFailure !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_CANCELED',
+                  payload: { requestId, snapshot: partialFailure },
+                });
+                return;
+              }
               const outcome = gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded';
               dispatchToBlock({
                 type: 'WORKFLOW_CANCELED',
