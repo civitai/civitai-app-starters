@@ -511,6 +511,14 @@ describe('release lane, END TO END: the real command against a loopback API', ()
         res.setHeader('content-type', 'application/json');
         return res.end(JSON.stringify(url.searchParams.get('page') === '1' ? world.files : []));
       }
+      // The real contents API answers base64-in-JSON unless the raw media type
+      // is asked for, and the fetcher returns the body as the file's text; a
+      // fetcher that stopped asking would parse JSON metadata as package.json
+      // and the release lane would silently never fire. Refuse anything else.
+      if (blob && req.headers.accept !== 'application/vnd.github.raw+json') {
+        res.statusCode = 415;
+        return res.end(`stub: contents requested with accept=${req.headers.accept}`);
+      }
       const body = blob ? world.blobs[`${decodeURIComponent(blob[1])}@${url.searchParams.get('ref')}`] : undefined;
       if (body === undefined) {
         res.statusCode = 500;
