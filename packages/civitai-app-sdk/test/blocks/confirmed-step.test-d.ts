@@ -88,6 +88,10 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'workflow_quote_rejected'
   | 'workflow_quote_unavailable'
   | 'workflow_quote_unpriced'
+  // The registered-step quote codes, from a separate change.
+  | 'step_quote_rejected'
+  | 'step_quote_unavailable'
+  | 'step_quote_unpriced'
 >();
 const dailyLimit: BlockWorkflowSnapshot['errorCode'] = 'daily-limit-exceeded';
 const futureCode: BlockWorkflowSnapshot['errorCode'] = 'some-code-a-later-host-adds';
