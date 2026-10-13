@@ -32,7 +32,10 @@ templates. Copy them along with the feature you came for.
   OS preference is never consulted.
 - **Boot skeleton.** `"bootSkeleton": true` in the manifest, paired with the
   skeleton markup inside `#root` in `index.html` — the host drops its own
-  loading veil for a block that declares it.
+  loading veil for a block that declares it. It does **not** lift the host's
+  10-second handshake deadline: the SDK must still answer with `BLOCK_READY`,
+  which any `@civitai/blocks-react` hook does at mount (README § "Required at
+  mount: the host handshake").
 - **Design system.** Components from `@civitai/blocks-react/ui` (`Card`,
   `Stack`, `Button`, `TextInput`, `Alert`, …) and the `--civitai-*` tokens they
   inject, so a block looks like Civitai in both themes with no hex colours of its

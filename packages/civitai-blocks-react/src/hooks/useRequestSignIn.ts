@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useRequestSignIn} returns. */
 export interface UseRequestSignIn {
@@ -26,6 +27,7 @@ export interface UseRequestSignIn {
  * if (viewer === null) return <button onClick={() => requestSignIn()}>Sign in</button>;
  */
 export function useRequestSignIn(): UseRequestSignIn {
+  useTransportConnection();
   const requestSignIn = useCallback((payload?: { returnUrl?: string }) => {
     getTransport().sendMessage({
       type: 'REQUEST_SIGN_IN',

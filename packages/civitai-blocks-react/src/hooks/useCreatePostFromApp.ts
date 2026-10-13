@@ -13,6 +13,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope this bridge requires — `posts:write:self`, named in
@@ -201,6 +202,7 @@ export interface UseCreatePostFromApp {
  * };
  */
 export function useCreatePostFromApp(): UseCreatePostFromApp {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<CreatePostError | null>(null);
 

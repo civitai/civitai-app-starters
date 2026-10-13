@@ -7,6 +7,7 @@ import { UPLOAD_BYTES_MAX_BYTES, UPLOAD_BYTES_TOO_LARGE_ERROR } from '../interna
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The SDK's own rejection when a reply carries neither an image nor an
@@ -89,6 +90,7 @@ export interface UseUploadImageBytes {
  * await createPost({ sources: [{ kind: 'published', imageIds: [image.imageId] }] });
  */
 export function useUploadImageBytes(): UseUploadImageBytes {
+  useTransportConnection();
   const upload = useCallback(
     async (bytes: ArrayBuffer, options?: UploadImageBytesOptions): Promise<BlockUploadedImageInfo> => {
       // The ONLY client-side refusal, mirroring `useSaveImage`'s cap pre-check:

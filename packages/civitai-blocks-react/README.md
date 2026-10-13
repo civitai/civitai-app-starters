@@ -117,6 +117,33 @@ viewer's signed-in civitai.com session, which the local harness does not have, s
 host — `createMockHost` or `Harness` from `@civitai/blocks-react/testing`, with
 the `publishImageIds` / `publishError` options.
 
+### Required at mount: the host handshake
+
+The SDK must be **connected at mount**. When the transport is created it posts
+`BLOCK_HELLO` to the host, and it answers the host's first valid `BLOCK_INIT`
+with `BLOCK_READY`. The host waits **10 seconds** for that answer; without it,
+the viewer sees "This app didn't load in time", the host retries twice, and then
+gives up. `"bootSkeleton": true` only removes the host's loading cover — it does
+**not** extend or lift that deadline.
+
+You do not have to do anything for this: **every hook exported from the package
+root connects the transport when its component mounts**, so a block that calls
+any one of them — even only `useBuzzWorkflow()`, whose requests all happen in
+callbacks — answers the host before anyone clicks. (In earlier releases, request-only
+hooks connected lazily on their first call, so a block whose only SDK use was
+such a hook rendered fine and was then timed out by the host.)
+
+What this means for you:
+
+- A block that renders but uses **no** hook from this package never connects.
+  Call `useBlockContext()` at your root (you will want its `ready` gate anyway).
+- A dev harness that injects options with `getTransport({ allowedParentOrigins })`
+  must still do so **before** the first component that uses a hook mounts — only
+  the first call's options are honoured.
+- If no parent allowlist is configured, the mount-time connect logs one
+  `console.error` and the block keeps rendering; the first bridge call then
+  throws the same configuration error it always did.
+
 ### `useBlockContext()`
 
 The primary hook. Returns everything the host delivered in `BLOCK_INIT` plus a

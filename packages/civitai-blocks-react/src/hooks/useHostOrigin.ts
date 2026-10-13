@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useHostOrigin} returns: the validated host origin, or
@@ -42,6 +43,7 @@ export type UseHostOrigin = string | undefined;
  * moment init lands.
  */
 export function useHostOrigin(): UseHostOrigin {
+  useTransportConnection();
   const transport = getTransport();
   const origin = useSyncExternalStore(
     (cb) => transport.subscribe(cb),

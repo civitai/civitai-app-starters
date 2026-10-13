@@ -8,6 +8,7 @@ import type {
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useDailyCompensation} returns.
@@ -54,6 +55,7 @@ export interface UseDailyCompensation {
  * const { resources, hasPublishedResources } = useDailyCompensation({ date: '2026-07-01' });
  */
 export function useDailyCompensation(params: BlockDailyCompensationParams): UseDailyCompensation {
+  useTransportConnection();
   const [resources, setResources] = useState<BlockDailyCompensationResource[] | null>(null);
   const [hasPublishedResources, setHasPublishedResources] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);

@@ -5,6 +5,7 @@ import type { BlockToken } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useBlockToken} returns: the live block token plus a manual
@@ -49,6 +50,7 @@ const REFRESH_LEAD_MS = 2 * 60 * 1000;
  * }
  */
 export function useBlockToken(): UseBlockToken {
+  useTransportConnection();
   const snap = useTransportSnapshot();
   const token = snap.token;
   const instanceId = snap.blockInstanceId;

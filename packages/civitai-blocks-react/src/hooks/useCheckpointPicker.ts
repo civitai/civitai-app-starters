@@ -6,6 +6,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useCheckpointPicker} returns. */
 export interface UseCheckpointPicker {
@@ -80,6 +81,7 @@ export interface UseCheckpointPicker {
  * const { selected } = await open({ baseModelGroup: checkpoint.baseModel });
  */
 export function useCheckpointPicker(): UseCheckpointPicker {
+  useTransportConnection();
   const open = useCallback(
     async (opts?: { baseModelGroup?: string; currentVersionId?: number }) => {
       // Both keys are spread conditionally, and an empty or whitespace-only

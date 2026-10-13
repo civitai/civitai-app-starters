@@ -4,6 +4,7 @@ import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import { useBuzzWorkflow } from './useBuzzWorkflow.js';
 import type { WatchWorkflowOptions } from './useBuzzWorkflow.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The most workflows one {@link useWorkflowBatch} may watch.
@@ -295,6 +296,7 @@ export function useWorkflowBatch(
   workflowIds: readonly string[],
   options?: WorkflowBatchOptions,
 ): UseWorkflowBatch {
+  useTransportConnection();
   validateIds(workflowIds);
 
   // A private `useBuzzWorkflow()` instance, so the app's own instance's

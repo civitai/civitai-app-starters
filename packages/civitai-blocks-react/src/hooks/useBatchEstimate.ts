@@ -11,6 +11,7 @@ import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { WorkflowEstimateError } from './useBuzzWorkflow.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { BlockEstimateBatchAggregate };
 
@@ -261,6 +262,7 @@ function toBatchEstimateError(err: unknown): BatchEstimateError {
  * }
  */
 export function useBatchEstimate(): UseBatchEstimate {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<BatchEstimateResult | null>(null);
   const [error, setError] = useState<BatchEstimateError | null>(null);

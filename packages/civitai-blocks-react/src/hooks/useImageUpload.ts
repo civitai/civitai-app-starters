@@ -11,6 +11,7 @@ import type {
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The
@@ -197,6 +198,7 @@ export function useImageUpload(options: {
 }): UseImageUploadAsyncScan;
 export function useImageUpload(options?: { purpose?: 'display' }): UseImageUpload;
 export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
+  useTransportConnection();
   const purpose = options?.purpose;
   const asyncScan = options?.asyncScan === true && purpose !== 'generationSource';
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { fetchNestedDocument } from '@civitai/app-sdk/blocks';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Where the fetch has got to. `idle` is the no-`src` state, not a
@@ -104,6 +105,7 @@ const NESTED_DOCUMENT_TIMEOUT_MS = 30_000;
  * ```
  */
 export function useNestedDocument(options?: UseNestedDocumentOptions): UseNestedDocument {
+  useTransportConnection();
   const src = options?.src;
   const baseUrl = options?.baseUrl;
   const [state, setState] = useState<State>(src ? LOADING : IDLE);

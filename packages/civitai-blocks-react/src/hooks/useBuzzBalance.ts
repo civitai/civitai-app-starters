@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The viewer's per-pool Buzz balance, in the domain-clamped set a Civitai App
@@ -54,6 +55,7 @@ export interface UseBuzzBalance {
  * return <span>Yellow: {balance?.yellow ?? 0}</span>;
  */
 export function useBuzzBalance(): UseBuzzBalance {
+  useTransportConnection();
   const [balance, setBalance] = useState<BuzzBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);

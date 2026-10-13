@@ -6,6 +6,7 @@ import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { parseSharedStorageRateLimit } from '../transport/validate.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * A shared-storage write the server REFUSED because a per-(viewer, app) budget
@@ -213,6 +214,7 @@ function rehydrateSharedItem(item: SharedStorageItemWire): SharedListItem {
 }
 
 export function useSharedStorage(): UseSharedStorage {
+  useTransportConnection();
   return useMemo<UseSharedStorage>(() => {
     const transport = getTransport();
     return {

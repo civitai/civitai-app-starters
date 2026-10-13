@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useBlockAnalytics} returns. */
 export interface UseBlockAnalytics {
@@ -59,6 +60,7 @@ export interface UseBlockAnalytics {
  * track('generate_clicked', { mode: 'txt2img', batch: 4 });
  */
 export function useBlockAnalytics(): UseBlockAnalytics {
+  useTransportConnection();
   const track = useCallback((eventName: string, properties?: Record<string, unknown>) => {
     getTransport().sendMessage({ type: 'TRACK_EVENT', payload: { eventName, properties } });
   }, []);
