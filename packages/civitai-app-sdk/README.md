@@ -169,6 +169,10 @@ own key:
   `'chat-completion'`, …). The wire enum is derived from the host's step registry, so an
   unregistered id is rejected fail-closed at the schema, and `params` are validated by that
   step's own `.strict()` schema.
+  An estimate the host has no price quote for fails with no `cost` and `snapshot.errorCode`
+  `step_quote_rejected` (refused; the same body will fail again), `step_quote_unavailable` (no
+  usable answer; the one a retry can clear) or `step_quote_unpriced` (an answer without a price).
+  The submit is unchanged. An older host prices that estimate at the step's declared estimate.
 - **`WorkflowBodyPassThroughStep`** (`step` ABSENT) — names an **orchestrator `$type`** directly
   and the host forwards `input` unmodified. There is no registry lookup, no param schema, no
   prompt audit and no AIR scan; what bounds it is a denylist of platform-internal `$type`s

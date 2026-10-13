@@ -1863,6 +1863,10 @@ export interface BlockWorkflowSnapshot {
    * `workflow_quote_*` codes, which are ESTIMATE-ONLY (`estimate()` and a
    * batch-estimate cell): `submit()` of the same body defines no such refusal
    * and proceeds, reserved at the ceiling.
+   * A REGISTERED `step` body ({@link WorkflowBodyStep}) the host has no price
+   * quote for gets one of the three `step_quote_*` codes, also ESTIMATE-ONLY
+   * (`estimate()` and a batch-estimate cell); its `submit()` is unchanged. The
+   * pass-through `step` arm does not set them.
    *
    * The values the host sends today ({@link KnownBlockWorkflowErrorCode}):
    *  - `'training-quote-rejected'` — the orchestrator refused the request
@@ -1906,6 +1910,24 @@ export interface BlockWorkflowSnapshot {
    * Each `workflow_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
    * error, errorCode }` with NO `cost`. A host that predates these codes
    * resolves the estimate instead, with the spend ceiling as `cost.total`.
+   *  - `'step_quote_rejected'` — ESTIMATE only, registered `step` body. The
+   *    orchestrator refused the request; resending the same body will not help.
+   *    `error` reads `No price quote for this step: the orchestrator rejected
+   *    the request: <reason>` when the reason is safe to show, else `No price
+   *    quote for this step: the orchestrator rejected the request; check the
+   *    step inputs and references (retrying the same body will not help)`.
+   *  - `'step_quote_unavailable'` — ESTIMATE only, registered `step` body. No
+   *    usable answer (an outage, a timeout, a rate limit, …). The one
+   *    `step_quote_*` code a retry of the same body can clear. `error` reads
+   *    `No price quote for this step: none could be obtained; try again`.
+   *  - `'step_quote_unpriced'` — ESTIMATE only, registered `step` body. The
+   *    orchestrator answered without a price. `error` reads `No price quote for
+   *    this step: the orchestrator answered without one`.
+   *
+   * Each `step_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
+   * error, errorCode }` with NO `cost`. A host that predates these codes
+   * resolves the estimate instead, priced at the step's declared estimate, so
+   * there a registered-step estimate may not be a quote.
    *
    * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
    * inbound validator accepts any string here. Handle an unrecognised code as a
@@ -2224,7 +2246,10 @@ export type KnownBlockWorkflowErrorCode =
   | 'workflow_repeat_unbounded'
   | 'workflow_quote_rejected'
   | 'workflow_quote_unavailable'
-  | 'workflow_quote_unpriced';
+  | 'workflow_quote_unpriced'
+  | 'step_quote_rejected'
+  | 'step_quote_unavailable'
+  | 'step_quote_unpriced';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {

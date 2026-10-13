@@ -544,6 +544,25 @@ try {
 - A refused `kind: 'workflow'` body sets its own codes, in the same shape — see
   the next section.
 
+#### A registered step with no price quote: `step_quote_*`
+
+A **registered** `kind: 'step'` body (one with a `step` id, such as
+`'chat-completion'` or `'convert-image'`) that the host has no price quote for
+fails on `estimate()` (`WorkflowEstimateError`) and as a batch-estimate cell,
+as `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no
+`cost`. `submit()` of the same body is unchanged. The pass-through arm (a
+`$type`, no `step`) does not set these codes.
+
+| `errorCode` | Means | `error` | Retry the same body? |
+|---|---|---|---|
+| `'step_quote_rejected'` | the orchestrator refused the request | `No price quote for this step: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this step: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` | no — change the body |
+| `'step_quote_unavailable'` | no usable answer (an outage, a timeout, a rate limit, …) | `No price quote for this step: none could be obtained; try again` | yes |
+| `'step_quote_unpriced'` | the orchestrator answered without a price | `No price quote for this step: the orchestrator answered without one` | not expected to help |
+
+An older host has none of the three: it resolves the estimate priced at the
+step's declared estimate. The mock host always quotes a registered step (at
+`generation.costPerGen`), so it never sends these codes.
+
 #### Several steps as one workflow: `kind: 'workflow'`
 
 A `kind: 'workflow'` body submits **several orchestrator steps as one
