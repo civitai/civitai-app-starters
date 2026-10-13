@@ -59,13 +59,22 @@
  *             file's freshness check could not cover every input the verdict
  *             depends on, so a stale PASS was reusable. It was removed.)
  *
- *             Its snippet count is also cross-checked: the number of verdict
- *             lines the gate printed per doc must equal a count of ts/tsx
- *             fences this script makes itself, so a gate that found nothing —
- *             or fewer than there are — cannot pass. Scope: the docs the gate
- *             PRINTED a verdict for. A doc the gate no longer lists at all is
- *             invisible to this cross-check, except the blocks-react README,
- *             which is required by name.
+ *             Its snippet count is also cross-checked, in two halves that
+ *             need each other:
+ *               - per doc the gate printed a verdict for, the number of
+ *                 verdict lines must equal a count of ts/tsx fences this
+ *                 script makes itself. That half is blind to a doc the gate
+ *                 printed NOTHING for — dropped from its list, not found on
+ *                 disk (the gate says "skipping" and exits 0), or yielding
+ *                 zero blocks — and each of those passed it, measured;
+ *               - so the SET of docs with a verdict must be exactly
+ *                 `EXPECTED_DOCS`, by name, a list kept in this file and
+ *                 derived from nothing the gate prints.
+ *             What that buys: for the docs named in `EXPECTED_DOCS`, a gate
+ *             that found none, or fewer fences than there are, cannot pass.
+ *             It says nothing about a doc that is in neither list — adding a
+ *             doc to the gate means adding it here, and this check failing is
+ *             the reminder.
  *
  *   FLOOR     the control on the controls: a doc with NO checkable snippet must
  *             be refused by the snippet-count floor every NC below applies.
@@ -119,6 +128,16 @@ const REL = TARGET.replace(repoRoot + '/', '');
 const REAL_INTERFACE = 'ConsentUnavailablePayload';
 const REAL_ALIAS = 'ConsentUnavailableReason';
 const BOGUS_NAME = 'ConsentUnavailablePayloadDOESNOTEXIST';
+// The docs the gate must print at least one verdict for. Written out HERE, not
+// read from the gate: the point is to notice when the gate's own list, or what
+// it finds on disk, stops matching. Keep in step with the gate's
+// `DEFAULT_DOCS` — the positive control goes red until you do.
+const EXPECTED_DOCS = [
+  'packages/civitai-app-sdk/README.md',
+  REL,
+  'packages/civitai-sdk/README.md',
+  'docs/build-your-first-app-block.md',
+];
 // The consent snippet's own import, byte for byte. NC4 deletes this line and
 // NC1 depends on it being there (an un-imported bogus name would PASS — NC5).
 const IMPORT_LINE = `import type { ${REAL_INTERFACE} } from '@civitai/app-sdk/blocks';\n`;
@@ -295,6 +314,11 @@ if (counts) {
   check(
     `every found snippet has a verdict, and at least one was compiled (${s ? `${s.passed} passed · ${s.skipped} skipped · ${s.failed} failed` : 'no summary'})`,
     s !== null && s.passed + s.skipped + s.failed === s.found && s.passed > 0,
+  );
+  check(
+    `the gate printed a verdict for exactly the ${EXPECTED_DOCS.length} expected docs`,
+    [...perDoc.keys()].sort().join('\n') === [...EXPECTED_DOCS].sort().join('\n'),
+    `gate printed verdicts for: ${[...perDoc.keys()].join(', ') || '(none)'} — expected: ${EXPECTED_DOCS.join(', ')}`,
   );
   check(
     `${REL} is among the docs the gate checked (${perDoc.get(REL) ?? 0} snippets)`,
