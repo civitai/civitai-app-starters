@@ -2,8 +2,10 @@
 
 The Civitai SDK: one client for the public API, the orchestrator and, inside a
 civitai.com page, the host. The same code serves a block app and an app of your
-own. It succeeds `@civitai/app-sdk`, whose 0.x releases continue from this repo
-as a separate codebase.
+own. New block apps start here. `@civitai/app-sdk/blocks` remains the contract
+underneath (the workflow body types, the manifest types, the host message
+shapes) and `@civitai/blocks-react` the React hook binding over it; both are
+still supported and release from this repo as separate codebases.
 
 ```ts
 import { initialize } from '@civitai/sdk';
@@ -55,7 +57,7 @@ Both give you:
 | Member | What it is |
 |---|---|
 | `app.site` | The public REST API at `/api/v1`: `get`, `post`, `request` |
-| `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token; see [Multi-step workflows](#multi-step-workflows) |
+| `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token: an OAuth access token is answered `401`, and a block holding one generates through `app.orchestration`. See [Multi-step workflows](#multi-step-workflows) |
 | `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
 | `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
 | `app.getToken()` | For a call this client does not make |
@@ -338,6 +340,14 @@ the viewer's and the app's budgets, tags it as this app's and submits it — the
 block never calls the orchestrator. It needs the block token the host mints and
 the `ai:write:budgeted` scope in the manifest.
 
+> **These routes take the block token only.** A block that declares
+> `auth: "oauth"` and is handed an OAuth access token is answered `401` on every
+> call here, and the `ApiError` message says so. Such a block generates through
+> [`app.orchestration`](#the-orchestrator) instead, as its own principal and
+> without the controls above; a block that wants `app.workflows` does not
+> declare `auth: "oauth"`. `initialize({ token })` is given no token kind, so
+> there the `401` arrives unexplained.
+
 A `kind: 'workflow'` body runs several steps as **one** workflow, and a later
 step can consume an earlier step's result through a `{ $ref, path }` reference:
 
@@ -394,6 +404,10 @@ above. The body and reply types (`WorkflowBody`, `WorkflowBodyWorkflow`,
 `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowSnapshot`, …) are
 exported from `@civitai/sdk`; no other package is needed to write one.
 
+A `kind: 'training'` body, and a step body carrying a `quoteId`, also need a
+quote the viewer has confirmed in the host's own dialog before they are
+submitted. `app.workflows` has no call for that confirmation step.
+
 | Call | Does |
 |---|---|
 | `estimate(body)` | Prices the body. `snapshot.cost.total` is whole Buzz |
@@ -424,9 +438,11 @@ Three things follow from that shape:
 - **A refused estimate has no `cost`.** An estimate the host could not price
   does not predict a refused submit: the same body can still be submitted, and
   is then reserved at the app's per-generation budget for each step.
-- **A refused `submit` for a budget or spending cap *does* carry `cost.total`**
-  — the price it would not charge — so you can offer the viewer a top-up. It has
-  no workflow to wait on, and nothing was charged.
+- **A `failed` snapshot from `submit` is one of two things, told apart by
+  `workflowId`.** The placeholder id `'failed'` means it was refused before
+  anything ran, and nothing was charged; a budget or spending-cap refusal
+  carries the `cost.total` it would not charge. A real id means a run was
+  created and came back failed, and Buzz may have been spent.
 - **A `failed` workflow from `wait` can still have `cost` and `imageUrls`.**
   Steps that finished before the failing one stay charged and keep their output.
 
@@ -437,6 +453,44 @@ What *does* reject is a request that was itself refused or never answered: an
 `ApiError` with the HTTP `status` (`400` for a body or key the host cannot
 parse, `403` for a workflow that is not this viewer's or not this app's), or a
 `CivitaiError` when a `2xx` carried no snapshot.
+
+### When a submit could not be confirmed
+
+One reply is neither a refusal nor a failed request. For a run the viewer
+confirmed a quote for — a `kind: 'training'` body, or a step body carrying a
+`quoteId` — the host can end up not knowing whether the run was created. It
+then answers with a refusal-shaped snapshot and a `submissionUnconfirmed` flag
+beside it, and `submit` **rejects** with `SubmissionUnconfirmedError` rather
+than hand back a snapshot that reads as "not started":
+
+```ts
+import { SubmissionUnconfirmedError } from '@civitai/sdk';
+
+try {
+  const submitted = await app.workflows.submit(body, { idempotencyKey });
+  if (submitted.status !== 'failed') {
+    track(submitted.workflowId); // started: follow it with wait()
+  } else if (submitted.workflowId === 'failed') {
+    showMessage('This could not start. Nothing was charged.');
+  } else {
+    showMessage('This run failed. Check your history before trying again.');
+  }
+} catch (error) {
+  if (error instanceof SubmissionUnconfirmedError) {
+    // The run MAY be running and MAY have been charged.
+    showMessage('We could not confirm this run. It may still be running.');
+    const { workflows } = await app.workflows.list(); // look for it before any retry
+  } else {
+    throw error;
+  }
+}
+```
+
+Do not tell the viewer nothing was spent, and do not submit again blindly: a
+second submit can start, and charge for, a second run. `error.snapshot`, when
+the host sent one, carries the `cost.total` that was reserved; its `workflowId`
+is a placeholder, not something to poll. `snapshot.error` on any reply is
+server text — log it and show your own copy.
 
 ### The idempotency key
 
@@ -776,11 +830,10 @@ per-viewer store is [app storage](#app-storage).
 - `npm run check:layering` keeps `core` free of any domain.
 - `npm run check:steps` fails when the step unions no longer match the
   installed `@civitai/orchestration-client`.
-- `npm run check:workflow-types` fails when `src/workflows/types.generated.ts`
-  — a generated copy of the block workflow types `@civitai/app-sdk/blocks`
-  defines — no longer matches its source. Refresh it with
-  `npm run gen:workflow-types`. The same comparison runs in the repo's guard
-  suite on every change.
+- `src/workflows/types.generated.ts` is a generated copy of the block workflow
+  types `@civitai/app-sdk/blocks` defines. The repo's guard suite
+  (`pnpm test:guards`) fails when it no longer matches its source; refresh it
+  with `npm run gen:workflow-types`.
 
 See [`BREAKING.md`](./BREAKING.md) for what an app gives up moving from
 `@civitai/app-sdk` 0.x and `@civitai/blocks-react`.

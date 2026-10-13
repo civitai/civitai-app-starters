@@ -27,6 +27,43 @@ const FINAL: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set([
   'expired',
 ]);
 
+/**
+ * The host could not learn whether a submit created a run. **The run may be
+ * running, and the viewer may have been charged.**
+ *
+ * 🔴 This is not a refusal, and it must not be handled like one: do not tell
+ * the viewer nothing was spent, and do not submit again blindly — a second
+ * submit can start, and charge for, a second run. Tell the viewer the outcome
+ * is unknown, then look for the run with {@link WorkflowsClient.list} before
+ * offering a retry.
+ *
+ * The host reports it for a run the viewer confirmed a quote for: a
+ * `kind: 'training'` body, or a step body carrying a `quoteId`.
+ *
+ * It is an error rather than a field on the result because the snapshot the
+ * host sends with it is shaped exactly like a refusal (`status: 'failed'`, the
+ * placeholder id, a `cost.total`), and a caller that reads only the snapshot
+ * would report "not started, nothing charged".
+ */
+export class SubmissionUnconfirmedError extends CivitaiError {
+  /**
+   * The snapshot the host sent beside the flag, when it sent a usable one. Its
+   * `cost.total` is the price that was reserved; its `workflowId` is a
+   * placeholder, not a workflow to poll.
+   */
+  readonly snapshot: BlockWorkflowSnapshot | undefined;
+
+  constructor(snapshot: BlockWorkflowSnapshot | undefined) {
+    super(
+      'workflows submit: the host could not confirm whether this run was started. It may be running ' +
+        'and the viewer may have been charged. Do not resubmit blindly: check `app.workflows.list()` ' +
+        'for the run first.',
+    );
+    this.name = 'SubmissionUnconfirmedError';
+    this.snapshot = snapshot;
+  }
+}
+
 export interface WorkflowCallOptions {
   signal?: AbortSignal;
 }
@@ -94,6 +131,10 @@ export interface WorkflowListResult {
  * `ApiError` carrying the HTTP status (a malformed body or key is `400`, a
  * workflow that is not this viewer's or this app's is `403`), or a
  * `CivitaiError` for a `2xx` that carried no snapshot.
+ *
+ * 🔴 And ONE reply that is neither: `submit` rejects with
+ * {@link SubmissionUnconfirmedError} when the host could not tell whether the
+ * run was created. That run may be live and charged.
  */
 export interface WorkflowsClient {
   /**
@@ -109,8 +150,17 @@ export interface WorkflowsClient {
    * Runs a body, spending the viewer's Buzz. Resolves as soon as the host has
    * accepted or refused it — follow it with {@link WorkflowsClient.wait}.
    *
-   * A budget or cap refusal resolves with `status: 'failed'`, a `cost.total`
-   * and no real workflow id. Nothing was charged.
+   * 🔴 A resolved `status: 'failed'` is one of TWO things, told apart by
+   * `workflowId`:
+   * - the placeholder id `'failed'`: refused before anything ran (a budget, a
+   *   spending cap, a body the host will not run). Nothing was charged. A
+   *   budget or cap refusal carries the `cost.total` it would not charge.
+   * - a real id: a run was created and came back failed. Buzz may have been
+   *   spent.
+   *
+   * A third outcome does not resolve at all: when the host could not confirm
+   * whether the run was created, this REJECTS with
+   * {@link SubmissionUnconfirmedError}. That run may be live and charged.
    *
    * 🔴 This client does not retry a failed submit; it only re-sends once after
    * refreshing an expired token, as every call does. If the request fails
@@ -150,18 +200,22 @@ export interface WorkflowsClient {
   list(query?: WorkflowListQuery, opts?: WorkflowCallOptions): Promise<WorkflowListResult>;
 }
 
+const isSnapshot = (value: unknown): value is BlockWorkflowSnapshot =>
+  value != null && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string';
+
+/**
+ * Asserted, not cast: every caller branches on `status`, and a reply without
+ * one would read as "not failed" to all of them.
+ */
+function requireSnapshot(op: string, res: { snapshot?: unknown } | undefined): BlockWorkflowSnapshot {
+  if (!isSnapshot(res?.snapshot)) throw new CivitaiError(`workflows ${op}: reply carried no snapshot`);
+  return res.snapshot;
+}
+
 export function createWorkflowsClient(http: Http): WorkflowsClient {
   /** Every snapshot route answers `{ snapshot }`. A `2xx` without one is not an answer. */
-  const snapshotOf = async (op: string, body: unknown, signal?: AbortSignal) => {
-    const res = await http<{ snapshot?: unknown }>('POST', `${BASE}/${op}`, { body, signal });
-    const snapshot = res?.snapshot as BlockWorkflowSnapshot | null | undefined;
-    // Asserted, not cast: every caller branches on `status`, and a reply
-    // without one would read as "not failed" to all of them.
-    if (snapshot == null || typeof snapshot !== 'object' || typeof snapshot.status !== 'string') {
-      throw new CivitaiError(`workflows ${op}: reply carried no snapshot`);
-    }
-    return snapshot;
-  };
+  const snapshotOf = async (op: string, body: unknown, signal?: AbortSignal) =>
+    requireSnapshot(op, await http<{ snapshot?: unknown }>('POST', `${BASE}/${op}`, { body, signal }));
 
   const get = (workflowId: string, { waitSeconds, signal }: WorkflowGetOptions = {}) =>
     // The id travels in the body on every route: it identifies the viewer, so
@@ -216,7 +270,18 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
             'e.g. crypto.randomUUID() — and reuse it on every retry of that submit. Nothing was sent.',
         );
       }
-      return snapshotOf('submit', { body, idempotencyKey }, opts.signal);
+      const res = await http<{ snapshot?: unknown; submissionUnconfirmed?: unknown }>(
+        'POST',
+        `${BASE}/submit`,
+        { body: { body, idempotencyKey }, signal: opts.signal },
+      );
+      // 🔴 Read BEFORE the snapshot is trusted. The snapshot beside this flag is
+      // refusal-shaped; returning it would tell the caller nothing was charged
+      // for a run that may be live.
+      if (res?.submissionUnconfirmed === true) {
+        throw new SubmissionUnconfirmedError(isSnapshot(res.snapshot) ? res.snapshot : undefined);
+      }
+      return requireSnapshot('submit', res);
     },
 
     get,

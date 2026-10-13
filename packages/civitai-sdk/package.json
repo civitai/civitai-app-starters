@@ -39,7 +39,6 @@
     "gen:steps": "node scripts/gen-step-types.mjs",
     "check:steps": "node scripts/gen-step-types.mjs --check",
     "gen:workflow-types": "node scripts/gen-workflow-types.mjs",
-    "check:workflow-types": "node scripts/gen-workflow-types.mjs --check",
     "snapshot:host": "node scripts/snapshot-host-messages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
     "test": "vitest run",

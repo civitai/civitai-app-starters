@@ -52,9 +52,10 @@ export interface AppClient {
      * work before it reaches the orchestrator. Multi-step `kind: 'workflow'`
      * bodies included.
      *
-     * 🔴 Requires the block token the host mints, like {@link AppClient.storage}.
-     * It is NOT {@link AppClient.orchestration}: that one calls the orchestrator
-     * directly with an OAuth access token and applies none of those controls.
+     * 🔴 Requires the block token the host mints, like {@link AppClient.storage}:
+     * an OAuth access token is answered `401` here. It is NOT
+     * {@link AppClient.orchestration}: that one calls the orchestrator directly
+     * with an OAuth access token and applies none of those controls.
      */
     readonly workflows: WorkflowsClient;
     /**
@@ -414,6 +415,34 @@ export interface StorageClient {
     getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
 }
 
+/**
+ * The host could not learn whether a submit created a run. **The run may be
+ * running, and the viewer may have been charged.**
+ *
+ * 🔴 This is not a refusal, and it must not be handled like one: do not tell
+ * the viewer nothing was spent, and do not submit again blindly — a second
+ * submit can start, and charge for, a second run. Tell the viewer the outcome
+ * is unknown, then look for the run with {@link WorkflowsClient.list} before
+ * offering a retry.
+ *
+ * The host reports it for a run the viewer confirmed a quote for: a
+ * `kind: 'training'` body, or a step body carrying a `quoteId`.
+ *
+ * It is an error rather than a field on the result because the snapshot the
+ * host sends with it is shaped exactly like a refusal (`status: 'failed'`, the
+ * placeholder id, a `cost.total`), and a caller that reads only the snapshot
+ * would report "not started, nothing charged".
+ */
+export declare class SubmissionUnconfirmedError extends CivitaiError {
+    /**
+     * The snapshot the host sent beside the flag, when it sent a usable one. Its
+     * `cost.total` is the price that was reserved; its `workflowId` is a
+     * placeholder, not a workflow to poll.
+     */
+    readonly snapshot: BlockWorkflowSnapshot | undefined;
+    constructor(snapshot: BlockWorkflowSnapshot | undefined);
+}
+
 export interface WorkflowCallOptions {
     signal?: AbortSignal;
 }
@@ -481,6 +510,10 @@ export interface WorkflowListResult {
  * `ApiError` carrying the HTTP status (a malformed body or key is `400`, a
  * workflow that is not this viewer's or this app's is `403`), or a
  * `CivitaiError` for a `2xx` that carried no snapshot.
+ *
+ * 🔴 And ONE reply that is neither: `submit` rejects with
+ * {@link SubmissionUnconfirmedError} when the host could not tell whether the
+ * run was created. That run may be live and charged.
  */
 export interface WorkflowsClient {
     /**
@@ -495,8 +528,17 @@ export interface WorkflowsClient {
      * Runs a body, spending the viewer's Buzz. Resolves as soon as the host has
      * accepted or refused it — follow it with {@link WorkflowsClient.wait}.
      *
-     * A budget or cap refusal resolves with `status: 'failed'`, a `cost.total`
-     * and no real workflow id. Nothing was charged.
+     * 🔴 A resolved `status: 'failed'` is one of TWO things, told apart by
+     * `workflowId`:
+     * - the placeholder id `'failed'`: refused before anything ran (a budget, a
+     *   spending cap, a body the host will not run). Nothing was charged. A
+     *   budget or cap refusal carries the `cost.total` it would not charge.
+     * - a real id: a run was created and came back failed. Buzz may have been
+     *   spent.
+     *
+     * A third outcome does not resolve at all: when the host could not confirm
+     * whether the run was created, this REJECTS with
+     * {@link SubmissionUnconfirmedError}. That run may be live and charged.
      *
      * 🔴 This client does not retry a failed submit; it only re-sends once after
      * refreshing an expired token, as every call does. If the request fails

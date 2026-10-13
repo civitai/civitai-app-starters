@@ -67,9 +67,10 @@ export interface AppClient {
    * work before it reaches the orchestrator. Multi-step `kind: 'workflow'`
    * bodies included.
    *
-   * 🔴 Requires the block token the host mints, like {@link AppClient.storage}.
-   * It is NOT {@link AppClient.orchestration}: that one calls the orchestrator
-   * directly with an OAuth access token and applies none of those controls.
+   * 🔴 Requires the block token the host mints, like {@link AppClient.storage}:
+   * an OAuth access token is answered `401` here. It is NOT
+   * {@link AppClient.orchestration}: that one calls the orchestrator directly
+   * with an OAuth access token and applies none of those controls.
    */
   readonly workflows: WorkflowsClient;
   /**
@@ -134,8 +135,10 @@ export async function initialize(
 
   const snapshot = () => transport.snapshot.get();
   const holdsBlockTokenNow = holdsBlockToken(snapshot);
+  // Read live, like the predicate above: the host rotates the token.
+  const holdsOAuthTokenNow = () => snapshot().token.kind === 'oauth';
   return {
-    ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow),
+    ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow, holdsOAuthTokenNow),
     host: createHost(transport),
     get viewer() {
       return snapshot().viewer;
@@ -203,6 +206,7 @@ function createAppClient(
   session: Session,
   options: ClientOptions,
   holdsBlockTokenNow: () => boolean = () => false,
+  holdsOAuthTokenNow: () => boolean = () => false,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
   // One instance for all four site-hosted surfaces: the storage and workflows
@@ -219,7 +223,7 @@ function createAppClient(
     site: createSiteClient(siteHttp),
     storage: createStorageClient(siteHttp),
     sharedStorage: createSharedStorageClient(siteHttp),
-    workflows: createWorkflowsClient(siteHttp),
+    workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),
     orchestration: createOrchestrationClient(
       refuseBlockToken(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL), holdsBlockTokenNow),
     ),
@@ -288,6 +292,34 @@ function explainApiRefusal(http: Http, holdsBlockTokenNow: () => boolean): Http 
           `the \`blocks/*\` routes it was minted for; which others also accept it is the ` +
           `server's to say and is not known here. If \`${path}\` needs an OAuth access token, ` +
           `${OAUTH_OPT_IN}.`;
+      }
+      throw error;
+    }
+  };
+}
+
+/**
+ * The mirror image of {@link explainApiRefusal}: the `blocks/workflows/*` routes
+ * are served to the block-scoped token only, so a block that declared
+ * `auth: "oauth"` and was handed an OAuth access token is answered `401` there.
+ * Unlike the rest of `/api/v1` this destination IS known, so the message can
+ * say what the token is and where that token does work.
+ *
+ * Only a `401`, and only when the host said the token is an OAuth one: a `403`
+ * here is about the workflow or the scope, and `initialize({ token })` knows no
+ * kind, so neither is annotated.
+ */
+function explainWorkflowRefusal(http: Http, holdsOAuthTokenNow: () => boolean): Http {
+  return async (method, path, opts) => {
+    try {
+      return await http(method, path, opts);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && holdsOAuthTokenNow()) {
+        // Appended, as in `explainApiRefusal`: `status` and `body` stay as sent.
+        error.message =
+          `${error.message} — and this block holds an OAuth access token. \`app.workflows\` needs ` +
+          'the block-scoped token, which the host hands to a block that does not declare ' +
+          '`auth: "oauth"`. With an OAuth access token, run workflows through `app.orchestration`.';
       }
       throw error;
     }

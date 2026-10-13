@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // `@civitai/sdk` does not depend on that package (see `src/safe-storage/index.ts`
 // for why the two stay independent), so it carries a COPY. This script is what
 // keeps the copy a copy: it extracts the declarations from app-sdk's source,
-// docs included, and `--check` fails when the committed file differs.
+// docs included. `tests/guards/sdk-workflow-types-copy.test.mjs` regenerates it
+// on every change and fails when the committed file differs.
 //
 // It is a text extractor, not a parser (the TypeScript in this workspace ships
 // no JS compiler API). Every assumption it makes about the source's shape is
@@ -140,14 +141,6 @@ const repoFile = (path) => fileURLToPath(new URL(`../../../${path}`, import.meta
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const text = renderWorkflowTypes(readFileSync(repoFile(SOURCE), 'utf8'));
   const count = workflowTypeNames(text).length;
-  if (process.argv.includes('--check')) {
-    if (readFileSync(repoFile(OUT), 'utf8') !== text) {
-      console.error(`${OUT} is stale. Run \`pnpm --filter @civitai/sdk gen:workflow-types\` and commit the result.`);
-      process.exit(1);
-    }
-    console.log(`${OUT} is up to date (${count} types).`);
-  } else {
-    writeFileSync(repoFile(OUT), text);
-    console.log(`Wrote ${OUT} (${count} types).`);
-  }
+  writeFileSync(repoFile(OUT), text);
+  console.log(`Wrote ${OUT} (${count} types).`);
 }

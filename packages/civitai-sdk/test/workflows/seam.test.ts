@@ -34,7 +34,7 @@ describe('the workflows client stays inside the block token namespace', () => {
   it('is built on the site transport, not the orchestrator one', () => {
     const app = read('../../src/app/index.ts');
 
-    expect(app).toContain('workflows: createWorkflowsClient(siteHttp)');
+    expect(app).toContain('workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow))');
     expect(app.match(/createWorkflowsClient\(/g)).toHaveLength(1);
   });
 

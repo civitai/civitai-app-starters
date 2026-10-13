@@ -45,6 +45,7 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
+export { SubmissionUnconfirmedError } from './workflows/index.js';
 export type {
   WorkflowCallOptions,
   WorkflowGetOptions,

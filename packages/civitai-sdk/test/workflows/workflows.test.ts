@@ -4,6 +4,7 @@ import {
   ApiError,
   CivitaiError,
   initialize,
+  SubmissionUnconfirmedError,
   type AppWorkflow,
   type BlockWorkflowSnapshot,
   type WorkflowBody,
@@ -223,6 +224,105 @@ describe('AppClient.workflows — submit', () => {
       status: 503,
     });
     expect(calls).toHaveLength(1);
+  });
+});
+
+/**
+ * The one reply on these routes that carries a field BESIDE `snapshot`. The host
+ * sends it when it could not learn whether a viewer-confirmed run was created:
+ * the run may be live and charged. The snapshot beside it is shaped exactly like
+ * a refusal, so only the flag tells the two apart.
+ */
+describe('AppClient.workflows — submit, when the host could not confirm the run', () => {
+  const TRAINING: WorkflowBody = {
+    kind: 'training',
+    datasetId: 'tds_0123456789abcdef0123456789abcdef',
+    engine: 'ai-toolkit',
+    model: 'sdxl',
+    params: { engine: 'ai-toolkit', ecosystem: 'sdxl' } as never,
+    triggerWord: 'lighthousestyle',
+    samplePrompts: ['a lighthouse at dusk'],
+    quoteId: 'tq_0123456789abcdef0123456789abcdef',
+  };
+  const CONFIRMED_STEP: WorkflowBody = {
+    kind: 'step',
+    $type: 'videoGen',
+    input: { prompt: 'waves against a lighthouse' },
+    maxBuzz: 250,
+    quoteId: 'sq_fedcba9876543210fedcba9876543210',
+  };
+
+  it.each([
+    ['a `kind: "training"` run', TRAINING, 4_800, 'key-train-1'],
+    ['a step that carries a `quoteId`', CONFIRMED_STEP, 163, 'key-step-1'],
+  ])('🔴 rejects for %s — an unknown outcome is not a refusal', async (_label, body, total, key) => {
+    const { workflows, calls } = await client([
+      () =>
+        json(200, {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed',
+            cost: { total },
+            error: 'We could not confirm this run was started.',
+          },
+          submissionUnconfirmed: true,
+        }),
+    ]);
+
+    const error = await workflows.submit(body, { idempotencyKey: key }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SubmissionUnconfirmedError);
+    expect(error).toBeInstanceOf(CivitaiError);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect((error as Error).name).toBe('SubmissionUnconfirmedError');
+    // The price the host had reserved travels on the error.
+    expect((error as SubmissionUnconfirmedError).snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total },
+      error: 'We could not confirm this run was started.',
+    });
+    // The message says what the caller must not conclude.
+    expect((error as Error).message).toContain('may be running');
+    expect((error as Error).message).toContain('charged');
+    // One request: the client does not resubmit on its own.
+    expect(calls).toHaveLength(1);
+    expect(sentBody(calls[0]!)).toMatchObject({ idempotencyKey: key, body: { quoteId: body.kind === 'training' ? 'tq_0123456789abcdef0123456789abcdef' : 'sq_fedcba9876543210fedcba9876543210' } });
+  });
+
+  it('CONTROL — the same snapshot WITHOUT the flag is a refusal, and resolves', async () => {
+    const { workflows } = await client([
+      () =>
+        json(200, {
+          snapshot: { workflowId: 'failed', status: 'failed', cost: { total: 4_800 }, error: 'Over the daily limit.' },
+        }),
+    ]);
+
+    await expect(workflows.submit(TRAINING, { idempotencyKey: 'key-train-2' })).resolves.toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 4_800 },
+      error: 'Over the daily limit.',
+    });
+  });
+
+  it('only `true` is the flag — a started run that happens to carry `false` resolves', async () => {
+    const { workflows } = await client([
+      () => json(200, { snapshot: snapshot('pending'), submissionUnconfirmed: false }),
+    ]);
+
+    await expect(workflows.submit(CONFIRMED_STEP, { idempotencyKey: 'key-step-2' })).resolves.toMatchObject({
+      status: 'pending',
+    });
+  });
+
+  it('still rejects as unconfirmed when the flag arrives with no usable snapshot', async () => {
+    const { workflows } = await client([() => json(200, { submissionUnconfirmed: true })]);
+
+    const error = await workflows.submit(TRAINING, { idempotencyKey: 'key-train-3' }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SubmissionUnconfirmedError);
+    expect((error as SubmissionUnconfirmedError).snapshot).toBeUndefined();
   });
 });
 
@@ -550,6 +650,53 @@ describe('AppClient.workflows — which token reaches it', () => {
 
     expect((error as ApiError).status).toBe(401);
     expect((error as ApiError).message).toBe('invalid block token');
+  });
+
+  it('🔴 explains a 401 to a block holding an OAuth access token — these routes take the block token', async () => {
+    const oauthToken = { raw: 'oauth-access', scopes: ['ai:write:budgeted'], expiresAt: new Date(0), kind: 'oauth' as const };
+    const transport = createFakeTransport({ token: oauthToken, viewer: { id: 7, username: 'viewer' } });
+    transport.handle('REQUEST_TOKEN', () => ({
+      token: { ...oauthToken, expiresAt: new Date(0).toISOString() },
+    }));
+    const { fetch } = fakeFetch([
+      () => json(401, { error: 'Block token required' }),
+      () => json(401, { error: 'Block token required' }),
+    ]);
+    const app = await initialize({ transport, fetch });
+
+    const error = await app.workflows.estimate(BODY).catch((e: unknown) => e);
+
+    // The status and body a caller branches on are untouched.
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(401);
+    expect((error as ApiError).body).toEqual({ error: 'Block token required' });
+    // The server's sentence stays first; the diagnosis is added to it.
+    expect((error as ApiError).message.startsWith('Block token required')).toBe(true);
+    expect((error as ApiError).message).toContain('OAuth access token');
+    expect((error as ApiError).message).toContain('app.orchestration');
+  });
+
+  it('adds nothing to a failure the token kind cannot explain', async () => {
+    const oauthToken = { raw: 'oauth-access', scopes: [], expiresAt: new Date(0), kind: 'oauth' as const };
+    const transport = createFakeTransport({ token: oauthToken, viewer: { id: 7, username: 'viewer' } });
+    const { fetch } = fakeFetch([() => json(403, { message: 'FORBIDDEN' })]);
+    const app = await initialize({ transport, fetch });
+
+    const error = await app.workflows.get(WORKFLOW_ID).catch((e: unknown) => e);
+
+    expect((error as ApiError).status).toBe(403);
+    expect((error as ApiError).message).toBe('FORBIDDEN');
+  });
+
+  it('adds nothing for `initialize({ token })`, which knows no token kind', async () => {
+    const { workflows } = await client([
+      () => json(401, { error: 'Block token required' }),
+      () => json(401, { error: 'Block token required' }),
+    ]);
+
+    const error = await workflows.estimate(BODY).catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe('Block token required');
   });
 
   it('follows a `siteUrl` override', async () => {
