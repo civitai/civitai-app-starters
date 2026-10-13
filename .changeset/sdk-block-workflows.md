@@ -16,8 +16,11 @@ const body: WorkflowBody = { kind: 'workflow', steps: [/* … */] };
 
 const estimate = await app.workflows.estimate(body);
 if (estimate.status !== 'failed') {
-  const submitted = await app.workflows.submit(body, { idempotencyKey: crypto.randomUUID() });
-  const done = await app.workflows.wait(submitted.workflowId);
+  const idempotencyKey = crypto.randomUUID(); // one per viewer action, reused on every retry
+  const submitted = await app.workflows.submit(body, { idempotencyKey });
+  if (submitted.status !== 'failed') {
+    const done = await app.workflows.wait(submitted.workflowId);
+  }
 }
 ```
 
@@ -28,6 +31,7 @@ if (estimate.status !== 'failed') {
 - A resolved `failed` snapshot from `submit` with the placeholder id `'failed'` was refused before anything ran. One with a real id is a run that was created and failed, and Buzz may have been spent.
 - `app.workflows` takes the block token only. A block holding an OAuth access token is answered `401`, and the error message says to use `app.orchestration`.
 - `submit` requires an `idempotencyKey` and rejects before sending without one. Mint it once per viewer action and reuse it on every retry. `submit` does not retry a failed request on its own.
+- A rejected `submit` is not "not started". After a `5xx`, a `409` or no answer the outcome is unknown: retry with the same key or check `app.workflows.list()`, and never mint a new key for the same viewer action.
 - `watch` and `wait` hold each read on the host, space their reads, wait out a brief outage and stop on a refusal. Pass a `signal` to stop early.
 - The contract types are exported from the package root: `WorkflowBody` and its members (`WorkflowBodyWorkflow`, `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `WorkflowBodyTextToImage`, …), `BlockWorkflowSnapshot`, `KnownBlockWorkflowErrorCode` and `AppWorkflow`. They are a generated copy of the types `@civitai/app-sdk/blocks` defines, kept identical by a guard test.
 

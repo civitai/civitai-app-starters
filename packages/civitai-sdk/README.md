@@ -449,10 +449,81 @@ Three things follow from that shape:
 The estimate is an estimate, not a ceiling: when a step's input references an
 earlier step, the orchestrator re-prices it once that value is known.
 
-What *does* reject is a request that was itself refused or never answered: an
-`ApiError` with the HTTP `status` (`400` for a body or key the host cannot
-parse, `403` for a workflow that is not this viewer's or not this app's), or a
-`CivitaiError` when a `2xx` carried no snapshot.
+What *does* reject is an `ApiError` with the HTTP `status`, a `CivitaiError`
+when a `2xx` carried no snapshot, or whatever `fetch` threw when no answer
+arrived. A `400` is a body or key the host cannot parse; a `403` on `get` or
+`cancel` is a workflow that is not this viewer's or not this app's.
+
+🔴 **For `submit`, a rejection does not mean "not started".** Read the next two
+sections before writing its `catch`.
+
+### When a submit rejects: the outcome is unknown
+
+A rejected `submit` has **not** told you the run does not exist. The host
+checks the request (its shape, the token, the scope, the budget on the token)
+before it submits anything, and a rejection from one of those checks is a plain
+refusal — but the same status codes can also come back after the orchestrator
+was called, and nothing in the reply says which it was. So treat every rejected
+`submit` as unknown. Three cases are worth knowing by name:
+
+- **A `5xx`.** The host answers with a server error both when nothing was
+  started and when its call to the orchestrator failed after the orchestrator
+  may already have created the run. On that second path the host undoes its
+  own budget reservations and forgets the key, so nothing on the host side
+  records the run — but a workflow may exist.
+- **A `409`.** The host answers `409` while an earlier submit with the same key
+  is still in flight (or its record was lost). The earlier attempt may yet
+  succeed.
+- **No answer at all** — a dropped connection, a timeout, an aborted request.
+
+Do **one of two things, and never mint a new key for that press**:
+
+1. **Retry `submit` with the same `idempotencyKey`.** The host derives the
+   run's identity on the orchestrator from the key, so that a repeat can be
+   matched to a run the first attempt created instead of starting a second
+   one. A new key cannot be matched to anything. After a `409`, wait before
+   retrying: the first attempt is still running. A request the host cannot
+   parse simply answers `400` again.
+2. **Or look for the run** with `app.workflows.list()` before treating the
+   press as failed.
+
+What this client can promise stops there. Matching a repeated key to an
+existing run is done by the host and the orchestrator, not here; it is not
+guaranteed to match, and the host remembers a key only for a limited time. So
+`list()` is the check that does not depend on it: when a retry is late, or
+fails again, look there before telling the viewer nothing ran.
+
+```ts
+import { ApiError, SubmissionUnconfirmedError } from '@civitai/sdk';
+
+// One key for this press. It outlives the call: a retry reuses it.
+const idempotencyKey = crypto.randomUUID();
+
+async function submitOnce() {
+  try {
+    const submitted = await app.workflows.submit(body, { idempotencyKey });
+    if (submitted.status !== 'failed') {
+      track(submitted.workflowId); // started: follow it with wait()
+    } else if (submitted.workflowId === 'failed') {
+      showMessage('This could not start. Nothing was charged.');
+    } else {
+      showMessage('This run failed. Check your history before trying again.');
+    }
+  } catch (error) {
+    if (error instanceof SubmissionUnconfirmedError) {
+      // The run MAY be running and MAY have been charged. Do not resubmit.
+      showMessage('We could not confirm this run. It may still be running.');
+      const { workflows } = await app.workflows.list(); // look for it
+    } else {
+      // An ApiError (a 5xx, a 409, …) or no answer: UNKNOWN. Keep
+      // `idempotencyKey`; the retry button calls submitOnce() again with the
+      // SAME key. Never a fresh key, and never "failed, nothing charged".
+      console.error(error instanceof ApiError ? error.status : error);
+      showRetry('We could not confirm this started.', submitOnce);
+    }
+  }
+}
+```
 
 ### When a submit could not be confirmed
 
@@ -461,33 +532,13 @@ confirmed a quote for — a `kind: 'training'` body, or a step body carrying a
 `quoteId` — the host can end up not knowing whether the run was created. It
 then answers with a refusal-shaped snapshot and a `submissionUnconfirmed` flag
 beside it, and `submit` **rejects** with `SubmissionUnconfirmedError` rather
-than hand back a snapshot that reads as "not started":
+than hand back a snapshot that reads as "not started". The example above
+handles it.
 
-```ts
-import { SubmissionUnconfirmedError } from '@civitai/sdk';
-
-try {
-  const submitted = await app.workflows.submit(body, { idempotencyKey });
-  if (submitted.status !== 'failed') {
-    track(submitted.workflowId); // started: follow it with wait()
-  } else if (submitted.workflowId === 'failed') {
-    showMessage('This could not start. Nothing was charged.');
-  } else {
-    showMessage('This run failed. Check your history before trying again.');
-  }
-} catch (error) {
-  if (error instanceof SubmissionUnconfirmedError) {
-    // The run MAY be running and MAY have been charged.
-    showMessage('We could not confirm this run. It may still be running.');
-    const { workflows } = await app.workflows.list(); // look for it before any retry
-  } else {
-    throw error;
-  }
-}
-```
-
-Do not tell the viewer nothing was spent, and do not submit again blindly: a
-second submit can start, and charge for, a second run. `error.snapshot`, when
+Here the host has **kept** the budget it reserved for the run, so this is not
+one to retry as a reflex: a second submit reserves that budget again and may
+start a second run. Do not tell the viewer nothing was spent. Look for the run
+with `app.workflows.list()` first. `error.snapshot`, when
 the host sent one, carries the `cost.total` that was reserved; its `workflowId`
 is a placeholder, not something to poll. `snapshot.error` on any reply is
 server text — log it and show your own copy.
@@ -495,18 +546,20 @@ server text — log it and show your own copy.
 ### The idempotency key
 
 `submit` spends Buzz, so it requires an `idempotencyKey` and refuses to send
-without one. The key is what makes a submit that was sent twice — a retry after
-a dropped connection, a double press — charge once.
+without one. The key is what lets the host recognise a submit that was sent
+twice — a retry after a dropped connection, a double press — as one request.
 
-- Mint it **once per thing the viewer asked for** and reuse that same key on
-  every retry. A key minted inside the retry loop protects nothing.
+- Mint it **once per thing the viewer asked for**, keep it until that press has
+  a known outcome, and reuse it on every retry. A key minted inside the retry
+  loop, or a fresh key for "try again" after an error, protects nothing: to the
+  host that is a new generation, and it is charged as one.
 - Letters, digits, `_` and `-`, 1 to 64 characters, **no colons**.
   `crypto.randomUUID()` fits. The host answers `400` for anything else, and this
   client sends the key exactly as given.
 - `submit` does not retry a failed request. (Like every call here it re-sends
   once after refreshing an expired token, which the host had refused unread.)
-  If it rejects without an answer, the workflow may or may not exist: call it
-  again with the same key.
+  After a `5xx`, a `409` or no answer the workflow may or may not exist: see
+  [When a submit rejects](#when-a-submit-rejects-the-outcome-is-unknown).
 
 Step limits, the reference rules and every `errorCode` are in the
 [workflows guide](https://developer.civitai.com/apps/guide/workflows).

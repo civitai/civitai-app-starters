@@ -506,14 +506,15 @@ export interface WorkflowListResult {
  * `cost.total` it would not charge. `estimate`, `submit`, `get`, `wait` and
  * `cancel` all RESOLVE with that snapshot. Branch on `snapshot.status`.
  *
- * What rejects is a request that was itself refused or never answered: an
- * `ApiError` carrying the HTTP status (a malformed body or key is `400`, a
- * workflow that is not this viewer's or this app's is `403`), or a
- * `CivitaiError` for a `2xx` that carried no snapshot.
+ * What rejects is an `ApiError` carrying the HTTP status, a `CivitaiError` for
+ * a `2xx` that carried no snapshot, or whatever `fetch` threw. A `400` is a
+ * malformed body or key; a `403` on `get` or `cancel` is a workflow that is
+ * not this viewer's or this app's.
  *
- * 🔴 And ONE reply that is neither: `submit` rejects with
- * {@link SubmissionUnconfirmedError} when the host could not tell whether the
- * run was created. That run may be live and charged.
+ * 🔴 A REJECTED `submit` IS NOT "NOT STARTED". A `5xx`, a `409` and a request
+ * that got no answer all leave the outcome UNKNOWN, and
+ * {@link SubmissionUnconfirmedError} says so outright. See
+ * {@link WorkflowsClient.submit}.
  */
 export interface WorkflowsClient {
     /**
@@ -540,10 +541,26 @@ export interface WorkflowsClient {
      * whether the run was created, this REJECTS with
      * {@link SubmissionUnconfirmedError}. That run may be live and charged.
      *
-     * 🔴 This client does not retry a failed submit; it only re-sends once after
-     * refreshing an expired token, as every call does. If the request fails
-     * without an answer, the workflow may or may not exist: retry with the SAME
-     * `idempotencyKey`.
+     * 🔴 WHEN THIS REJECTS, TREAT THE OUTCOME AS UNKNOWN. The host refuses a
+     * bad request before submitting anything, but the reply does not say whether
+     * a rejection came before or after the orchestrator was called. By name:
+     * - a `5xx`: the host answers this both when nothing was started and when
+     *   its orchestrator call failed after the orchestrator may have created the
+     *   run. A workflow may exist.
+     * - a `409`: an earlier submit with the same key is still in flight (or its
+     *   record was lost). That attempt may yet succeed.
+     * - no answer (a dropped connection, a timeout): unknown.
+     *
+     * Retry with the SAME `idempotencyKey` — the host derives the run's identity
+     * on the orchestrator from it, so that a repeat can be matched to an existing
+     * run — or look for the run with {@link WorkflowsClient.list}. Never mint a
+     * new key for the same viewer action: a new key is a new generation and a
+     * second charge. That matching is the host's and the orchestrator's, is not
+     * guaranteed, and is not something this client can verify; `list` is the
+     * check that does not depend on it.
+     *
+     * This client does not retry a failed submit itself; it only re-sends once
+     * after refreshing an expired token, as every call does.
      */
     submit(body: WorkflowBody, opts: WorkflowSubmitOptions): Promise<BlockWorkflowSnapshot>;
     /** One workflow's current state. Only a workflow this app submitted for this viewer. */
@@ -551,6 +568,11 @@ export interface WorkflowsClient {
     /**
      * Yields the workflow now and again each time it changes, ending at a final
      * status. Break out of the loop to stop watching.
+     *
+     * A yielded snapshot can be a bare progress placeholder — just `workflowId`
+     * and `status: 'processing'` — which the host sends when it skips a read
+     * under load. Keep what an earlier snapshot showed rather than rendering
+     * that one as "no steps, no images".
      */
     watch(workflowId: string, opts?: WorkflowWatchOptions): AsyncGenerator<BlockWorkflowSnapshot, void, undefined>;
     /** Resolves once the workflow reaches a final status, whichever it is. */

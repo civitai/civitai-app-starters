@@ -571,6 +571,115 @@ describe('AppClient.workflows — watch and wait', () => {
     expect(calls).toHaveLength(5);
   });
 
+  it.each(['canceled', 'expired'] as const)('`wait` ends on `%s` after ONE read — it is final', async (status) => {
+    vi.useFakeTimers();
+    // Nothing else is scripted: a second read would have no answer to get.
+    const { workflows, calls } = await client([() => json(200, { snapshot: snapshot(status) })]);
+
+    const settled = workflows.wait(WORKFLOW_ID, { intervalMs: 0 }).catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+
+    expect(await settled).toEqual({ workflowId: '4417-20261013101112131', status });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each(['canceled', 'expired'] as const)('`watch` stops iterating at `%s`', async (status) => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(200, { snapshot: snapshot(status) }),
+    ]);
+
+    const seen: string[] = [];
+    const finished = (async () => {
+      for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s.status);
+      return 'ended';
+    })().catch(() => 'threw');
+    await vi.runAllTimersAsync();
+
+    expect(await finished).toBe('ended');
+    expect(seen).toEqual(['processing', status]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('counts CONSECUTIVE failures only — five blips spread over a long watch do not end it', async () => {
+    vi.useFakeTimers();
+    const blip = () => json(503, { message: 'unavailable' });
+    const progress = (n: number) => () =>
+      json(200, { snapshot: snapshot('processing', { imageUrls: Array.from({ length: n }, (_, i) => `https://example.test/${i}.png`) }) });
+    const { workflows, calls } = await client([
+      progress(0),
+      blip,
+      progress(1),
+      blip,
+      progress(2),
+      blip,
+      progress(3),
+      blip,
+      progress(4),
+      blip,
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+
+    const settled = workflows.wait(WORKFLOW_ID, { intervalMs: 0 }).catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+
+    // Five failures in total, never two in a row: every one is waited out.
+    expect(await settled).toEqual({ workflowId: '4417-20261013101112131', status: 'succeeded' });
+    expect(calls).toHaveLength(11);
+  });
+
+  it('waits before re-reading after a failed read — a failing host is not retried at once', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(503, { message: 'unavailable' }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+
+    const settled = workflows.wait(WORKFLOW_ID, { intervalMs: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    // The good read and the failed one have happened; the retry has not.
+    expect(calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(calls).toHaveLength(2);
+
+    await vi.runAllTimersAsync();
+    await expect(settled).resolves.toMatchObject({ status: 'succeeded' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('an abort DURING a held read rejects with the reason and sends nothing more', async () => {
+    vi.useFakeTimers();
+    const urls: string[] = [];
+    const fetch = ((input: RequestInfo | URL, init: RequestInit = {}) => {
+      urls.push(String(input));
+      if (urls.length === 1) return Promise.resolve(json(200, { snapshot: snapshot('processing') }));
+      // Every later read is held open until the caller's signal fires.
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal!;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }) as typeof globalThis.fetch;
+    const app = await initialize({ token: 'block-jwt-1', fetch });
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+
+    const settled = app.workflows
+      .wait(WORKFLOW_ID, { intervalMs: 0, signal: controller.signal })
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls).toHaveLength(2); // the held read is in flight
+
+    controller.abort(reason);
+    // Long enough for every back-off this client has: none may be spent on a retry.
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(await settled).toBe(reason);
+    expect(urls).toHaveLength(2);
+  });
+
   it('stops reading when the caller stops watching', async () => {
     const { workflows, calls } = await client([
       () => json(200, { snapshot: snapshot('processing') }),
