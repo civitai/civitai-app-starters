@@ -80,7 +80,7 @@ describe('createMockHost — image picker', () => {
     const result = await mount();
     await expect(result.current.open()).resolves.toEqual({
       source: 'posted',
-      url: 'https://image.civitai.com/mock/original=true/dev-posted-image.jpeg',
+      url: 'https://image.civitai.com/mock/width=832/dev-posted-image.jpeg',
       width: 832,
       height: 1216,
       nsfwLevel: 1,
@@ -206,9 +206,11 @@ describe('createMockHost — image picker', () => {
     ['a wrong-case member', ['Generated']],
   ])('refuses sources that are %s with an error', async (_, sources) => {
     await mount({ cannedImagePicks: LIBRARY });
-    expect(await rawRequest({ requestId: 'raw-src', sources })).toEqual({
+    // Matched on behaviour, not on the host's exact wording: an error naming
+    // `sources`, and no pick.
+    expect(await rawRequest({ requestId: 'raw-src', sources })).toStrictEqual({
       requestId: 'raw-src',
-      error: "OPEN_IMAGE_PICKER: sources must be a non-empty array of 'posted' and/or 'generated'.",
+      error: expect.stringMatching(/sources must be/),
     });
   });
 
@@ -216,19 +218,88 @@ describe('createMockHost — image picker', () => {
     'refuses multiple.max = %s with an error',
     async (max) => {
       await mount({ cannedImagePicks: LIBRARY });
-      expect(await rawRequest({ requestId: 'raw-max', multiple: { max } })).toEqual({
+      expect(await rawRequest({ requestId: 'raw-max', multiple: { max } })).toStrictEqual({
         requestId: 'raw-max',
-        error: 'OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.',
+        error: expect.stringMatching(/multiple\.max must be/),
       });
     },
   );
 
-  it('refuses a `multiple` that is not an object with an error', async () => {
+  // Any PRESENT `multiple` asks for a multi pick. `null` in particular is
+  // refused, as the host refuses it: it is never read as "no `multiple`" and
+  // answered with a single pick.
+  it.each([
+    ['null', null],
+    ['a number', 3],
+    ['an empty object', {}],
+  ])('refuses a `multiple` that is %s with an error, never a single pick', async (_, multiple) => {
     await mount({ cannedImagePicks: LIBRARY });
-    expect(await rawRequest({ requestId: 'raw-multiple', multiple: 3 })).toEqual({
+    expect(await rawRequest({ requestId: 'raw-multiple', multiple })).toStrictEqual({
       requestId: 'raw-multiple',
-      error: 'OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.',
+      error: expect.stringMatching(/multiple\.max must be/),
     });
+  });
+
+  it('a bad `sources` is reported before a bad `multiple`', async () => {
+    await mount({ cannedImagePicks: LIBRARY });
+    expect(
+      await rawRequest({ requestId: 'raw-both', sources: [], multiple: { max: 0 } }),
+    ).toStrictEqual({ requestId: 'raw-both', error: expect.stringMatching(/sources must be/) });
+  });
+
+  // ── What the host does to a pick before it reaches the app ──────────────────
+  it('drops an imageId canned on a GENERATED pick, single and multi, and keeps a posted one', async () => {
+    const result = await mount({
+      cannedImagePicks: [{ ...LIBRARY[0], imageId: 4141 }, LIBRARY[1]],
+    });
+    const single = await result.current.open({ sources: ['generated'] });
+    expect(single).toStrictEqual(LIBRARY[0]);
+    expect(single).not.toHaveProperty('imageId');
+    const many = await result.current.open({ multiple: { max: 5 } });
+    expect(many).toStrictEqual([LIBRARY[0], LIBRARY[1]]);
+    expect(many[0]).not.toHaveProperty('imageId');
+    expect(many[1]!.imageId).toBe(903);
+  });
+
+  it('sends only the contract fields of a canned pick', async () => {
+    await mount({
+      cannedImagePicks: [{ ...LIBRARY[1], postId: 77, meta: { prompt: 'x' } } as never],
+    });
+    expect(await rawRequest({ requestId: 'raw-fields' })).toStrictEqual({
+      requestId: 'raw-fields',
+      selected: LIBRARY[1],
+    });
+  });
+
+  it('offers a repeated image (same source and url) once, keeping the first', async () => {
+    const twin = { ...LIBRARY[1], nsfwLevel: 16, imageId: 999 };
+    // Same url under the OTHER source is a different image and is kept.
+    const otherSource = { ...LIBRARY[0], url: LIBRARY[1]!.url };
+    const result = await mount({
+      cannedImagePicks: [LIBRARY[1]!, twin, LIBRARY[3]!, otherSource, LIBRARY[1]!],
+    });
+    await expect(result.current.open({ multiple: { max: 9 } })).resolves.toStrictEqual([
+      LIBRARY[1],
+      LIBRARY[3],
+      otherSource,
+    ]);
+    // The repeat does not use up a slot: max 2 still reaches the second image.
+    await expect(result.current.open({ multiple: { max: 2 } })).resolves.toStrictEqual([
+      LIBRARY[1],
+      LIBRARY[3],
+    ]);
+  });
+
+  it('the default posted pick is a resized rendition url, not the original file', async () => {
+    const result = await mount();
+    const image = await result.current.open({ sources: ['posted'] });
+    expect(image!.url).not.toContain('original=true');
+    expect(image!.url).toContain(`width=${image!.width}`);
+  });
+
+  it('hands back whatever nsfwLevel a canned pick carries (a pick can be mature)', async () => {
+    const result = await mount({ cannedImagePicks: [{ ...LIBRARY[1]!, nsfwLevel: 16 }] });
+    expect((await result.current.open())!.nsfwLevel).toBe(16);
   });
 
   it('on a model-slot context the picker is unsupported: the hook REJECTS, single and multi', async () => {

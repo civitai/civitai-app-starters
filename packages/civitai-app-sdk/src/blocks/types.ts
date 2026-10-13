@@ -339,27 +339,52 @@ export type BlockImagePickerSource = 'posted' | 'generated';
  * The host lists and filters the library in its own chrome; the block receives
  * only what the viewer picked.
  *
- * What is pickable is decided by the host, never by the block:
+ * WHAT IS PICKABLE is decided by the host, never by the block:
  *  - `'posted'`: the viewer's own images that are in a published post, fully
- *    scanned, unflagged, and within the same SFW ceiling a `'display'` upload
- *    has to clear (the guarantee documented on {@link BlockUploadedImageInfo}).
- *  - `'generated'`: the viewer's own succeeded generator outputs whose rating
- *    is within that same ceiling. An output with no rating is not pickable.
+ *    scanned, not flagged, and rated.
+ *  - `'generated'`: the viewer's own succeeded generator outputs that carry a
+ *    rating the host recognises.
+ *  - Either way the image's rating has to be one the VIEWER'S OWN browsing
+ *    level on the site allows: the viewer is offered what they can already
+ *    browse. An unrated image is never pickable.
  *
- * `{ url, width, height }` is a valid {@link BlockSourceImage}, so a pick can
- * be fed into a generation body. The generation body bounds each dimension to
- * 64–2048 on its own; a picked image may be larger than that.
+ * 🔴 A PICK CAN BE A MATURE IMAGE. `nsfwLevel` is the image's rating and is
+ * never 0. The pick was offered to this viewer under this viewer's settings;
+ * nothing about it says anyone else may see it. An app that shows a pick to
+ * anybody other than the viewer who picked it has to gate that on `nsfwLevel`
+ * itself.
+ *
+ * WHAT `url`, `width` AND `height` ARE differs by library:
+ *  - `'posted'`: `url` is a RESIZED RENDITION of the image, not the original
+ *    file. `width` / `height` are the size that rendition is requested at, and
+ *    the host picks one with both sides within 64–2048 (a small original is
+ *    upscaled). The image CDN normally serves exactly that size; it can serve
+ *    the original instead while a rendition is still being produced. A posted
+ *    image with no rendition in that range (an extreme aspect ratio) is not
+ *    pickable.
+ *  - `'generated'`: `url` is the generator's own output URL, and `width` /
+ *    `height` are the output's own size, which can exceed 2048. 🔴 That URL
+ *    may be time-limited: use it promptly and do not store it.
+ *
+ * AS A GENERATION SOURCE: `url` is Civitai-hosted, so `{ url, width, height }`
+ * has the shape of a {@link BlockSourceImage} and passes the generation body's
+ * source-image URL check. That is all this type promises. The generation body
+ * still applies its own rules, including 64–2048 per side, which a generated
+ * pick can exceed.
  */
 export interface BlockPickedImageInfo {
   /** Which library the viewer picked it from. */
   source: BlockImagePickerSource;
-  /** Civitai-hosted image URL, usable directly as a generation `sourceImage.url`. */
+  /** Civitai-hosted image URL. What it points at differs by `source`; see above. */
   url: string;
-  /** Pixel width of the image at `url`. */
+  /** Pixel width that goes with `url`; see above for each `source`. */
   width: number;
-  /** Pixel height of the image at `url`. */
+  /** Pixel height that goes with `url`; see above for each `source`. */
   height: number;
-  /** NSFW-level bitmask value (same scale as {@link BlockUploadedImageInfo.nsfwLevel}). */
+  /**
+   * The image's NSFW-level bitmask value (same scale as
+   * {@link BlockUploadedImageInfo.nsfwLevel}). Can be a mature level; never 0.
+   */
   nsfwLevel: number;
   /**
    * The `Image` row id. Present for `source: 'posted'`; ABSENT for

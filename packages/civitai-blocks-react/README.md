@@ -2244,8 +2244,8 @@ no bytes path: `upload` rejects with `the host returned no uploaded image`.
 Let the viewer pick one of their **existing** Civitai images: the ones they have
 posted, and the ones they made with the Civitai generator. The host opens its own
 picker over the viewer's library, and your app receives only what the viewer
-picked. Returns `{ open }`. `open()` resolves with one image, or `null` if the
-viewer closed the picker.
+picked. Returns `{ open }`. `open()` resolves with one image, or `null` if
+nothing was picked.
 
 ```tsx
 const { open } = useImagePicker();
@@ -2254,20 +2254,21 @@ const image = await open();   // BlockPickedImageInfo | null
 if (image) {
   // image.source     'posted' | 'generated'
   // image.url        a Civitai-hosted image URL
-  // image.width, image.height, image.nsfwLevel
+  // image.width, image.height
+  // image.nsfwLevel  the image's rating; it can be a mature level
   // image.imageId    set for a posted image, undefined for a generated one
 }
 ```
 
 **Several images in one session: `multiple: { max }`.** `open` then resolves with
-a **list** of up to `max` images instead of a single image. Closing the picker
-resolves with `[]`.
+a **list** of up to `max` images instead of a single image, or `[]` if nothing
+was picked.
 
 ```tsx
 const { open } = useImagePicker();
 
 const images = await open({ multiple: { max: 5 } });
-// [] when the viewer closed the picker; otherwise 1 to 5 images
+// [] when nothing was picked; otherwise 1 to 5 images
 const urls = images.map((image) => image.url);
 ```
 
@@ -2281,32 +2282,69 @@ const output = await open({ sources: ['generated'] });
 // output?.imageId is always undefined here: a generator output has no image id
 ```
 
-- **What the viewer can pick is decided by the host.** Posted images: the
-  viewer's own, in a published post, fully scanned and not flagged. Generated
-  images: the viewer's own finished generator outputs that have a rating. Both
-  are limited to the same SFW ceiling an upload has to clear. Images only, no
-  video. Your app never sees the rest of the library.
+If your app decides at runtime whether to ask for one image or several, pass
+`multiple` as a value that may be `undefined`. The result is then either shape,
+so narrow it with `Array.isArray`:
+
+```tsx
+const { open } = useImagePicker();
+
+const picked = await open({ multiple: allowSeveral ? { max: 3 } : undefined });
+const images = Array.isArray(picked) ? picked : picked ? [picked] : [];
+```
+
+What the viewer can pick, and what you get back:
+
+- **The host decides what is pickable.** Posted images: the viewer's own, in a
+  published post, fully scanned, not flagged and rated. Generated images: the
+  viewer's own finished generator outputs that have a rating. In both cases the
+  viewer is offered only what their own browsing settings on Civitai allow them
+  to see. An unrated image is never offered. Images only, no video. Your app
+  never sees the rest of the library.
+- 🔴 **A pick can be a mature image.** `nsfwLevel` is the image's rating, and it
+  is never `0`. The image was offered to this viewer under this viewer's own
+  settings. That says nothing about anyone else. If your app shows a pick to
+  anybody other than the viewer who picked it (a shared board, a gallery, a
+  public post), it is your app's job to check `nsfwLevel` and decide who may
+  see it.
 - **`imageId` is set only on a posted image.** A generator output that was never
   posted has no image id, so check `image.source` or `image.imageId` before you
   use it.
-- **Closing the picker is not an error.** A single pick resolves with `null` and
-  a `multiple` pick with `[]`. A signed-out viewer is sent to sign in, and the
-  call resolves the same way.
+- **A posted pick's `url` is a resized copy, not the original file.** `width` and
+  `height` are the size that copy is requested at. The host chooses one with both
+  sides between 64 and 2048 pixels, and a small original is scaled up. The image
+  server normally returns exactly that size, but it can return the original
+  while the resized copy is still being produced. A posted image that has no
+  size in that range (a very long or very wide one) is not offered.
+- 🔴 **A generated pick's `url` is the generator's own output link and may stop
+  working after a while.** Use it soon after the pick and do not store it for
+  later. Its `width` and `height` are the output's own size.
+
+What `open` resolves and rejects with:
+
+- **`null` (or `[]` with `multiple`) means nothing was picked.** Usually the
+  viewer closed the picker. A signed-out viewer sees the picker with a sign-in
+  button, and closing it gives the same result. The host also answers this way
+  immediately, without showing a picker, while your app is being viewed in
+  review mode or is not ready yet.
 - **`max` is a whole number of at least 1, capped at 20** (exported as
   `IMAGE_PICKER_MULTIPLE_MAX`). A larger value is clamped to 20. `0`, a negative
   number or a fraction rejects before anything is sent, and so does an empty
   `sources` or a value other than `'posted'` and `'generated'`.
 - **A refusal rejects.** If the host refuses the request, `open` rejects with an
   `Error` carrying the host's message. It never resolves with `null` for a
-  refusal, so `null` always means the viewer closed the picker.
+  refusal.
 - **Page apps only.** On any other surface the host answers at once and `open`
   rejects with `unsupported on this host`.
 - **On a host that does not have the picker yet**, the request gets no answer and
   `open` rejects with a `RequestTimeoutError` after 10 minutes.
-- **Using a pick as a generation source.** `{ url, width, height }` of a picked
-  image is a valid `sourceImage` for a generation body. The generation body has
-  its own limit of 64 to 2048 pixels per side, and a picked image can be larger
-  than that, so scale the numbers down before you submit if they are.
+
+Using a pick as the source image of a generation: a pick's `url` is hosted by
+Civitai, so `{ url, width, height }` passes the address check a generation body
+makes on its `sourceImage`. That is the only thing this hook settles. The
+generation body has its own rules, including 64 to 2048 pixels per side. A posted
+pick is already within that range. A generated pick can be larger, and a
+generation body refuses a size above 2048.
 
 With the mock host (`createMockHost` or `Harness` from
 `@civitai/blocks-react/testing`) there is no picker to click through: `open`
@@ -2314,10 +2352,14 @@ resolves at once. By default the mock holds one posted image and one generated
 image. Pass `cannedImagePicks: [...]` to set the viewer's library. The mock keeps
 only the images matching the request's `sources`, then answers a single pick with
 the first one and a `multiple` pick with the first `max`. `cannedImagePicks: null`
-is a viewer who always closes the picker. The mock refuses an invalid `sources` or
-`max` with an error, and answers `unsupported on this host` when its `context` is
-a model slot. `dev:live` cannot list the viewer's images, so there `open` rejects
-with a message saying to use the mock host.
+is a viewer who always closes the picker. Like the host, the mock offers a
+repeated image once and drops an `imageId` from a generated image. It does not
+model browsing settings or ratings: it returns whatever `nsfwLevel` you give an
+image, so use that to test how your app handles a mature pick. The mock refuses
+an invalid `sources` or `multiple` with an error, and answers
+`unsupported on this host` when its `context` is a model slot. `dev:live` cannot
+list the viewer's images, so there `open` rejects with a message saying to use
+the mock host.
 
 ### `useSaveImage()`
 

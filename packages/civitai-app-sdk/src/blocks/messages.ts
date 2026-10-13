@@ -939,11 +939,11 @@ export type ParentToBlockMessage =
       //
       // TWO REPLY SHAPES, one per request shape, never mixed:
       //   - single pick (no `multiple` on the request): `{ requestId, selected? }`.
-      //     `selected` is absent when the viewer dismissed — the hook resolves
+      //     `selected` is absent when nothing was picked — the hook resolves
       //     to `null`.
       //   - multi pick (`multiple` on the request): `{ requestId,
-      //     selectedImages }` — 1..max images, `[]` when the viewer dismissed.
-      //     `selected` is not set.
+      //     selectedImages }` — 1..max images, `[]` when nothing was picked.
+      //     `selected` is not set, and the list is always present.
       //
       // `error` is set only when the host REFUSES the request (an invalid
       // `sources` or `multiple.max`, or a surface that does not offer the
@@ -1662,13 +1662,14 @@ export type BlockToParentMessage =
       // {@link BlockPickedImageInfo} on `IMAGE_PICKER_RESULT`. Images only.
       // No scope is required and the block sends no token.
       //
-      // The host decides what is pickable (see {@link BlockPickedImageInfo}).
+      // The host decides what is pickable; {@link BlockPickedImageInfo} is the
+      // one place that states the rule and what a pick's fields mean.
       // It refuses with `{ requestId, error }` for a `sources` that is not a
-      // non-empty array of known members and for a `multiple.max` that is not
-      // a whole number ≥ 1. A surface that does not offer the picker answers
-      // `unsupported on this host` the same way. Review mode, a block that is
-      // not ready and a signed-out viewer (who is sent to sign in) all answer
-      // as a dismiss.
+      // non-empty array of known members and for a `multiple` whose `max` is
+      // not a whole number ≥ 1. A surface that does not offer the picker
+      // answers `unsupported on this host` the same way. In review mode, and
+      // for a block that is not ready, it answers at once as if nothing was
+      // picked, without showing a picker.
       //
       // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT. The host's generic
       // `unsupported on this host` reply exists only for message types the host

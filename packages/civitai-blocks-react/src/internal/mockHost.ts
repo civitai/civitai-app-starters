@@ -1113,12 +1113,18 @@ export interface MockHostOptions {
    * itself clamped to 20). When nothing is left the reply is a dismiss. `null`
    * or `[]` simulates a viewer who dismisses every time.
    *
+   * As on the real host, an entry repeating an earlier one (same `source` and
+   * `url`) is offered once, and an `imageId` on a `'generated'` entry is
+   * dropped. Nothing else is checked: the mock does not model browsing levels
+   * or ratings, so it hands back whatever `nsfwLevel` an entry carries.
+   *
    * Defaults to one posted image (with an `imageId`) and one generated image
    * (without one), so both libraries answer out of the box.
    *
    * The mock applies the real host's refusals too: a `sources` that is not a
-   * non-empty array of `'posted'` / `'generated'`, or a `max` that is not a
-   * whole number ≥ 1, is answered with an `error`, and so is any request on a
+   * non-empty array of `'posted'` / `'generated'`, or a `multiple` that is
+   * not `{ max }` with a whole number ≥ 1, is answered with an `error`, and so
+   * is any request on a
    * model-slot `context` (`unsupported on this host`: the picker is a page-app
    * affordance). Live-tunable via {@link MockHost.setScenario}.
    */
@@ -1869,16 +1875,40 @@ const MOCK_IMAGE_PICKER_MULTI_MAX = 20;
 /** The libraries `OPEN_IMAGE_PICKER` knows. */
 const MOCK_IMAGE_PICKER_SOURCES: readonly BlockImagePickerSource[] = ['posted', 'generated'];
 
+/** The host's refusal for a bad `sources`, and for a bad `multiple`. */
+const MOCK_IMAGE_PICKER_SOURCES_ERROR =
+  'OPEN_IMAGE_PICKER: sources must be a non-empty list of "posted" and/or "generated".';
+const MOCK_IMAGE_PICKER_MULTIPLE_ERROR =
+  'OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.';
+
+/**
+ * A canned pick as the host puts it on the wire: the contract's fields only,
+ * and `imageId` only on a posted pick (a generator output has no image id, so
+ * one set on a canned `'generated'` entry is dropped).
+ */
+function toWireImagePick(image: BlockPickedImageInfo): BlockPickedImageInfo {
+  const { source, url, width, height, nsfwLevel, imageId } = image;
+  return {
+    source,
+    url,
+    width,
+    height,
+    nsfwLevel,
+    ...(source === 'posted' && typeof imageId === 'number' ? { imageId } : {}),
+  };
+}
+
 /**
  * The images the mock host answers `OPEN_IMAGE_PICKER` from when
  * {@link MockHostOptions.cannedImagePicks} is omitted: one per library, and
  * every field differs between them so a block that mixes two picks up shows
- * it. The generated one has NO `imageId`, as on the real host.
+ * it. The generated one has NO `imageId`, as on the real host, and the posted
+ * one's `url` is a resized rendition, not the original file.
  */
 const DEFAULT_IMAGE_PICKS: BlockPickedImageInfo[] = [
   {
     source: 'posted',
-    url: 'https://image.civitai.com/mock/original=true/dev-posted-image.jpeg',
+    url: 'https://image.civitai.com/mock/width=832/dev-posted-image.jpeg',
     width: 832,
     height: 1216,
     nsfwLevel: 1,
@@ -4551,39 +4581,51 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 requested.length === 0 ||
                 !requested.every((s) => MOCK_IMAGE_PICKER_SOURCES.includes(s))
               ) {
-                refuse(
-                  "OPEN_IMAGE_PICKER: sources must be a non-empty array of 'posted' and/or 'generated'.",
-                );
+                refuse(MOCK_IMAGE_PICKER_SOURCES_ERROR);
                 return;
               }
               wanted = requested as string[];
             }
-            const available = (cannedImagePicks ?? []).filter((image) =>
-              wanted.includes(image.source),
-            );
+            // `multiple`: ANY present value asks for a multi pick, so `null` and
+            // a non-object are refused, as the host refuses them. Checked
+            // before the library is read, in the host's order.
             const multiple = pickerPayload.multiple;
-            if (multiple !== undefined && multiple !== null) {
-              const max =
-                typeof multiple === 'object' ? (multiple as { max?: unknown }).max : undefined;
-              if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
-                refuse('OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.');
+            let max: number | null = null;
+            if (multiple !== undefined) {
+              const requestedMax =
+                multiple && typeof multiple === 'object'
+                  ? (multiple as { max?: unknown }).max
+                  : undefined;
+              if (
+                typeof requestedMax !== 'number' ||
+                !Number.isInteger(requestedMax) ||
+                requestedMax < 1
+              ) {
+                refuse(MOCK_IMAGE_PICKER_MULTIPLE_ERROR);
                 return;
               }
+              max = Math.min(requestedMax, MOCK_IMAGE_PICKER_MULTI_MAX);
+            }
+            // The library, narrowed to the requested sources, with a repeated
+            // image (same source and url) collapsed onto its first occurrence.
+            const available: BlockPickedImageInfo[] = [];
+            for (const image of cannedImagePicks ?? []) {
+              if (!wanted.includes(image.source)) continue;
+              if (available.some((kept) => kept.source === image.source && kept.url === image.url))
+                continue;
+              available.push(image);
+            }
+            if (max !== null) {
               dispatchToBlock({
                 type: 'IMAGE_PICKER_RESULT',
-                payload: {
-                  requestId,
-                  selectedImages: available
-                    .slice(0, Math.min(max, MOCK_IMAGE_PICKER_MULTI_MAX))
-                    .map((image) => ({ ...image })),
-                },
+                payload: { requestId, selectedImages: available.slice(0, max).map(toWireImagePick) },
               });
               return;
             }
             const first = available[0];
             dispatchToBlock({
               type: 'IMAGE_PICKER_RESULT',
-              payload: { requestId, ...(first ? { selected: { ...first } } : {}) },
+              payload: { requestId, ...(first ? { selected: toWireImagePick(first) } : {}) },
             });
             return;
           }

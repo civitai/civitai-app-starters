@@ -1033,6 +1033,8 @@ describe('isValidImagePickerResult', () => {
   it('accepts a generated pick (no imageId)', () => {
     expect(isValidImagePickerResult({ requestId: 'r', selected: generated })).toBe(true);
   });
+  // The host never sends nsfwLevel 0 (an unrated image is not pickable), but
+  // that rule is the host's: here `nsfwLevel` only has to be a finite number.
   it('accepts nsfwLevel 0 and fractional dimensions (finite is the rule)', () => {
     expect(
       isValidImagePickerResult({
@@ -1075,6 +1077,7 @@ describe('isValidImagePickerResult', () => {
     ['width Infinity', { requestId: 'r', selected: { ...posted, width: Number.POSITIVE_INFINITY } }],
     ['height missing', { requestId: 'r', selected: { ...posted, height: undefined } }],
     ['height zero', { requestId: 'r', selected: { ...posted, height: 0 } }],
+    ['height negative', { requestId: 'r', selected: { ...posted, height: -1216 } }],
     ['height NaN', { requestId: 'r', selected: { ...posted, height: Number.NaN } }],
     ['nsfwLevel missing', { requestId: 'r', selected: { ...posted, nsfwLevel: undefined } }],
     ['nsfwLevel a string', { requestId: 'r', selected: { ...posted, nsfwLevel: '1' } }],

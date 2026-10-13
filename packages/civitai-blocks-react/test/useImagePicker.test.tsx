@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import { IMAGE_PICKER_MULTIPLE_MAX, useImagePicker } from '../src/hooks/useImagePicker.js';
+import {
+  IMAGE_PICKER_MULTIPLE_MAX,
+  IMAGE_PICKER_NO_LIST_ERROR,
+  useImagePicker,
+} from '../src/hooks/useImagePicker.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
@@ -504,27 +508,40 @@ describe('useImagePicker', () => {
       await expect(settled).resolves.toBe('host says no');
     });
 
-    // The contract's multi reply is `selectedImages`. A reply carrying the
-    // single-pick shape instead still becomes a list, so the caller has one
-    // result shape to handle.
-    it('a single-pick `selected` reply is normalised to a one-item list', async () => {
+    // A multi pick is always answered with a list. A reply that passes the
+    // validator but carries none is malformed: it rejects, and is never read as
+    // "nothing picked" or turned into a one-item list.
+    it.each([
+      ['a single-pick `selected` only', { selected: GENERATED }],
+      ['nothing but the requestId', {}],
+    ])('rejects a multi reply carrying %s', async (_, extra) => {
       const { result } = renderHook(() => useImagePicker());
       let pick!: Promise<unknown>;
       act(() => {
         pick = result.current.open({ multiple: { max: 3 } });
       });
-      replyRaw({ requestId: lastSent().payload.requestId, selected: GENERATED });
-      await expect(pick).resolves.toEqual([GENERATED]);
+      const settled = pick.then(
+        (value) => ({ resolved: value }),
+        (err: Error) => ({ rejected: err.message }),
+      );
+      replyRaw({ requestId: lastSent().payload.requestId, ...extra });
+      await expect(settled).resolves.toEqual({ rejected: 'the host returned no image list' });
+      expect(IMAGE_PICKER_NO_LIST_ERROR).toBe('the host returned no image list');
     });
 
-    it('a bare dismiss reply is normalised to an empty list', async () => {
+    // A `multiple` decided at runtime: `undefined` is a single pick, with no
+    // `multiple` key on the wire.
+    it('open({ multiple: undefined }) is a single pick', async () => {
       const { result } = renderHook(() => useImagePicker());
+      const toggle = undefined as { max: number } | undefined;
       let pick!: Promise<unknown>;
       act(() => {
-        pick = result.current.open({ multiple: { max: 3 } });
+        pick = result.current.open({ multiple: toggle });
       });
-      replyRaw({ requestId: lastSent().payload.requestId });
-      await expect(pick).resolves.toEqual([]);
+      const { requestId, ...rest } = lastSent().payload;
+      expect(rest).toStrictEqual({});
+      replyRaw({ requestId, selected: POSTED });
+      await expect(pick).resolves.toEqual(POSTED);
     });
 
     it('drops a list reply with ONE malformed entry rather than returning the rest', async () => {
