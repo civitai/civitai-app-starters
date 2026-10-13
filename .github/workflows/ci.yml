@@ -149,24 +149,33 @@ jobs:
       # Real-browser (vitest browser mode) perf/layout tests for the dev:live
       # picker overlay — happy-dom can't lay out, decode images, or run
       # IntersectionObserver/PerformanceObserver, so these run in headless
-      # Chromium. Install Playwright's bundled Chromium + its OS deps first.
+      # Chromium. Install Playwright's bundled Chromium first.
       # (CI uses the bundled binary; NixOS local runs set
       # PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium) instead.)
       #
-      # 🔴 timeout-minutes is NOT belt-and-braces here. `--with-deps` shells out
-      # to apt-get, and a wedge there is INDISTINGUISHABLE from a slow install:
-      # the job just renders "in progress" until GitHub's 6-hour cap. Measured
-      # 2026-08-19 on one PR — this exact step ran 22-33s on four branches that
-      # morning, then HUNG FOR 2h13m on a commit whose lockfile did not move
-      # playwright at all, and a plain re-run of the same commit completed in
-      # 3m48s. So the hazard is real, unrelated to any diff, and silent.
+      # 🔴 NO `--with-deps`, AND THAT IS THE FIX RATHER THAN AN OMISSION. That
+      # flag runs apt-get, and apt (the runner's package mirror) was where every
+      # slow or timed-out install in this job and its siblings hung; the
+      # browser download itself is fast. Measurements: the commit that removed
+      # it.
       #
-      # 15, not 10: the slowest SUCCESSFUL run observed was 3m48s, so this is
-      # ~4x headroom against a false red (a timeout that fires on healthy runs
-      # trains everyone to click re-run, which is worse than no timeout) while
-      # still cutting a wedge from 6h to 15m.
-      - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
-        timeout-minutes: 15
+      # On `ubuntu-latest` it NEWLY installed no shared library for chromium
+      # (fonts and font tools only). It did UPGRADE libraries already on the
+      # image — libx11, mesa/libgbm, libfreetype6, varying with the image date —
+      # and those upgrades are no longer applied. A chromium crash inside one
+      # of those libraries should suspect this change first.
+      #
+      # 🔴 A MISSING LIBRARY FAILS RED, NOT GREEN: nothing in the browser suites
+      # skips when the browser cannot launch (vitest exits 1 on `Tests  no
+      # tests`; `check-examples-render` exits 1 from `chromium.launch()`). The
+      # remedy is to install that one package, not `--with-deps`.
+      #
+      # Fonts are gone with it: no test asserts a glyph or text width today; one
+      # that does needs its font installed.
+      #
+      # 5 minutes: with apt gone the step is the download only (worst seen 86s).
+      - run: pnpm --filter @civitai/blocks-react exec playwright install chromium
+        timeout-minutes: 5
       - run: pnpm --filter @civitai/blocks-react test:browser
 
   # SELF-CONTAINED design-system job. Everything here builds/typechecks/tests
@@ -237,12 +246,12 @@ jobs:
       # the elements. This step also carried HTML-vs-React computed-style
       # parity until components-react@0.9.0 deleted the hand-written React
       # layer the parity test compared against. Bundled Chromium in CI.
-      # Same apt/network wedge hazard as the blocks-react job above — see the
-      # measurement recorded there. This is the step that actually hung; both
-      # sites get the guard, because fixing only the one that bit us leaves the
-      # identical bug armed at the other.
-      - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
-        timeout-minutes: 15
+      # No `--with-deps`, and a 5-minute cap: see the measurement recorded on
+      # the `blocks-react` job's identical step. All three chromium installs in
+      # this file are the same line for the same reason — fixing only the one
+      # that bit us leaves the identical bug armed at the others.
+      - run: pnpm --filter @civitai/components-react exec playwright install chromium
+        timeout-minutes: 5
       - run: pnpm --filter @civitai/components-react test:browser
 
       # The custom elements: real upgrade, ElementInternals and computed styles,
@@ -250,36 +259,69 @@ jobs:
       # already installed by the step above (one shared Playwright cache).
       - run: pnpm --filter @civitai/components test:browser
 
-  # ADVISORY cross-engine contract. Kept OUT of branch protection because the
-  # cost here is the BROWSER INSTALL, not the tests: `playwright install
-  # --with-deps` was measured wedging for 2h13m on one commit (2026-08-19),
-  # which is why every install step in this file carries a timeout. Three
-  # engines triples that exposure, so a wedge or an upstream apt failure must
-  # not be able to block a PR. The chromium half of this contract already runs
-  # inside the REQUIRED `design-system` job, so nothing is only checked here.
+  # ADVISORY cross-engine contract. The chromium half of this contract already
+  # runs inside the REQUIRED `design-system` job, so nothing is only checked
+  # here.
+  #
+  # 🔴 IT RUNS IN THE PLAYWRIGHT IMAGE, BECAUSE WEBKIT CANNOT DO WITHOUT APT ON
+  # THE RUNNER AND APT IS WHAT WEDGED. Measured, per engine, on `ubuntu-latest`
+  # with a plain `playwright install` (no `--with-deps`): chromium and firefox
+  # launch and pass; webkit dies at launch on 35 missing libraries (libgtk-4,
+  # the gstreamer set, libavif, libflite, …). `--with-deps` for three engines
+  # was 181 packages / 126 MB from the runner's apt mirror — this job's install
+  # step timed out at 25 minutes three times in ten days, and once took 24m31s
+  # and passed (`Fetched 126 MB in 23min 58s (87.4 kB/s)`).
+  #
+  # The image carries all three engines AND their system libraries, so this job
+  # has no install step at all: one registry pull replaces apt and the three
+  # CDN downloads.
+  #
+  # 🔴 THE TAG IS THE ONE HAND-WRITTEN PLAYWRIGHT VERSION IN THIS FILE. The
+  # image's browsers only launch under the Playwright that image was built
+  # for, and the package comes from pnpm-lock.yaml — a mismatch fails every
+  # launch with `Executable doesn't exist at /ms-playwright/…`.
+  # A playwright bump (Dependabot opens them) therefore needs the tag below
+  # edited by hand; THIS JOB GOING RED on the bump PR is the signal. Nothing
+  # else gates it, deliberately: a guard in the required jobs would turn every
+  # such bump red until the edit, for an advisory job that already says so.
+  #
+  # `--user 1001` is the runner's own uid: firefox refuses to start when $HOME
+  # is not owned by the user running it, and the image's default is root.
+  #
+  # Still OUT of branch protection: the pull is a network fetch like any other.
+  # It has no step to put a timeout on (it happens in the runner's own
+  # `Initialize containers`), hence the JOB-level cap.
   design-system-cross-browser:
     name: design-system cross-browser contract (advisory)
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    timeout-minutes: 15
+    container:
+      # Must equal the `playwright` version in pnpm-lock.yaml — see above.
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      options: --user 1001
     steps:
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
+      # No pnpm store cache in this job, unlike every other one. Inside the
+      # container the store sits under a different $HOME, so the cache entry
+      # the other jobs share never matches here: this job would keep a second
+      # copy of the store under the same key, and pay to save it (37s, measured,
+      # with the gzip the image falls back to) each time the lockfile moves.
+      # A cold `pnpm install` here was measured at 8s.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
-
-      - run: pnpm --filter @civitai/components exec playwright install --with-deps chromium firefox webkit
-        timeout-minutes: 25
 
       # Probes the platform features the elements are built on, then the
       # cross-engine surface itself: upgrade, token inheritance across the
@@ -576,10 +618,10 @@ jobs:
       # headless Chromium and check it renders past "Loading…", logs no error,
       # and PAINTS the host's theme (dark under a light OS was white until the
       # examples went dark-first). ~15s for the original 6 examples x 3 scenarios locally.
-      # timeout-minutes on the install for the apt-get wedge documented on the
-      # `blocks-react` job's identical step.
-      - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
-        timeout-minutes: 15
+      # No `--with-deps`, and a 5-minute cap on the install: both for the
+      # reasons measured on the `blocks-react` job's identical step.
+      - run: pnpm --filter @civitai/blocks-react exec playwright install chromium
+        timeout-minutes: 5
       - run: pnpm check:examples-render
         timeout-minutes: 5
 
