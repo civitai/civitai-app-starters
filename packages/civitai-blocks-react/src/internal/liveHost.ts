@@ -558,10 +558,13 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   /**
    * The single tRPC transport primitive. Builds the non-batched httpLink +
    * superjson request for `procedure` and returns the PARSED envelope (or an
-   * error). `method` selects the tRPC verb:
-   *   - `'POST'` (mutation): body is `{ json: <input> }`.
-   *   - `'GET'` (query): input is querystring-encoded as
-   *     `?input=encodeURIComponent(JSON.stringify({ json: <input> }))`.
+   * error). Every call — query or mutation — is a POST to
+   * `/api/trpc/<procedure>` with body `{ json: <input> }` and no querystring.
+   * For a QUERY that is tRPC's query method override, which civitai.com's
+   * tRPC handler accepts (`allowMethodOverride: true`); the procedure is still
+   * a query on the server. Never GET: every procedure the live host calls
+   * takes the block token (a bearer credential) in its input, and a GET would
+   * put that input — token included — in the URL (`?input=…`).
    * Every call carries `Authorization: Bearer <rawToken>`. A thrown fetch →
    * `{ error, transient: true }`; a non-2xx → `{ error, transient }` (status-
    * classified via {@link isTransientHttpStatus}). Both `callTrpcMutation` and
@@ -570,27 +573,20 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   async function rawTrpcCall(
     procedure: string,
     input: Record<string, unknown>,
-    method: 'GET' | 'POST',
   ): Promise<RawTrpcResult> {
     if (!fetchImpl) return { error: 'no fetch available' };
     try {
-      let url = `${baseUrl}/api/trpc/${procedure}`;
+      const url = `${baseUrl}/api/trpc/${procedure}`;
       const init: RequestInit = {
-        method,
+        method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${rawToken}`,
         },
-      };
-      if (method === 'GET') {
-        // tRPC query: superjson input goes in the querystring.
-        const encoded = encodeURIComponent(JSON.stringify({ json: input }));
-        url = `${url}?input=${encoded}`;
-      } else {
         // Non-batched httpLink + superjson transformer wraps the input as
         // `{ json: <input> }` (no `meta` for plain JSON inputs).
-        init.body = JSON.stringify({ json: input });
-      }
+        body: JSON.stringify({ json: input }),
+      };
       const res = await fetchImpl(url, init);
       const text = await res.text();
       let parsed: unknown;
@@ -626,7 +622,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     procedure: string,
     input: Record<string, unknown>,
   ): Promise<TrpcCallResult> {
-    const raw = await rawTrpcCall(procedure, input, 'POST');
+    const raw = await rawTrpcCall(procedure, input);
     if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
     const snapshot = extractSnapshot(raw.parsed);
     if (!snapshot) {
@@ -637,16 +633,16 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
   /**
    * Call a tRPC DATA procedure (storage / settings) and unwrap the plain data
-   * object it returns (via {@link extractData}). `method` is `'GET'` for queries
-   * (`apps.storage.{get,list,getQuota}`) and `'POST'` for mutations
-   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`).
+   * object it returns (via {@link extractData}). Queries
+   * (`apps.storage.{get,list,getQuota}`) and mutations
+   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`) alike — the
+   * wire form is the same POST (see {@link rawTrpcCall}).
    */
   async function callTrpcData(
     procedure: string,
     input: Record<string, unknown>,
-    method: 'GET' | 'POST',
   ): Promise<TrpcDataResult> {
-    const raw = await rawTrpcCall(procedure, input, method);
+    const raw = await rawTrpcCall(procedure, input);
     if (raw.error !== undefined) {
       return {
         error: raw.error,
@@ -1069,7 +1065,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.estimateWorkflowBatch',
               { blockToken: rawToken, bodies: typed.payload?.bodies },
-              'POST',
             ).then((r) => {
               const data = r.data as { snapshots?: unknown; aggregate?: unknown } | undefined;
               dispatchToBlock({
@@ -1237,7 +1232,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzBalance',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_BALANCE_RESULT',
@@ -1262,7 +1256,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyViewer',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'VIEWER_RESULT',
@@ -1283,7 +1276,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzTransactions',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_TRANSACTIONS_RESULT',
@@ -1300,7 +1292,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzAccounts',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_ACCOUNTS_RESULT',
@@ -1317,7 +1308,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyDailyCompensation',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'DAILY_COMPENSATION_RESULT',
@@ -1477,7 +1467,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.queryAppWorkflows',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'APP_WORKFLOWS_RESULT',
@@ -1502,7 +1491,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.cancelAppWorkflow',
               { blockToken: rawToken, workflowId: cancelId },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'CANCEL_APP_WORKFLOW_RESULT',
@@ -1563,7 +1551,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getImagesByIds',
               { blockToken: rawToken, imageIds: typed.payload?.imageIds ?? [] },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'IMAGES_RESULT',
@@ -1721,7 +1708,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.updateUserSettings',
               { blockToken: rawToken, settings: { checkpoint_version_id: versionId } },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'USER_CHECKPOINT_SET',
@@ -1734,11 +1720,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_GET': {
-            // Query apps.storage.get {blockToken, key} (GET). The server enforces
+            // Query apps.storage.get {blockToken, key} (sent as POST). The server enforces
             // the apps:storage:read scope; the dev token carries it iff the local
             // manifest declared it.
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }, 'GET').then(
+            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1767,7 +1753,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.storage.set',
               { blockToken: rawToken, key, value },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -1795,7 +1780,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.storage.delete',
               { blockToken: rawToken, key },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -1822,7 +1806,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_LIST': {
-            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (GET).
+            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (sent as POST).
             // Clamp the limit to the server's [1,200] bound (default 50); only
             // include prefix/cursor when they're strings so JSON.stringify drops
             // the undefined keys (the server input is `.optional()`).
@@ -1836,7 +1820,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof prefix === 'string') listInput.prefix = prefix;
             if (typeof cursor === 'string') listInput.cursor = cursor;
-            void callTrpcData('apps.storage.list', listInput, 'GET').then((r) => {
+            void callTrpcData('apps.storage.list', listInput).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'APP_STORAGE_LIST_RESULT',
@@ -1871,8 +1855,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_QUOTA': {
-            // Query apps.storage.getQuota {blockToken} (GET).
-            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }, 'GET').then(
+            // Query apps.storage.getQuota {blockToken} (sent as POST).
+            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1928,7 +1912,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
             if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
-            void callTrpcData('apps.shared.list', listInput, 'GET').then((r) => {
+            void callTrpcData('apps.shared.list', listInput).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_LIST_RESULT',
@@ -1955,7 +1939,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_GET_COUNT': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }, 'GET').then(
+            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1979,7 +1963,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.getCounts',
               { blockToken: rawToken, keys },
-              'GET',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -2021,7 +2004,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // so a `?g=` deep-link to a moderated row cannot distinguish it
             // from an absent one. Only a HOST-SIDE failure sets `error`.
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }, 'GET').then((r) => {
+            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_GET_RESULT',
@@ -2060,7 +2043,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.append',
               { blockToken: rawToken, value },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -2084,7 +2066,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.update',
               { blockToken: rawToken, key, value },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'SHARED_UPDATE_RESULT',
@@ -2098,7 +2079,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_VOTE': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -2119,7 +2100,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_UNVOTE': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -2140,7 +2121,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_WITHDRAW': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -2185,7 +2166,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             if (typeof typed.payload?.reason === 'string') {
               reportInput.reason = typed.payload.reason;
             }
-            void callTrpcData('apps.shared.report', reportInput, 'POST').then((r) => {
+            void callTrpcData('apps.shared.report', reportInput).then((r) => {
               dispatchToBlock({
                 type: 'SHARED_REPORT_RESULT',
                 payload: r.error
