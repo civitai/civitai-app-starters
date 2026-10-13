@@ -856,7 +856,7 @@ describe('useBuzzWorkflow', () => {
   it.each([
     ['training-quote-rejected', 'Training could not be priced: dataset entry 3 has no caption'],
     ['training-quote-unavailable', 'Training needs a price quote and none could be obtained; try again.'],
-    ['training-quote-unpriced', 'Training needs a price quote and none could be obtained; try again.'],
+    ['training-quote-unpriced', 'Training needs a price quote and the orchestrator answered without one.'],
   ])('estimate() delivers errorCode %s on the rejected error’s snapshot', async (errorCode, error) => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const { settled, reply } = driveEstimate(result.current.estimate as never);

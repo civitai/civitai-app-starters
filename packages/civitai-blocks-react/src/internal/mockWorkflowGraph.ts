@@ -74,8 +74,17 @@ export interface MockWorkflowRefusal {
     | 'workflow_ref_invalid'
     | 'workflow_too_many_steps'
     | 'workflow_repeat_unbounded'
-    | 'training-quote-unavailable';
+    | `training-quote-${MockWorkflowQuoteFailure}`
+    | `workflow_quote_${MockWorkflowQuoteFailure}`;
 }
+
+/**
+ * Why the host has no price quote for a workflow (its `PassThroughQuoteFailure`
+ * kinds): `'rejected'` — the orchestrator refused the body, so the same body
+ * will fail again; `'unavailable'` — no usable answer, the one cause a retry of
+ * the same body can clear; `'unpriced'` — an answer without a price.
+ */
+export type MockWorkflowQuoteFailure = 'rejected' | 'unavailable' | 'unpriced';
 
 const ARGUMENTS_REF = '$arguments';
 /** The name the single-step kinds give their one step; a workflow step may not take it. */
@@ -329,30 +338,57 @@ function checkStepInput(
   return checkStepInput(template.$type, template.input, depth + 2, new Set([...sources, forClause.as]), state);
 }
 
-/** The host's refusal text for an unquoted training step (`UNQUOTED_TRAINING_ERROR`). */
-export const MOCK_UNQUOTED_TRAINING_ERROR =
-  'Training needs a price quote and none could be obtained; try again.';
+/**
+ * The host's `quoteFailureCause`: why there is no quote, as the clause that
+ * completes "…needs a price quote and ". Only `'unavailable'` says "try again".
+ * The mock has no orchestrator message to pass on, so `'rejected'` is the host's
+ * wording for a rejection with no reason safe to show.
+ */
+const MOCK_QUOTE_FAILURE_CAUSE: Record<MockWorkflowQuoteFailure, string> = {
+  rejected:
+    'the orchestrator rejected the request; check the step inputs and references ' +
+    '(retrying the same body will not help)',
+  unavailable: 'none could be obtained; try again',
+  unpriced: 'the orchestrator answered without one',
+};
+
+/** The host's refusal text for an unquoted training step (`unquotedTrainingRefusal`). */
+export const mockUnquotedTrainingError = (failure: MockWorkflowQuoteFailure): string =>
+  `Training needs a price quote and ${MOCK_QUOTE_FAILURE_CAUSE[failure]}.`;
 
 /**
- * The refusal for a body {@link mockWorkflowBodyRefusal} ACCEPTED when the host
- * could get NO price quote for it, or `null` when it would proceed (reserved at
- * the ceiling). In the host's order: a training step anywhere (its own
- * `training-quote-*` refusal — the mock reports `'training-quote-unavailable'`,
- * the code for "no usable answer"), then a `repeat` anywhere
- * (`workflow_repeat_unbounded`, naming the first such step).
+ * The refusal, on BOTH the estimate and the submit, for a body
+ * {@link mockWorkflowBodyRefusal} ACCEPTED when the host has no price quote for
+ * it, or `null` when the submit would proceed (reserved at the ceiling). In the
+ * host's order: a training step anywhere (`training-quote-<failure>`), then a
+ * `repeat` anywhere (`workflow_repeat_unbounded`, naming the first such step).
+ * The message states the cause.
  */
-export function mockUnpricedWorkflowRefusal(body: {
-  steps: ReadonlyArray<{ $type: string; input: unknown }>;
-}): MockWorkflowRefusal | null {
+export function mockUnpricedWorkflowRefusal(
+  body: { steps: ReadonlyArray<{ $type: string; input: unknown }> },
+  failure: MockWorkflowQuoteFailure,
+): MockWorkflowRefusal | null {
   const types = body.steps.map((step) => collectStepTypes(step.$type, step.input) ?? [step.$type]);
   if (types.some((ts) => ts.some((t) => t === 'training' || t === 'imageResourceTraining'))) {
-    return { error: MOCK_UNQUOTED_TRAINING_ERROR, errorCode: 'training-quote-unavailable' };
+    return { error: mockUnquotedTrainingError(failure), errorCode: `training-quote-${failure}` };
   }
   const index = types.findIndex((ts) => ts.some(isRepeat));
   if (index === -1) return null;
   return {
-    error: `workflow step ${index}: a workflow with a repeat needs a price quote and none could be obtained; try again`,
+    error: `workflow step ${index}: a workflow with a repeat needs a price quote and ${MOCK_QUOTE_FAILURE_CAUSE[failure]}`,
     errorCode: 'workflow_repeat_unbounded',
+  };
+}
+
+/**
+ * The host's `unquotedWorkflowEstimateRefusal`: what an ESTIMATE of a workflow
+ * with no price quote fails with when {@link mockUnpricedWorkflowRefusal} did
+ * not already refuse it. Estimate only — the submit of the same body proceeds.
+ */
+export function mockUnquotedWorkflowEstimateRefusal(failure: MockWorkflowQuoteFailure): MockWorkflowRefusal {
+  return {
+    error: `No price quote for this workflow: ${MOCK_QUOTE_FAILURE_CAUSE[failure]}`,
+    errorCode: `workflow_quote_${failure}`,
   };
 }
 

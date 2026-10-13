@@ -630,46 +630,121 @@ describe('createMockHost — kind: workflow', () => {
     const repeatStep = (template: Record<string, unknown> = { $type: 'echo' }) =>
       step('r', { for: { $ref: '$arguments', path: 'xs', as: 'x' }, template }, { $type: 'repeat' });
 
-    it.each([
-      ['a top-level repeat', workflow([step('a'), repeatStep()], { xs: [1] }), 1],
-      [
-        'a repeat nested in a repeat',
-        workflow(
-          [repeatStep({ $type: 'repeat', input: { for: { $ref: '$arguments', path: 'xs', as: 'y' }, template: { $type: 'echo' } } })],
-          { xs: [1] },
-        ),
-        0,
-      ],
-    ])('refuses %s with workflow_repeat_unbounded, before anything is debited', async (_, body, index) => {
-      const { host, estimate, submit } = await setup({ buzz: { balance: 500 }, generation: { workflowUnpriced: true } });
-      const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_repeat_unbounded');
-      expect(snapshot.error).toBe(
-        `workflow step ${index}: a workflow with a repeat needs a price quote and none could be obtained; try again`,
-      );
-      const out = await submit(body);
-      expect(out).toBeInstanceOf(WorkflowSubmitError);
-      expect((out as WorkflowSubmitError).snapshot.errorCode).toBe('workflow_repeat_unbounded');
-      expect(host.buzz.getBalance()).toBe(500);
-    });
-
-    it('refuses a training step (even in a repeat template) with the training code, ahead of the repeat', async () => {
-      const { estimate } = await setup({ generation: { workflowUnpriced: true } });
-      const body = workflow([repeatStep({ $type: 'training', input: {} })], { xs: [1] });
-      const snapshot = expectEstimateRefusal(await estimate(body), 'training-quote-unavailable');
-      expect(snapshot.error).toBe('Training needs a price quote and none could be obtained; try again.');
-    });
-
-    it('a workflow with neither proceeds, reserved at budget × steps with no fee', async () => {
-      const { host, estimate, submit, poll } = await setup({
+    // The host's `quoteFailureCause`, written out: these are the wire strings.
+    const CAUSE = {
+      rejected:
+        'the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)',
+      unavailable: 'none could be obtained; try again',
+      unpriced: 'the orchestrator answered without one',
+    } as const;
+    /** Every knob value, with the cause it selects; `true` is the 0.71.0 spelling of `'unavailable'`. */
+    const KNOBS = [
+      ['rejected', 'rejected'],
+      ['unavailable', 'unavailable'],
+      ['unpriced', 'unpriced'],
+      [true, 'unavailable'],
+    ] as const;
+    /** Budget 50 × 3 steps = 150: equal to no step price (5, 11, 23), their sum (39) or sum + fee (46). */
+    const unpriced = (knob: (typeof KNOBS)[number][0]) =>
+      ({
         buzzBudget: 50,
         buzz: { balance: 500 },
         pollsUntilDone: 1,
-        generation: { workflowUnpriced: true, costPerGen, authorFee: FEE },
+        generation: { workflowUnpriced: knob, costPerGen, authorFee: FEE },
+      }) as const;
+
+    it.each(KNOBS)('%s: an estimate FAILS with workflow_quote_%s and no price', async (knob, cause) => {
+      const { estimate } = await setup(unpriced(knob));
+      const snapshot = expectEstimateRefusal(await estimate(chain()), `workflow_quote_${cause}`);
+      expect(snapshot.error).toBe(`No price quote for this workflow: ${CAUSE[cause]}`);
+      // The whole reply: no `cost`, and not the `pending` quote sentinel.
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        error: `No price quote for this workflow: ${CAUSE[cause]}`,
+        errorCode: `workflow_quote_${cause}`,
       });
-      expect(((await estimate(chain())) as BlockWorkflowSnapshot).cost).toEqual({ total: 150, authorFee: 0 });
-      const { workflowId } = (await submit(chain())) as BlockWorkflowSnapshot;
+    });
+
+    it.each(KNOBS)('%s: the SUBMIT of the same body still proceeds, reserved at budget × steps with no fee', async (knob) => {
+      const { host, estimate, submit, poll } = await setup(unpriced(knob));
+      expect(await estimate(chain())).toBeInstanceOf(WorkflowEstimateError);
+      const submitted = (await submit(chain())) as BlockWorkflowSnapshot;
+      expect(submitted.status).toBe('pending');
+      expect(submitted.errorCode).toBeUndefined();
       expect(host.buzz.getBalance()).toBe(350);
-      expect((await poll(workflowId)).cost).toEqual({ total: 150 });
+      expect((await poll(submitted.workflowId)).cost).toEqual({ total: 150 });
+    });
+
+    it.each(KNOBS)('%s: a batch-estimate cell fails with workflow_quote_%s and is left out of the total', async (knob, cause) => {
+      const { result } = await setup(unpriced(knob));
+      let batch: Awaited<ReturnType<typeof result.current.batchEstimate.estimateBatch>> | undefined;
+      await act(async () => {
+        batch = await result.current.batchEstimate.estimateBatch([
+          chain(),
+          { kind: 'textToImage', modelId: 1, modelVersionId: 2, params: { prompt: 'x' } },
+        ]);
+      });
+      const [first, second] = batch!.cells;
+      expect(first!.ok).toBe(false);
+      expect(!first!.ok && first!.error.snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        error: `No price quote for this workflow: ${CAUSE[cause]}`,
+        errorCode: `workflow_quote_${cause}`,
+      });
+      // The knob touches no other kind.
+      expect(second).toMatchObject({ ok: true, cost: { total: 1007, authorFee: 7 } });
+      expect(batch!.aggregate).toEqual({ total: 1007, pricedCells: 1, cellCount: 2 });
+    });
+
+    it.each([false, undefined, 'nonsense' as never])('%s leaves every workflow quoted', async (knob) => {
+      const { estimate } = await setup({ ...unpriced('unpriced'), generation: { workflowUnpriced: knob, costPerGen, authorFee: FEE } });
+      expect(((await estimate(chain())) as BlockWorkflowSnapshot).cost).toEqual({ total: 46, authorFee: 7 });
+    });
+
+    it('is live-tunable: the cause follows setScenario, and clearing it restores the quote', async () => {
+      const { host, estimate } = await setup({ generation: { costPerGen, authorFee: FEE } });
+      expect(((await estimate(chain())) as BlockWorkflowSnapshot).cost).toEqual({ total: 46, authorFee: 7 });
+      act(() => host.setScenario({ generation: { workflowUnpriced: 'rejected' } }));
+      expectEstimateRefusal(await estimate(chain()), 'workflow_quote_rejected');
+      act(() => host.setScenario({ generation: { workflowUnpriced: false } }));
+      expect(((await estimate(chain())) as BlockWorkflowSnapshot).cost).toEqual({ total: 46, authorFee: 7 });
+    });
+
+    describe.each(KNOBS)('%s: a repeat or a training step is refused on both paths', (knob, cause) => {
+      it.each([
+        ['a top-level repeat', workflow([step('a'), repeatStep()], { xs: [1] }), 1],
+        [
+          'a repeat nested in a repeat',
+          workflow(
+            [repeatStep({ $type: 'repeat', input: { for: { $ref: '$arguments', path: 'xs', as: 'y' }, template: { $type: 'echo' } } })],
+            { xs: [1] },
+          ),
+          0,
+        ],
+      ])('refuses %s with workflow_repeat_unbounded, before anything is debited', async (_, body, index) => {
+        const { host, estimate, submit } = await setup({ buzz: { balance: 500 }, generation: { workflowUnpriced: knob } });
+        const error = `workflow step ${index}: a workflow with a repeat needs a price quote and ${CAUSE[cause]}`;
+        const snapshot = expectEstimateRefusal(await estimate(body), 'workflow_repeat_unbounded');
+        expect(snapshot.error).toBe(error);
+        const out = await submit(body);
+        expect(out).toBeInstanceOf(WorkflowSubmitError);
+        expect((out as WorkflowSubmitError).snapshot.errorCode).toBe('workflow_repeat_unbounded');
+        expect((out as WorkflowSubmitError).snapshot.error).toBe(error);
+        expect(host.buzz.getBalance()).toBe(500);
+      });
+
+      it('refuses a training step (even in a repeat template) with the training code, ahead of the repeat', async () => {
+        const { host, estimate, submit } = await setup({ buzz: { balance: 500 }, generation: { workflowUnpriced: knob } });
+        const body = workflow([repeatStep({ $type: 'training', input: {} })], { xs: [1] });
+        const snapshot = expectEstimateRefusal(await estimate(body), `training-quote-${cause}`);
+        expect(snapshot.error).toBe(`Training needs a price quote and ${CAUSE[cause]}.`);
+        const out = await submit(body);
+        expect(out).toBeInstanceOf(WorkflowSubmitError);
+        expect((out as WorkflowSubmitError).snapshot.errorCode).toBe(`training-quote-${cause}`);
+        expect(host.buzz.getBalance()).toBe(500);
+      });
     });
 
     it('a QUOTED repeat workflow is not refused', async () => {

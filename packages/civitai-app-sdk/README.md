@@ -259,10 +259,15 @@ const body: WorkflowBody = {
 
 - 🔴 **The estimate is not a maximum.** The orchestrator re-prices a step once the values it
   references are known and charges the difference.
-- **A workflow the host cannot price still proceeds**, reserved at the ceiling above — unless it
-  contains a training step (refused without a quote, as on the single-step arm) or a `repeat`
-  step at any depth (also refused without a quote, before any reservation, as
-  `workflow_repeat_unbounded`).
+- **A workflow the host cannot price has no estimate, but its submit still proceeds.** The
+  estimate (and a batch-estimate cell) fails with no `cost` and `snapshot.errorCode`
+  `workflow_quote_rejected` (the orchestrator refused the body; the same body will fail again),
+  `workflow_quote_unavailable` (no usable answer; the one a retry can clear) or
+  `workflow_quote_unpriced` (an answer without a price). The submit of the same body is reserved
+  at the ceiling above — unless it contains a training step (refused without a quote on both, as
+  on the single-step arm) or a `repeat` step at any depth (also refused on both, before any
+  reservation, as `workflow_repeat_unbounded`; its `error` states the cause). An older host
+  returns the ceiling as the estimate's `cost.total` instead of failing.
 - **One author fee per workflow**, on the quoted base, itemised as `cost.authorFee` on the
   estimate. If the workflow bills more, the fee charged is held to the fee shown; a workflow that
   does not succeed has its whole fee reversed, even if earlier steps delivered output.
@@ -277,8 +282,8 @@ const body: WorkflowBody = {
 - A refused body carries `snapshot.errorCode`: `workflow_step_denied` (a platform-internal
   `$type`), `workflow_ref_invalid` (a reference to the step itself, a later step, or nothing, or a
   step name that breaks the naming rules, or a malformed `repeat`/`merge`),
-  `workflow_repeat_unbounded` (a `repeat` not over an array in `arguments`, or over 16 iterations)
-  or `workflow_too_many_steps`. The single-step pass-through arm refuses `repeat` outright.
+  `workflow_repeat_unbounded` (a `repeat` not over an array in `arguments`, or over 16 iterations,
+  or a `repeat` with no price quote) or `workflow_too_many_steps`. The single-step pass-through arm refuses `repeat` outright.
 - Requires a host that knows the kind; an older host refuses the body.
 
 ### `defineBlock` validator rules
