@@ -8,4 +8,6 @@ The host waits 10 seconds for a block's handshake (`BLOCK_HELLO`, then `BLOCK_RE
 
 Every hook exported from the package root now creates the transport in a mount effect. The effect does not run during server rendering, so these hooks stay safe to render on a server. Nothing is created when the package is imported, so `getTransport({ allowedParentOrigins })` called before the first component mounts, as dev harnesses and tests do, still takes effect. If no parent allowlist is configured, the mount-time connect logs one `console.error` instead of throwing, and the block keeps rendering. The first bridge call throws the same error as before.
 
+The transport now handles its own 10-second `BLOCK_INIT` timeout. Because hooks connect at mount, an unhandled timeout would otherwise fail the test run of any block app whose tests mount a hook with no host. The timeout message, which names the configured and observed origins, is now logged with `console.warn` and is no longer an unhandled rejection. `waitForInit()` still rejects with the same error.
+
 No migration is needed. A block that uses no hook from this package still never connects. Call `useBlockContext()` at its root.
