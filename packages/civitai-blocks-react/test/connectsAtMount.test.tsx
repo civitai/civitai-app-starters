@@ -180,34 +180,45 @@ describe('every public hook connects the block at mount', () => {
   // The connection is ADDITIVE: a block with no parent allowlist configured used
   // to render and fail only on its first bridge call. It must not now crash on
   // mount instead — the failure is logged once, and the bridge call still throws.
-  it('a block with no allowlist still renders; the failure is logged once, not thrown', async () => {
-    resetTransport();
-    vi.stubEnv('VITE_BLOCK_ALLOWED_PARENT_ORIGINS', '');
-    vi.stubEnv('NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS', '');
-    vi.stubEnv('PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS', '');
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let api: ReturnType<typeof entry.useBuzzWorkflow> | undefined;
-    function Probe(): ReactElement {
-      api = entry.useBuzzWorkflow();
-      return <span>rendered</span>;
-    }
-    try {
-      const first = render(<Probe />);
-      const second = render(<Probe />);
-      expect(first.getAllByText('rendered').length).toBeGreaterThan(0);
-      expect(second.getAllByText('rendered').length).toBeGreaterThan(0);
-      const connectLogs = errorSpy.mock.calls.filter((c) =>
-        String(c[0]).includes('could not connect to the host at mount'),
-      );
-      expect(connectLogs).toHaveLength(1);
-      expect(String(connectLogs[0]![1])).toContain('allowedParentOrigins must contain at least one entry');
-      // Unchanged behaviour: the first bridge call surfaces the same error.
-      await expect(api!.cancel('wf')).rejects.toThrow(/allowedParentOrigins/);
-    } finally {
-      cleanup();
-      errorSpy.mockRestore();
-      vi.unstubAllEnvs();
+  //
+  // 🔴 RUN TWICE, ON PURPOSE. The once-only latch lives beside the transport and
+  // is cleared by `resetTransport()`. With a latch that outlived the reset, only
+  // the FIRST misconfigured case in a worker would ever see its log, so a single
+  // case passes for the wrong reason: it is green only because nothing tripped
+  // the latch before it. The second run is the one that proves the reset.
+  it.each(['first', 'second'])(
+    'a block with no allowlist still renders; the failure is logged once, not thrown (%s run)',
+    async () => {
       resetTransport();
-    }
-  });
+      vi.stubEnv('VITE_BLOCK_ALLOWED_PARENT_ORIGINS', '');
+      vi.stubEnv('NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS', '');
+      vi.stubEnv('PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS', '');
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let api: ReturnType<typeof entry.useBuzzWorkflow> | undefined;
+      function Probe(): ReactElement {
+        api = entry.useBuzzWorkflow();
+        return <span>rendered</span>;
+      }
+      try {
+        const first = render(<Probe />);
+        const second = render(<Probe />);
+        expect(first.getAllByText('rendered').length).toBeGreaterThan(0);
+        expect(second.getAllByText('rendered').length).toBeGreaterThan(0);
+        const connectLogs = errorSpy.mock.calls.filter((c) =>
+          String(c[0]).includes('could not connect to the host at mount'),
+        );
+        expect(connectLogs).toHaveLength(1);
+        expect(String(connectLogs[0]![1])).toContain(
+          'allowedParentOrigins must contain at least one entry',
+        );
+        // Unchanged behaviour: the first bridge call surfaces the same error.
+        await expect(api!.cancel('wf')).rejects.toThrow(/allowedParentOrigins/);
+      } finally {
+        cleanup();
+        errorSpy.mockRestore();
+        vi.unstubAllEnvs();
+        resetTransport();
+      }
+    },
+  );
 });

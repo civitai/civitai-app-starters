@@ -1,9 +1,6 @@
 import { useEffect } from 'react';
 
-import { getTransport } from '../transport/singleton.js';
-
-/** One console line per page, not one per hook instance per mount. */
-let reportedConnectFailure = false;
+import { claimConnectFailureReport, getTransport } from '../transport/singleton.js';
 
 /**
  * Connects the block to its host at MOUNT. Internal — every public hook calls
@@ -20,6 +17,12 @@ let reportedConnectFailure = false;
  * answered the host and was torn down before anyone could click. Calling this
  * from every public hook makes "uses any SDK hook" imply "is connected".
  * `test/connectsAtMount.test.tsx` pins it over the whole exported hook set.
+ *
+ * 🔴 IT IS CALLED EVEN WHERE IT IS REDUNDANT, ON PURPOSE. About half the hooks
+ * already reach `getTransport()` at render or in a mount fetch; they call this
+ * anyway so the rule is "every public hook", which needs no case analysis. A
+ * mount fetch can be conditional (`useWildcardPack` skips it for an invalid id),
+ * so "it already fetches on mount" is not a safe reason to leave one out.
  *
  * 🔴 WHY AN EFFECT, NOT RENDER. `useBlockContext` constructs during render, and
  * that is fine for it — but a render-time call throws during SSR (the iframe
@@ -45,8 +48,9 @@ export function useTransportConnection(): void {
     try {
       getTransport();
     } catch (err) {
-      if (!reportedConnectFailure) {
-        reportedConnectFailure = true;
+      // One console line per transport lifecycle, not one per hook instance:
+      // a block calling ten hooks would otherwise log ten identical errors.
+      if (claimConnectFailureReport()) {
         // eslint-disable-next-line no-console -- developer-facing diagnostic; the host will time this block out
         console.error('@civitai/blocks-react: could not connect to the host at mount.', err);
       }
