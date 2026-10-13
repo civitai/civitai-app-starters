@@ -231,6 +231,10 @@ function toBatchEstimateError(err: unknown): BatchEstimateError {
  * - **At most {@link BATCH_ESTIMATE_MAX_CELLS} bodies per call.**
  * - **`kind: 'training'` bodies are refused per cell.** Estimate a training run
  *   with `useBuzzWorkflow().estimate()`.
+ * - **A cell never carries a `stepQuote`.** A batch stores nothing, so a
+ *   pass-through step priced above the per-call budget comes back with its cost
+ *   and no confirmable quote. To run it with `useRunConfirmedStep()`, estimate
+ *   that one body with `useBuzzWorkflow().estimate()`.
  *
  * 🔴 ESTIMATE ONLY. There is no batch submit and no server-side id for the
  * list. To watch and cancel the submitted cells together, use

@@ -1332,7 +1332,45 @@ export type WorkflowBodyPassThroughStep = {
    * viewer as a maximum.
    */
   maxBuzz: number;
+  /**
+   * The viewer-confirmable quote this job is charged against —
+   * {@link BlockStepQuote.quoteId} from this body's own estimate
+   * (`sq_` + 32 lowercase hex characters, {@link BLOCK_STEP_QUOTE_ID_REGEX}).
+   *
+   * OMIT it everywhere except a CONFIRMED run: an estimate never carries it,
+   * and neither does an ordinary submit. It is REQUIRED on
+   * `RUN_CONFIRMED_STEP` (`useRunConfirmedStep()` in `@civitai/blocks-react`),
+   * the only message that can run a job priced above the token's per-call
+   * budget — see {@link BlockWorkflowSnapshot.stepQuote} for the flow.
+   *
+   * 🔴 A body carrying it is NOT runnable through `SUBMIT_WORKFLOW`. The server
+   * charges a confirmed job only against a quote the viewer confirmed in
+   * Civitai's own dialog from a signed-in session, so the same body sent as a
+   * plain submit is refused. Change nothing else in the body between the
+   * estimate and the run: the server checks it against the quoted one
+   * (`quoteId` itself is excluded from that comparison).
+   */
+  quoteId?: string;
 };
+
+// ============================================================
+// Confirmed steps (a pass-through job above the per-call budget)
+// ============================================================
+
+/**
+ * Ceiling on what ONE viewer-confirmed pass-through job may cost, in Buzz. Host
+ * constant `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`. A fixed price above it gets
+ * no {@link BlockWorkflowSnapshot.stepQuote} and cannot be run from an app.
+ */
+export const BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+
+/**
+ * The shape of a confirmed-step quote id ({@link BlockStepQuote.quoteId}): `sq_`
+ * followed by 32 lowercase hex characters. Host constant
+ * `BLOCK_STEP_QUOTE_ID_REGEX`. Disjoint from the training quote's `tq_` shape,
+ * so neither kind's id can name the other's quote.
+ */
+export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
 
 // ============================================================
 // App Blocks MULTI-STEP kind (`kind: 'workflow'`)
@@ -1851,13 +1889,16 @@ export interface BlockWorkflowSnapshot {
    *
    * WHERE IT APPEARS today: the refusal for a pass-through `step` body
    * ({@link WorkflowBodyPassThroughStep}) whose `$type` is a training type
-   * (`'training'` or `'imageResourceTraining'`) when the host could not get a
+   * (`'training'` or `'imageResourceTraining'`, in any casing — the host
+   * compares `$type` case-insensitively) when the host could not get a
    * price quote for it. That refusal is `{ workflowId: 'failed', status:
    * 'failed', error, errorCode }` with no `cost`, and it is the reply to
    * `estimate()` (which rejects with `WorkflowEstimateError`), to `submit()`
    * (which rejects with `WorkflowSubmitError`, before anything is reserved or
    * charged), and to that body's cell in a batch estimate. Read it from the
-   * error's `.snapshot.errorCode`. The `kind: 'training'` arm does NOT set it.
+   * error's `.snapshot.errorCode`. A `kind: 'training'` ESTIMATE does not set
+   * it. The confirmed SUBMIT of a training run or a confirmed step can — see
+   * `'daily-limit-exceeded'` below.
    * A refused `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) sets it in
    * the same shape, on the same three replies — except the three
    * `workflow_quote_*` codes, which are ESTIMATE-ONLY (`estimate()` and a
@@ -1875,6 +1916,15 @@ export interface BlockWorkflowSnapshot {
    *  - `'training-quote-unavailable'` — no usable answer (an outage, a timeout,
    *    a rate limit, insufficient funds, …). Retrying later may succeed.
    *  - `'training-quote-unpriced'` — the orchestrator answered without a price.
+   *  - `'daily-limit-exceeded'` — a viewer-confirmed job (a `kind: 'training'`
+   *    run or a confirmed step) would exceed what remains today of the daily
+   *    Buzz limit THE VIEWER set for this app. Nothing was charged and no job
+   *    was started; the confirm cannot override it, and only the viewer can
+   *    raise the limit. This one arrives on the failed snapshot a confirmed
+   *    SUBMIT resolves (`{ workflowId: 'failed', status: 'failed', cost, error,
+   *    errorCode }`), not on an estimate. On a confirmed step the host also
+   *    reports it as the `error` code of `CONFIRMED_STEP_RESULT` — see
+   *    {@link BlockRunConfirmedStepHostError}.
    *  - `'workflow_step_denied'` — a step of a `kind: 'workflow'` body names a
    *    platform-internal `$type`. Remove or replace that step.
    *  - `'workflow_ref_invalid'` — a {@link WorkflowStepRef} in a step's `input`
@@ -2131,6 +2181,84 @@ export interface BlockWorkflowSnapshot {
    */
   trainingQuote?: BlockTrainingQuote;
   /**
+   * The viewer-confirmable quote a pass-through `step` ESTIMATE
+   * ({@link WorkflowBodyPassThroughStep}) produced, when the job costs more than
+   * the app may spend without asking. Its presence means: this job cannot run
+   * through `submit()`, and CAN run through `useRunConfirmedStep()` once the
+   * viewer confirms `stepQuote.total` in Civitai's own dialog.
+   *
+   * THE FLOW, mirroring a training run's:
+   *  1. `useBuzzWorkflow().estimate(body)` — the reply carries `stepQuote`.
+   *  2. `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId:
+   *     stepQuote.quoteId })` — Civitai shows the viewer the price (read back
+   *     from the server, never from the body) and submits on their confirm.
+   *  3. `useBuzzWorkflow().watch(snapshot.workflowId)`.
+   *
+   * WHEN THE HOST SENDS IT — all of these, decided server-side:
+   *  - the orchestrator quoted a **FIXED** price for exactly this step:
+   *    positive, and not a variable or metered one. The viewer confirms what
+   *    they are charged, so a price that may move is never confirmable;
+   *  - that price is ABOVE the token's per-call budget and at most
+   *    {@link BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB} (5,000 Buzz);
+   *  - the block runs in a page app for a signed-in viewer on an ordinary
+   *    token. Development, dev-tunnel and review sessions never get one, and
+   *    neither does the model slot.
+   * Everywhere else the field is ABSENT and the estimate is exactly what it was.
+   * Absent is therefore not an error — it is also what every host that
+   * predates civitai/civitai#5786 sends.
+   *
+   * 🔴 ONLY A SINGLE ESTIMATE CARRIES IT. A batch estimate
+   * (`ESTIMATE_WORKFLOW_BATCH`, `useBatchEstimate()`) stores nothing, so its
+   * cells never have a `stepQuote`, whatever they cost. Price a grid in a batch,
+   * then estimate the one body you want to run on its own.
+   *
+   * 🔴 TWO BODIES MAKE THAT ESTIMATE FAIL INSTEAD OF RETURNING A PRICE — only
+   * where a quote would otherwise have been granted (so not below the budget,
+   * and not in a batch). The reply is the failure snapshot `{ workflowId:
+   * 'failed', status: 'failed', error }`, which `estimate()` rejects with; the
+   * same text arrives as `CONFIRMED_STEP_RESULT`'s `error` if such a body is
+   * run. Neither has an {@link BlockWorkflowSnapshot.errorCode}; they are
+   * server messages, so match on the text and keep a generic branch:
+   *  - `a training step type cannot run as a confirmed step — use
+   *    kind:'training'` — `$type` is `training` or `imageResourceTraining`, in
+   *    any casing.
+   *    Training has its own kind ({@link WorkflowBodyTraining}).
+   *  - `a confirmed step needs plain JSON input (objects, arrays, strings,
+   *    finite numbers, booleans, null) — <path> is <what>` — `input` holds a
+   *    `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an
+   *    `undefined` array element or an empty slot in a sparse array
+   *    (`… — body.input.list[1] is an empty array slot`). The quote is bound to the exact body, so the
+   *    body must be exactly representable. The part after the dash names the
+   *    offending path (`body.input.when is a Date`) and varies: match on the
+   *    text BEFORE the dash.
+   *
+   * `total` is the price the viewer confirms and is charged. 🔴 It can differ
+   * from `cost.total` on the same snapshot, which stays what an UNCONFIRMED
+   * submit would reserve (`max(maxBuzz, quote)`); show `stepQuote.total` on a
+   * confirm button. `expiresAt` is an ISO-8601 timestamp 15 minutes out; after
+   * it the run is refused and you estimate again. A quote is single-use.
+   */
+  stepQuote?: BlockStepQuote;
+  /**
+   * What each 3D model in {@link BlockWorkflowSnapshot.imageUrls} IS — one label
+   * per model a pass-through step produced (e.g. `polyGen`).
+   *
+   * Every model url is still listed in `imageUrls`, unchanged and in the same
+   * order as before the field existed; this only says which entry is which.
+   * Match on `url`:
+   *
+   * ```ts
+   * const glb = snapshot.model3dOutputs?.find(
+   *   (m) => m.format === 'glb' && m.variant === 'model',
+   * );
+   * if (glb) viewer.load(glb.url);
+   * ```
+   *
+   * OMITTED when the workflow produced no 3D model, and on hosts that predate
+   * civitai/civitai#5786 — in which case `imageUrls` is all there is.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
+  /**
    * The steps of a `kind: 'workflow'` run ({@link WorkflowBodyWorkflow}), in
    * the orchestrator's order, each with its own status and results. The steps a
    * `repeat` step generates follow it, named `<repeat name>.<n>`, so the list
@@ -2209,6 +2337,44 @@ export interface BlockTrainingQuote {
   expiresAt: string;
 }
 
+/** {@link BlockWorkflowSnapshot.stepQuote}. */
+export interface BlockStepQuote {
+  /**
+   * `sq_` + 32 lowercase hex characters ({@link BLOCK_STEP_QUOTE_ID_REGEX}).
+   * Opaque — pass it back verbatim as the body's `quoteId`.
+   */
+  quoteId: string;
+  /** The exact price the viewer confirms and is charged, in Buzz. */
+  total: number;
+  /** The orchestrator `$type` that was priced — the body's own `$type`. */
+  stepType: string;
+  /** ISO-8601. The quote cannot be run after this. */
+  expiresAt: string;
+}
+
+/**
+ * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
+ * {@link AppWorkflow.model3dOutputs} — the label for one 3D model url.
+ */
+export interface BlockModel3dOutput {
+  /** The model's url. Also present in the snapshot's `imageUrls` (an `AppWorkflow`'s `images`). */
+  url: string;
+  /**
+   * The model's own file format as the orchestrator reports it — `'glb'`,
+   * `'fbx'`, …. An open set: compare against the formats your viewer loads and
+   * ignore the rest.
+   */
+  format: string;
+  /**
+   * Which output of the step this model is: the output field it came from,
+   * dot-joined when nested — `'model'`, `'riggedFbxModel'`,
+   * `'basicAnimations.walkingModel'`, …. An array index is a segment
+   * (`'models.0'`), and it is `''` when the step's whole output is the model.
+   * The names are the orchestrator's, per `$type`; nothing here lists them.
+   */
+  variant: string;
+}
+
 /**
  * Why the host substituted a checkpoint version — see
  * {@link BlockWorkflowSnapshot.modelSubstitutions}.
@@ -2240,6 +2406,7 @@ export type KnownBlockWorkflowErrorCode =
   | 'training-quote-rejected'
   | 'training-quote-unavailable'
   | 'training-quote-unpriced'
+  | 'daily-limit-exceeded'
   | 'workflow_step_denied'
   | 'workflow_ref_invalid'
   | 'workflow_too_many_steps'
@@ -2944,6 +3111,13 @@ export interface AppWorkflow {
    * absence as "unknown", not as "no checkpoint".
    */
   trainedEpochs?: BlockTrainedEpoch[];
+  /**
+   * Labels for the 3D models among this workflow's {@link AppWorkflow.images} —
+   * same shape and rule as {@link BlockWorkflowSnapshot.model3dOutputs}: every
+   * labelled `url` is also an entry of `images`, and the field is OMITTED when
+   * there are none (and on hosts that predate it).
+   */
+  model3dOutputs?: BlockModel3dOutput[];
 }
 
 // ============================================================
@@ -3319,4 +3493,45 @@ export type BlockRunTrainingHostError =
   | 'invalid training request'
   | 'no block token'
   | 'declined'
+  | 'submission-unconfirmed';
+
+/**
+ * The HOST'S OWN refusal codes on a `CONFIRMED_STEP_RESULT`'s `error`. Mirrors
+ * civitai/civitai's `RUN_CONFIRMED_STEP_HOST_ERRORS`
+ * (`src/components/AppBlocks/runConfirmedStepGate.ts`, civitai/civitai#5786).
+ *
+ * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: server messages
+ * (an expired or already-used quote, a body that differs from the quoted one, a
+ * price that changed, `confirmed steps from apps are not enabled`) arrive
+ * verbatim in the same field.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off.
+ * - `block is not ready` — the host handshake has not completed.
+ * - `sign in to run` — anonymous viewer; there is no account to charge.
+ * - `invalid confirmed step request` — the body is not a pass-through
+ *   `kind: 'step'` body naming an `sq_`-shaped `quoteId`.
+ * - `no block token` — the host holds no block token yet.
+ * - `declined` — the viewer dismissed the confirm. 🔴 GUARANTEED to mean NO JOB
+ *   WAS SUBMITTED. The quote is untouched and can still be run before it
+ *   expires.
+ * - `daily-limit-exceeded` — the job would exceed what remains today of the
+ *   daily Buzz limit the VIEWER set for this app. NO job was submitted and
+ *   nothing was charged. The host has already told the viewer, in its own
+ *   chrome, and pointed them at where to raise the limit; there is no confirm
+ *   to click and nothing the app can do about it. Do not retry.
+ * - `submission-unconfirmed` — the submit was SENT but its outcome is unknown.
+ *   🔴 The job MAY BE RUNNING AND CHARGED. Every confirmation is its own job,
+ *   so a retry (which needs a new estimate and a new confirmation) starts a
+ *   SECOND, separately charged job if the first one did start. Check the
+ *   viewer's generations (`useAppWorkflows()`) before offering one, and never
+ *   retry automatically.
+ */
+export type BlockRunConfirmedStepHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to run'
+  | 'invalid confirmed step request'
+  | 'no block token'
+  | 'declined'
+  | 'daily-limit-exceeded'
   | 'submission-unconfirmed';
