@@ -8,6 +8,7 @@ import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
 import { resolveIdempotencyKey } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** The consent-gated scope a tip needs (`social:tip:self`). */
 const TIP_SCOPES = [BLOCK_SCOPES.SOCIAL_TIP_SELF] as const;
@@ -125,6 +126,7 @@ export interface UseTip {
  * await tip({ toUserId: 123, amount: 50 }, { idempotencyKey: keyRef.current });
  */
 export function useTip(): UseTip {
+  useTransportConnection();
   const host = useHostOrigin();
   const { raw } = useBlockToken();
   const [loading, setLoading] = useState(false);

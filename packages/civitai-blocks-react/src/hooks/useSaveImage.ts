@@ -4,6 +4,7 @@ import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
 import { SAVE_BYTES_MAX_BYTES, SAVE_BYTES_TOO_LARGE_ERROR } from '../internal/saveBytes.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Input to {@link UseSaveImage.saveImage}. Exactly ONE of `url` / `imageId` /
@@ -113,6 +114,7 @@ function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
  * await saveImage({ bytes: healedPng, filename: 'healed.png' });
  */
 export function useSaveImage(): UseSaveImage {
+  useTransportConnection();
   const saveImage = useCallback(async (input: SaveImageInput): Promise<void> => {
     const payload = toWirePayload(input);
     const reply = await sendTypedRequest(

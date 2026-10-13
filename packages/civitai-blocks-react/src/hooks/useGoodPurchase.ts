@@ -10,6 +10,7 @@ import type { Entitlement } from './useEntitlements.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useBuzzPurchase } from './useBuzzPurchase.js';
 import { useHostOrigin } from './useHostOrigin.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope a purchase needs.
@@ -197,6 +198,7 @@ export interface UseGoodPurchase {
  * );
  */
 export function useGoodPurchase(): UseGoodPurchase {
+  useTransportConnection();
   const host = useHostOrigin();
   const { raw } = useBlockToken();
   const { openPurchaseModal } = useBuzzPurchase();

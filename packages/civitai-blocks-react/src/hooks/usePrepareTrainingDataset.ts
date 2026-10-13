@@ -13,6 +13,7 @@ import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope the training flow requires — `ai:write:budgeted`. The
@@ -149,6 +150,7 @@ export interface UsePrepareTrainingDataset {
  * }
  */
 export function usePrepareTrainingDataset(): UsePrepareTrainingDataset {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<PrepareTrainingDatasetError | null>(null);
 

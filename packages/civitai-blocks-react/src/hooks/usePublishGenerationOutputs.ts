@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link usePublishGenerationOutputs} returns.
@@ -64,6 +65,7 @@ export interface UsePublishGenerationOutputs {
  * // …store imageIds via useSharedStorage() so the grid can read them back gated.
  */
 export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
+  useTransportConnection();
   const publish = useCallback(
     async (args: { workflowId: string; imageIndexes?: number[]; title?: string }): Promise<number[]> => {
       const reply = await sendTypedRequest(

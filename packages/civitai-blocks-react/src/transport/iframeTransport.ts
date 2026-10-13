@@ -217,6 +217,19 @@ export class IframeTransport implements BlockTransport {
       this.resolveInit = resolve;
       this.rejectInit = reject;
     });
+    // 🔴 THE TRANSPORT HANDLES ITS OWN INIT TIMEOUT. Every hook connects the
+    // transport at mount, and most blocks never call `waitForInit()`, so without
+    // a handler here the 10s timeout is an UNHANDLED rejection. That fails the
+    // Vitest run of any block app whose tests mount a hook with no host. This
+    // handler makes the rejection handled and keeps the diagnostic (it names the
+    // configured and observed origins) on the console as a warning. It is a
+    // separate branch of the promise: `waitForInit()` still returns
+    // `initPromise` itself, so its callers still receive the rejection.
+    // Pinned by `test/initTimeoutUnhandled.test.tsx`.
+    this.initPromise.catch((err: unknown) => {
+      // eslint-disable-next-line no-console -- developer-facing diagnostic; the host shows its own fallback
+      console.warn(err instanceof Error ? err.message : err);
+    });
     this.initTimeoutId = setTimeout(() => {
       if (!this.initResolved) {
         this.initResolved = true;

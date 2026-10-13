@@ -10,6 +10,7 @@ import type {
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { BlockRunConfirmedStepHostError, BlockStepQuote, WorkflowBodyPassThroughStep };
 
@@ -277,6 +278,7 @@ export interface UseRunConfirmedStep {
  * }
  */
 export function useRunConfirmedStep(): UseRunConfirmedStep {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<RunConfirmedStepError | null>(null);
 

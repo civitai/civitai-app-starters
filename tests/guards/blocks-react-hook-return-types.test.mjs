@@ -101,6 +101,7 @@ const HOOK_FILES = [
   'useSharedStorage',
   'useTip',
   'useTipAllowance',
+  'useTransportConnection',
   'useUploadImageBytes',
   'useViewer',
   'useWildcardPack',
@@ -113,8 +114,12 @@ const HOOK_FILES = [
  * `useRequestSequencer` (#413) is the shared in-flight-request sequencer the
  * public hooks call; it has no standalone meaning to a block author and
  * publishing a return type for it would publish the helper.
+ *
+ * `useTransportConnection` is the mount-time `getTransport()` touch every
+ * public hook calls so that using ANY hook answers the host's handshake. It
+ * returns nothing and exists only to be called from inside this package.
  */
-const INTERNAL_HOOKS = ['useRequestSequencer'];
+const INTERNAL_HOOKS = ['useRequestSequencer', 'useTransportConnection'];
 
 /**
  * Hooks whose return annotation is NOT `Use<Hook>` because the hook is

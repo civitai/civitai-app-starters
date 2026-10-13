@@ -6,6 +6,7 @@ import { throwOnReplyError } from '../internal/replyError.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The most resources ONE multi-select `open({ multiple })` can return — the
@@ -170,6 +171,7 @@ const MULTIPLE_RESOURCE_TYPES: ReadonlySet<string> = new Set(['lora', 'locon', '
  * }
  */
 export function useResourcePicker(): UseResourcePicker {
+  useTransportConnection();
   const open = useCallback(
     async (
       opts: ResourcePickerOpenOptions & { multiple?: ResourcePickerMultiple | null },

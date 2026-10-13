@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Backstop timeout for the direct REST allowance GET (see {@link useTip} /
@@ -80,6 +81,7 @@ export interface UseTipAllowance {
  * // allowance?.remaining — Buzz the viewer may still tip today
  */
 export function useTipAllowance(): UseTipAllowance {
+  useTransportConnection();
   const host = useHostOrigin();
   const { raw } = useBlockToken();
   const [allowance, setAllowance] = useState<TipAllowance | null>(null);

@@ -6,6 +6,7 @@ import { useBlockContext } from './useBlockContext.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Backstop timeout for the direct REST entitlements GET (see {@link useTip} /
@@ -139,6 +140,7 @@ export interface UseEntitlements {
  * return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
  */
 export function useEntitlements(): UseEntitlements {
+  useTransportConnection();
   const host = useHostOrigin();
   const { raw } = useBlockToken();
   const { ready, viewer } = useBlockContext();

@@ -18,6 +18,7 @@ import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { resolveIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope {@link UseBuzzWorkflow.submit} requires.
@@ -1047,6 +1048,7 @@ export interface UseBuzzWorkflow {
  * }
  */
 export function useBuzzWorkflow(): UseBuzzWorkflow {
+  useTransportConnection();
   const [status, setStatus] = useState<WorkflowStatus>('idle');
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);

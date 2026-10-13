@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
 import type { BlockSnapshot } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Subscribe a hook to the singleton transport. All hooks build on this —
@@ -73,6 +74,7 @@ export type UseBlockContext = Pick<
  * return <div data-theme={theme}>{isSignedIn(viewer) ? 'Hi there' : 'Hi anon'}</div>;
  */
 export function useBlockContext(): UseBlockContext {
+  useTransportConnection();
   const snap = useTransportSnapshot();
   return {
     ready: snap.ready,

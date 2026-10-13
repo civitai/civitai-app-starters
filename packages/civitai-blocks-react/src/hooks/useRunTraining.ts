@@ -10,6 +10,7 @@ import type {
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { BlockRunTrainingHostError, BlockTrainingQuote, WorkflowBodyTraining };
 
@@ -200,6 +201,7 @@ export interface UseRunTraining {
  * }
  */
 export function useRunTraining(): UseRunTraining {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<RunTrainingError | null>(null);
 

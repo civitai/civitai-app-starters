@@ -1,5 +1,6 @@
 import { BREAKPOINT_KEYS, breakpoints, type BreakpointKey } from '@civitai/theme';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Width tier of the block's own box.
@@ -110,6 +111,7 @@ export interface BlockBreakpoint {
  * );
  */
 export function useBlockBreakpoint(ref?: RefObject<HTMLElement | null>): UseBlockBreakpoint {
+  useTransportConnection();
   // `null` means UNMEASURED — distinct from a measured `'base'`. See `measured`.
   const [tier, setTier] = useState<BlockSizeTier | null>(null);
 
