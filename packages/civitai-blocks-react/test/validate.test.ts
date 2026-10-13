@@ -15,6 +15,7 @@ import {
   isValidEstimateBatchResult,
   isValidCheckpointPickerResult,
   isValidImageUploadResult,
+  isValidImagePickerResult,
   isValidResourcePickerResult,
   isValidSharedAppendResult,
   isValidSharedCountResult,
@@ -1006,6 +1007,98 @@ describe('isValidCheckpointPickerResult', () => {
   });
 });
 
+describe('isValidImagePickerResult', () => {
+  const posted = {
+    source: 'posted',
+    url: 'https://image.civitai.com/x/original=true/posted.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 7001,
+  };
+  const generated = {
+    source: 'generated',
+    url: 'https://image.civitai.com/x/original=true/generated.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  };
+
+  it('is the validator payloadValidatorFor routes IMAGE_PICKER_RESULT to', () => {
+    expect(payloadValidatorFor('IMAGE_PICKER_RESULT')).toBe(isValidImagePickerResult);
+  });
+  it('accepts a posted pick (with imageId)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selected: posted })).toBe(true);
+  });
+  it('accepts a generated pick (no imageId)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selected: generated })).toBe(true);
+  });
+  it('accepts nsfwLevel 0 and fractional dimensions (finite is the rule)', () => {
+    expect(
+      isValidImagePickerResult({
+        requestId: 'r',
+        selected: { ...generated, nsfwLevel: 0, width: 511.5, height: 0.5 },
+      }),
+    ).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts a list of picks and an empty list', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selectedImages: [posted, generated] })).toBe(true);
+    expect(isValidImagePickerResult({ requestId: 'r', selectedImages: [] })).toBe(true);
+  });
+  it('accepts a refusal carrying only an error, including an empty one', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', error: 'unsupported on this host' })).toBe(true);
+    expect(isValidImagePickerResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+  it('accepts an error reply without checking the pick beside it (the hook throws first)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', error: 'no', selected: { source: 'x' } })).toBe(true);
+  });
+  it.each([
+    ['not an object', 'IMAGE_PICKER_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7, selected: posted }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['selected null', { requestId: 'r', selected: null }],
+    ['selected not an object', { requestId: 'r', selected: 'posted' }],
+    ['source missing', { requestId: 'r', selected: { ...posted, source: undefined } }],
+    ['source unknown', { requestId: 'r', selected: { ...posted, source: 'uploaded' } }],
+    ['source wrong case', { requestId: 'r', selected: { ...posted, source: 'Posted' } }],
+    ['url empty', { requestId: 'r', selected: { ...posted, url: '' } }],
+    ['url not a string', { requestId: 'r', selected: { ...posted, url: 5 } }],
+    ['width missing', { requestId: 'r', selected: { ...posted, width: undefined } }],
+    ['width zero', { requestId: 'r', selected: { ...posted, width: 0 } }],
+    ['width negative', { requestId: 'r', selected: { ...posted, width: -832 } }],
+    ['width a string', { requestId: 'r', selected: { ...posted, width: '832' } }],
+    ['width Infinity', { requestId: 'r', selected: { ...posted, width: Number.POSITIVE_INFINITY } }],
+    ['height missing', { requestId: 'r', selected: { ...posted, height: undefined } }],
+    ['height zero', { requestId: 'r', selected: { ...posted, height: 0 } }],
+    ['height NaN', { requestId: 'r', selected: { ...posted, height: Number.NaN } }],
+    ['nsfwLevel missing', { requestId: 'r', selected: { ...posted, nsfwLevel: undefined } }],
+    ['nsfwLevel a string', { requestId: 'r', selected: { ...posted, nsfwLevel: '1' } }],
+    ['nsfwLevel NaN', { requestId: 'r', selected: { ...posted, nsfwLevel: Number.NaN } }],
+    ['imageId a string', { requestId: 'r', selected: { ...posted, imageId: '7001' } }],
+    ['imageId zero', { requestId: 'r', selected: { ...posted, imageId: 0 } }],
+    ['imageId negative', { requestId: 'r', selected: { ...posted, imageId: -7001 } }],
+    ['imageId fractional', { requestId: 'r', selected: { ...posted, imageId: 7001.5 } }],
+    ['imageId null', { requestId: 'r', selected: { ...posted, imageId: null } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImagePickerResult(payload)).toBe(false);
+  });
+  it.each([
+    ['selectedImages not an array', { requestId: 'r', selectedImages: posted }],
+    ['selectedImages null', { requestId: 'r', selectedImages: null }],
+    ['one entry not an object', { requestId: 'r', selectedImages: [posted, 7] }],
+    ['one entry with an unknown source', { requestId: 'r', selectedImages: [posted, { ...generated, source: 'video' }] }],
+    ['one entry with a zero width', { requestId: 'r', selectedImages: [posted, { ...generated, width: 0 }] }],
+    ['the LAST entry with a string imageId', { requestId: 'r', selectedImages: [generated, posted, { ...posted, imageId: '7001' }] }],
+  ])('rejects a list reply: %s', (_, payload) => {
+    expect(isValidImagePickerResult(payload)).toBe(false);
+  });
+});
+
 describe('isValidResourcePickerResult', () => {
   const selected = {
     versionId: 9001,
@@ -1401,6 +1494,7 @@ describe('payloadValidatorFor', () => {
       'SAVE_IMAGE_RESULT',
       'CHECKPOINT_PICKER_RESULT',
       'RESOURCE_PICKER_RESULT',
+      'IMAGE_PICKER_RESULT',
       'USER_CHECKPOINT_SET',
     ]) {
       expect(payloadValidatorFor(t)).toBeTypeOf('function');

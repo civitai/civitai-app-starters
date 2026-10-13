@@ -87,6 +87,7 @@ const HOOK_FILES = [
   'useGenerationResources',
   'useGoodPurchase',
   'useHostOrigin',
+  'useImagePicker',
   'useImageUpload',
   'useNestedDocument',
   'usePrepareTrainingDataset',

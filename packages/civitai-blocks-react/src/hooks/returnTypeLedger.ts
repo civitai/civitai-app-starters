@@ -75,6 +75,7 @@ import type {
   useGenerationResources,
   useGoodPurchase,
   useHostOrigin,
+  useImagePicker,
   useImageUpload,
   useNestedDocument,
   usePrepareTrainingDataset,
@@ -121,6 +122,7 @@ import type {
   UseGenerationResources,
   UseGoodPurchase,
   UseHostOrigin,
+  UseImagePicker,
   UseImageUpload,
   UseNestedDocument,
   UsePrepareTrainingDataset,
@@ -214,6 +216,7 @@ type _usePublishGenerationOutputs = Assert<
 >;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
+type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
 type _useRunConfirmedStep = Assert<
   Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>

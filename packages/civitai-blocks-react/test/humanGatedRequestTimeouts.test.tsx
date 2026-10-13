@@ -9,6 +9,7 @@ import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
 import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
+import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRunConfirmedStep } from '../src/hooks/useRunConfirmedStep.js';
 import { useRunTraining } from '../src/hooks/useRunTraining.js';
@@ -75,6 +76,10 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
   OPEN_CHECKPOINT_PICKER: () => {
     const { result } = renderHook(() => useCheckpointPicker());
     return () => result.current.open({ baseModelGroup: 'SDXL' });
+  },
+  OPEN_IMAGE_PICKER: () => {
+    const { result } = renderHook(() => useImagePicker());
+    return () => result.current.open();
   },
   OPEN_IMAGE_UPLOAD: () => {
     const { result } = renderHook(() => useImageUpload());
@@ -146,6 +151,7 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
 const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> = {
   OPEN_BUZZ_PURCHASE: { type: 'BUZZ_PURCHASE_RESULT', extra: { purchased: false } },
   OPEN_CHECKPOINT_PICKER: { type: 'CHECKPOINT_PICKER_RESULT', extra: {} },
+  OPEN_IMAGE_PICKER: { type: 'IMAGE_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_UPLOAD: { type: 'IMAGE_UPLOAD_RESULT', extra: {} },
   OPEN_RESOURCE_PICKER: { type: 'RESOURCE_PICKER_RESULT', extra: {} },
   PUBLISH_GENERATION_OUTPUTS: {
@@ -206,6 +212,7 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'CREATE_POST_FROM_APP',
       'OPEN_BUZZ_PURCHASE',
       'OPEN_CHECKPOINT_PICKER',
+      'OPEN_IMAGE_PICKER',
       'OPEN_IMAGE_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',

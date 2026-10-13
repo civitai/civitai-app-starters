@@ -84,6 +84,7 @@ const REQUEST_TIMEOUT_CLASS = {
   // ── Gated on a human ────────────────────────────────────────────────────
   OPEN_BUZZ_PURCHASE: 'human', //          viewer walks a purchase flow
   OPEN_CHECKPOINT_PICKER: 'human', //      viewer browses + picks
+  OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)

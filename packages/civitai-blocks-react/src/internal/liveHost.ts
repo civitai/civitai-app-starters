@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 49, of which 11 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 50, of which 12 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -127,6 +127,9 @@
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
  *     pipeline. Replies DISMISSED (the hook resolves `null`).
+ *   • OPEN_IMAGE_PICKER — needs the host's picker over the viewer's own posted
+ *     images and generator outputs, read off their signed-in session; no
+ *     block-token endpoint lists either. Replies with a refusal.
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -164,6 +167,13 @@ import {
   type OpenPickerOptions,
   type PickerResultChannel,
 } from './pickerOverlay.js';
+
+/**
+ * The `error` the live host answers `OPEN_IMAGE_PICKER` with. `useImagePicker()`
+ * rejects with it, so it says what to do instead.
+ */
+export const IMAGE_PICKER_UNSUPPORTED_ERROR =
+  'the image picker is not supported in dev:live — use dev:mock';
 
 /** Default civitai backend the live host forwards to. */
 const DEFAULT_BACKEND_BASE_URL = 'https://civitai.com';
@@ -1699,6 +1709,29 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
               payload: { requestId: requestId ?? '' },
+            });
+            return;
+          }
+
+          case 'OPEN_IMAGE_PICKER': {
+            // REFUSED. The picker lists the viewer's own posted images and
+            // generator outputs in host chrome, off the viewer's signed-in
+            // session. A dev block token has no endpoint that lists either, and
+            // this harness has no session, so there is nothing real to pick
+            // from. Rather than let `useImagePicker()` hang to its 10-minute
+            // timeout, or hand back an invented image, answer with an error
+            // (the hook rejects) and log what to use instead.
+            logOnce(
+              'open-image-picker',
+              'OPEN_IMAGE_PICKER received but live dev mode cannot list the viewer\'s own images ' +
+                '— useImagePicker().open() REJECTS. Test the image picker against the real site, ' +
+                'or use createMockHost({ cannedImagePicks }) in dev:mock.',
+            );
+            // A refusal nobody can route is not worth sending.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'IMAGE_PICKER_RESULT',
+              payload: { requestId, error: IMAGE_PICKER_UNSUPPORTED_ERROR },
             });
             return;
           }

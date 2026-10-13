@@ -8,7 +8,8 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
-import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import { IMAGE_PICKER_UNSUPPORTED_ERROR, decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
@@ -3048,6 +3049,116 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
           'createMockHost({ uploadImageBytesResult }) in dev:mock.',
       );
       expect(logged.filter((m) => m.includes('dismissed (null)'))).toHaveLength(0);
+    } finally {
+      resetTransport();
+    }
+  });
+});
+
+describe('createLiveHost — OPEN_IMAGE_PICKER (refused: nothing lists the viewer\'s images)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_PICKER');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('replies IMAGE_PICKER_RESULT with an error and no image, instead of hanging', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick', sources: ['posted'], multiple: { max: 3 } });
+    const payload = await waitForMessage(inbound, 'IMAGE_PICKER_RESULT');
+    // The whole reply: a refusal, never an invented image or an empty list.
+    expect(payload).toEqual({
+      requestId: 'r-pick',
+      error: 'the image picker is not supported in dev:live — use dev:mock',
+    });
+    expect(IMAGE_PICKER_UNSUPPORTED_ERROR).toBe(
+      'the image picker is not supported in dev:live — use dev:mock',
+    );
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged).toContain(
+      "[createLiveHost] OPEN_IMAGE_PICKER received but live dev mode cannot list the viewer's own images " +
+        '— useImagePicker().open() REJECTS. Test the image picker against the real site, ' +
+        'or use createMockHost({ cannedImagePicks }) in dev:mock.',
+    );
+  });
+
+  it('logs once across repeated requests but answers every one', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick-1' });
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick-2' });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'IMAGE_PICKER_RESULT')).toHaveLength(2),
+    );
+    expect(
+      inbound.messages
+        .filter((m) => m.type === 'IMAGE_PICKER_RESULT')
+        .map((m) => m.payload?.requestId),
+    ).toEqual(['r-pick-1', 'r-pick-2']);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_IMAGE_PICKER received'))).toHaveLength(1);
+  });
+
+  it('a request with no requestId gets no reply (nothing could route it)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', {});
+    // Positive control: a routable request sent AFTER it is answered, so the
+    // absence below is not just "nothing has arrived yet".
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-after' });
+    await waitForMessage(inbound, 'IMAGE_PICKER_RESULT');
+    const replies = inbound.messages.filter((m) => m.type === 'IMAGE_PICKER_RESULT');
+    expect(replies).toHaveLength(1);
+    expect(replies[0].payload?.requestId).toBe('r-after');
+  });
+
+  it('useImagePicker().open() REJECTS with the refusal, for a single and a multi pick', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const { result } = renderHook(() => useImagePicker());
+      const single = await result.current.open().then(
+        (value) => ({ resolved: value }),
+        (err: Error) => ({ rejected: err.message }),
+      );
+      expect(single).toEqual({
+        rejected: 'the image picker is not supported in dev:live — use dev:mock',
+      });
+      const multi = await result.current.open({ multiple: { max: 2 } }).then(
+        (value) => ({ resolved: value }),
+        (err: Error) => ({ rejected: err.message }),
+      );
+      expect(multi).toEqual({
+        rejected: 'the image picker is not supported in dev:live — use dev:mock',
+      });
     } finally {
       resetTransport();
     }

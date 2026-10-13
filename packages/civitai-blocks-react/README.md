@@ -2239,6 +2239,86 @@ unstamped) or an already-posted id is refused with
 rule, the scope check, the real scan, or an older host's picker. `dev:live` has
 no bytes path: `upload` rejects with `the host returned no uploaded image`.
 
+### `useImagePicker()`
+
+Let the viewer pick one of their **existing** Civitai images: the ones they have
+posted, and the ones they made with the Civitai generator. The host opens its own
+picker over the viewer's library, and your app receives only what the viewer
+picked. Returns `{ open }`. `open()` resolves with one image, or `null` if the
+viewer closed the picker.
+
+```tsx
+const { open } = useImagePicker();
+
+const image = await open();   // BlockPickedImageInfo | null
+if (image) {
+  // image.source     'posted' | 'generated'
+  // image.url        a Civitai-hosted image URL
+  // image.width, image.height, image.nsfwLevel
+  // image.imageId    set for a posted image, undefined for a generated one
+}
+```
+
+**Several images in one session: `multiple: { max }`.** `open` then resolves with
+a **list** of up to `max` images instead of a single image. Closing the picker
+resolves with `[]`.
+
+```tsx
+const { open } = useImagePicker();
+
+const images = await open({ multiple: { max: 5 } });
+// [] when the viewer closed the picker; otherwise 1 to 5 images
+const urls = images.map((image) => image.url);
+```
+
+**One library only: `sources`.** Pass `['posted']` or `['generated']` to offer
+just that library. Leave it out to offer both.
+
+```tsx
+const { open } = useImagePicker();
+
+const output = await open({ sources: ['generated'] });
+// output?.imageId is always undefined here: a generator output has no image id
+```
+
+- **What the viewer can pick is decided by the host.** Posted images: the
+  viewer's own, in a published post, fully scanned and not flagged. Generated
+  images: the viewer's own finished generator outputs that have a rating. Both
+  are limited to the same SFW ceiling an upload has to clear. Images only, no
+  video. Your app never sees the rest of the library.
+- **`imageId` is set only on a posted image.** A generator output that was never
+  posted has no image id, so check `image.source` or `image.imageId` before you
+  use it.
+- **Closing the picker is not an error.** A single pick resolves with `null` and
+  a `multiple` pick with `[]`. A signed-out viewer is sent to sign in, and the
+  call resolves the same way.
+- **`max` is a whole number of at least 1, capped at 20** (exported as
+  `IMAGE_PICKER_MULTIPLE_MAX`). A larger value is clamped to 20. `0`, a negative
+  number or a fraction rejects before anything is sent, and so does an empty
+  `sources` or a value other than `'posted'` and `'generated'`.
+- **A refusal rejects.** If the host refuses the request, `open` rejects with an
+  `Error` carrying the host's message. It never resolves with `null` for a
+  refusal, so `null` always means the viewer closed the picker.
+- **Page apps only.** On any other surface the host answers at once and `open`
+  rejects with `unsupported on this host`.
+- **On a host that does not have the picker yet**, the request gets no answer and
+  `open` rejects with a `RequestTimeoutError` after 10 minutes.
+- **Using a pick as a generation source.** `{ url, width, height }` of a picked
+  image is a valid `sourceImage` for a generation body. The generation body has
+  its own limit of 64 to 2048 pixels per side, and a picked image can be larger
+  than that, so scale the numbers down before you submit if they are.
+
+With the mock host (`createMockHost` or `Harness` from
+`@civitai/blocks-react/testing`) there is no picker to click through: `open`
+resolves at once. By default the mock holds one posted image and one generated
+image. Pass `cannedImagePicks: [...]` to set the viewer's library. The mock keeps
+only the images matching the request's `sources`, then answers a single pick with
+the first one and a `multiple` pick with the first `max`. `cannedImagePicks: null`
+is a viewer who always closes the picker. The mock refuses an invalid `sources` or
+`max` with an error, and answers `unsupported on this host` when its `context` is
+a model slot. `dev:live` cannot list the viewer's images, so there `open` rejects
+with a message saying to use the mock host.
+
 ### `useSaveImage()`
 
 Ask the host to download a file to the viewer's device. **A block cannot

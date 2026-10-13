@@ -231,6 +231,12 @@ export type {
   UploadImageBytesOptions,
   UseUploadImageBytes,
 } from './hooks/useUploadImageBytes.js';
+export { useImagePicker, IMAGE_PICKER_MULTIPLE_MAX } from './hooks/useImagePicker.js';
+export type {
+  UseImagePicker,
+  ImagePickerOpenOptions,
+  ImagePickerMultiple,
+} from './hooks/useImagePicker.js';
 export { useGenerationResources } from './hooks/useGenerationResources.js';
 export type { UseGenerationResources } from './hooks/useGenerationResources.js';
 export {

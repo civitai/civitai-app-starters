@@ -10,8 +10,10 @@ import type {
 } from '../../src/blocks/messages.js';
 import type {
   BlockGenerationSourceImageInfo,
+  BlockImagePickerSource,
   BlockImageScanResult,
   BlockPendingImageInfo,
+  BlockPickedImageInfo,
   BlockUploadedImageInfo,
   PageSlotContext,
   WorkflowBody,
@@ -162,6 +164,103 @@ describe('OPEN_IMAGE_UPLOAD / IMAGE_UPLOAD_RESULT message guards', () => {
       expect(sel && 'width' in sel && sel.width).toBe(768);
     } else {
       expect.unreachable('sourceResult should narrow to IMAGE_UPLOAD_RESULT');
+    }
+  });
+});
+
+describe('OPEN_IMAGE_PICKER / IMAGE_PICKER_RESULT message guards', () => {
+  const posted: BlockPickedImageInfo = {
+    source: 'posted',
+    url: 'https://image.civitai.com/x/original=true/posted.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 4242,
+  };
+  // A generator output that was never posted has no Image row, so no imageId.
+  const generated: BlockPickedImageInfo = {
+    source: 'generated',
+    url: 'https://image.civitai.com/x/original=true/generated.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  };
+  const request: BlockToParentMessage = {
+    type: 'OPEN_IMAGE_PICKER',
+    payload: { requestId: 'p-1' },
+  };
+
+  it('isMessage accepts OPEN_IMAGE_PICKER + IMAGE_PICKER_RESULT by discriminator', () => {
+    const picked: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-1', selected: posted },
+    };
+    const dismissed: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-1' },
+    };
+    expect(isMessage<BlockToParentMessage, 'OPEN_IMAGE_PICKER'>(request, 'OPEN_IMAGE_PICKER')).toBe(
+      true,
+    );
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(picked, 'IMAGE_PICKER_RESULT'),
+    ).toBe(true);
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(dismissed, 'IMAGE_PICKER_RESULT'),
+    ).toBe(true);
+    // The upload reply is a different message, not an alias of this one.
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(picked, 'IMAGE_UPLOAD_RESULT'),
+    ).toBe(false);
+  });
+
+  it('the request carries only a requestId by default; sources and multiple are optional', () => {
+    expect(request.payload).not.toHaveProperty('sources');
+    expect(request.payload).not.toHaveProperty('multiple');
+
+    const sources: BlockImagePickerSource[] = ['generated'];
+    const narrowed: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_PICKER',
+      payload: { requestId: 'p-2', sources, multiple: { max: 5 } },
+    };
+    if (isMessage<BlockToParentMessage, 'OPEN_IMAGE_PICKER'>(narrowed, 'OPEN_IMAGE_PICKER')) {
+      expect(narrowed.payload.sources).toEqual(['generated']);
+      expect(narrowed.payload.multiple).toEqual({ max: 5 });
+    } else {
+      expect.unreachable('narrowed should narrow to OPEN_IMAGE_PICKER');
+    }
+  });
+
+  it('a posted pick carries a numeric imageId and a generated pick carries none', () => {
+    expect(typeof posted.imageId).toBe('number');
+    expect(generated).not.toHaveProperty('imageId');
+    // Both are a valid generation source image as they stand.
+    const asSource: BlockGenerationSourceImageInfo = generated;
+    expect(asSource).toMatchObject({ width: 1024, height: 768 });
+  });
+
+  it('IMAGE_PICKER_RESULT carries a list for a multi pick and an error for a refusal', () => {
+    const many: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-3', selectedImages: [posted, generated] },
+    };
+    const refused: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-4', error: 'unsupported on this host' },
+    };
+    if (
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(many, 'IMAGE_PICKER_RESULT') &&
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(refused, 'IMAGE_PICKER_RESULT')
+    ) {
+      expect(many.payload.selectedImages?.map((image) => image.source)).toEqual([
+        'posted',
+        'generated',
+      ]);
+      expect(many.payload.selected).toBeUndefined();
+      expect(refused.payload.error).toBe('unsupported on this host');
+      expect(refused.payload.selected).toBeUndefined();
+    } else {
+      expect.unreachable('both should narrow to IMAGE_PICKER_RESULT');
     }
   });
 });

@@ -323,6 +323,53 @@ export type BlockNavigateScope = 'app' | 'site';
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
+ * Which of the viewer's own image libraries `OPEN_IMAGE_PICKER` (via
+ * `useImagePicker`) offers:
+ *  - `'posted'` — images the viewer has posted to Civitai.
+ *  - `'generated'` — outputs the viewer made with the Civitai generator.
+ *
+ * The request's `sources` narrows the picker to one of them; omitting it offers
+ * both. Images only — neither library offers video through this picker.
+ */
+export type BlockImagePickerSource = 'posted' | 'generated';
+
+/**
+ * One image the viewer picked from their own Civitai images
+ * (`IMAGE_PICKER_RESULT.selected` / `.selectedImages`, via `useImagePicker`).
+ * The host lists and filters the library in its own chrome; the block receives
+ * only what the viewer picked.
+ *
+ * What is pickable is decided by the host, never by the block:
+ *  - `'posted'`: the viewer's own images that are in a published post, fully
+ *    scanned, unflagged, and within the same SFW ceiling a `'display'` upload
+ *    has to clear (the guarantee documented on {@link BlockUploadedImageInfo}).
+ *  - `'generated'`: the viewer's own succeeded generator outputs whose rating
+ *    is within that same ceiling. An output with no rating is not pickable.
+ *
+ * `{ url, width, height }` is a valid {@link BlockSourceImage}, so a pick can
+ * be fed into a generation body. The generation body bounds each dimension to
+ * 64–2048 on its own; a picked image may be larger than that.
+ */
+export interface BlockPickedImageInfo {
+  /** Which library the viewer picked it from. */
+  source: BlockImagePickerSource;
+  /** Civitai-hosted image URL, usable directly as a generation `sourceImage.url`. */
+  url: string;
+  /** Pixel width of the image at `url`. */
+  width: number;
+  /** Pixel height of the image at `url`. */
+  height: number;
+  /** NSFW-level bitmask value (same scale as {@link BlockUploadedImageInfo.nsfwLevel}). */
+  nsfwLevel: number;
+  /**
+   * The `Image` row id. Present for `source: 'posted'`; ABSENT for
+   * `source: 'generated'` (a generator output that was never posted has no
+   * `Image` row).
+   */
+  imageId?: number;
+}
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

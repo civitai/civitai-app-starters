@@ -69,6 +69,8 @@ import {
   type BlockTrainedEpoch,
   type BlockWorkflowSnapshot,
   type BlockGatedImage,
+  type BlockImagePickerSource,
+  type BlockPickedImageInfo,
   type BlockCollectionFollowErrorCode,
   type BlockCreatePostHostError,
   type BlockCreatePostResult,
@@ -1101,6 +1103,27 @@ export interface MockHostOptions {
    */
   cannedMultiPicks?: CannedPick[] | null;
   /**
+   * The viewer's pickable images, as `OPEN_IMAGE_PICKER` answers from them
+   * (what `useImagePicker().open()` resolves with). The mock has no picker UI:
+   * it answers at once, as if the viewer picked from the top of this list.
+   *
+   * The list is first FILTERED to the request's `sources` (all of it when the
+   * request names none). A single pick then answers with the first image left,
+   * and a multi pick (`multiple: { max }`) with the first `max` of them (`max`
+   * itself clamped to 20). When nothing is left the reply is a dismiss. `null`
+   * or `[]` simulates a viewer who dismisses every time.
+   *
+   * Defaults to one posted image (with an `imageId`) and one generated image
+   * (without one), so both libraries answer out of the box.
+   *
+   * The mock applies the real host's refusals too: a `sources` that is not a
+   * non-empty array of `'posted'` / `'generated'`, or a `max` that is not a
+   * whole number ≥ 1, is answered with an `error`, and so is any request on a
+   * model-slot `context` (`unsupported on this host`: the picker is a page-app
+   * affordance). Live-tunable via {@link MockHost.setScenario}.
+   */
+  cannedImagePicks?: BlockPickedImageInfo[] | null;
+  /**
    * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` when the block
    * requests `purpose:'display'` (the default) — what `useImageUpload().open()`
    * resolves with. `null` simulates a dismissed upload modal (→
@@ -1714,6 +1737,7 @@ export type MockHostScenarioPatch = Pick<
   | 'pollsUntilDone'
   | 'cannedPicks'
   | 'cannedMultiPicks'
+  | 'cannedImagePicks'
   | 'cannedImageUpload'
   | 'cannedGenerationSourceUpload'
   | 'cannedImageScan'
@@ -1838,6 +1862,36 @@ const DEFAULT_SECOND_LORA_PICK: CannedPick = {
 
 /** The multi-select cap — the real host's, and `additionalResources`'. */
 const MOCK_RESOURCE_PICKER_MULTI_MAX = 5;
+
+/** The multi-pick cap of `OPEN_IMAGE_PICKER`, the real host's. */
+const MOCK_IMAGE_PICKER_MULTI_MAX = 20;
+
+/** The libraries `OPEN_IMAGE_PICKER` knows. */
+const MOCK_IMAGE_PICKER_SOURCES: readonly BlockImagePickerSource[] = ['posted', 'generated'];
+
+/**
+ * The images the mock host answers `OPEN_IMAGE_PICKER` from when
+ * {@link MockHostOptions.cannedImagePicks} is omitted: one per library, and
+ * every field differs between them so a block that mixes two picks up shows
+ * it. The generated one has NO `imageId`, as on the real host.
+ */
+const DEFAULT_IMAGE_PICKS: BlockPickedImageInfo[] = [
+  {
+    source: 'posted',
+    url: 'https://image.civitai.com/mock/original=true/dev-posted-image.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 12345801,
+  },
+  {
+    source: 'generated',
+    url: 'https://image.civitai.com/mock/original=true/dev-generated-image.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  },
+];
 
 /**
  * The canned image the mock host "returns" from `OPEN_IMAGE_UPLOAD`. Mirrors the
@@ -2445,6 +2499,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Canned MULTI-select picks. `undefined` = derive from the single LoRA pick
   // (see the option's docs); `null` = dismissed.
   let cannedMultiPicks: CannedPick[] | null | undefined = options.cannedMultiPicks;
+  // The viewer's pickable images for OPEN_IMAGE_PICKER. `null` = dismisses.
+  let cannedImagePicks: BlockPickedImageInfo[] | null =
+    options.cannedImagePicks === undefined ? DEFAULT_IMAGE_PICKS : options.cannedImagePicks;
   // Canned image-upload result. `null` = dismissed; undefined = default image.
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
@@ -4469,6 +4526,68 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'OPEN_IMAGE_PICKER': {
+            // The viewer picking from their own images. No picker UI here: the
+            // mock answers at once from `cannedImagePicks`, with the real
+            // host's rules in the real host's order. A request nobody can
+            // route is dropped, as the host drops it.
+            if (!isRoutableRequestId(requestId)) return;
+            const refuse = (error: string) =>
+              dispatchToBlock({ type: 'IMAGE_PICKER_RESULT', payload: { requestId, error } });
+            // A page-app affordance: every other surface answers the generic
+            // refusal.
+            if (!emulatesPageHost(options.context)) {
+              refuse('unsupported on this host');
+              return;
+            }
+            const pickerPayload = (typed.payload ?? {}) as { sources?: unknown; multiple?: unknown };
+            // `sources`: omitted = both. Otherwise a non-empty array of known
+            // members; repeats are harmless.
+            let wanted: readonly string[] = MOCK_IMAGE_PICKER_SOURCES;
+            if (pickerPayload.sources !== undefined) {
+              const requested = pickerPayload.sources;
+              if (
+                !Array.isArray(requested) ||
+                requested.length === 0 ||
+                !requested.every((s) => MOCK_IMAGE_PICKER_SOURCES.includes(s))
+              ) {
+                refuse(
+                  "OPEN_IMAGE_PICKER: sources must be a non-empty array of 'posted' and/or 'generated'.",
+                );
+                return;
+              }
+              wanted = requested as string[];
+            }
+            const available = (cannedImagePicks ?? []).filter((image) =>
+              wanted.includes(image.source),
+            );
+            const multiple = pickerPayload.multiple;
+            if (multiple !== undefined && multiple !== null) {
+              const max =
+                typeof multiple === 'object' ? (multiple as { max?: unknown }).max : undefined;
+              if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+                refuse('OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.');
+                return;
+              }
+              dispatchToBlock({
+                type: 'IMAGE_PICKER_RESULT',
+                payload: {
+                  requestId,
+                  selectedImages: available
+                    .slice(0, Math.min(max, MOCK_IMAGE_PICKER_MULTI_MAX))
+                    .map((image) => ({ ...image })),
+                },
+              });
+              return;
+            }
+            const first = available[0];
+            dispatchToBlock({
+              type: 'IMAGE_PICKER_RESULT',
+              payload: { requestId, ...(first ? { selected: { ...first } } : {}) },
+            });
+            return;
+          }
+
           case 'OPEN_IMAGE_UPLOAD': {
             // Host-chrome image upload: return the canned result keyed by the
             // requested `purpose` (mirrors the real host's IMAGE_UPLOAD_RESULT).
@@ -5213,6 +5332,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedMultiPicks' in patch) cannedMultiPicks = patch.cannedMultiPicks;
+    // `null` is a meaningful value (dismisses), and `undefined` restores the
+    // defaults, so check for the KEY's presence.
+    if ('cannedImagePicks' in patch)
+      cannedImagePicks =
+        patch.cannedImagePicks === undefined ? DEFAULT_IMAGE_PICKS : patch.cannedImagePicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
     if ('cannedGenerationSourceUpload' in patch)
