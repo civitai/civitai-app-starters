@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload, ParentToBlockMessage } from '@civitai/app-sdk/blocks';
@@ -8,6 +12,15 @@ import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
 const OTHER_ORIGIN = 'https://evil.example.com';
+
+// Read from package.json, NOT from `src/version.generated.ts`: the expectation
+// must not come from the constant the transport sends, or a stale constant
+// would agree with itself.
+const PACKAGE_VERSION = (
+  JSON.parse(
+    readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
+  ) as { version: string }
+).version;
 
 function buildInitPayload(overrides: Partial<BlockInitPayload> = {}): BlockInitPayload {
   return {
@@ -526,7 +539,7 @@ describe('IframeTransport', () => {
     );
     expect(postMessageMock).toHaveBeenNthCalledWith(
       3,
-      { type: 'BLOCK_READY', payload: { height: 0 } },
+      { type: 'BLOCK_READY', payload: { height: 0, sdkVersion: PACKAGE_VERSION } },
       PARENT_ORIGIN,
     );
     transport.dispose();
@@ -651,9 +664,23 @@ describe('IframeTransport', () => {
     // BLOCK_READY is the first outbound — the platform's 10s ready timeout
     // depends on this; useBlockResize follows with real measurements.
     expect(postMessageMock).toHaveBeenCalledWith(
-      { type: 'BLOCK_READY', payload: { height: 0 } },
+      { type: 'BLOCK_READY', payload: { height: 0, sdkVersion: PACKAGE_VERSION } },
       PARENT_ORIGIN,
     );
+    transport.dispose();
+  });
+
+  it('reports this package\'s version as sdkVersion in BLOCK_READY', async () => {
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
+    await transport.waitForInit();
+    const ready = postMessageMock.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { sdkVersion?: unknown } })
+      .filter((m) => m.type === 'BLOCK_READY');
+    expect(ready).toHaveLength(1);
+    // Plain semver: no package-name prefix, no leading `v`.
+    expect(PACKAGE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
+    expect(ready[0]!.payload?.sdkVersion).toBe(PACKAGE_VERSION);
     transport.dispose();
   });
 

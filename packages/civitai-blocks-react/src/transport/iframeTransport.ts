@@ -24,6 +24,7 @@ import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
 import { isRoutableRequestId } from './requestId.js';
 import { payloadValidatorFor, projectInboundPayload } from './validate.js';
+import { VERSION } from '../version.generated.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
@@ -744,7 +745,9 @@ export class IframeTransport implements BlockTransport {
         // block's root element mounts. Queued because the iframe's React
         // tree hasn't rendered yet at this point — the postMessage goes
         // out on the next microtask via the standard dispatch path.
-        this.dispatch('BLOCK_READY', { height: 0 });
+        // `sdkVersion` is informational (the host counts versions in the
+        // wild); nothing is negotiated on it and older blocks omit it.
+        this.dispatch('BLOCK_READY', { height: 0, sdkVersion: VERSION });
         this.resolveInit(data.payload);
       }
       return;

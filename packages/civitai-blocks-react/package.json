@@ -34,7 +34,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "generate": "node scripts/gen-version.mjs",
+    "build": "node scripts/gen-version.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",
     "test:browser": "vitest run --project browser",

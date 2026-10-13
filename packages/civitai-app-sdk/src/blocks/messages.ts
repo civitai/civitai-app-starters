@@ -1200,7 +1200,12 @@ export type BlockToParentMessage =
   // payload is empty: it discloses nothing a parent frame cannot already infer
   // from the URL it framed.
   | { type: 'BLOCK_HELLO'; payload?: undefined }
-  | { type: 'BLOCK_READY'; payload: { height: number } }
+  // `sdkVersion` is INFORMATIONAL: the plain semver (`"0.73.0"` — no package
+  // name, no `v`) of the package whose transport sent this message, so a host
+  // can count which SDK versions are in the wild. It is not a protocol version
+  // and nothing is negotiated on it. Optional in both directions: blocks built
+  // before it existed omit it, and a host must never require it.
+  | { type: 'BLOCK_READY'; payload: { height: number; sdkVersion?: string } }
   | { type: 'BLOCK_ERROR'; payload: { message: string; fatal: boolean } }
   // The block's transport REFUSED an inbound host message at its trust boundary
   // and dropped it. Fire-and-forget, no `requestId`, no reply: it reports a drop
