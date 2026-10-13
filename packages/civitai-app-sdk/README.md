@@ -2,6 +2,17 @@
 
 Shared OAuth + orchestrator glue for building third-party [Civitai](https://civitai.com) apps. Used internally by every starter in [`civitai/civitai-app-starters`](https://github.com/civitai/civitai-app-starters), and publishable for direct use in your own app.
 
+> **Building a block app (an app that runs inside civitai.com)? Start from
+> [`@civitai/sdk`](https://www.npmjs.com/package/@civitai/sdk).** The three
+> packages are layers over one host contract, and all three are supported:
+>
+> - **`@civitai/sdk`** is the client new block apps start on: `initialize()`,
+>   then `app.workflows`, `app.storage`, `app.site` and `app.host`.
+> - **`@civitai/app-sdk/blocks`** (this package) is the contract itself: the
+>   workflow body types, the manifest types and the host message shapes.
+> - **[`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react)**
+>   is the React hook binding over that same contract.
+
 This package is **runtime-agnostic** — Node 20+ APIs only. There is no Next.js, SvelteKit, or Express coupling. Each starter writes a ~30-line framework adapter that calls into these primitives.
 
 ## Install
