@@ -34,7 +34,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { JOBS, ADVISORY_JOBS, CORE_JOBS, STEP_GATED_JOBS, UNGATED_STEPS, classifyPath } from '../../scripts/ci-lanes.mjs';
+import { JOBS, ADVISORY_JOBS, CORE_JOBS, STEP_GATED_JOBS, UNGATED_STEPS, RELEASE_LANE_JOBS, classifyPath } from '../../scripts/ci-lanes.mjs';
 import { parseJobs, parseSteps, problems as rawProblems, laneCondition, stepIsGated, LANES_JOB } from './lib/ci-workflow.mjs';
 
 const SHAPE = { stepGated: STEP_GATED_JOBS, ungatedSteps: UNGATED_STEPS };
@@ -97,6 +97,7 @@ describe('ci.yml agrees with the lane ledger', () => {
       'actions/setup-node',
       'pnpm test:guards',
       'node scripts/check-starter-workspace-overrides.mjs',
+      'node scripts/check-generated-version.mjs',
     ]);
   });
 
@@ -108,6 +109,21 @@ describe('ci.yml agrees with the lane ledger', () => {
     assert.deepEqual([...ADVISORY_JOBS].sort(), ADVISORY_PINNED);
     assert.equal(ADVISORY_JOBS.length + CORE_JOBS.length, Object.keys(JOBS).length);
     for (const kind of Object.values(JOBS)) assert.ok(['core', 'advisory'].includes(kind), `unknown kind ${kind}`);
+  });
+
+  test('the release lane runs exactly the pinned set, and it covers both release guards', () => {
+    // A second copy on purpose. Widening or narrowing what a Version Packages
+    // PR runs is the operator's trade, so it takes an edit here too.
+    assert.deepEqual([...RELEASE_LANE_JOBS].sort(), ['packaging', 'starter-pins']);
+    for (const id of RELEASE_LANE_JOBS) assert.ok(id in JOBS, `release-lane job ${id} is not in the ledger`);
+    // The override guard and `pnpm test:guards` are not release-lane JOBS: they
+    // are every-lane STEPS of the starter matrix, which is what keeps them
+    // running when the release lane turns the matrix's heavy steps off.
+    assert.ok(UNGATED_STEPS.includes('node scripts/check-starter-workspace-overrides.mjs'));
+    assert.ok(UNGATED_STEPS.includes('pnpm test:guards'));
+    // design-system, the only other job running it, is off in the release lane.
+    assert.ok(UNGATED_STEPS.includes('node scripts/check-generated-version.mjs'));
+    assert.ok(!RELEASE_LANE_JOBS.includes('starter'), 'starter is step-gated; listing it would run its heavy steps');
   });
 
   test('no required context is path-scoped, and none was renamed', () => {

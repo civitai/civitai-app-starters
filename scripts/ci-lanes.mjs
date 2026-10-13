@@ -25,11 +25,18 @@
  *   full       every `core` job, plus the `advisory` jobs whose inputs the PR
  *              touches. `push` (to main) and `workflow_dispatch` run everything,
  *              and so does any other event (there is no `schedule` trigger).
+ *   release    the changesets Version Packages PR, when its diff is ONLY release
+ *              machinery (`RELEASE_FILES`) AND every package.json in it changed
+ *              only `version` and workspace-dependency versions (read from the
+ *              two blobs, not from the path). Runs `RELEASE_LANE_JOBS`: the
+ *              install + build + tarball check (`packaging`), the pin guard
+ *              (`starter-pins`), and the `starter` legs' every-lane steps, which
+ *              are `pnpm test:guards` and the workspace-override guard. Anything
+ *              short of a clean positive classification -> `full`.
  *
- * In this lane set no core job is ever off; the per-job outputs for core jobs
- * and the `starter` matrix's step gating exist for the lanes that turn core
- * jobs off (the release-PR lane and the push-to-main tested-tree skip). They
- * are not dead code.
+ * The per-job outputs for core jobs and the `starter` matrix's step gating are
+ * how the release lane (and the push-to-main tested-tree skip) turn core jobs
+ * off. They are not dead code.
  *
  * ADVISORY jobs are the five non-required jobs that depend on something outside
  * the tree at run time (a published schema, the npm registry, the orchestrator
@@ -52,7 +59,8 @@
  * TESTS  tests/guards/ci-lanes.test.mjs (the decision table) and
  *        tests/guards/ci-lanes-ledger.test.mjs (ci.yml against `JOBS`).
  */
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -101,6 +109,58 @@ export const UNGATED_STEPS = Object.freeze([
   'actions/setup-node',
   'pnpm test:guards',
   'node scripts/check-starter-workspace-overrides.mjs',
+  'node scripts/check-generated-version.mjs',
+]);
+
+/** The head branch `changesets/action` (release.yml) force-pushes the Version Packages PR to. */
+export const RELEASE_BRANCH = 'changeset-release/main';
+
+/**
+ * What runs on a release-lane PR, as a set: every other job's output is `false`.
+ * `starter` is not here, so its heavy steps are off; its every-lane steps
+ * (`UNGATED_STEPS`, which include both release guards) still run in all five legs.
+ *
+ * THE TRADE, AS IT ACTUALLY IS. A version bump does not change what any job
+ * BUILDS against: the root `pnpm.overrides` pin every `@civitai/*` workspace
+ * package to `workspace:*`, so the starters and packages resolve the same
+ * local code whatever the carets say. It can still break a job that READS a
+ * version. The one known case is a `version.generated.ts` left behind its
+ * package.json, which `design-system` (off in this lane) is the only job to
+ * check; that check therefore also runs as an every-lane step
+ * (`UNGATED_STEPS`). No other version-reading check in a dropped job is known,
+ * and none is covered here if one exists. What the lane drops beyond that is
+ * the release PR RE-TESTING MAIN'S CODE right before a publish. `release.yml` publishes on
+ * the merge push and does not wait for CI, so if main ever carries a red core
+ * job, a green release-lane PR can merge and publish it. The full-suite run on
+ * the release PR was the last thing that would have been red in front of
+ * whoever merges. Measured exposure when this was written: 0 of 100 recent
+ * push-to-main runs were red on a core job, and 2 of 17 release-PR runs with a
+ * core failure failed on a step this lane drops: both were `playwright install
+ * --with-deps` in dropped jobs, and 0 were a typecheck, test or build step.
+ */
+export const RELEASE_LANE_JOBS = Object.freeze(['packaging', 'starter-pins']);
+
+/**
+ * The files a Version Packages PR may touch, with the change kind it may make.
+ * MEASURED, not designed: the union over the 14 release PRs merged between
+ * 2026-10-03 and 2026-10-12 (`gh api pulls/<n>/files`) was exactly these six
+ * shapes, plus ONE test file a human pushed onto the release branch by hand
+ * (#535), which is the case that must get the full suite and does, by not
+ * being here. No release PR in that sample touched `pnpm-lock.yaml`: the root
+ * `pnpm.overrides` pin every workspace package to `workspace:*`, so the
+ * lockfile does not churn on a bump. A lockfile change is therefore NOT release
+ * machinery here and runs the full suite.
+ *
+ * `content` names the blob check `checkReleaseContent` applies; a path is
+ * release-only only if its status matches AND its content check passes.
+ */
+export const RELEASE_FILES = Object.freeze([
+  { glob: '.changeset/*.md', status: 'removed', content: null },
+  { glob: 'packages/*/CHANGELOG.md', status: 'modified', content: null },
+  { glob: 'packages/*/package.json', status: 'modified', content: 'package-json' },
+  { glob: 'packages/*/src/version.generated.ts', status: 'modified', content: 'version-constant' },
+  { glob: 'starters/*/package.json', status: 'modified', content: 'package-json' },
+  { glob: 'starters/examples/*/package.json', status: 'modified', content: 'package-json' },
 ]);
 
 export const ADVISORY_JOBS = Object.freeze(
@@ -216,6 +276,99 @@ export function classifyPath(path) {
 
 const everyJob = (value) => Object.fromEntries(Object.keys(JOBS).map((id) => [id, value]));
 
+const RELEASE_COMPILED = RELEASE_FILES.map((r) => ({ ...r, re: globToRegExp(r.glob) }));
+
+/**
+ * The release-file rule a changed-file entry satisfies, or a string saying why
+ * it is not release machinery. Pure; the blob half is `checkReleaseContent`.
+ */
+export function releaseRuleFor(f) {
+  if (typeof f?.filename !== 'string' || f.filename === '') return 'a changed-file entry has no filename';
+  if (f.previous_filename) return `${f.filename} is a rename`;
+  const rule = RELEASE_COMPILED.find((r) => r.re.test(f.filename));
+  if (!rule) return `${f.filename} is not release machinery`;
+  if (f.status !== rule.status) return `${f.filename} is ${f.status ?? 'of unknown status'}, a release only ever ${rule.status} it`;
+  return rule;
+}
+
+const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+/** What `changeset version` writes: a plain version, or a caret/tilde/>= range on one. */
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const RELEASE_RANGE = /^(?:[\^~]|>=)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?: <\d+\.\d+\.\d+)?$/;
+
+/**
+ * Why `head` is more than a version bump of `base`, or null when it is not.
+ * Masks `version` and every WORKSPACE package's entry in the four dependency
+ * maps, then requires the rest of the document to be identical; each masked
+ * value that changed must still look like a version (a `workspace:`, `file:`
+ * or git specifier does not).
+ */
+export function packageJsonBumpProblem(baseText, headText, workspaceNames) {
+  let base;
+  let head;
+  try {
+    base = JSON.parse(baseText);
+    head = JSON.parse(headText);
+  } catch (err) {
+    return `does not parse as JSON (${err.message})`;
+  }
+  if (!base || !head || typeof base !== 'object' || typeof head !== 'object') return 'is not a JSON object';
+  const mask = (doc) => {
+    const copy = structuredClone(doc);
+    delete copy.version;
+    for (const field of DEP_FIELDS) {
+      if (!copy[field] || typeof copy[field] !== 'object') continue;
+      for (const name of Object.keys(copy[field])) if (workspaceNames.has(name)) copy[field][name] = '<release>';
+    }
+    return JSON.stringify(copy);
+  };
+  if (mask(base) !== mask(head)) return 'changes something other than `version` and workspace dependency versions';
+  if (base.version !== head.version && (typeof head.version !== 'string' || !VERSION.test(head.version))) {
+    return `sets version to ${JSON.stringify(head.version)}`;
+  }
+  for (const field of DEP_FIELDS) {
+    for (const name of Object.keys(head[field] ?? {})) {
+      if (!workspaceNames.has(name) || base[field]?.[name] === head[field][name]) continue;
+      const v = head[field][name];
+      if (typeof v !== 'string' || !RELEASE_RANGE.test(v)) return `sets ${field}.${name} to ${JSON.stringify(v)}`;
+    }
+  }
+  return null;
+}
+
+/** The `VERSION = "x"` literal of a generated version module, or null. */
+const versionConstant = (text) => text.match(/^export const VERSION = "([^"]+)";$/m)?.[1] ?? null;
+
+/**
+ * Why a release PR's blobs are more than a version bump, or null when every
+ * changed file is. `fetchBlob(path, side)` returns the file's text at the
+ * PR's `base` or `head` commit and THROWS on any failure; a throw here is
+ * caught by the caller and fails open.
+ */
+export async function checkReleaseContent(files, { fetchBlob, workspaceNames }) {
+  if (!(workspaceNames instanceof Set) || workspaceNames.size === 0) return 'no workspace package names to mask';
+  for (const f of files) {
+    const rule = releaseRuleFor(f);
+    if (typeof rule === 'string') return rule;
+    if (rule.content === 'package-json') {
+      const problem = packageJsonBumpProblem(await fetchBlob(f.filename, 'base'), await fetchBlob(f.filename, 'head'), workspaceNames);
+      if (problem) return `${f.filename} ${problem}`;
+    } else if (rule.content === 'version-constant') {
+      const [base, head] = [await fetchBlob(f.filename, 'base'), await fetchBlob(f.filename, 'head')];
+      const headVersion = versionConstant(head);
+      if (!headVersion || !versionConstant(base)) return `${f.filename} has no parseable VERSION constant`;
+      if (base.replace(versionConstant(base), '<v>') !== head.replace(headVersion, '<v>')) {
+        return `${f.filename} changes more than its VERSION constant`;
+      }
+      // Whether the stamped version MATCHES package.json is not decided here.
+      // A drifted module is most often one that was not regenerated, so it is
+      // absent from the diff and no file walk can see it; the every-lane step
+      // `node scripts/check-generated-version.mjs` reads the tree instead.
+    }
+  }
+  return null;
+}
+
 /**
  * The decision, as a pure function of what the run knows.
  *
@@ -224,9 +377,12 @@ const everyJob = (value) => Object.fromEntries(Object.keys(JOBS).map((id) => [id
  * @param {Array<{filename: string, previous_filename?: string}>} [input.files]
  *        the pull request's changed files (pull_request only)
  * @param {string} [input.filesError] set when the file list could not be computed
+ * @param {object} [input.release] pull_request only, and only when the head is
+ *        `RELEASE_BRANCH` in this repository: `{ problem }`, where `problem` is
+ *        null when `checkReleaseContent` found nothing but a version bump
  * @returns {{ lane: string, reason: string, jobs: Record<string, boolean> }}
  */
-export function decide({ event, files, filesError } = {}) {
+export function decide({ event, files, filesError, release } = {}) {
   if (event !== 'pull_request') {
     // push, workflow_dispatch, and any event this file has never heard of.
     return { lane: 'full', reason: `${event || 'unknown event'}: every job`, jobs: everyJob(true) };
@@ -238,6 +394,26 @@ export function decide({ event, files, filesError } = {}) {
   // A pull request with no changed files is not a state this can tell apart from
   // an API that answered with nothing.
   if (files.length === 0) return runAll('the changed-file list is empty');
+
+  // The release lane needs BOTH halves: the head is the release branch of this
+  // repository (decided by the caller from the payload, never from the actor)
+  // AND `checkReleaseContent` came back with no problem. That function is the
+  // ONE walk over the files: it applies `releaseRuleFor` (path + status) to
+  // every entry before any blob check, so a non-release path is a problem
+  // there and is not re-derived here. `problem === null` is the only accepted
+  // value; undefined, a string, or a missing `release` all fall through to the
+  // ordinary pull_request lane below.
+  let releaseNote = '';
+  if (release) {
+    if (release.problem === null) {
+      return {
+        lane: 'release',
+        reason: `release PR, version bump only (${files.length} files): ${RELEASE_LANE_JOBS.join(', ')} + the starter guards`,
+        jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, RELEASE_LANE_JOBS.includes(id)])),
+      };
+    }
+    releaseNote = `release branch, but NOT a pure version bump (${release.problem ?? 'content not checked'}); full suite. `;
+  }
 
   const jobs = everyJob(true);
   for (const id of ADVISORY_JOBS) jobs[id] = false;
@@ -254,11 +430,11 @@ export function decide({ event, files, filesError } = {}) {
     }
   }
   const ran = ADVISORY_JOBS.filter((id) => jobs[id]);
-  const reason = unclassified.length
+  const reason = releaseNote + (unclassified.length
     ? `unclassified path(s) select every advisory job: ${unclassified.slice(0, 5).join(', ')}`
     : ran.length
       ? `advisory jobs whose inputs changed: ${ran.join(', ')}`
-      : 'no advisory job reads any changed path';
+      : 'no advisory job reads any changed path');
   return { lane: 'full', reason, jobs };
 }
 
@@ -286,6 +462,50 @@ export async function fetchPullRequestFiles({ api, repo, number, token, fetchImp
   }
 }
 
+/**
+ * The Version Packages PR: head branch `RELEASE_BRANCH`, pushed to THIS
+ * repository (a fork can name a branch anything), into `main`. The actor is
+ * deliberately not consulted; a human pushing to the branch is the case the
+ * content check exists for.
+ */
+export function isReleaseHead(payload, repository) {
+  const pr = payload?.pull_request;
+  return (
+    pr?.head?.ref === RELEASE_BRANCH &&
+    typeof repository === 'string' &&
+    pr?.head?.repo?.full_name === repository &&
+    pr?.base?.ref === 'main'
+  );
+}
+
+/** `@civitai/*` names of the packages in this checkout's `packages/` directory. */
+export function workspacePackageNames(root = fileURLToPath(new URL('..', import.meta.url))) {
+  const names = new Set();
+  for (const e of readdirSync(join(root, 'packages'), { withFileTypes: true })) {
+    const file = join(root, 'packages', e.name, 'package.json');
+    if (e.isDirectory() && existsSync(file)) names.add(JSON.parse(readFileSync(file, 'utf8')).name);
+  }
+  return names;
+}
+
+/** `fetchBlob(path, 'base'|'head')` over the contents API; throws on anything but a 200. */
+export function blobFetcher({ api, repo, token, shas, fetchImpl = fetch }) {
+  return async (path, side) => {
+    const sha = shas?.[side];
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error(`no ${side} sha`);
+    const res = await fetchImpl(`${api}/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`, {
+      headers: {
+        accept: 'application/vnd.github.raw+json',
+        'x-github-api-version': '2022-11-28',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`contents ${path}@${side} answered HTTP ${res.status}`);
+    return res.text();
+  };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   if (argv[0] === '--explain') {
@@ -310,6 +530,22 @@ async function main() {
         number,
         token: env.GITHUB_TOKEN,
       });
+      if (isReleaseHead(payload, env.GITHUB_REPOSITORY)) {
+        input.release = { problem: 'content not checked' };
+        try {
+          input.release.problem = await checkReleaseContent(input.files, {
+            fetchBlob: blobFetcher({
+              api: env.GITHUB_API_URL ?? 'https://api.github.com',
+              repo: env.GITHUB_REPOSITORY,
+              token: env.GITHUB_TOKEN,
+              shas: { base: payload.pull_request.base.sha, head: payload.pull_request.head.sha },
+            }),
+            workspaceNames: workspacePackageNames(),
+          });
+        } catch (err) {
+          input.release.problem = `the release content check failed (${err?.message ?? err})`;
+        }
+      }
     } catch (err) {
       input.filesError = String(err?.message ?? err);
     }
