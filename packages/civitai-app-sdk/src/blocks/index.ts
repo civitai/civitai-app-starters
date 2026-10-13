@@ -246,6 +246,11 @@ export type {
   InlineComfyNode,
   WorkflowBodyStep,
   WorkflowBodyPassThroughStep,
+  WorkflowBodyWorkflow,
+  WorkflowBodyWorkflowStep,
+  WorkflowStepRef,
+  WithWorkflowStepRefs,
+  BlockWorkflowStepSnapshot,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,
@@ -278,6 +283,9 @@ export type {
   BlockModel3dOutput,
   BlockRunConfirmedStepHostError,
 } from './types.js';
+
+/** Host bound for the App Blocks `kind: 'workflow'` body — see `WorkflowBodyWorkflow`. */
+export { BLOCK_WORKFLOW_MAX_STEPS, BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS } from './types.js';
 
 /**
  * Host bounds for a viewer-confirmed pass-through step, mirrored from

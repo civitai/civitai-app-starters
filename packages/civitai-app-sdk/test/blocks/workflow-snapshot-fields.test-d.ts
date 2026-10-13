@@ -152,6 +152,13 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'training-quote-unavailable'
   | 'training-quote-unpriced'
   | 'daily-limit-exceeded'
+  | 'workflow_step_denied'
+  | 'workflow_ref_invalid'
+  | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded'
+  | 'workflow_quote_rejected'
+  | 'workflow_quote_unavailable'
+  | 'workflow_quote_unpriced'
 >();
 // The host's refusal assigns; so does a code a later host adds (open string).
 const refusal: BlockWorkflowSnapshot = {

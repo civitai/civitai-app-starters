@@ -80,6 +80,14 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'training-quote-unavailable'
   | 'training-quote-unpriced'
   | 'daily-limit-exceeded'
+  // The multi-step `kind: 'workflow'` codes, from a separate change.
+  | 'workflow_step_denied'
+  | 'workflow_ref_invalid'
+  | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded'
+  | 'workflow_quote_rejected'
+  | 'workflow_quote_unavailable'
+  | 'workflow_quote_unpriced'
 >();
 const dailyLimit: BlockWorkflowSnapshot['errorCode'] = 'daily-limit-exceeded';
 const futureCode: BlockWorkflowSnapshot['errorCode'] = 'some-code-a-later-host-adds';

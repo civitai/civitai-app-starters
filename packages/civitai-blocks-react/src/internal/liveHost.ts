@@ -70,11 +70,12 @@
  * and row budgets enforced per (app, user) — with the REAL ceilings, so a
  * write this host accepts is one production would accept.
  *
- * SET_USER_CHECKPOINT (Phase 4): FORWARDED (faithful) to the block-token
- * `blocks.updateUserSettings` mutation — never fabricated. The default page
- * setup mints a PAGE token which lacks `ctx.modelId`, so the backend returns the
- * honest error "block token lacks modelId context"; that real outcome is
- * surfaced to the block. With a model-slot token it persists for real.
+ * SET_USER_CHECKPOINT (Phase 4): answered as the production host for the slot
+ * would. On a PAGE context (the default; dev-token mints page tokens) it is
+ * refused locally with the page host's own reply — `ok: false` and the same
+ * error text — and no backend call, because the page host makes none. On a
+ * model-slot context it is FORWARDED to the block-token
+ * `blocks.updateUserSettings` mutation, never fabricated.
  *
  * SHARED STORAGE (#386): the live host SERVES all TEN `SHARED_*` bridges —
  * `apps.shared.{list,get,getCount,getCounts,append,update,vote,unvote,withdraw,
@@ -151,6 +152,7 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
+import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 import { parseSharedStorageRateLimit } from '../transport/validate.js';
@@ -240,9 +242,6 @@ export interface LiveHostOptions {
    */
   manifest?: unknown;
 }
-
-/** Page slot id — dev-token mints page tokens (mirrors PAGE_SLOT_ID server-side). */
-const PAGE_SLOT_ID = 'app.page';
 
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
@@ -679,11 +678,19 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
    * with {@link POLL_RETRY_BACKOFF_MS} backoff. The final result is only ever a
    * `snapshot` OR a still-transient error — the caller turns the latter into a
    * keep-polling `processing` reply, never a fabricated terminal `failed`.
+   *
+   * `waitSeconds` is the block's long-poll hint, passed through unchanged;
+   * `undefined` sends none, which keeps the request byte-identical to a plain
+   * read.
    */
-  async function pollWithRetry(workflowId: string): Promise<TrpcCallResult> {
+  async function pollWithRetry(workflowId: string, waitSeconds?: number): Promise<TrpcCallResult> {
     let last: TrpcCallResult = { error: 'poll failed', transient: true };
     for (let attempt = 0; attempt <= POLL_RETRY_BACKOFF_MS.length; attempt += 1) {
-      last = await callTrpcMutation('blocks.pollWorkflow', { blockToken: rawToken, workflowId });
+      last = await callTrpcMutation('blocks.pollWorkflow', {
+        blockToken: rawToken,
+        workflowId,
+        ...(waitSeconds !== undefined ? { waitSeconds } : {}),
+      });
       // A real snapshot (incl. a genuine terminal `failed`) — done.
       if (last.snapshot) return last;
       // A non-transient error (malformed response, deterministic 4xx) — don't
@@ -977,6 +984,10 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             imageIds?: number[];
             title?: string;
             body?: WorkflowBody;
+            // SUBMIT_WORKFLOW / POLL_WORKFLOW. `unknown`: this object is a cast
+            // over an untyped `postMessage`, and each is checked before use.
+            idempotencyKey?: unknown;
+            waitSeconds?: unknown;
             // ESTIMATE_WORKFLOW_BATCH — forwarded as sent; the server checks it.
             bodies?: unknown;
             path?: string;
@@ -1101,23 +1112,48 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // transfer, and inventing one is a behaviour change on a path where
             // `dev:live` spends REAL Buzz. Threading it through is tracked
             // separately rather than bolted on here.
-            void callTrpcMutation('blocks.submitWorkflow', { blockToken: rawToken, body }).then(
-              (r) => {
-                dispatchToBlock({
-                  type: 'WORKFLOW_SUBMITTED',
-                  payload: {
-                    requestId,
-                    snapshot: r.snapshot ?? errorSnapshot(r.error ?? 'submit failed'),
-                  },
-                });
-              },
-            );
+            //
+            // 🔴 THE IDEMPOTENCY KEY IS FORWARDED, as both production hosts do:
+            // only when it is a non-empty string, otherwise the field is left
+            // off. It was dropped here, so in `dev:live` — which spends REAL
+            // Buzz — a retry carrying the same key was a second submit rather
+            // than a deduplicated one, and a key in a format the server refuses
+            // was never refused. The server validates the format; its refusal
+            // comes back as the failed snapshot below.
+            const rawIdempotencyKey = typed.payload?.idempotencyKey;
+            const idempotencyKey =
+              typeof rawIdempotencyKey === 'string' && rawIdempotencyKey.length > 0
+                ? rawIdempotencyKey
+                : undefined;
+            void callTrpcMutation('blocks.submitWorkflow', {
+              blockToken: rawToken,
+              body,
+              ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+            }).then((r) => {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: r.snapshot ?? errorSnapshot(r.error ?? 'submit failed'),
+                },
+              });
+            });
             return;
           }
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            void pollWithRetry(workflowId).then((r) => {
+            // The long-poll hint is forwarded (it was dropped here, so
+            // `watch()` could never hold a poll open in `dev:live`), with the
+            // production hosts' rule as of civitai/civitai#5798: a finite
+            // number is sent UNCHANGED, anything else sends no field. The
+            // server owns every bound (floor, `<= 0` is no hold, the cap).
+            const rawWaitSeconds = typed.payload?.waitSeconds;
+            const waitSeconds =
+              typeof rawWaitSeconds === 'number' && Number.isFinite(rawWaitSeconds)
+                ? rawWaitSeconds
+                : undefined;
+            void pollWithRetry(workflowId, waitSeconds).then((r) => {
               // Snapshot present (incl. a genuine terminal `failed` from the
               // backend) — forward it as-is.
               if (r.snapshot) {
@@ -1681,13 +1717,26 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'SET_USER_CHECKPOINT': {
-            // FORWARD (faithful) to blocks.updateUserSettings — never fabricate.
-            // Mirror the prod IframeHost's versionId validation: a number or an
-            // explicit null is valid; anything else is rejected WITHOUT a backend
-            // call. NOTE: dev-token mints PAGE tokens which lack `ctx.modelId`, so
-            // with the default page setup the backend returns the honest error
-            // "block token lacks modelId context" — this is FAITHFUL (it surfaces
-            // the real outcome) and works for real with a model-slot token.
+            // 🔴 A PAGE REFUSES, ALWAYS, WITHOUT A BACKEND CALL — and the default
+            // context is a page. That is the production page host exactly: the
+            // same reply type, shape and error text, whatever `versionId` was
+            // sent, and nothing dropped except a request with no id to answer.
+            // This used to forward to `blocks.updateUserSettings`, a call the
+            // page host never makes, so the block saw the server's wording where
+            // production sends its own refusal. See ./hostSurface.ts.
+            if (emulatesPageHost(options.context)) {
+              if (!isRoutableRequestId(requestId)) return;
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: { requestId, ok: false, error: PAGE_CHECKPOINT_PERSIST_ERROR },
+              });
+              return;
+            }
+            // MODEL SLOT: FORWARD (faithful) to blocks.updateUserSettings — never
+            // fabricate. Mirror the prod IframeHost's versionId validation: a
+            // number or an explicit null is valid; anything else is rejected
+            // WITHOUT a backend call. A token without `ctx.modelId` gets the
+            // server's honest "block token lacks modelId context".
             const rawVersionId = typed.payload?.versionId;
             const versionId =
               rawVersionId === null
@@ -2448,6 +2497,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
 
           default:
+            // No reply, as in production. `livehost-message-coverage.test.mjs`
+            // holds every protocol type with a reply channel to a `case` above,
+            // so what reaches here is BLOCK_HELLO, BLOCK_MESSAGE_REJECTED or a
+            // type this protocol does not declare. The real host's `unsupported
+            // on this host` reply is built only for a request type it KNOWS and
+            // has no handler for; a type it does not know gets nothing.
             return;
         }
       },

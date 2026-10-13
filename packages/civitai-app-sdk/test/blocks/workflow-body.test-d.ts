@@ -50,6 +50,7 @@ import type {
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
   WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
 } from '../../src/blocks/types.js';
 
 /** The `textToImage` member, narrowed out of the union for member-field asserts. */
@@ -98,6 +99,7 @@ expectTypeOf<WorkflowBody>().toEqualTypeOf<
   | WorkflowBodyStep
   | WorkflowBodyPassThroughStep
   | WorkflowBodyTraining
+  | WorkflowBodyWorkflow
 >();
 
 // --- additionalResources is OPTIONAL on the textToImage member ---
@@ -448,6 +450,8 @@ if (someBody.kind === 'textToImage') {
   expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
 } else if (someBody.kind === 'training') {
   expectTypeOf(someBody.datasetId).toEqualTypeOf<string>();
+} else if (someBody.kind === 'workflow') {
+  expectTypeOf(someBody.steps).toEqualTypeOf<WorkflowBodyWorkflow['steps']>();
 } else {
   // 🔴 Same shape one level down: narrowing to `kind === 'step'` leaves BOTH
   // arms, so `step` is `string | undefined` here and `params` is NOT readable.

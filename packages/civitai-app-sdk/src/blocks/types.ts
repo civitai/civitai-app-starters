@@ -1249,6 +1249,9 @@ export type WorkflowBodyStep = {
  *    checkpoint itself.
  *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
  *    (256 KB) serialized. Both REJECT; neither truncates.
+ *  - **`repeat` is refused on this arm**, outright: a `repeat` may only
+ *    iterate an array in a body's own `arguments`, and this arm has none. Use
+ *    a `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) to repeat a step.
  *  - `maxBuzz` is the app's spend knob, and the host's quote can raise the
  *    reservation above it — see its own note below.
  *
@@ -1368,6 +1371,219 @@ export const BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
  * so neither kind's id can name the other's quote.
  */
 export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
+
+// ============================================================
+// App Blocks MULTI-STEP kind (`kind: 'workflow'`)
+// ============================================================
+
+/**
+ * The most steps one `kind: 'workflow'` body may carry. The host refuses a
+ * longer list with `errorCode: 'workflow_too_many_steps'`; an empty list is
+ * refused too.
+ */
+export const BLOCK_WORKFLOW_MAX_STEPS = 8;
+
+/**
+ * The most times one top-level `repeat` step of a `kind: 'workflow'` body may
+ * run its template, NESTED REPEATS MULTIPLIED (a 4-item repeat inside a 4-item
+ * repeat is 16). The host refuses more with
+ * `errorCode: 'workflow_repeat_unbounded'`.
+ */
+export const BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS = 16;
+
+/**
+ * A REFERENCE inside a `kind: 'workflow'` step's `input` — the orchestrator's
+ * own mechanism for feeding one step's result into a later step. Put it
+ * anywhere a value would go, at any depth.
+ *
+ * `$ref` names where the value comes from:
+ *  - `'$arguments'` — the body's own {@link WorkflowBodyWorkflow.arguments};
+ *  - the `name` of an EARLIER step in the same body;
+ *  - `'$<index>'` — an EARLIER step you did NOT name, by its zero-based
+ *    position (`'$0'` is the first step). A step that has a `name` is
+ *    referenced by that name only.
+ *
+ * An object counts as a reference only when it has BOTH `$ref` and `path` and
+ * no key other than `default` / `format`; anything else is ordinary input.
+ *
+ * `path` selects the value inside that source, e.g. `'output.images[0].url'`
+ * for a step, or `'prompt'` for `$arguments`. The orchestrator resolves it; the
+ * path is not checked by this package or by the host.
+ *
+ * 🔴 A reference may only point BACKWARDS. A step that names itself, a later
+ * step, or a step that does not exist is refused by the host with
+ * `errorCode: 'workflow_ref_invalid'` before anything is priced or reserved.
+ * A body may hold at most 64 references, in inputs nested at most 32 levels.
+ *
+ * `default` is the value used when the path resolves to nothing; `format` is a
+ * template applied to the resolved value. Both are passed to the orchestrator
+ * unmodified.
+ */
+export type WorkflowStepRef = {
+  $ref: '$arguments' | `$${number}` | (string & {});
+  path: string;
+  default?: unknown;
+  format?: string;
+};
+
+/**
+ * `T` with a {@link WorkflowStepRef} allowed in place of any value, at any
+ * depth. Use it to keep a step input typed while still wiring references in:
+ *
+ * ```ts
+ * type CutoutInput = { image: string; format?: 'png' | 'webp' };
+ * const input: WithWorkflowStepRefs<CutoutInput> = {
+ *   image: { $ref: 'draw', path: 'output.images[0].url' },
+ *   format: 'png',
+ * };
+ * ```
+ */
+export type WithWorkflowStepRefs<T> =
+  | WorkflowStepRef
+  | (T extends ReadonlyArray<infer U>
+      ? Array<WithWorkflowStepRefs<U>>
+      : T extends object
+        ? { [K in keyof T]: WithWorkflowStepRefs<T[K]> }
+        : T);
+
+/** One step of a {@link WorkflowBodyWorkflow}. */
+export type WorkflowBodyWorkflowStep = {
+  /**
+   * What later steps call this one in a {@link WorkflowStepRef}, and the `name`
+   * it reports under on {@link BlockWorkflowSnapshot.steps}. Optional: an
+   * unnamed step is named by its position (`'$0'`, `'$1'`, …).
+   *
+   * A lowercase letter followed by up to 31 of `a-z`, `0-9`, `_` or `-`
+   * (`/^[a-z][a-z0-9_-]{0,31}$/`), unique within the body, and not
+   * `'block-step'`, which is reserved. A name that breaks a rule is refused
+   * with `errorCode: 'workflow_ref_invalid'`.
+   */
+  name?: string;
+  /**
+   * The ORCHESTRATOR step type to run, verbatim — e.g. `'imageGen'`. Not
+   * resolved against any allowlist: it is refused only when it names a
+   * platform-internal type (scanners, moderation classifiers, hashing, web
+   * scrape/search, and the retired `textToImage` step type), with
+   * `errorCode: 'workflow_step_denied'`. 1…64 characters.
+   *
+   * Two step types are read by shape, because they name their sources outside
+   * a {@link WorkflowStepRef}:
+   *  - **`repeat` — over `arguments` only, at most
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} iterations.** Its input must
+   *    be exactly `{ for: { $ref, path, as }, template: { $type, name?, input? } }`
+   *    with `for.$ref === '$arguments'` and `path` naming an ARRAY in the body's
+   *    `arguments`; its length is the iteration count, nested repeats
+   *    multiplied. A repeat over another step's output, a missing or non-array
+   *    path, or too many iterations is refused with
+   *    `errorCode: 'workflow_repeat_unbounded'`; a wrong shape, or repeats nested
+   *    more than 4 deep, with `workflow_ref_invalid`. Inside the template the
+   *    `as` name is a source a reference may name; it may not equal a step name.
+   *    The template's `$type` is held to the denylist too.
+   *  - **`merge`** — every entry of `input.fields` needs a string `$ref` and a
+   *    `reduce`, and each `$ref` must name `$arguments` or an EARLIER step,
+   *    never a repeat variable. Each counts toward the 64-reference cap.
+   *    Otherwise `workflow_ref_invalid`.
+   */
+  $type: string;
+  /**
+   * The step's own input object. Any value in it, at any depth, may be a
+   * {@link WorkflowStepRef}. The orchestrator's per-`$type` schema is the only
+   * authority for what a given `$type` accepts. Every step's `input` plus the
+   * body's `arguments` may total at most 262144 bytes (256 KB) serialized.
+   */
+  input: Record<string, unknown>;
+  /**
+   * `true` marks an INTERMEDIATE step: its blobs are not surfaced, neither on
+   * its own {@link BlockWorkflowStepSnapshot.imageUrls} nor in the top-level
+   * {@link BlockWorkflowSnapshot.imageUrls}. The step still runs and is still
+   * charged.
+   */
+  suppressOutput?: boolean;
+};
+
+/**
+ * The `workflow` member of {@link WorkflowBody} — SEVERAL orchestrator steps
+ * submitted as ONE workflow, where a later step can consume an earlier step's
+ * result through a {@link WorkflowStepRef}. It travels through the same
+ * messages and hooks as every other kind (`estimate`, `submit`, `watch`,
+ * `cancel`, a batch-estimate cell, `useWorkflowBatch`).
+ *
+ * Between 1 and {@link BLOCK_WORKFLOW_MAX_STEPS} steps. There is no `maxBuzz`:
+ * the spend ceiling is the app's per-generation budget × the number of steps,
+ * enforced by the host. The host's schema is strict: an unknown key on the
+ * body or on a step is rejected, not dropped.
+ *
+ * 🔴 THREE THINGS ABOUT THE PRICE, all of them different from a single-step
+ * body:
+ *  1. **The estimate is NOT a maximum.** When a step's input references an
+ *     earlier step, the orchestrator re-prices that step once the referenced
+ *     values are known and charges the difference. Show the estimate as an
+ *     estimate; never as "you will pay at most".
+ *  2. **A workflow the host cannot price has no estimate, but its submit still
+ *     proceeds.** `estimate()` (and that body's cell in a batch estimate) FAILS
+ *     with no `cost` and `errorCode` `'workflow_quote_rejected'`,
+ *     `'workflow_quote_unavailable'` or `'workflow_quote_unpriced'` — see
+ *     {@link BlockWorkflowSnapshot.errorCode} for which of them a retry can
+ *     clear. `submit()` of the same body is NOT refused: it is reserved at the
+ *     ceiling above instead of at a quote. So a failed estimate does not predict
+ *     a refused submit. Two exceptions are refused on BOTH, before any
+ *     reservation: a workflow containing a training step, exactly as on the
+ *     single-step arm (a `training-quote-*` `errorCode`), and one with a
+ *     `repeat` step at any depth (`errorCode: 'workflow_repeat_unbounded'`).
+ *     Their `error` states the cause; only "none could be obtained; try again"
+ *     is one a retry of the same body can clear.
+ *     (An OLDER host returns the ceiling as the estimate's `cost.total` instead
+ *     of failing, so there a total equal to the ceiling may be unpriced.)
+ *  3. **One author fee per workflow**, not one per step, computed on the
+ *     QUOTED base. The estimate's `cost.authorFee` is that single fee, already
+ *     inside `cost.total`. If the workflow bills more than the quote, the fee
+ *     charged is held to the fee shown. A workflow that does not succeed has
+ *     its WHOLE fee reversed, even when earlier steps delivered output.
+ *
+ * The app's velocity limit counts one unit per step, and a `repeat` step one
+ * per iteration (nested repeats multiplied) instead of one.
+ *
+ * 🔴 A FAILED WORKFLOW CAN STILL HAVE COST AND IMAGES. Steps that succeeded
+ * before the failing one stay charged, so a `failed` snapshot can carry
+ * `cost.total > 0` and usable `imageUrls`. See {@link BlockWorkflowSnapshot.steps}.
+ *
+ * 🔴 REQUIRES A HOST THAT KNOWS THIS KIND. An older host refuses the body.
+ *
+ * @example An image step whose output a second step consumes.
+ * ```ts
+ * const body: WorkflowBody = {
+ *   kind: 'workflow',
+ *   arguments: { prompt: 'a lighthouse at dusk' },
+ *   steps: [
+ *     {
+ *       name: 'draw',
+ *       $type: 'imageGen',
+ *       input: {
+ *         engine: 'google',
+ *         model: 'nano-banana-2',
+ *         prompt: { $ref: '$arguments', path: 'prompt' },
+ *       },
+ *       suppressOutput: true,
+ *     },
+ *     {
+ *       name: 'cutout',
+ *       $type: 'imageBackgroundRemoval',
+ *       input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+ *     },
+ *   ],
+ * };
+ * ```
+ */
+export type WorkflowBodyWorkflow = {
+  kind: 'workflow';
+  /** The steps, in order. 1…{@link BLOCK_WORKFLOW_MAX_STEPS}. */
+  steps: WorkflowBodyWorkflowStep[];
+  /**
+   * Values the steps can read through `{ $ref: '$arguments', path }` — one
+   * place to put a prompt or a seed that several steps share.
+   */
+  arguments?: Record<string, unknown>;
+};
 
 // ============================================================
 // App Blocks TRAINING kind (`kind: 'training'`)
@@ -1590,6 +1806,10 @@ export interface WorkflowBodyTraining {
  *    on a server-prepared dataset of the viewer's own images. ESTIMATE ONLY
  *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
  *    host-chrome consent dialog is the only way to confirm its quote.
+ *  - {@link WorkflowBodyWorkflow} (`kind: 'workflow'`) — up to
+ *    {@link BLOCK_WORKFLOW_MAX_STEPS} orchestrator steps submitted as one
+ *    workflow, a later step consuming an earlier one's result through a
+ *    {@link WorkflowStepRef}. Its estimate is not a maximum — read its doc.
  *
  * `kind: 'step'` is therefore itself a union, discriminated on the PRESENCE of
  * `step` — the same nesting {@link WorkflowBodyCustomComfy} has on `mode`.
@@ -1611,7 +1831,8 @@ export type WorkflowBody =
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
   | WorkflowBodyPassThroughStep
-  | WorkflowBodyTraining;
+  | WorkflowBodyTraining
+  | WorkflowBodyWorkflow;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block
@@ -1652,6 +1873,9 @@ export interface BlockWorkflowSnapshot {
      *   orchestrator price quote, which refuses before any fee is looked up; and
      *   the kinds that price no fee (`customComfy`, pass-through `step`,
      *   `training`). **Do not read absent as `0`** — show `total` on its own.
+     *
+     * A `kind: 'workflow'` estimate itemises it too, and it is ONE fee for the
+     * whole workflow however many steps it has.
      */
     authorFee?: number;
   };
@@ -1675,6 +1899,11 @@ export interface BlockWorkflowSnapshot {
    * error's `.snapshot.errorCode`. A `kind: 'training'` ESTIMATE does not set
    * it. The confirmed SUBMIT of a training run or a confirmed step can — see
    * `'daily-limit-exceeded'` below.
+   * A refused `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) sets it in
+   * the same shape, on the same three replies — except the three
+   * `workflow_quote_*` codes, which are ESTIMATE-ONLY (`estimate()` and a
+   * batch-estimate cell): `submit()` of the same body defines no such refusal
+   * and proceeds, reserved at the ceiling.
    *
    * The values the host sends today ({@link KnownBlockWorkflowErrorCode}):
    *  - `'training-quote-rejected'` — the orchestrator refused the request
@@ -1692,6 +1921,41 @@ export interface BlockWorkflowSnapshot {
    *    errorCode }`), not on an estimate. On a confirmed step the host also
    *    reports it as the `error` code of `CONFIRMED_STEP_RESULT` — see
    *    {@link BlockRunConfirmedStepHostError}.
+   *  - `'workflow_step_denied'` — a step of a `kind: 'workflow'` body names a
+   *    platform-internal `$type`. Remove or replace that step.
+   *  - `'workflow_ref_invalid'` — a {@link WorkflowStepRef} in a step's `input`
+   *    points at the step itself, a later step, or nothing; or a step `name`
+   *    breaks the naming rules (see {@link WorkflowBodyWorkflowStep.name}).
+   *    `error` names the step by its position.
+   *  - `'workflow_too_many_steps'` — more than
+   *    {@link BLOCK_WORKFLOW_MAX_STEPS} steps.
+   *  - `'workflow_repeat_unbounded'` — a `repeat` step iterates something other
+   *    than an array in the body's `arguments`, or more than
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} times, nested repeats
+   *    multiplied; or the workflow has a `repeat` and the host has no price
+   *    quote for it. `error` then reads `workflow step N: a workflow with a
+   *    repeat needs a price quote and <cause>`, where `<cause>` is one of the
+   *    three in the `workflow_quote_*` messages below. A retry of the same body
+   *    can succeed only when the cause is `none could be obtained; try again`;
+   *    otherwise the body is what has to change.
+   *  - `'workflow_quote_rejected'` — ESTIMATE only. The orchestrator refused
+   *    the body, so there is no price to show; resending the same body will not
+   *    help. `error` reads `No price quote for this workflow: the orchestrator
+   *    rejected the request: <reason>` when the reason is safe to show, else
+   *    `No price quote for this workflow: the orchestrator rejected the request;
+   *    check the step inputs and references (retrying the same body will not
+   *    help)`.
+   *  - `'workflow_quote_unavailable'` — ESTIMATE only. No usable answer (an
+   *    outage, a timeout, a rate limit, …). The one `workflow_quote_*` code a
+   *    retry of the same body can clear. `error` reads `No price quote for this
+   *    workflow: none could be obtained; try again`.
+   *  - `'workflow_quote_unpriced'` — ESTIMATE only. The orchestrator answered
+   *    without a price. `error` reads `No price quote for this workflow: the
+   *    orchestrator answered without one`.
+   *
+   * Each `workflow_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
+   * error, errorCode }` with NO `cost`. A host that predates these codes
+   * resolves the estimate instead, with the spend ceiling as `cost.total`.
    *
    * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
    * inbound validator accepts any string here. Handle an unrecognised code as a
@@ -1972,6 +2236,49 @@ export interface BlockWorkflowSnapshot {
    * civitai/civitai#5786 — in which case `imageUrls` is all there is.
    */
   model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * The steps of a `kind: 'workflow'` run ({@link WorkflowBodyWorkflow}), in
+   * the orchestrator's order, each with its own status and results. The steps a
+   * `repeat` step generates follow it, named `<repeat name>.<n>`, so the list
+   * can be longer than the body's.
+   *
+   * The top-level fields keep their meaning: `status` is the workflow's,
+   * `imageUrls` is the union of every step that did NOT set `suppressOutput`,
+   * and `cost` is the whole workflow's.
+   *
+   * 🔴 A `failed` WORKFLOW IS NOT AN EMPTY ONE. Steps that succeeded before the
+   * failing step stay charged and keep their results, so a snapshot with
+   * `status: 'failed'` can carry `cost.total > 0` and usable `imageUrls`. Read
+   * `steps` to see which step failed (`status: 'failed'`, with its `error`)
+   * and which finished.
+   *
+   * Read it from the poll and cancel replies of a `kind: 'workflow'` run; do
+   * not rely on it being on the submit reply. ABSENT for every other kind, on
+   * an estimate (which creates no workflow) and on a host that predates it.
+   */
+  steps?: BlockWorkflowStepSnapshot[];
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.steps}. */
+export interface BlockWorkflowStepSnapshot {
+  /** The step's `name` from the body, or the name the host gave an unnamed step. */
+  name: string;
+  /** The orchestrator step type that ran. */
+  $type: string;
+  status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
+  /**
+   * This step's own image urls. Omitted when it has none, and always omitted
+   * for a step submitted with `suppressOutput: true`.
+   */
+  imageUrls?: string[];
+  /**
+   * The step's raw orchestrator output, minus its blobs — the same treatment
+   * and the same caveats as {@link BlockWorkflowSnapshot.stepOutputs}: its shape
+   * is whatever the orchestrator returns for that `$type`, and it is UNSCANNED.
+   */
+  output?: unknown;
+  /** Why this step failed. Diagnostic text; do not render it verbatim. */
+  error?: string;
 }
 
 /**
@@ -2077,7 +2384,14 @@ export type KnownBlockWorkflowErrorCode =
   | 'training-quote-rejected'
   | 'training-quote-unavailable'
   | 'training-quote-unpriced'
-  | 'daily-limit-exceeded';
+  | 'daily-limit-exceeded'
+  | 'workflow_step_denied'
+  | 'workflow_ref_invalid'
+  | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded'
+  | 'workflow_quote_rejected'
+  | 'workflow_quote_unavailable'
+  | 'workflow_quote_unpriced';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {

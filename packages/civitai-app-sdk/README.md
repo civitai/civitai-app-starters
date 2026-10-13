@@ -140,7 +140,7 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -260,6 +260,71 @@ behind the host flag `app-blocks-training-kind` (off by default), and refused fr
 and review sessions. The dataset is prepared over `PREPARE_TRAINING_DATASET`
 (civitai/civitai#5438). Use it through `@civitai/blocks-react`'s `usePrepareTrainingDataset()`
 and `useRunTraining()`.
+
+`WorkflowBodyWorkflow` (`kind: 'workflow'`) submits **several orchestrator steps as one
+workflow**, 1 to `BLOCK_WORKFLOW_MAX_STEPS` (8), through the same messages as every other kind.
+A value anywhere in a step's `input` may be a `WorkflowStepRef`
+(`{ $ref, path, default?, format? }`) naming `'$arguments'`, an **earlier** step's `name`, or an
+earlier **unnamed** step by position (`'$0'`). A `name` starts with a lowercase
+letter, uses only lowercase letters, digits, `_` and `-`, and is unique (the exact rule is on
+`WorkflowBodyWorkflowStep.name`). `suppressOutput: true` marks an intermediate step whose
+blobs are not surfaced. There is no `maxBuzz`: the ceiling is the app's per-generation budget × the
+number of steps.
+
+```ts
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      suppressOutput: true,
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+```
+
+- 🔴 **The estimate is not a maximum.** The orchestrator re-prices a step once the values it
+  references are known and charges the difference.
+- **A workflow the host cannot price has no estimate, but its submit still proceeds.** The
+  estimate (and a batch-estimate cell) fails with no `cost` and `snapshot.errorCode`
+  `workflow_quote_rejected` (the orchestrator refused the body; the same body will fail again),
+  `workflow_quote_unavailable` (no usable answer; the one a retry can clear) or
+  `workflow_quote_unpriced` (an answer without a price). The submit of the same body is reserved
+  at the ceiling above — unless it contains a training step (refused without a quote on both, as
+  on the single-step arm) or a `repeat` step at any depth (also refused on both, before any
+  reservation, as `workflow_repeat_unbounded`; its `error` states the cause). An older host
+  returns the ceiling as the estimate's `cost.total` instead of failing.
+- **One author fee per workflow**, on the quoted base, itemised as `cost.authorFee` on the
+  estimate. If the workflow bills more, the fee charged is held to the fee shown; a workflow that
+  does not succeed has its whole fee reversed, even if earlier steps delivered output.
+- **`repeat` over `arguments` only, at most 16 iterations** (`BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`,
+  nested repeats multiplied): `for.$ref` must be `'$arguments'` and `path` must name an array
+  there. A `merge` step's `fields` entries each need a string `$ref` (an earlier step or
+  `$arguments`) and a `reduce`. Repeat children appear in `snapshot.steps` as `<name>.<n>`. The
+  velocity limit counts one unit per step, and a `repeat` one per iteration.
+- `snapshot.steps` reports each step's `status`, `imageUrls`, `output` and `error`. A `failed`
+  workflow can still carry `cost.total > 0` and usable `imageUrls`: steps that succeeded before
+  the failing one stay charged.
+- A refused body carries `snapshot.errorCode`: `workflow_step_denied` (a platform-internal
+  `$type`), `workflow_ref_invalid` (a reference to the step itself, a later step, or nothing, or a
+  step name that breaks the naming rules, or a malformed `repeat`/`merge`),
+  `workflow_repeat_unbounded` (a `repeat` not over an array in `arguments`, or over 16 iterations,
+  or a `repeat` with no price quote) or `workflow_too_many_steps`. The single-step pass-through arm refuses `repeat` outright.
+- Requires a host that knows the kind; an older host refuses the body.
 
 ### `defineBlock` validator rules
 

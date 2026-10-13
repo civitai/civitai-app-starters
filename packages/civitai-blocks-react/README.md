@@ -482,7 +482,7 @@ if (quote.cost) showPrice(priceLine(quote.cost));
 
 | `cost.authorFee` | Means | Where |
 |---|---|---|
-| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage` or registered-`step` body, and the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price |
+| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage`, registered-`step` or `workflow` body (one fee for the whole workflow), and the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price |
 | `0` | a fee was looked up and none applies to this request | the same replies |
 | absent | the total is **not itemised** | a host that predates the field; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost with the fee charged separately; the registered-`step` `submit()` refusal for a missing orchestrator price quote, which refuses before any fee is looked up; and `customComfy`, pass-through `step` and `training` quotes, which price no fee |
 
@@ -543,6 +543,189 @@ try {
   the inbound validator accepts any string. Keep a `default` branch.
 - A `kind: 'training'` **estimate** does not set it; the three `training-quote-*`
   codes belong to the pass-through arm.
+- A refused `kind: 'workflow'` body sets its own codes, in the same shape — see
+  the next section.
+
+#### Several steps as one workflow: `kind: 'workflow'`
+
+A `kind: 'workflow'` body submits **several orchestrator steps as one
+workflow**, where a later step can consume an earlier step's result. It goes
+through the hooks you already use: `useBuzzWorkflow().estimate / submit /
+watch / cancel`, a `useBatchEstimate()` cell, and `useWorkflowBatch()`. There
+is no new hook and no new message.
+
+```tsx
+import { useBuzzWorkflow } from '@civitai/blocks-react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const { estimate, submit, watch } = useBuzzWorkflow();
+
+// Step 1 draws an image; step 2 removes the background from step 1's result.
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        // Read from `arguments` above.
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      // An intermediate step: its image is not surfaced.
+      suppressOutput: true,
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      // Read from the EARLIER step named `draw`.
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+
+const quote = await estimate(body);
+showPrice(`About ${quote.cost?.total} Buzz`); // an estimate, not a maximum
+
+const submitted = await submit(body);
+const done = await watch(submitted.workflowId);
+
+for (const step of done.steps ?? []) {
+  if (step.status === 'failed') showError(`${step.name} failed`);
+}
+// Even when `done.status === 'failed'`, earlier steps may have left images.
+showImages(done.imageUrls ?? []);
+```
+
+**The body**
+
+- `steps`: 1 to 8 (`BLOCK_WORKFLOW_MAX_STEPS`). Each is `{ name?, $type, input,
+  suppressOutput? }`, where `$type` is an orchestrator step type and `input` is
+  that step's own input.
+- **A step `name`** is optional. It is a lowercase letter followed by up to 31
+  of `a-z`, `0-9`, `_` or `-`, unique within the body, and not `block-step`
+  (reserved). A step you do not name is named by its position: `$0`, `$1`, ….
+- **A reference** is `{ $ref, path, default?, format? }` and may stand in for
+  any value in `input`, at any depth. `$ref` is `'$arguments'`, the `name` of an
+  **earlier** step, or — for an earlier step you did not name — its position
+  (`'$0'` is the first step). A step can never reference itself or a later
+  step. An object is a reference only when it has both `$ref` and `path` and no
+  other key but `default` / `format`.
+- **Limits**: 64 references per body, inputs nested at most 32 levels, `repeat`
+  templates nested at most 4 deep, a `$type` of at most 64 characters, and 256
+  KB (262144 bytes) for every step's `input` plus `arguments` together. An
+  unknown key on the body or on a step is rejected. The app's velocity limit
+  counts one unit per step, and a `repeat` step one per iteration instead.
+- `suppressOutput: true` marks an intermediate step. Its images are left out of
+  `snapshot.imageUrls` and out of its own `steps[i].imageUrls`. It still runs
+  and is still charged.
+- There is **no `maxBuzz`**. The spend ceiling is the app's per-generation
+  budget × the number of steps, enforced by the host.
+- Any orchestrator `$type` is accepted except the platform-internal ones:
+  scanners, moderation classifiers, hashing, web scrape/search, and the retired
+  `textToImage` step type.
+- **`repeat` over `arguments` only, at most 16 iterations**
+  (`BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`, nested repeats multiplied). Its input
+  is exactly `{ for: { $ref: '$arguments', path, as }, template: { $type,
+  name?, input? } }`, where `path` names an array in `arguments`. Inside the
+  template, `as` is a source a reference may name; it may not equal a step
+  name. The template's `$type` is held to the denylist too. A `repeat` over
+  another step's output is refused, because its length is unknown until that
+  step has run. The single-step pass-through `kind: 'step'` arm refuses
+  `repeat` outright.
+- **`merge`**: every entry of `input.fields` needs a string `$ref` (`$arguments`
+  or an earlier step, never a repeat variable) and a `reduce`; each counts
+  toward the 64-reference limit.
+- `WithWorkflowStepRefs<T>` (from `@civitai/app-sdk/blocks`) types an input you
+  already have a type for while still allowing references in it.
+
+**🔴 Three things about the price**
+
+1. **The estimate is not a maximum.** When a step reads from an earlier step,
+   the orchestrator re-prices it once those values are known and charges the
+   difference. Never show the estimate as "you will pay at most".
+2. **A workflow the host cannot price has no estimate, but its submit still
+   proceeds.** `estimate()` rejects with a `workflow_quote_*` `errorCode` and
+   no `cost` (see the second table under Refusals), and a batch estimate
+   returns that as the cell. `submit()` of the same body is **not** refused: it
+   reserves the ceiling above instead of a quote. So a failed estimate does not
+   predict a refused submit. Two exceptions are refused on both, before any
+   reservation: a workflow with a training step (a `training-quote-*`
+   `errorCode`, as on the single-step arm), and a workflow with a `repeat` step
+   at any depth (`workflow_repeat_unbounded`). Their `error` states why there
+   is no quote, and only `none could be obtained; try again` is a cause a retry
+   of the same body can clear; for the others the body has to change.
+   An older host returns the ceiling as the estimate's `cost.total` instead of
+   failing, so there a total equal to the ceiling may be unpriced.
+3. **One author fee per workflow**, not one per step, on the quoted base. The
+   estimate's `cost.authorFee` is that single fee, already inside `cost.total`.
+   If the workflow bills more than the quote, the fee charged is held to the
+   fee shown. A workflow that does not succeed has its **whole** fee reversed,
+   even if earlier steps delivered output.
+
+**The result**
+
+`snapshot.steps` lists every step in order, as `{ name, $type, status,
+imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+`cancel()`; do not rely on it being on the `submit()` reply. The steps a
+`repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
+fields keep their meaning: `status` and `cost` are the whole workflow's, and
+`imageUrls` is the union of the steps that did not set `suppressOutput`.
+
+🔴 **A `failed` workflow is not an empty one.** Steps that succeeded before the
+failing step stay charged and keep their results, so a snapshot with `status:
+'failed'` can carry `cost.total > 0` and usable `imageUrls`. Show what did
+finish, and do not tell the viewer nothing was charged — though the app fee is
+reversed for any workflow that does not succeed.
+
+**Refusals**
+
+A body the host will not run is refused before anything is priced or reserved:
+`estimate()` rejects with `WorkflowEstimateError`, `submit()` with
+`WorkflowSubmitError`, and a batch estimate returns it as that cell. Branch on
+`err.snapshot.errorCode`:
+
+| `errorCode` | Means |
+|---|---|
+| `'workflow_too_many_steps'` | more than 8 steps |
+| `'workflow_step_denied'` | a step names a platform-internal `$type` |
+| `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; a step name breaks the rules above; a `repeat` or `merge` is malformed; or a repeat `as` name is also a step name |
+| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied); or the workflow has a `repeat` and the host has no price quote for it. `error` then reads `workflow step N: a workflow with a repeat needs a price quote and <cause>`; a retry of the same body can work only when `<cause>` is `none could be obtained; try again` |
+
+A body the host WOULD run, but has no price quote for, fails on `estimate()`
+and as a batch-estimate cell only, with no `cost`. `submit()` of the same body
+still proceeds (point 2 above):
+
+| `errorCode` | Means | `error` | Retry the same body? |
+|---|---|---|---|
+| `'workflow_quote_rejected'` | the orchestrator refused the body | `No price quote for this workflow: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this workflow: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` | no — change the body |
+| `'workflow_quote_unavailable'` | no usable answer (an outage, a timeout, a rate limit, …) | `No price quote for this workflow: none could be obtained; try again` | yes |
+| `'workflow_quote_unpriced'` | the orchestrator answered without a price | `No price quote for this workflow: the orchestrator answered without one` | not expected to help |
+
+An older host has none of the three: it resolves the estimate with the ceiling
+as `cost.total`.
+
+- **Requires a host that knows the kind.** An older host refuses the body.
+- **Test it locally.** The mock host prices each step with
+  `generation.costPerGen` (a function gets the step as its second argument) and
+  multiplies it by a `repeat` step's iteration count, then adds
+  `generation.authorFee` once; refuses with the four codes of the first table,
+  in the host's order; reports
+  `steps` on every poll, finishing them in order; and
+  `generation.failWorkflowStep: '<name>'` (`'$<index>'` for an unnamed step)
+  makes one step fail, so you can render a partial failure. The mock checks
+  where a reference points, not whether its `path` exists; it never re-prices;
+  and it does not expand a `repeat` step into generated `<name>.<n>` steps. It
+  quotes every workflow unless you set `generation.workflowUnpriced` to
+  `'rejected'`, `'unavailable'` or `'unpriced'` (`true` means `'unavailable'`),
+  which simulates no quote for that cause: a workflow with a training step or a
+  `repeat` is refused on both `estimate()` and `submit()`; any other fails its
+  `estimate()` with `workflow_quote_<cause>` and no `cost`, while its
+  `submit()` is reserved at `buzzBudget` × steps with no fee. The mock has no
+  orchestrator reason to pass on, so `'rejected'` always gives the reason-less
+  message, never the `…rejected the request: <reason>` form.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
@@ -1752,6 +1935,20 @@ if (isModelSlotContext(context) && context.checkpoint) {
 }
 ```
 
+🔴 **`persist()` works on a model slot only. On a page it always rejects.** A
+full-page app (`app.page`) is bound to no model, so the host has nowhere to write
+the override: it answers every `persist()`, including `persist(null)`, with
+`ok: false`, and the promise rejects with `page blocks cannot persist a
+checkpoint override (no model binding)`. A page app keeps the checkpoint `open()`
+returned in its own state (or in `useAppStorage()`).
+
+Both dev hosts (`createMockHost` / `Harness` and `dev:live`) refuse it the same
+way, and both default to a page context. Pass a complete `ModelSlotContext` as
+`context` to exercise a block that persists. A test that expected `persist()` to
+resolve under the default mock context was asserting something a page app never
+gets: give it the model slot the block really runs in, or, for a page app, drop
+the `persist()` call.
+
 ### `useResourcePicker()`
 
 Drive the platform resource picker for page blocks — `'Checkpoint' | 'LORA'`.
@@ -2857,6 +3054,8 @@ MockHostScenarioPatch
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario
+MockWorkflowQuoteFailure
+MockWorkflowStepInfo
 PopoverShimHandle
 PopoverShimOptions
 ```
@@ -3054,6 +3253,21 @@ const options: LiveHostOptions = {
 const host = createLiveHost(options);
 const uninstall = host.install();
 ```
+
+What `dev:live` forwards, and how it answers the one call it does not:
+
+- **`useCheckpointPicker().persist()` on a page** is refused with no backend
+  call, as the page host refuses it (see
+  [`useCheckpointPicker()`](#usecheckpointpicker)). The default `context` is a
+  page, because a dev token is a page token.
+- **`submit()`'s `idempotencyKey` reaches the server**, as it does from the
+  production hosts. A retry with the same key is deduplicated there, and a key in
+  a format the server refuses fails the submit with the server's message.
+- **`watch()`'s `waitSeconds` reaches the server**, so a poll is held open
+  instead of answered at once, and the server decides the actual hold. This
+  matches the production hosts as of
+  [civitai/civitai#5798](https://github.com/civitai/civitai/pull/5798); a
+  production host without that change drops the field and answers at once.
 
 ### Stability of `/live`
 
