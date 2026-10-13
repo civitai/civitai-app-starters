@@ -369,7 +369,7 @@ const DEFAULT_DOCS = [
  * controls must run the gate over a DELIBERATELY BROKEN doc. Without the
  * override the only way to do that was to mutate a tracked doc in place and
  * restore it in a `finally` — and `finally` does not run on SIGINT, so Ctrl-C
- * during the (multi-minute) self-test left `packages/civitai-blocks-react/
+ * during the (then multi-minute) self-test left `packages/civitai-blocks-react/
  * README.md` modified with a bogus identifier and the script's own
  * "could not restore" guard never printed. Measured, not assumed: `kill -INT`
  * mid-run left 3 occurrences of the bogus name in the tracked file.
