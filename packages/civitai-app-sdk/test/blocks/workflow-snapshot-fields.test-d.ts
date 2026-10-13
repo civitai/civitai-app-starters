@@ -159,6 +159,9 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'workflow_quote_rejected'
   | 'workflow_quote_unavailable'
   | 'workflow_quote_unpriced'
+  | 'step_quote_rejected'
+  | 'step_quote_unavailable'
+  | 'step_quote_unpriced'
 >();
 // The host's refusal assigns; so does a code a later host adds (open string).
 const refusal: BlockWorkflowSnapshot = {
