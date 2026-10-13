@@ -1481,12 +1481,21 @@ export type WorkflowBodyWorkflowStep = {
  *     earlier step, the orchestrator re-prices that step once the referenced
  *     values are known and charges the difference. Show the estimate as an
  *     estimate; never as "you will pay at most".
- *  2. **A workflow the host cannot price still proceeds.** It is reserved at
- *     the ceiling above instead of at a quote — unless it contains a training
- *     step, which is refused without a quote exactly as on the single-step arm
- *     (a `training-quote-*` `errorCode`), or a `repeat` step at any depth,
- *     which is refused without a quote too, before any reservation, with
- *     `errorCode: 'workflow_repeat_unbounded'` — retrying later may succeed.
+ *  2. **A workflow the host cannot price has no estimate, but its submit still
+ *     proceeds.** `estimate()` (and that body's cell in a batch estimate) FAILS
+ *     with no `cost` and `errorCode` `'workflow_quote_rejected'`,
+ *     `'workflow_quote_unavailable'` or `'workflow_quote_unpriced'` — see
+ *     {@link BlockWorkflowSnapshot.errorCode} for which of them a retry can
+ *     clear. `submit()` of the same body is NOT refused: it is reserved at the
+ *     ceiling above instead of at a quote. So a failed estimate does not predict
+ *     a refused submit. Two exceptions are refused on BOTH, before any
+ *     reservation: a workflow containing a training step, exactly as on the
+ *     single-step arm (a `training-quote-*` `errorCode`), and one with a
+ *     `repeat` step at any depth (`errorCode: 'workflow_repeat_unbounded'`).
+ *     Their `error` states the cause; only "none could be obtained; try again"
+ *     is one a retry of the same body can clear.
+ *     (An OLDER host returns the ceiling as the estimate's `cost.total` instead
+ *     of failing, so there a total equal to the ceiling may be unpriced.)
  *  3. **One author fee per workflow**, not one per step, computed on the
  *     QUOTED base. The estimate's `cost.authorFee` is that single fee, already
  *     inside `cost.total`. If the workflow bills more than the quote, the fee
@@ -1850,7 +1859,10 @@ export interface BlockWorkflowSnapshot {
    * charged), and to that body's cell in a batch estimate. Read it from the
    * error's `.snapshot.errorCode`. The `kind: 'training'` arm does NOT set it.
    * A refused `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) sets it in
-   * the same shape, on the same three replies.
+   * the same shape, on the same three replies — except the three
+   * `workflow_quote_*` codes, which are ESTIMATE-ONLY (`estimate()` and a
+   * batch-estimate cell): `submit()` of the same body defines no such refusal
+   * and proceeds, reserved at the ceiling.
    *
    * The values the host sends today ({@link KnownBlockWorkflowErrorCode}):
    *  - `'training-quote-rejected'` — the orchestrator refused the request
@@ -1870,10 +1882,30 @@ export interface BlockWorkflowSnapshot {
    *  - `'workflow_repeat_unbounded'` — a `repeat` step iterates something other
    *    than an array in the body's `arguments`, or more than
    *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} times, nested repeats
-   *    multiplied; or the workflow has a `repeat` and the host could get no
-   *    price quote for it (`error` then reads `… a workflow with a repeat needs
-   *    a price quote and none could be obtained; try again`, and a retry may
-   *    succeed).
+   *    multiplied; or the workflow has a `repeat` and the host has no price
+   *    quote for it. `error` then reads `workflow step N: a workflow with a
+   *    repeat needs a price quote and <cause>`, where `<cause>` is one of the
+   *    three in the `workflow_quote_*` messages below. A retry of the same body
+   *    can succeed only when the cause is `none could be obtained; try again`;
+   *    otherwise the body is what has to change.
+   *  - `'workflow_quote_rejected'` — ESTIMATE only. The orchestrator refused
+   *    the body, so there is no price to show; resending the same body will not
+   *    help. `error` reads `No price quote for this workflow: the orchestrator
+   *    rejected the request: <reason>` when the reason is safe to show, else
+   *    `No price quote for this workflow: the orchestrator rejected the request;
+   *    check the step inputs and references (retrying the same body will not
+   *    help)`.
+   *  - `'workflow_quote_unavailable'` — ESTIMATE only. No usable answer (an
+   *    outage, a timeout, a rate limit, …). The one `workflow_quote_*` code a
+   *    retry of the same body can clear. `error` reads `No price quote for this
+   *    workflow: none could be obtained; try again`.
+   *  - `'workflow_quote_unpriced'` — ESTIMATE only. The orchestrator answered
+   *    without a price. `error` reads `No price quote for this workflow: the
+   *    orchestrator answered without one`.
+   *
+   * Each `workflow_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
+   * error, errorCode }` with NO `cost`. A host that predates these codes
+   * resolves the estimate instead, with the spend ceiling as `cost.total`.
    *
    * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
    * inbound validator accepts any string here. Handle an unrecognised code as a
@@ -2189,7 +2221,10 @@ export type KnownBlockWorkflowErrorCode =
   | 'workflow_step_denied'
   | 'workflow_ref_invalid'
   | 'workflow_too_many_steps'
-  | 'workflow_repeat_unbounded';
+  | 'workflow_repeat_unbounded'
+  | 'workflow_quote_rejected'
+  | 'workflow_quote_unavailable'
+  | 'workflow_quote_unpriced';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {

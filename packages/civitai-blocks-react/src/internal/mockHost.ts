@@ -112,6 +112,8 @@ import {
 } from './uploadBytes.js';
 import {
   mockUnpricedWorkflowRefusal,
+  mockUnquotedWorkflowEstimateRefusal,
+  type MockWorkflowQuoteFailure,
   mockWorkflowBodyRefusal,
   mockWorkflowStepGenerations,
   mockWorkflowStepName,
@@ -254,6 +256,8 @@ export type CostSpec =
  * {@link MockGenerationScenario.costPerGen} once per step and sums the results.
  * `undefined` for every other kind, which is priced with one call.
  */
+export type { MockWorkflowQuoteFailure };
+
 export interface MockWorkflowStepInfo {
   /** Zero-based position in the body's `steps`. */
   index: number;
@@ -482,17 +486,27 @@ export interface MockGenerationScenario {
    */
   failWorkflowStep?: string;
   /**
-   * Simulate the host getting NO price quote for a `kind: 'workflow'` body. The
-   * host then refuses, before any reservation, a workflow with a training step
-   * (`errorCode: 'training-quote-unavailable'`) or a `repeat` step at any depth
-   * (`'workflow_repeat_unbounded'`); any other workflow proceeds reserved at the
-   * CEILING — {@link MockHostOptions.buzzBudget} × the number of steps — which
-   * the estimate reports as `cost.total`, with `authorFee: 0` (no quote, no
-   * fee base). Ignored by every other kind. Live-tunable via
+   * Simulate the host getting NO price quote for a `kind: 'workflow'` body, and
+   * say why: `'rejected'` (the orchestrator refused the body), `'unavailable'`
+   * (no usable answer — the one cause a retry can clear) or `'unpriced'` (an
+   * answer without a price). `true` means `'unavailable'`.
+   *
+   *  - A workflow with a training step (`errorCode: 'training-quote-<cause>'`)
+   *    or a `repeat` step at any depth (`'workflow_repeat_unbounded'`) is
+   *    refused on BOTH `estimate()` and `submit()`, before any reservation.
+   *  - Any other workflow: `estimate()` FAILS with `'workflow_quote_<cause>'`
+   *    and no `cost`, while `submit()` still PROCEEDS, reserved at the CEILING —
+   *    {@link MockHostOptions.buzzBudget} × the number of steps — with no author
+   *    fee (no quote, no fee base). A failed estimate does not predict a refused
+   *    submit.
+   *
+   * `error` is the host's sentence for the cause. The mock has no orchestrator
+   * reason to pass on, so `'rejected'` always reads the host's reason-less form.
+   * Ignored by every other kind. Live-tunable via
    * `setScenario({ generation: { workflowUnpriced } })`. Default: unset (every
    * workflow is quoted at its per-step `costPerGen`).
    */
-  workflowUnpriced?: boolean;
+  workflowUnpriced?: boolean | MockWorkflowQuoteFailure;
   /**
    * A single result image url (or `(body) => url`). For a `kind: 'workflow'`
    * run this (and {@link images}) is the LAST step that did not set
@@ -2362,6 +2376,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     viewerVoted: row.voters.has(mockUserId),
   });
 
+  /** Why a `kind: 'workflow'` body has no price quote, or `null` when it is quoted. */
+  const workflowQuoteFailure = (): MockWorkflowQuoteFailure | null => {
+    const knob = gen.workflowUnpriced;
+    if (knob === true) return 'unavailable';
+    return knob === 'rejected' || knob === 'unavailable' || knob === 'unpriced' ? knob : null;
+  };
+
   // Resolve a per-gen cost from the scenario (or legacy `cost`).
   // A `kind: 'workflow'` body is the SUM of its steps — see `workflowStepCosts`.
   const costFor = (body: WorkflowBody): number => {
@@ -2377,7 +2398,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
    */
   const workflowStepCosts = (body: MockWorkflowBody): number[] => {
     // Unpriced: reserved at the ceiling, one per-generation budget per step.
-    if (gen.workflowUnpriced === true) return body.steps.map(() => buzzBudget);
+    if (workflowQuoteFailure() !== null) return body.steps.map(() => buzzBudget);
     const spec: CostSpec = gen.costPerGen ?? legacyCost;
     return (Array.isArray(body.steps) ? body.steps : []).map((step, index) => {
       const each =
@@ -2407,7 +2428,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       (body.kind === 'step' && typeof body.step === 'string');
     if (!quotesFee) return null;
     // An unpriced workflow has no quoted base, so no fee is priced on it.
-    if (body.kind === 'workflow' && gen.workflowUnpriced === true) return 0;
+    if (body.kind === 'workflow' && workflowQuoteFailure() !== null) return 0;
     const spec = gen.authorFee ?? 0;
     return typeof spec === 'function' ? spec(body) : spec;
   };
@@ -2915,9 +2936,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           // `failureSnapshot` shape (no `cost`). A body that passes is priced
           // below like any other: `quotedCost` sums the steps and adds ONE fee.
           if (body.kind === 'workflow') {
+            // With no quote the estimate has no price to show: it fails with the
+            // cause, never the ceiling. (The submit of the same body proceeds.)
+            const failure = workflowQuoteFailure();
             const refusal =
               mockWorkflowBodyRefusal(body) ??
-              (gen.workflowUnpriced === true ? mockUnpricedWorkflowRefusal(body) : null);
+              (failure === null
+                ? null
+                : (mockUnpricedWorkflowRefusal(body, failure) ??
+                  mockUnquotedWorkflowEstimateRefusal(failure)));
             if (refusal !== null) return { workflowId: 'failed', status: 'failed', ...refusal };
           }
           return {
@@ -3214,9 +3241,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // before any cap, balance or debit — the same refusal, with the same
             // `errorCode`, the estimate gives. No `cost`, so `submit()` rejects.
             if (body.kind === 'workflow') {
+              const failure = workflowQuoteFailure();
               const refusal =
                 mockWorkflowBodyRefusal(body) ??
-                (gen.workflowUnpriced === true ? mockUnpricedWorkflowRefusal(body) : null);
+                (failure === null ? null : mockUnpricedWorkflowRefusal(body, failure));
               if (refusal !== null) {
                 dispatchToBlock({
                   type: 'WORKFLOW_SUBMITTED',

@@ -178,6 +178,9 @@ describe('isValidWorkflowSnapshot', () => {
     ['training-quote-rejected'],
     ['training-quote-unavailable'],
     ['training-quote-unpriced'],
+    ['workflow_quote_rejected'],
+    ['workflow_quote_unavailable'],
+    ['workflow_quote_unpriced'],
     // Open string: a code a later host adds must not drop the reply.
     ['some-later-code'],
   ])('accepts errorCode %s', (errorCode) => {

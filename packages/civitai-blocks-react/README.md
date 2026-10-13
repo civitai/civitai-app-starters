@@ -541,8 +541,8 @@ try {
   (`KnownBlockWorkflowErrorCode | (string & {})`), the host may add codes, and
   the inbound validator accepts any string. Keep a `default` branch.
 - The `kind: 'training'` arm does not set it.
-- A refused `kind: 'workflow'` body sets its own three codes, in the same
-  shape — see the next section.
+- A refused `kind: 'workflow'` body sets its own codes, in the same shape — see
+  the next section.
 
 #### Several steps as one workflow: `kind: 'workflow'`
 
@@ -644,12 +644,19 @@ showImages(done.imageUrls ?? []);
 1. **The estimate is not a maximum.** When a step reads from an earlier step,
    the orchestrator re-prices it once those values are known and charges the
    difference. Never show the estimate as "you will pay at most".
-2. **A workflow the host cannot price still proceeds.** `submit()` reserves the
-   ceiling above instead of a quote. Two exceptions are refused without a
-   quote, before any reservation: a workflow with a training step (a
-   `training-quote-*` `errorCode`, as on the single-step arm), and a workflow
-   with a `repeat` step at any depth (`workflow_repeat_unbounded`; a retry may
-   succeed).
+2. **A workflow the host cannot price has no estimate, but its submit still
+   proceeds.** `estimate()` rejects with a `workflow_quote_*` `errorCode` and
+   no `cost` (see the second table under Refusals), and a batch estimate
+   returns that as the cell. `submit()` of the same body is **not** refused: it
+   reserves the ceiling above instead of a quote. So a failed estimate does not
+   predict a refused submit. Two exceptions are refused on both, before any
+   reservation: a workflow with a training step (a `training-quote-*`
+   `errorCode`, as on the single-step arm), and a workflow with a `repeat` step
+   at any depth (`workflow_repeat_unbounded`). Their `error` states why there
+   is no quote, and only `none could be obtained; try again` is a cause a retry
+   of the same body can clear; for the others the body has to change.
+   An older host returns the ceiling as the estimate's `cost.total` instead of
+   failing, so there a total equal to the ceiling may be unpriced.
 3. **One author fee per workflow**, not one per step, on the quoted base. The
    estimate's `cost.authorFee` is that single fee, already inside `cost.total`.
    If the workflow bills more than the quote, the fee charged is held to the
@@ -683,22 +690,40 @@ A body the host will not run is refused before anything is priced or reserved:
 | `'workflow_too_many_steps'` | more than 8 steps |
 | `'workflow_step_denied'` | a step names a platform-internal `$type` |
 | `'workflow_ref_invalid'` | a reference points at the step itself, a later step, or nothing; a step name breaks the rules above; a `repeat` or `merge` is malformed; or a repeat `as` name is also a step name |
-| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied); or the workflow has a `repeat` and no price quote could be had (retrying may work) |
+| `'workflow_repeat_unbounded'` | a `repeat` iterates something other than an array in `arguments`, or more than 16 times (nested repeats multiplied); or the workflow has a `repeat` and the host has no price quote for it. `error` then reads `workflow step N: a workflow with a repeat needs a price quote and <cause>`; a retry of the same body can work only when `<cause>` is `none could be obtained; try again` |
+
+A body the host WOULD run, but has no price quote for, fails on `estimate()`
+and as a batch-estimate cell only, with no `cost`. `submit()` of the same body
+still proceeds (point 2 above):
+
+| `errorCode` | Means | `error` | Retry the same body? |
+|---|---|---|---|
+| `'workflow_quote_rejected'` | the orchestrator refused the body | `No price quote for this workflow: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this workflow: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` | no — change the body |
+| `'workflow_quote_unavailable'` | no usable answer (an outage, a timeout, a rate limit, …) | `No price quote for this workflow: none could be obtained; try again` | yes |
+| `'workflow_quote_unpriced'` | the orchestrator answered without a price | `No price quote for this workflow: the orchestrator answered without one` | not expected to help |
+
+An older host has none of the three: it resolves the estimate with the ceiling
+as `cost.total`.
 
 - **Requires a host that knows the kind.** An older host refuses the body.
 - **Test it locally.** The mock host prices each step with
   `generation.costPerGen` (a function gets the step as its second argument) and
   multiplies it by a `repeat` step's iteration count, then adds
-  `generation.authorFee` once; refuses with the four codes above, in the host's
-  order; reports
+  `generation.authorFee` once; refuses with the four codes of the first table,
+  in the host's order; reports
   `steps` on every poll, finishing them in order; and
   `generation.failWorkflowStep: '<name>'` (`'$<index>'` for an unnamed step)
   makes one step fail, so you can render a partial failure. The mock checks
   where a reference points, not whether its `path` exists; it never re-prices;
   and it does not expand a `repeat` step into generated `<name>.<n>` steps. It
-  quotes every workflow unless you set `generation.workflowUnpriced: true`,
-  which simulates no quote: a workflow with a training step or a `repeat` is
-  refused, and any other is reserved at `buzzBudget` × steps with no fee.
+  quotes every workflow unless you set `generation.workflowUnpriced` to
+  `'rejected'`, `'unavailable'` or `'unpriced'` (`true` means `'unavailable'`),
+  which simulates no quote for that cause: a workflow with a training step or a
+  `repeat` is refused on both `estimate()` and `submit()`; any other fails its
+  `estimate()` with `workflow_quote_<cause>` and no `cost`, while its
+  `submit()` is reserved at `buzzBudget` × steps with no fee. The mock has no
+  orchestrator reason to pass on, so `'rejected'` always gives the reason-less
+  message, never the `…rejected the request: <reason>` form.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
@@ -2837,6 +2862,7 @@ MockHostScenarioPatch
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario
+MockWorkflowQuoteFailure
 MockWorkflowStepInfo
 PopoverShimHandle
 PopoverShimOptions
