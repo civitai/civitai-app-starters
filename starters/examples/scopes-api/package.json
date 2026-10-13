@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@civitai/app-sdk": "^0.68.0",
-    "@civitai/blocks-react": "^0.72.1",
+    "@civitai/blocks-react": "^0.72.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

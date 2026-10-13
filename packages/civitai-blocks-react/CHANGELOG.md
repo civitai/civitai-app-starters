@@ -1,5 +1,19 @@
 # @civitai/blocks-react
 
+## 0.72.2
+
+### Patch Changes
+
+- 2ba4691: **Every hook now connects the block to its host at mount.**
+
+  The host waits 10 seconds for a block's handshake (`BLOCK_HELLO`, then `BLOCK_READY` after `BLOCK_INIT`) before it shows "This app didn't load in time", retries twice and gives up. `bootSkeleton` removes the loading cover but not that deadline. The handshake is sent by the transport, which is created lazily. `useBlockContext()` and a few other hooks created it during render. Request-only hooks did not: `useBuzzWorkflow`, `useBatchEstimate`, `useWorkflowBatch`, `useBuzzPurchase`, `useCheckpointPicker`, `useResourcePicker`, `useCollectionFollow`, `useCreatePostFromApp`, `usePrepareTrainingDataset`, `useRunTraining`, `useRunConfirmedStep`, `useGatedImages`, `usePublishGenerationOutputs`, `useSaveImage`, `useUploadImageBytes`, `useCivitaiNavigate`, `useRequestSignIn`, `useRequestConsent`, `useBlockAnalytics`, `useBlockResize` (before its ref is attached), `useBlockBreakpoint`, `useNestedDocument`, and `useWildcardPack` with a non-positive id created it only on their first request, and the last three never created it at all. A block whose only SDK use was one of these rendered and then timed out before anyone could click.
+
+  Every hook exported from the package root now creates the transport in a mount effect. The effect does not run during server rendering, so these hooks stay safe to render on a server. Nothing is created when the package is imported, so `getTransport({ allowedParentOrigins })` called before the first component mounts, as dev harnesses and tests do, still takes effect. If no parent allowlist is configured, the mount-time connect logs one `console.error` instead of throwing, and the block keeps rendering. The first bridge call throws the same error as before.
+
+  The transport now handles its own 10-second `BLOCK_INIT` timeout. Because hooks connect at mount, an unhandled timeout would otherwise fail the test run of any block app whose tests mount a hook with no host. The timeout message, which names the configured and observed origins, is now logged with `console.warn` and is no longer an unhandled rejection. `waitForInit()` still rejects with the same error.
+
+  No migration is needed. A block that uses no hook from this package still never connects. Call `useBlockContext()` at its root.
+
 ## 0.72.1
 
 ### Patch Changes
@@ -614,15 +628,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                        single measurements on one machine.
+                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2442,10 +2456,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                              after    @civitai/theme       0.3.1                   — 1 copy
-                                                                       @civitai/components  0.4.2                   — 1 copy
+                                                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                after    @civitai/theme       0.3.1                   — 1 copy
+                                                                         @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
