@@ -16,7 +16,7 @@ messages have no destination yet.
 | Old message(s) | Now | Status |
 |---|---|---|
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
-| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
+| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `app.workflows`, over `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist**, and `app.workflows` wraps all five (`estimate`, `submit`, `get`/`watch`/`wait`, `cancel`, `list`). 🔴 Use it, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
 | `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |

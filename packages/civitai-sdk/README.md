@@ -30,8 +30,10 @@ if (picked && (await app.requestGrants(['ai:write:budgeted']))) {
 > 🔴 **If you are a BLOCK, do not copy the `app.orchestration` call above.** That
 > reaches the orchestrator directly and carries none of the controls the block
 > path applies — the per-call Buzz budget, the per-viewer and per-app daily caps,
-> the maturity clamp, and the `app-block:<appId>` attribution tag. Submit through
-> `POST /api/v1/blocks/workflows/submit` instead. The substitution type-checks and
+> the maturity clamp, and the `app-block:<appId>` attribution tag. Generate with
+> **`app.workflows`** instead: `estimate`, `submit` and `wait` go through the
+> host's `/api/v1/blocks/workflows/*` routes, which apply all of them — see
+> [Multi-step workflows](#multi-step-workflows). The substitution type-checks and
 > passes tests, which is why it is worth saying here: the snippet above is written
 > for an app that is its own principal, not for a block. `BREAKING.md` §*What a
 > direct orchestrator call loses* has the detail.
@@ -53,7 +55,8 @@ Both give you:
 | Member | What it is |
 |---|---|
 | `app.site` | The public REST API at `/api/v1`: `get`, `post`, `request` |
-| `app.orchestration` | Workflows: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
+| `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token; see [Multi-step workflows](#multi-step-workflows) |
+| `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
 | `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
 | `app.getToken()` | For a call this client does not make |
 
@@ -93,6 +96,7 @@ the refusal sits at the surface, not at startup:
 | `app.sharedStorage.*` | Reads work, anonymous included. Writes additionally need a signed-in viewer past the server's minimum-trust gate, so a `403` there is about the VIEWER, not the token |
 | `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
+| `app.workflows.*` | Works. Generation for a block goes here, with the `ai:write:budgeted` scope |
 | `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
 | `app.requestGrants(...)` | Works. Goes to the host's consent dialog, so a `consent_required` fallback can still prompt |
 
@@ -325,6 +329,137 @@ author's key, an already-withdrawn row and a key that never existed — it is no
 an existence oracle, so do not report that as "someone else owns this". Put every
 string other viewers will read in `title`/`body`, which the server moderates;
 `data` is unmoderated app structure.
+
+## Multi-step workflows
+
+`app.workflows` is how a **block** generates. It goes through the host's
+`/api/v1/blocks/workflows/*` routes, so the host prices the work, holds it to
+the viewer's and the app's budgets, tags it as this app's and submits it — the
+block never calls the orchestrator. It needs the block token the host mints and
+the `ai:write:budgeted` scope in the manifest.
+
+A `kind: 'workflow'` body runs several steps as **one** workflow, and a later
+step can consume an earlier step's result through a `{ $ref, path }` reference:
+
+```ts
+import { initialize, type WorkflowBody } from '@civitai/sdk';
+
+const app = await initialize();
+
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      suppressOutput: true, // an intermediate: its output is not surfaced
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+
+// 1. Price it. Nothing is charged or reserved.
+const estimate = await app.workflows.estimate(body);
+if (estimate.status === 'failed') {
+  // A refusal RESOLVES — see below.
+  throw new Error(estimate.error ?? 'This workflow could not be priced.');
+}
+if (!(await confirmSpend(estimate.cost?.total))) throw new Error('Not confirmed.');
+
+// 2. Run it. One key per press of the button, reused on every retry.
+const idempotencyKey = crypto.randomUUID();
+const submitted = await app.workflows.submit(body, { idempotencyKey });
+if (submitted.status === 'failed') {
+  throw new Error(submitted.error ?? 'This workflow was not started.');
+}
+
+// 3. Follow it to a final status.
+const done = await app.workflows.wait(submitted.workflowId);
+if (done.status === 'succeeded') render(done.imageUrls);
+```
+
+Every body kind the host accepts goes through the same seven calls — a single
+`textToImage` generation is `{ kind: 'textToImage', … }` in place of the body
+above. The body and reply types (`WorkflowBody`, `WorkflowBodyWorkflow`,
+`WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowSnapshot`, …) are
+exported from `@civitai/sdk`; no other package is needed to write one.
+
+| Call | Does |
+|---|---|
+| `estimate(body)` | Prices the body. `snapshot.cost.total` is whole Buzz |
+| `submit(body, { idempotencyKey })` | Runs it, spending the viewer's Buzz |
+| `get(workflowId)` | The workflow as it stands now |
+| `watch(workflowId)` | An async iterator: the workflow now, then each time it changes, until a final status |
+| `wait(workflowId)` | The last value of `watch` — the final snapshot, whichever status it is |
+| `cancel(workflowId)` | Stops it on the orchestrator and resolves the workflow as it now stands |
+| `list({ cursor?, limit? })` | A page of the workflows this app ran for this viewer, as `{ workflows, cursor }` |
+
+### A refusal is an answer, not a throw
+
+When the host declines to price or run a body it answers **`200` with a
+snapshot whose `status` is `'failed'`**. Every call above *resolves* with it, so
+branch on the snapshot rather than wrapping the call in `try`:
+
+```ts
+const estimate = await app.workflows.estimate(body);
+if (estimate.status === 'failed') {
+  estimate.error; // a sentence for the viewer, e.g. which step is at fault
+  estimate.errorCode; // a stable code to branch on, when the refusal defines one
+  estimate.cost; // absent: nothing was priced
+}
+```
+
+Three things follow from that shape:
+
+- **A refused estimate has no `cost`.** An estimate the host could not price
+  does not predict a refused submit: the same body can still be submitted, and
+  is then reserved at the app's per-generation budget for each step.
+- **A refused `submit` for a budget or spending cap *does* carry `cost.total`**
+  — the price it would not charge — so you can offer the viewer a top-up. It has
+  no workflow to wait on, and nothing was charged.
+- **A `failed` workflow from `wait` can still have `cost` and `imageUrls`.**
+  Steps that finished before the failing one stay charged and keep their output.
+
+The estimate is an estimate, not a ceiling: when a step's input references an
+earlier step, the orchestrator re-prices it once that value is known.
+
+What *does* reject is a request that was itself refused or never answered: an
+`ApiError` with the HTTP `status` (`400` for a body or key the host cannot
+parse, `403` for a workflow that is not this viewer's or not this app's), or a
+`CivitaiError` when a `2xx` carried no snapshot.
+
+### The idempotency key
+
+`submit` spends Buzz, so it requires an `idempotencyKey` and refuses to send
+without one. The key is what makes a submit that was sent twice — a retry after
+a dropped connection, a double press — charge once.
+
+- Mint it **once per thing the viewer asked for** and reuse that same key on
+  every retry. A key minted inside the retry loop protects nothing.
+- Letters, digits, `_` and `-`, 1 to 64 characters, **no colons**.
+  `crypto.randomUUID()` fits. The host answers `400` for anything else, and this
+  client sends the key exactly as given.
+- `submit` does not retry a failed request. (Like every call here it re-sends
+  once after refreshing an expired token, which the host had refused unread.)
+  If it rejects without an answer, the workflow may or may not exist: call it
+  again with the same key.
+
+Step limits, the reference rules and every `errorCode` are in the
+[workflows guide](https://developer.civitai.com/apps/guide/workflows).
+
+`app.orchestration`, next, is a different client for a different caller: it
+reaches the orchestrator directly with an OAuth access token and applies none of
+the controls above, which is why it refuses a block token outright.
 
 ## The orchestrator
 
@@ -641,6 +776,11 @@ per-viewer store is [app storage](#app-storage).
 - `npm run check:layering` keeps `core` free of any domain.
 - `npm run check:steps` fails when the step unions no longer match the
   installed `@civitai/orchestration-client`.
+- `npm run check:workflow-types` fails when `src/workflows/types.generated.ts`
+  — a generated copy of the block workflow types `@civitai/app-sdk/blocks`
+  defines — no longer matches its source. Refresh it with
+  `npm run gen:workflow-types`. The same comparison runs in the repo's guard
+  suite on every change.
 
 See [`BREAKING.md`](./BREAKING.md) for what an app gives up moving from
 `@civitai/app-sdk` 0.x and `@civitai/blocks-react`.
