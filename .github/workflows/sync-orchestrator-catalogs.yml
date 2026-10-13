@@ -39,8 +39,9 @@ on:
     # 06:41 UTC daily.
     #
     # WHY DAILY AND NOT 6-HOURLY. Unlike the canonical schema mirror — whose
-    # cadence IS the bound on how long every PR in this repo stays red, because
-    # `check-canonical-schema` failing blocks work — this drift check is
+    # cadence IS the bound on how long `ci.yml`'s `schema-drift` job stays red
+    # wherever it runs (every push to main, and the PRs `scripts/ci-lanes.mjs`
+    # routes to it; no longer every PR) — this drift check is
     # ADVISORY by design (ci.yml says so, and says not to add it to branch
     # protection). Nothing is blocked while it is red; what is at stake is that
     # a permanently-red advisory gate trains people to ignore it, and a PR

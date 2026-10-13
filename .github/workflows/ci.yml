@@ -4,6 +4,18 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A manual run takes no lane: every job runs.
+  #
+  # There is deliberately NO `schedule:` here. Every push to main runs all five
+  # advisory jobs, which is what notices drift nobody's PR caused (push runs
+  # landed on 28 of the 31 days 2026-09-12..10-12), and two of them have their own re-sync crons
+  # (`revendor-canonical-schema.yml`, `sync-orchestrator-catalogs.yml`).
+  #
+  # WHERE A RED ADVISORY JOB SHOWS UP NOW, exactly: on main's commit status
+  # (the push run is red), and, for schema and catalog drift, as the PR the
+  # re-sync workflow above opens. Nothing else: no issue, no notification, and
+  # no pull request unless it touches that job's inputs.
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -13,8 +25,76 @@ env:
   NODE_VERSION: '24'
 
 jobs:
+  # WHICH JOBS THIS RUN NEEDS. `scripts/ci-lanes.mjs` is the one place that
+  # decides; every other job reads its own output through the same condition:
+  #
+  #     needs: lanes
+  #     if: ${{ !cancelled() && needs.lanes.outputs.<job-id> != 'false' }}
+  #
+  # 🔴 THE SHAPE OF THAT CONDITION IS THE FAIL-OPEN GUARANTEE; do not "tidy" it.
+  #   - `!cancelled()` is a status function, and a status function is what stops
+  #     GitHub applying the implicit `success()` that would SKIP every dependent
+  #     the moment this job failed or was skipped. Without it, a broken
+  #     classifier turns the whole workflow green-by-skipping, required
+  #     contexts included.
+  #   - `!= 'false'` and never `== 'true'`: a job is skipped only when the
+  #     script positively wrote `false` for it. A failed or skipped `lanes` has
+  #     EMPTY outputs, and empty is not `false`, so everything runs.
+  #
+  # Selection is job-level on purpose. A job skipped by its own `if:` reports
+  # `skipped`, which satisfies a required context; a workflow-level `paths:`
+  # filter leaves required contexts pending forever.
+  #
+  # 🔴 THE CORE JOBS' `needs: lanes` + CONDITION, THE `starter` MATRIX'S
+  # PER-STEP GATING, AND ITS JOB-LEVEL `!cancelled()` ARE NOT DEAD CODE. In
+  # this change alone no lane turns a core job off (pull_request and push both
+  # run every core job), so they look removable. They are the wiring the
+  # release-PR lane and the push-to-main tested-tree skip switch core jobs off
+  # through; delete them and those lanes stop skipping anything, or, for the
+  # matrix, stop reporting the five required `Starter (<name>)` contexts.
+  #
+  # NOT a required context, and it must not become one: nothing depends on it
+  # succeeding. `tests/guards/ci-lanes-ledger.test.mjs` pins this job's outputs
+  # and every job's condition against the ledger in the script.
+  lanes:
+    name: CI lanes (which jobs this run needs)
+    runs-on: ubuntu-latest
+    # A checkout and a few API calls. A hang here holds every other job, and a
+    # timed-out `lanes` fails open (empty outputs: everything runs).
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      lane: ${{ steps.decide.outputs.lane }}
+      sdk: ${{ steps.decide.outputs.sdk }}
+      schema-drift: ${{ steps.decide.outputs.schema-drift }}
+      starter-pins: ${{ steps.decide.outputs.starter-pins }}
+      orchestrator-catalog-drift: ${{ steps.decide.outputs.orchestrator-catalog-drift }}
+      civitai-sdk: ${{ steps.decide.outputs.civitai-sdk }}
+      blocks-react: ${{ steps.decide.outputs.blocks-react }}
+      design-system: ${{ steps.decide.outputs.design-system }}
+      design-system-cross-browser: ${{ steps.decide.outputs.design-system-cross-browser }}
+      design-system-drift-guard: ${{ steps.decide.outputs.design-system-drift-guard }}
+      readme-snippets: ${{ steps.decide.outputs.readme-snippets }}
+      starter: ${{ steps.decide.outputs.starter }}
+      examples: ${{ steps.decide.outputs.examples }}
+      packaging: ${{ steps.decide.outputs.packaging }}
+      public-types: ${{ steps.decide.outputs.public-types }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner's preinstalled node is enough (built-ins only), which keeps
+      # this job, and so the start of every job behind it, to a few seconds.
+      - id: decide
+        run: node scripts/ci-lanes.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   sdk:
     name: SDK (typecheck + test + build)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.sdk != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +124,8 @@ jobs:
 
   schema-drift:
     name: Canonical schema drift-check
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.schema-drift != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -57,6 +139,8 @@ jobs:
 
   starter-pins:
     name: Starter pins vs published
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.starter-pins != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -82,6 +166,8 @@ jobs:
   # orchestrator shipped a new step type". Pure fetch + compare — no install.
   orchestrator-catalog-drift:
     name: Orchestrator catalog drift-check
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.orchestrator-catalog-drift != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -94,6 +180,8 @@ jobs:
 
   civitai-sdk:
     name: '@civitai/sdk (typecheck + test + build)'
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,6 +208,8 @@ jobs:
 
   blocks-react:
     name: blocks-react (typecheck + test + build)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -187,6 +277,8 @@ jobs:
   # so the required-check setting stays stable.
   design-system:
     name: design-system (theme + components + components-react)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -293,6 +385,8 @@ jobs:
   # `Initialize containers`), hence the JOB-level cap.
   design-system-cross-browser:
     name: design-system cross-browser contract (advisory)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.design-system-cross-browser != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -338,6 +432,8 @@ jobs:
   # live-dependent `Canonical schema drift-check` job, which is also advisory.
   design-system-drift-guard:
     name: design-system drift guard (vs live civitai/civitai)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -381,6 +477,8 @@ jobs:
 
   readme-snippets:
     name: README snippets (typecheck)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.readme-snippets != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -414,6 +512,19 @@ jobs:
 
   starter:
     name: Starter
+    # 🔴 THIS JOB IS GATED PER STEP, NOT PER JOB, AND BOTH HALVES OF THAT ARE
+    # LOAD-BEARING.
+    #   - It is a MATRIX. A matrix job skipped at job level is never expanded:
+    #     it reports ONE context, `Starter`, and the five REQUIRED contexts
+    #     `Starter (<name>)` stay pending forever.
+    #   - It runs `pnpm test:guards`, which must run on every event and in every
+    #     lane (`workflow-action-pins.test.mjs` pins that).
+    # So every leg always starts and always runs the guards and the override
+    # check; the lane output turns off the install and everything after it.
+    # The job-level `if:` is ONLY the status function: without it a failed or
+    # skipped `lanes` job would skip this one, guards included.
+    needs: lanes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -461,6 +572,7 @@ jobs:
       - run: node scripts/check-starter-workspace-overrides.mjs
 
       - run: pnpm install --frozen-lockfile
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
 
       # Starters consume the first-party packages via published caret ranges
       # that the root pnpm.overrides redirects to workspace:* (the block
@@ -468,11 +580,14 @@ jobs:
       # Building all packages up front so each starter's typecheck sees fresh
       # .d.ts files.
       - run: pnpm -r --filter "./packages/*" build
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
 
       - name: Typecheck
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
         run: pnpm --filter ./starters/${{ matrix.starter }} typecheck
 
       - name: Build
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
         # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.
         # CI doesn't have real secrets; SKIP_ENV_VALIDATION turns the bailout
         # off so the build verifies code compiles, not that env is wired.
@@ -495,7 +610,7 @@ jobs:
       # wedged child process is indistinguishable from a slow one, and would
       # otherwise burn to GitHub's 6-hour cap.
       - name: Expired-session probe (next-app)
-        if: matrix.starter == 'next-app'
+        if: ${{ needs.lanes.outputs.starter != 'false' && matrix.starter == 'next-app' }}
         run: pnpm --filter ./starters/next-app probe:expired-session
         env:
           PROBE_SKIP_BUILD: '1'
@@ -515,7 +630,7 @@ jobs:
       # double the socket count, and that a missing dist/index.html exits
       # non-zero. PROBE_SKIP_BUILD reuses the Build step's output.
       - name: Static-serving probe (PWA starters)
-        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        if: ${{ needs.lanes.outputs.starter != 'false' && (matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa') }}
         run: pnpm --filter ./starters/${{ matrix.starter }} probe:static-serving
         env:
           PROBE_SKIP_BUILD: '1'
@@ -531,7 +646,7 @@ jobs:
       # the dimension: https -> Secure + HSTS, http -> neither. One point alone
       # is passed by `const production = true`.
       - name: Cookie-flags probe (PWA starters)
-        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        if: ${{ needs.lanes.outputs.starter != 'false' && (matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa') }}
         run: pnpm --filter ./starters/${{ matrix.starter }} probe:cookie-flags
         env:
           PROBE_SKIP_BUILD: '1'
@@ -541,6 +656,7 @@ jobs:
       # existence rather than on a matrix name, for the same reason as the lint
       # step below: an `if:` on a name silently stops running on a rename.
       - name: Test (if defined)
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
         run: |
           if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
             pnpm --filter ./starters/${{ matrix.starter }} test
@@ -549,6 +665,7 @@ jobs:
           fi
 
       - name: Lint (if defined)
+        if: ${{ needs.lanes.outputs.starter != 'false' }}
         run: |
           if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
             pnpm --filter ./starters/${{ matrix.starter }} lint
@@ -569,6 +686,8 @@ jobs:
   # dependency beyond the usual install is the pinned CLI from npm.
   examples:
     name: Examples (typecheck + build + civitai app validate)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
     runs-on: ubuntu-latest
     env:
       # Pinned, and asserted by the checker, so a CLI release cannot change this
@@ -635,6 +754,8 @@ jobs:
   # blowing.
   packaging:
     name: Packaging (shipped sourcemaps)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.packaging != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -671,6 +792,8 @@ jobs:
   # inside THIS job for the same reason: it needs the install too.
   public-types:
     name: Public type closure (built .d.ts)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.public-types != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

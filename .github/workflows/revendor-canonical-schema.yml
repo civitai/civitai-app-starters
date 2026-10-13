@@ -21,8 +21,12 @@ on:
     # no webhook from civitai, no repository_dispatch, nothing to subscribe to.
     # So the ONLY thing that closes the gap between "the canonical changed" and
     # "the mirror was re-vendored" is this cron firing. Until it does, the guard
-    # is red on every PR in this repo and nothing clears it but a human noticing
-    # and dispatching this workflow by hand.
+    # is red wherever it runs and nothing clears it but a human noticing and
+    # dispatching this workflow by hand. Since `ci.yml` grew lanes, "wherever it
+    # runs" is: every push to main, and the PRs that touch the vendored schema,
+    # its check script, ci.yml or `scripts/ci-lanes.mjs` (the classifier there
+    # decides) -- NOT every PR. A red run there shows on main's commit status,
+    # and this workflow's PR is the other place the drift becomes visible.
     #
     # The concrete case this was raised for: civitai PR #4314 added an optional
     # `repository` property to the canonical manifest schema and merged to
@@ -87,13 +91,15 @@ jobs:
       # a manual `workflow_dispatch`, so there is no override. If the canonical
       # drifts again while that PR sits open, the PR's bytes are stale and merging
       # it does NOT restore parity; `ci.yml`'s `schema-drift` job is a hard fail
-      # on every PR in the repo until a later run re-vendors. That is the
-      # escalation — loud, repo-wide, within ~6 hours — but it points at the wrong
-      # object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT and the next run
-      # re-vendors. An open-but-abandoned PR blocks every future re-vendor for as
-      # long as it stays open. The old behaviour kept re-vendoring instead, and
-      # destroyed reviewer commits silently to do it; a visible stall was chosen
-      # over a silent clobber deliberately.
+      # wherever it runs (every push to main, and the PRs `scripts/ci-lanes.mjs`
+      # routes to it) until a later run re-vendors. Where that shows: on main's
+      # commit status, and nowhere on the PRs that do not run the job. It also
+      # points at the wrong object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT
+      # and the next run re-vendors. An open-but-abandoned PR blocks every future
+      # re-vendor for as long as it stays open. The old behaviour kept
+      # re-vendoring instead, and destroyed reviewer commits silently to do it; a
+      # stall was chosen over a silent clobber, and the stall is only as visible
+      # as a red main.
       - name: Refuse to clobber an open re-vendor PR
         id: guard
         env:
