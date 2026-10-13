@@ -15,7 +15,7 @@
  *
  * 🔴 NO TRACKED FILE IS EVER WRITTEN. An earlier revision mutated
  * `packages/civitai-blocks-react/README.md` in place and restored it in a
- * `finally`. `finally` does not run on SIGINT, and this suite takes minutes, so
+ * `finally`. `finally` does not run on SIGINT, and this suite took minutes then, so
  * a Ctrl-C left the tracked doc modified with a bogus identifier — measured:
  * `kill -INT` mid-run left 3 occurrences behind, and the old "could not restore"
  * guard never printed because it lives in the block that did not run. Each
