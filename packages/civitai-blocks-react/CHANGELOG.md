@@ -1,5 +1,71 @@
 # @civitai/blocks-react
 
+## 0.72.0
+
+### Minor Changes
+
+- 61c1cae: **Confirmed steps: a pass-through job priced above the per-call budget can run once the viewer confirms its exact price. Plus labelled 3D outputs.** Mirrors the host contract of civitai/civitai#5786. Additive: nothing changes for a host that does not carry it, and nothing changes for a body within the budget.
+
+  🔴 **Availability.** The host side is behind the per-viewer flag `app-blocks-confirmed-step`, which ships off, and requires a civitai.com host carrying civitai/civitai#5786. Page apps only, `ai:write:budgeted`, a signed-in viewer. Refused for development, dev-tunnel and review tokens, so **`dev:live` cannot exercise it** — build the flow against the mock host. Where the feature is unavailable nothing errors: the estimate simply carries no `stepQuote`.
+
+  **`@civitai/app-sdk`** (`@civitai/app-sdk/blocks`)
+
+  - `BlockWorkflowSnapshot.stepQuote?: BlockStepQuote` (`{ quoteId, total, stepType, expiresAt }`) — on a pass-through `step` estimate whose **fixed** price (positive, not variable or metered) is above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000). `total` is the price the viewer confirms and is charged. Single-use; expires after 15 minutes.
+  - Only a **single** estimate carries `stepQuote`; a batch-estimate cell never does. Where a quote would be granted, the estimate fails instead (the `'failed'` snapshot, which `estimate()` rejects with) for a training `$type` in any casing — `a training step type cannot run as a confirmed step — use kind:'training'` — and for an `input` that is not plain JSON (including an empty slot in a sparse array) — `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — <path> is <what>` (match on the text before the dash). Both are server messages with no `errorCode`.
+  - `WorkflowBodyPassThroughStep.quoteId?: string` — set only on a confirmed run. `BLOCK_STEP_QUOTE_ID_REGEX` (`/^sq_[a-f0-9]{32}$/`) is its shape.
+  - New message pair: `RUN_CONFIRMED_STEP { requestId, body }` → `CONFIRMED_STEP_RESULT { requestId, snapshot? , error? }`, and `BlockRunConfirmedStepHostError` for the host's own codes: `review-mode`, `block is not ready`, `sign in to run`, `invalid confirmed step request`, `no block token`, `declined`, `daily-limit-exceeded`, `submission-unconfirmed`. `RUN_CONFIRMED_STEP` joins `BLOCK_TO_PARENT_MESSAGE_TYPES`.
+  - `KnownBlockWorkflowErrorCode` gains `'daily-limit-exceeded'`: a viewer-confirmed job (a training run or a confirmed step) would exceed what remains today of the daily Buzz limit the viewer set for the app. Nothing was charged. ⚠️ Adding a member to this union is a compile error for a consumer with an exhaustive `switch` over it and no `default`; the field itself was always an open string, and its docs have always said to keep one.
+  - `BlockWorkflowSnapshot.model3dOutputs?` and `AppWorkflow.model3dOutputs?`: `BlockModel3dOutput[]` (`{ url, format, variant }`) — which entry of `imageUrls` / `images` is which 3D model (`polyGen`). Every labelled url is still in the image list, unchanged. Omitted when there are none.
+
+  **`@civitai/blocks-react`**
+
+  - **`useRunConfirmedStep()`** → `{ runConfirmedStep(body), pending, error }`, modelled on `useRunTraining()`. `estimate(body)` → `runConfirmedStep({ ...body, quoteId: stepQuote.quoteId })` → `watch(workflowId)`. Sent under the 10-minute human-interaction bound. It rejects with a `RunConfirmedStepError` whose flags carry the money meaning: `.declined` and `.dailyLimitExceeded` (no job), `.refused` (a refunded spend-cap refusal; no job), `.unconfirmed` / `.timedOut` (a job **may** be running and charged), `.signInRequired`. Also exported: `RUN_CONFIRMED_STEP_ERROR_CODES`, `isRunConfirmedStepErrorCode`, `isStepQuoteId`, and the types `UseRunConfirmedStep`, `QuotedStepBody`, `RunConfirmedStepErrorCode`.
+  - 🔴 **No automatic retry of any kind.** Every confirmation is its own job — there is no idempotency key — so after `submission-unconfirmed` a retry is a new, separately charged job. The hook never re-sends and never prompts for consent.
+  - `runConfirmedStep` refuses, before sending anything, a body whose `quoteId` is missing or not `sq_`-shaped. `useBuzzWorkflow().submit()` refuses a `step` body that carries a `quoteId`, the way it already refuses a training body: only the host's dialog can confirm a quote.
+  - The inbound validators accept `CONFIRMED_STEP_RESULT`, `stepQuote` and `model3dOutputs`, and refuse a present-but-malformed value, as for the other optional snapshot fields.
+  - **Mock host** (`createMockHost` / `Harness`): a pass-through `step` estimate carries a `stepQuote` whenever the mock's price (`generation.costPerGen`, or `cost`) is above `buzzBudget` (default 200) and at most 5,000, for a signed-in viewer. ⚠️ A test that estimates such a body against the mock and asserts the whole snapshot now sees the extra field. New options: `runConfirmedStepError` (`'declined'`, `'daily-limit-exceeded'`, `'submission-unconfirmed'`, or a server message; `?confirmedStep=declined|daily-limit|unconfirmed` in the dev harness), `runConfirmedStepCapRefusal`, and `generation.model3dOutputs`. As on the server, a batch-estimate cell carries no `stepQuote`, and an over-budget estimate of a training `$type` or of non-plain-JSON `input` fails with the server's message. The mock stores its quotes and refuses an unknown, expired or already-run one, a changed body (compared in canonical form, so key order does not matter), and a plain `SUBMIT_WORKFLOW` carrying a `quoteId`. It has no dialog and prices every estimate as fixed.
+  - **`dev:live`** answers `RUN_CONFIRMED_STEP` with a refusal immediately rather than leaving the request to time out.
+
+  No peer-range change: `@civitai/blocks-react` imports the new `@civitai/app-sdk` surface as types only, so its runtime still loads against the existing floor. Install the matching `@civitai/app-sdk` minor to get the new types.
+
+- c502aa9: **The two development hosts now handle three messages the way the production hosts do (for `waitSeconds`, the production hosts as of civitai/civitai#5798).**
+
+  `createMockHost` / `Harness` (`/testing`) and `createLiveHost` (`/live`) each stand in for civitai.com. In three places they did something the production hosts do not, so code passed locally and behaved differently once deployed.
+
+  **`useCheckpointPicker().persist()` on a page is refused.** A full-page app (`app.page`) is bound to no model, so the page host has nowhere to write a checkpoint override. It answers every `SET_USER_CHECKPOINT`, including a clear (`null`), with `USER_CHECKPOINT_SET { requestId, ok: false, error: 'page blocks cannot persist a checkpoint override (no model binding)' }`. The mock used to answer `ok: true` there, and `dev:live` used to forward the call to the server. Both now send the page host's reply, and `dev:live` makes no backend call for it. Which host is imitated follows the `context` option: `app.page` (the default in both) is a page, anything else is a model slot, where `persist()` behaves as before.
+
+  **`dev:live` forwards `idempotencyKey` on `SUBMIT_WORKFLOW`.** It was dropped, so the server never saw the key `submit()` sent: a retry with the same key was a second submit, and a key in a format the server refuses was never refused. It is now forwarded as the production hosts forward it, only when it is a non-empty string.
+
+  **`dev:live` forwards `waitSeconds` on `POLL_WORKFLOW`.** It was dropped, so `watch()` could not hold a poll open in `dev:live`. A finite number is sent unchanged and anything else sends no field; the server owns every bound (it floors the value, treats `0` or less as no hold, and caps the hold). This matches the production hosts as of civitai/civitai#5798. Against a civitai.com without #5798, a value that is not a whole number from 0 to 60 fails the poll.
+
+  **Migration.** A test that expects `persist()` to resolve under the default mock context now sees a rejection. If the block runs in a model slot, pass that slot as `context` (a complete `ModelSlotContext`) and it resolves as before. If the block is a page app, the test was asserting something production never does: remove the `persist()` call and keep the picked checkpoint in the app's own state.
+
+  An unknown message type still gets no reply from either development host. That matches production, which sends its `unsupported on this host` reply only for a request type it knows and has no handler for.
+
+- 07a6986: RELEASE HOLD: mirrors civitai/civitai#5812, which is merged but not yet deployed. Until civitai.com runs it, an estimate of an unpriced `kind: 'workflow'` body still resolves with the spend ceiling as `cost.total`; release this once #5812 is live.
+
+  **A `kind: 'workflow'` estimate with no price quote now fails with an `errorCode` instead of showing the spend ceiling as the price.**
+
+  `KnownBlockWorkflowErrorCode` gains three values. Each arrives on `estimate()` (which rejects with `WorkflowEstimateError`) and on that body's cell of a batch estimate, as `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`:
+
+  | `errorCode`                    | Means                                                                    | `error`                                                                                                                                                                                                                                                                          |
+  | ------------------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `'workflow_quote_rejected'`    | the orchestrator refused the body; resending the same body will not help | `No price quote for this workflow: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this workflow: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` |
+  | `'workflow_quote_unavailable'` | no usable answer; the one a retry can clear                              | `No price quote for this workflow: none could be obtained; try again`                                                                                                                                                                                                            |
+  | `'workflow_quote_unpriced'`    | the orchestrator answered without a price                                | `No price quote for this workflow: the orchestrator answered without one`                                                                                                                                                                                                        |
+
+  `submit()` is unchanged: the same unquoted body still proceeds, reserved at the app's per-generation budget × the number of steps. A failed estimate does not predict a refused submit. A workflow with a training step or a `repeat` is still refused on both, with the codes it had (`training-quote-*`, `workflow_repeat_unbounded`); the message now states the cause (`workflow step N: a workflow with a repeat needs a price quote and <cause>`), and only `none could be obtained; try again` is one a retry of the same body can clear.
+
+  **Migration.** An app that renders `cost.total` from a workflow estimate should catch `WorkflowEstimateError` and branch on `err.snapshot.errorCode`. The docs no longer say that an estimate equal to the ceiling may be unpriced; that remains true only of a host without #5812.
+
+  **Mock host (`@civitai/blocks-react/testing`).** `generation.workflowUnpriced` now also takes the cause, `'rejected' | 'unavailable' | 'unpriced'` (type `MockWorkflowQuoteFailure`); `true` keeps working and means `'unavailable'`. With it set, `estimate()` of a workflow with no training step or `repeat` now FAILS with `workflow_quote_<cause>` and the host's message, where 0.71.0 priced it at `buzzBudget` × steps; `submit()` still proceeds at that ceiling with no fee. The training and `repeat` refusals carry the chosen cause (`training-quote-<cause>`). A test that asserted the ceiling as the mock's unpriced estimate now sees a rejection.
+
+### Patch Changes
+
+- 0a9f337: **`dev:live` no longer puts the dev block token in request URLs.**
+
+  The live dev host (`createLiveHost`, behind `dev:live`) now sends every tRPC query as POST, with the input in the request body. Every query it sends carries the block token: `apps.storage.get`, `apps.storage.list`, `apps.storage.getQuota`, `apps.shared.list`, `apps.shared.get`, `apps.shared.getCount` and `apps.shared.getCounts`. Before, these went out as GET with the input, token included, in `?input=`. They are still queries on the server; this is tRPC's query method override, which civitai.com already accepts. Mutation requests are unchanged, and nothing changes for a block: every bridge message resolves exactly as before.
+
 ## 0.71.0
 
 ### Minor Changes
@@ -530,15 +596,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                single measurements on one machine.
+                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2358,10 +2424,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                          after    @civitai/theme       0.3.1                   — 1 copy
-                                                                   @civitai/components  0.4.2                   — 1 copy
+                                                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                            after    @civitai/theme       0.3.1                   — 1 copy
+                                                                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
