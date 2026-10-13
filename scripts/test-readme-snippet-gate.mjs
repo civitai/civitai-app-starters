@@ -53,17 +53,19 @@
  *             is silently shimmed to `any` again — indistinguishable, from the
  *             "0 failed" line alone, from a healthy run.
  *
- *             🔴 READ FROM THE GATE'S OWN RESULT RECORD, NOT A SECOND RUN. This
- *             script runs straight after `pnpm typecheck:readme` in CI; running
- *             the gate over the same tree again bought the same answer for the
- *             same minutes. The gate now leaves a record
- *             (`scripts/lib/readme-gate-result.mjs`) fingerprinted over the
- *             docs, the gate's source, the built declarations and the lockfile,
- *             and this control reads it — ONLY on an exact fingerprint match.
- *             No record, or one from a different tree, and the gate is run
- *             here, so `pnpm typecheck:readme:selftest` still stands alone. The
- *             record's snippet count is cross-checked against a count this
- *             script makes itself, so a gate that found nothing cannot pass.
+ *             The gate is RUN here, over the default docs — this control
+ *             does not take the preceding CI step's word for it. (A revision
+ *             of this script reused a result file the gate step wrote; the
+ *             file's freshness check could not cover every input the verdict
+ *             depends on, so a stale PASS was reusable. It was removed.)
+ *
+ *             Its snippet count is also cross-checked: the number of verdict
+ *             lines the gate printed per doc must equal a count of ts/tsx
+ *             fences this script makes itself, so a gate that found nothing —
+ *             or fewer than there are — cannot pass. Scope: the docs the gate
+ *             PRINTED a verdict for. A doc the gate no longer lists at all is
+ *             invisible to this cross-check, except the blocks-react README,
+ *             which is required by name.
  *
  *   FLOOR     the control on the controls: a doc with NO checkable snippet must
  *             be refused by the snippet-count floor every NC below applies.
@@ -107,7 +109,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fingerprint, readResult } from './lib/readme-gate-result.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -252,80 +253,52 @@ function probeBlock(type, value) {
 // ---------------------------------------------------------------- positive
 console.log('positive control — the unmodified tree');
 
-/** The gate's result record, but only if it describes THIS tree. */
-function freshRecord() {
-  const { record, why } = readResult();
-  if (!record) return { record: null, why };
-  if (!Array.isArray(record.docs) || record.docs.length === 0) {
-    return { record: null, why: 'result record lists no docs' };
-  }
-  const now = fingerprint({ docs: record.docs.map((d) => d.rel) });
-  if (now !== record.fingerprint) {
-    return {
-      record: null,
-      why: 'result record is from a different tree — a doc, the gate, a built declaration or the lockfile changed since it was written',
-    };
-  }
-  return { record, why: '' };
-}
+const positive = runGate();
+check('gate passes on the unmodified tree', positive.ok, positive.out.slice(-2000));
 
-let { record, why: noRecordWhy } = freshRecord();
-if (record) {
-  console.log(
-    '  (reusing the result `pnpm typecheck:readme` recorded for this exact tree — the gate is not run a second time)',
-  );
-} else {
-  console.log(`  (${noRecordWhy} — running the gate over the default docs)`);
-  const run = runGate();
-  if (!run.ok) console.log(run.out.slice(-2000));
-  ({ record, why: noRecordWhy } = freshRecord());
-}
-check('the gate ran on this tree and left a result record', record !== null, noRecordWhy);
-
-if (record) {
+const counts = positive.out.match(/Resolved (\d+) SDK value exports and (\d+) type-only exports/);
+check('runner reports its resolved-export counts', counts !== null);
+if (counts) {
   check(
-    'gate passes on the unmodified tree',
-    record.failed === 0,
-    `${record.failed} snippet(s) failed — run \`pnpm typecheck:readme\` for the diagnostics`,
-  );
-  check(
-    'runner reports its resolved-export counts',
-    Number.isInteger(record.valueExports) && Number.isInteger(record.typeExports),
-  );
-  check(
-    `value-export map is non-empty (${record.valueExports})`,
-    record.valueExports > 0,
+    `value-export map is non-empty (${counts[1]})`,
+    Number(counts[1]) > 0,
     'a zero here means auto-import resolved nothing',
   );
   check(
-    `type-only export map is non-empty (${record.typeExports})`,
-    record.typeExports > 0,
+    `type-only export map is non-empty (${counts[2]})`,
+    Number(counts[2]) > 0,
     'a zero here means every type name is still falling back to an `any` shim',
   );
+}
 
-  // The floor, on the real tree: the gate's per-doc snippet count against a
-  // count made here, by a different function, from the same files.
+// The floor, on the real tree: the gate's verdict lines per doc against a
+// count made here, by a different function, from the same files.
+{
+  const perDoc = new Map();
+  for (const m of positive.out.matchAll(/^  (?:PASS|FAIL|SKIP)  (.+):\d+ \[tsx?\]/gm)) {
+    perDoc.set(m[1], (perDoc.get(m[1]) ?? 0) + 1);
+  }
   const disagreements = [];
   let independentTotal = 0;
-  for (const { rel, found } of record.docs) {
+  for (const [rel, found] of perDoc) {
     const abs = resolve(repoRoot, rel);
     const mine = existsSync(abs) ? fencedBlocks(readFileSync(abs, 'utf8')).length : 0;
     independentTotal += mine;
     if (mine !== found) disagreements.push(`${rel}: gate ${found}, this script ${mine}`);
   }
+  const s = positive.summary;
   check(
-    `the gate found every ts/tsx fence this script counts independently (${independentTotal} across ${record.docs.length} docs)`,
-    disagreements.length === 0 && independentTotal > 0 && record.total === independentTotal,
-    disagreements.join('; ') || `gate total ${record.total}, this script ${independentTotal}`,
+    `the gate found every ts/tsx fence this script counts independently (${independentTotal} across ${perDoc.size} docs)`,
+    disagreements.length === 0 && independentTotal > 0 && s !== null && s.found === independentTotal,
+    disagreements.join('; ') || `gate summary ${s ? `${s.found} found` : 'missing'}, this script ${independentTotal}`,
   );
   check(
-    `every found snippet has a verdict, and at least one was compiled (${record.passed} passed · ${record.skipped} skipped · ${record.failed} failed)`,
-    record.passed + record.skipped + record.failed === record.total && record.passed > 0,
+    `every found snippet has a verdict, and at least one was compiled (${s ? `${s.passed} passed · ${s.skipped} skipped · ${s.failed} failed` : 'no summary'})`,
+    s !== null && s.passed + s.skipped + s.failed === s.found && s.passed > 0,
   );
-  const target = record.docs.find((d) => d.rel === REL);
   check(
-    `${REL} is among the docs the gate checked (${target?.found ?? 0} snippets)`,
-    (target?.found ?? 0) > 0,
+    `${REL} is among the docs the gate checked (${perDoc.get(REL) ?? 0} snippets)`,
+    (perDoc.get(REL) ?? 0) > 0,
     'NC1 and NC4 below extract their snippet from this doc',
   );
 }

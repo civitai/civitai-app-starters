@@ -82,7 +82,6 @@ import { createRequire } from 'node:module';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { clearResult, fingerprint, writeResult } from './lib/readme-gate-result.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -290,12 +289,6 @@ function resolveDocs() {
 }
 
 const DOCS = resolveDocs();
-// The result record (see `scripts/lib/readme-gate-result.mjs`) describes a run
-// over the DEFAULT docs only. A run redirected by `README_SNIPPET_DOCS` is a
-// control doc or a one-off, and must neither write a record nor clear one: the
-// self-test's negative controls run this script with the override set, straight
-// after it has read the record a default run left.
-const RECORD_RESULT = DOCS === DEFAULT_DOCS;
 
 const SKIP_MARKER = '@ts-skip-readme';
 
@@ -609,9 +602,6 @@ function checkBlock(block, exportMap) {
 }
 
 function main() {
-  // Before anything can fail: a run that exits early (missing build, a crash)
-  // must leave NO record, never the previous run's.
-  if (RECORD_RESULT) clearResult();
   // 🔴 `@civitai/sdk` is named here too. Without its build every fence in its
   // README fails with a bare `TS2307: cannot find module` — a red gate that
   // reads like doc rot instead of a missing build step.
@@ -639,17 +629,10 @@ function main() {
       `type-only exports for auto-import.\n`,
   );
 
-  // Fingerprinted BEFORE any doc is read, not after the run: a doc edited
-  // while this runs must leave a record that no longer matches the tree (so the
-  // self-test runs the gate again), never one that pairs the NEW bytes with
-  // verdicts about the OLD ones.
-  const treeFingerprint = RECORD_RESULT ? fingerprint({ docs: DOCS }) : '';
-
   let total = 0;
   let checked = 0;
   let skipped = 0;
   const failures = [];
-  const perDoc = [];
 
   for (const rel of DOCS) {
     // `resolve`, not `join`: an absolute entry from `README_SNIPPET_DOCS` must
@@ -657,11 +640,9 @@ function main() {
     const file = resolve(repoRoot, rel);
     if (!existsSync(file)) {
       console.log(`- ${rel}: (not found, skipping)`);
-      perDoc.push({ rel, found: 0, missing: true });
       continue;
     }
     const blocks = extractBlocks(readFileSync(file, 'utf8'), rel);
-    perDoc.push({ rel, found: blocks.length });
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       total++;
@@ -689,21 +670,6 @@ function main() {
   console.log(
     `\nREADME snippets: ${total} found · ${checked} passed · ${skipped} skipped · ${failures.length} failed`,
   );
-
-  // Written on a FAILING run too — "the gate ran here and found 1 failure" is a
-  // result the self-test must be able to read, and refuse.
-  if (RECORD_RESULT) {
-    writeResult({
-      fingerprint: treeFingerprint,
-      docs: perDoc,
-      total,
-      passed: checked,
-      skipped,
-      failed: failures.length,
-      valueExports: exportMap.values.size,
-      typeExports: exportMap.types.size,
-    });
-  }
 
   if (failures.length) {
     console.error('\n--- failures ---');
