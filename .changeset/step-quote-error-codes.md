@@ -3,8 +3,6 @@
 '@civitai/blocks-react': patch
 ---
 
-RELEASE HOLD: mirrors civitai/civitai#5825, which is merged but not yet deployed. Until civitai.com runs it, a registered-step estimate with no price quote still resolves priced at the step's declared estimate; release this once #5825 is live.
-
 **A registered-step estimate with no price quote now fails with an `errorCode` instead of showing the step's declared price.**
 
 `KnownBlockWorkflowErrorCode` gains three values. They apply to a REGISTERED `kind: 'step'` body (one with a `step` id), not the pass-through `$type` arm. Each arrives on `estimate()` (which rejects with `WorkflowEstimateError`) and on that body's cell of a batch estimate, as `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`:
