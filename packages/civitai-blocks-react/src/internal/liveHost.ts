@@ -429,6 +429,26 @@ function isTransientHttpStatus(status: number): boolean {
 const POLL_RETRY_BACKOFF_MS = [250, 500, 1000] as const;
 
 /**
+ * tRPC QUERY procedures whose input carries the block token (a bearer
+ * credential). A plain query would put that input — token included — in the
+ * request URL (`?input=…`), so {@link rawTrpcCall} sends these as POST with
+ * the input in the body instead: tRPC's query method override, which
+ * civitai.com's tRPC handler accepts (`allowMethodOverride: true`). They stay
+ * QUERIES on the server; only the wire verb changes. Mirrors the server-side
+ * list of block-token query procedures; `blocks.listMyWorkflows` is on that
+ * list too but the live host never calls it.
+ */
+const TOKEN_BEARING_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
+  'apps.storage.get',
+  'apps.storage.list',
+  'apps.storage.getQuota',
+  'apps.shared.list',
+  'apps.shared.get',
+  'apps.shared.getCount',
+  'apps.shared.getCounts',
+]);
+
+/**
  * Map ONE raw `apps.shared.*` row → the `SharedStorageItemWire` shape the
  * protocol puts on `SHARED_LIST_RESULT.items` and `SHARED_GET_RESULT.item`.
  *
@@ -558,10 +578,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   /**
    * The single tRPC transport primitive. Builds the non-batched httpLink +
    * superjson request for `procedure` and returns the PARSED envelope (or an
-   * error). `method` selects the tRPC verb:
+   * error). `method` is the procedure's tRPC verb:
    *   - `'POST'` (mutation): body is `{ json: <input> }`.
    *   - `'GET'` (query): input is querystring-encoded as
-   *     `?input=encodeURIComponent(JSON.stringify({ json: <input> }))`.
+   *     `?input=encodeURIComponent(JSON.stringify({ json: <input> }))` —
+   *     EXCEPT a query in {@link TOKEN_BEARING_QUERY_PROCEDURES}, which goes
+   *     out as POST with the same `{ json: <input> }` body a mutation uses
+   *     (tRPC's query method override), so the block token never lands in
+   *     the URL.
    * Every call carries `Authorization: Bearer <rawToken>`. A thrown fetch →
    * `{ error, transient: true }`; a non-2xx → `{ error, transient }` (status-
    * classified via {@link isTransientHttpStatus}). Both `callTrpcMutation` and
@@ -575,14 +599,16 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     if (!fetchImpl) return { error: 'no fetch available' };
     try {
       let url = `${baseUrl}/api/trpc/${procedure}`;
+      const wireMethod =
+        method === 'GET' && TOKEN_BEARING_QUERY_PROCEDURES.has(procedure) ? 'POST' : method;
       const init: RequestInit = {
-        method,
+        method: wireMethod,
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${rawToken}`,
         },
       };
-      if (method === 'GET') {
+      if (wireMethod === 'GET') {
         // tRPC query: superjson input goes in the querystring.
         const encoded = encodeURIComponent(JSON.stringify({ json: input }));
         url = `${url}?input=${encoded}`;
@@ -1734,7 +1760,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_GET': {
-            // Query apps.storage.get {blockToken, key} (GET). The server enforces
+            // Query apps.storage.get {blockToken, key} (sent as POST). The server enforces
             // the apps:storage:read scope; the dev token carries it iff the local
             // manifest declared it.
             const key = typed.payload?.key ?? '';
@@ -1822,7 +1848,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_LIST': {
-            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (GET).
+            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (sent as POST).
             // Clamp the limit to the server's [1,200] bound (default 50); only
             // include prefix/cursor when they're strings so JSON.stringify drops
             // the undefined keys (the server input is `.optional()`).
@@ -1871,7 +1897,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_QUOTA': {
-            // Query apps.storage.getQuota {blockToken} (GET).
+            // Query apps.storage.getQuota {blockToken} (sent as POST).
             void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }, 'GET').then(
               (r) => {
                 if (r.error) {
