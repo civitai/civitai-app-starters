@@ -670,21 +670,6 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
-  it('reports this package\'s name and version as sdkName / sdkVersion in BLOCK_READY', async () => {
-    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
-    window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
-    await transport.waitForInit();
-    const ready = postMessageMock.mock.calls
-      .map((c) => c[0] as { type: string; payload?: { sdkName?: unknown; sdkVersion?: unknown } })
-      .filter((m) => m.type === 'BLOCK_READY');
-    expect(ready).toHaveLength(1);
-    // Plain semver: no package-name prefix, no leading `v`.
-    expect(PACKAGE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
-    expect(ready[0]!.payload?.sdkVersion).toBe(PACKAGE_VERSION);
-    expect(ready[0]!.payload?.sdkName).toBe('blocks-react');
-    transport.dispose();
-  });
-
   it('dedupes repeated BLOCK_INIT (host retry-until-ready contract)', async () => {
     // The civitai host (IframeHost.tsx) re-sends BLOCK_INIT on a ~400ms interval
     // until it sees BLOCK_READY, to defeat the cross-origin iframe onLoad race

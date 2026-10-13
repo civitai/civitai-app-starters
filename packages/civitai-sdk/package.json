@@ -30,8 +30,8 @@
     "dist"
   ],
   "scripts": {
-    "generate": "node scripts/gen-version.mjs",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && node scripts/gen-version.mjs && tsc -p tsconfig.json",
+    "generate": "node ../../scripts/gen-version.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && node ../../scripts/gen-version.mjs && tsc -p tsconfig.json",
     "api": "node scripts/api-report.mjs",
     "api:check": "node scripts/api-report.mjs --check",
     "check:layering": "node scripts/check-layering.mjs",

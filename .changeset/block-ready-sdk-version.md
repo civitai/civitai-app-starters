@@ -1,7 +1,7 @@
 ---
 '@civitai/app-sdk': minor
-'@civitai/blocks-react': minor
-'@civitai/sdk': minor
+'@civitai/blocks-react': patch
+'@civitai/sdk': patch
 ---
 
 **`BLOCK_READY` now reports which SDK the block was built with, and its version.**
@@ -9,7 +9,7 @@
 The `BLOCK_READY` payload gains two optional fields:
 
 - `sdkName`: which package's transport sent the message. `'blocks-react'` for `@civitai/blocks-react`, `'sdk'` for `@civitai/sdk`. The two packages version independently, so a version alone cannot tell them apart.
-- `sdkVersion`: that package's plain semver (for example `"0.73.0"`, with no package name and no `v`).
+- `sdkVersion`: that package's plain semver, with no package name and no `v`.
 
 Both transports now send them, so the host can see which SDK versions are in use.
 

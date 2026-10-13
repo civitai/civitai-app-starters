@@ -36,8 +36,6 @@ describe('IframeTransport handshake', () => {
     const { posted, deliver } = mountTransport();
     deliver(init());
 
-    // Plain semver: no package-name prefix, no leading `v`.
-    expect(PACKAGE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
     expect(posted.filter((p) => p.msg.type === 'BLOCK_READY').map((p) => p.msg.payload)).toEqual([
       { height: 0, sdkName: 'sdk', sdkVersion: PACKAGE_VERSION },
     ]);

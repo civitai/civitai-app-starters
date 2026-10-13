@@ -1201,8 +1201,8 @@ export type BlockToParentMessage =
   // from the URL it framed.
   | { type: 'BLOCK_HELLO'; payload?: undefined }
   // `sdkName` + `sdkVersion` are INFORMATIONAL: which package's transport sent
-  // this message, and that package's plain semver (`"0.73.0"` — no package
-  // name, no `v`), so a host can count which SDK versions are in the wild.
+  // this message, and that package's plain semver (no package name, no `v`),
+  // so a host can count which SDK versions are in the wild.
   // `sdkName` is a closed set — `'blocks-react'` for `@civitai/blocks-react`,
   // `'sdk'` for `@civitai/sdk` — because the two packages version
   // independently and a bare semver cannot tell them apart; a host treats any

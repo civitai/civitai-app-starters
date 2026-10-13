@@ -126,11 +126,6 @@ the viewer sees "This app didn't load in time", the host retries twice, and then
 gives up. `"bootSkeleton": true` only removes the host's loading cover — it does
 **not** extend or lift that deadline.
 
-`BLOCK_READY` also carries `sdkName: 'blocks-react'` and this package's version
-as `sdkVersion` (plain semver, for example `"0.73.0"`). They are informational:
-the host uses them to see which SDK versions are in use. Nothing is negotiated
-on them.
-
 You do not have to do anything for this: **every hook exported from the package
 root connects the transport when its component mounts**, so a block that calls
 any one of them — even only `useBuzzWorkflow()`, whose requests all happen in

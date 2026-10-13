@@ -300,9 +300,11 @@ jobs:
 
       # 🔴 BEFORE THE BUILD, AND THAT ORDER IS THE WHOLE POINT. Every build step
       # below regenerates `packages/civitai-components/src/version.generated.ts`
-      # from package.json, so by the time `@civitai/components test` runs its own
-      # parity assertion ("the stamped element version matches package.json") the
-      # two sides agree by construction and it cannot fail. That is how 0.8.1
+      # from package.json (`@civitai/blocks-react` and `@civitai/sdk` commit one
+      # too, and this step checks all three), so by the time
+      # `@civitai/components test` runs its own parity assertion ("the stamped
+      # element version matches package.json") the two sides agree by
+      # construction and it cannot fail. That is how 0.8.1
       # stayed committed against a 0.9.0 package.json from #492 onward with CI
       # green throughout. This step reads the COMMITTED file as text, needs no
       # build, and is the only thing here that can see that drift. Moving it
@@ -580,9 +582,10 @@ jobs:
       # THE COMMITTED `version.generated.ts` AGAINST ITS package.json, IN EVERY
       # LANE. `design-system` runs the same check (before its build, see there),
       # but the release lane turns that job off, and the release PR is exactly
-      # where this drifts: a `@civitai/components` bump whose module was not
-      # regenerated leaves the file OUT of the diff, so no file classifier can
-      # see it. Reads two files as text; no install, and it must stay ahead of
+      # where this drifts: a bump of `@civitai/components`, `@civitai/blocks-react`
+      # or `@civitai/sdk` whose module was not regenerated leaves the file OUT of
+      # the diff, so no file classifier can see it. Reads each module and its
+      # package.json as text; no install, and it must stay ahead of
       # any build step in this job, because a build regenerates the module.
       - run: node scripts/check-generated-version.mjs
 
