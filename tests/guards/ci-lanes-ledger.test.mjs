@@ -203,13 +203,18 @@ describe('every file an advisory job reads selects that job', () => {
     assert.deepEqual(dataPathsIn('V="$REPO_ROOT/a/b.json"\nW="${REPO_ROOT}/c/d.sh"'), ['a/b.json', 'c/d.sh']);
     // A directory literal and a path built from a variable are the known limit.
     assert.deepEqual(dataPathsIn("join(REPO_ROOT, 'starters'); join(REPO_ROOT, dir, 'package.json');"), []);
-    // The previous single-pattern form took ~227 ms at 24 arguments and
-    // doubled per argument. 5000 arguments with no closing parenthesis is the
-    // worst case for it; this must stay far inside a second.
-    const hostile = `join(REPO_ROOT, ${"'a', ".repeat(5000)}`;
+    // The previous single-pattern form, `((?:['"][^'"]*['"]\s*,?\s*)+)\)`, is
+    // exponential on quoted arguments separated by whitespace WITHOUT a comma
+    // and never closed: the optional comma lets `\s*,?\s*` split each gap two
+    // ways. Measured on it: ~0.2 s at 24 repetitions, ~4 s at 28, doubling per
+    // step. (With commas it is linear, so a comma-separated input proves
+    // nothing.) 28 keeps a regression to seconds rather than a hang; the bound
+    // is generous because the two-pass scan takes well under a millisecond.
+    const hostile = `join(REPO_ROOT, ${"'a' ".repeat(28)}`;
     const t0 = process.hrtime.bigint();
     assert.deepEqual(dataPathsIn(hostile), []);
-    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 500, 'the argument-list scan is no longer linear');
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 1000, `scanning 28 unseparated arguments took ${ms.toFixed(0)} ms; the argument-list scan backtracks`);
   });
 
   for (const job of jobs) {
