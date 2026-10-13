@@ -153,8 +153,9 @@ export function triggerBlock(text) {
 }
 
 export const LANES_JOB = 'lanes';
+export const RECORD_JOB = 'record-tree';
 /** Jobs that are not in the ledger because they ARE the lane machinery. */
-const STRUCTURAL = [LANES_JOB];
+const STRUCTURAL = [LANES_JOB, RECORD_JOB];
 export const laneCondition = (id) => `\${{ !cancelled() && needs.${LANES_JOB}.outputs.${id} != 'false' }}`;
 /** The job-level condition of a step-gated job: the status function and nothing else. */
 export const STEP_GATED_JOB_CONDITION = '${{ !cancelled() }}';
@@ -169,6 +170,54 @@ export const stepIsGated = (cond, id) =>
  * Empty means the workflow and the ledger agree. Each message starts with a
  * stable tag in square brackets, which is what the negative controls match on.
  */
+/**
+ * The `&&`-conjuncts of a `${{ … }}` condition, trimmed, or null when the
+ * condition is not a pure conjunction (an `||` or a parenthesis makes the
+ * set reading wrong, so it is refused rather than approximated).
+ */
+export function conjuncts(cond) {
+  const m = typeof cond === 'string' ? cond.match(/^\$\{\{([\s\S]*)\}\}$/) : null;
+  // Zero-argument status calls (`!cancelled()`, `success()`) are atoms; any
+  // other parenthesis, or an `||`, is structure this set reading cannot see.
+  if (!m || /\|\||[()]/.test(m[1].replace(/!?\b\w+\(\)/g, ''))) return null;
+  return m[1].split('&&').map((c) => c.trim().replace(/\s+/g, ' ')).filter(Boolean);
+}
+
+/** The exact conjunct set `record-tree` must carry for a ledger. */
+export function recordConjuncts(ledger) {
+  const core = Object.keys(ledger).filter((id) => ledger[id] === 'core');
+  const advisory = Object.keys(ledger).filter((id) => ledger[id] === 'advisory');
+  return [
+    '!cancelled()',
+    "github.event_name == 'pull_request'",
+    `needs.${LANES_JOB}.result == 'success'`,
+    `needs.${LANES_JOB}.outputs.lane == 'full'`,
+    ...core.flatMap((id) => [`needs.${id}.result == 'success'`, `needs.${LANES_JOB}.outputs.${id} == 'true'`]),
+    // Skipped by its lane is fine; failed or cancelled is not.
+    ...advisory.flatMap((id) => [`needs.${id}.result != 'failure'`, `needs.${id}.result != 'cancelled'`]),
+  ];
+}
+
+/**
+ * Evaluates a pure-conjunction condition of the shapes `recordConjuncts`
+ * produces against a context. Throws on any other shape, so a test cannot pass
+ * by evaluating something it does not understand.
+ */
+export function evaluateConjunction(cond, ctx) {
+  const parts = conjuncts(cond);
+  if (!parts) throw new Error(`not a pure conjunction: ${cond}`);
+  return parts.every((c) => {
+    if (c === '!cancelled()') return !ctx.cancelled;
+    let m = c.match(/^github\.event_name == '([^']*)'$/);
+    if (m) return ctx.event === m[1];
+    m = c.match(/^needs\.([\w-]+)\.result (==|!=) '([^']*)'$/);
+    if (m) return ((ctx.results[m[1]] ?? '') === m[3]) === (m[2] === '==');
+    m = c.match(/^needs\.([\w-]+)\.outputs\.([\w-]+) == '([^']*)'$/);
+    if (m) return (ctx.outputs[m[1]]?.[m[2]] ?? '') === m[3];
+    throw new Error(`unknown conjunct shape: ${c}`);
+  });
+}
+
 export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {}) {
   const out = [];
   const jobs = parseJobs(text);
@@ -266,6 +315,39 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     }
     if (!lanes.body.some((l) => /^\s*-\s*id:\s*decide\s*$/.test(l) || /^\s*id:\s*decide\s*$/.test(l))) {
       out.push(`[lanes-step-id] no step with \`id: decide\` in the \`${LANES_JOB}\` job; every output reads \`steps.decide\``);
+    }
+  }
+
+  const record = byId.get(RECORD_JOB);
+  if (!record) {
+    out.push(`[record-missing] ci.yml has no \`${RECORD_JOB}\` job; no tree is ever recorded and main never skips`);
+  } else {
+    const want = [LANES_JOB, ...ledgerIds];
+    for (const id of want.filter((id) => !record.needs.includes(id))) {
+      out.push(
+        `[record-needs-missing] \`${RECORD_JOB}\` does not need \`${id}\`, so it can record a tree before \`${id}\` finished, ` +
+          'or without it having run at all. Every job goes in its `needs:`.',
+      );
+    }
+    for (const id of record.needs.filter((id) => !want.includes(id))) {
+      out.push(`[record-needs-unknown] \`${RECORD_JOB}\` needs \`${id}\`, which is not in the ledger`);
+    }
+    const have = conjuncts(record.if);
+    if (!have) {
+      out.push(`[record-condition-shape] \`${RECORD_JOB}\`'s \`if:\` is not a pure \`&&\` conjunction: ${record.if}`);
+    } else {
+      const expect = recordConjuncts(ledger);
+      for (const c of expect.filter((c) => !have.includes(c))) {
+        out.push(`[record-condition-missing] \`${RECORD_JOB}\`'s \`if:\` lacks \`${c}\`; without it a run that did not test the full tree can record it`);
+      }
+      for (const c of have.filter((c) => !expect.includes(c))) {
+        out.push(`[record-condition-unknown] \`${RECORD_JOB}\`'s \`if:\` carries \`${c}\`, which the ledger does not account for`);
+      }
+    }
+    const upload = record.body.findIndex((l) => /uses:\s*actions\/upload-artifact@/.test(l));
+    const name = upload === -1 ? null : record.body.slice(upload).find((l) => /^\s+name:/.test(l))?.trim();
+    if (name !== 'name: ci-tested-tree-${{ steps.tree.outputs.sha }}-full') {
+      out.push(`[record-artifact-name] \`${RECORD_JOB}\` uploads ${name ?? 'nothing'}; the gate looks up \`ci-tested-tree-<tree>-full\``);
     }
   }
 

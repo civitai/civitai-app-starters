@@ -33,6 +33,12 @@
  *              (`starter-pins`), and the `starter` legs' every-lane steps, which
  *              are `pnpm test:guards` and the workspace-override guard. Anything
  *              short of a clean positive classification -> `full`.
+ *   tree-already-tested
+ *              a push to main whose commit TREE is byte-for-byte a tree that a
+ *              completed, green, FULL-lane pull_request run already tested
+ *              (`pushGate`). Core jobs off; the advisory five still run,
+ *              because they read live services and a PR run says nothing about
+ *              those today. Anything short of a verified match -> `full`.
  *
  * The per-job outputs for core jobs and the `starter` matrix's step gating are
  * how the release lane (and the push-to-main tested-tree skip) turn core jobs
@@ -162,6 +168,49 @@ export const RELEASE_FILES = Object.freeze([
   { glob: 'starters/*/package.json', status: 'modified', content: 'package-json' },
   { glob: 'starters/examples/*/package.json', status: 'modified', content: 'package-json' },
 ]);
+
+/**
+ * THE TESTED-TREE RECORD. ci.yml's `record-tree` job, on a pull_request run
+ * whose `lanes` output was `full` and whose every CORE job ran its full step
+ * set and succeeded, uploads an artifact named
+ * `${RECORD_ARTIFACT_PREFIX}<tree sha>${RECORD_ARTIFACT_SUFFIX}`, where the tree
+ * is the tested MERGE commit's (`refs/pull/<n>/merge`), i.e. what a squash
+ * merge produces when main has not moved since.
+ *
+ * The suffix names the lane. A release-lane run never records, and the gate
+ * only looks a FULL record up, so a lane-limited run cannot vouch for a tree
+ * even if a later edit made it record.
+ */
+export const RECORD_ARTIFACT_PREFIX = 'ci-tested-tree-';
+export const RECORD_ARTIFACT_SUFFIX = '-full';
+export const RECORD_JOB_NAME = 'Record the tested tree';
+export const WORKFLOW_PATH = '.github/workflows/ci.yml';
+
+/**
+ * Changed between the previous main tip and the pushed commit -> no skip.
+ *   - ci.yml and this script: the gate's own definition. A PR run that tested
+ *     this tree ran the PR's copy of them; a change to WHAT is gated must be
+ *     seen running in full on main once.
+ *   - pnpm-lock.yaml and the root package.json (`packageManager`): the inputs
+ *     of `setup-node`'s pnpm cache key. Pull-request runs RESTORE caches from
+ *     main but cannot write them there; a main that skips every install after
+ *     a lockfile change leaves every later PR on a cold cache.
+ */
+export const GATE_INPUTS = Object.freeze([WORKFLOW_PATH, 'scripts/ci-lanes.mjs', 'pnpm-lock.yaml', 'package.json']);
+
+/**
+ * The files that DEFINE a record: the workflow that uploads it and the
+ * classifier that decides the lane it was uploaded under. A run vouches for a
+ * tree only if its head commit carries the same blobs of these as the pushed
+ * commit does.
+ */
+export const RECORD_DEFINITION = Object.freeze([WORKFLOW_PATH, 'scripts/ci-lanes.mjs']);
+
+/** A skip never rests on a record older than this (the artifact's `created_at`). */
+export const MAX_RECORD_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** What runs on main when the exact tree already passed: the advisory five, nothing else. */
+export const TREE_LANE = 'tree-already-tested';
 
 export const ADVISORY_JOBS = Object.freeze(
   Object.keys(JOBS).filter((id) => JOBS[id] === 'advisory'),
@@ -380,12 +429,22 @@ export async function checkReleaseContent(files, { fetchBlob, workspaceNames }) 
  * @param {object} [input.release] pull_request only, and only when the head is
  *        `RELEASE_BRANCH` in this repository: `{ problem }`, where `problem` is
  *        null when `checkReleaseContent` found nothing but a version bump
+ * @param {object} [input.pushGate] push only: `pushGate`'s verdict; ONLY
+ *        `skip === true` skips anything, and only on `push`
  * @returns {{ lane: string, reason: string, jobs: Record<string, boolean> }}
  */
-export function decide({ event, files, filesError, release } = {}) {
+export function decide({ event, files, filesError, release, pushGate } = {}) {
+  if (event === 'push' && pushGate?.skip === true) {
+    return {
+      lane: TREE_LANE,
+      reason: `tree ${pushGate.tree} already passed in full on pull_request run ${pushGate.runId}: core jobs off, advisory jobs on`,
+      jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, JOBS[id] === 'advisory'])),
+    };
+  }
   if (event !== 'pull_request') {
     // push, workflow_dispatch, and any event this file has never heard of.
-    return { lane: 'full', reason: `${event || 'unknown event'}: every job`, jobs: everyJob(true) };
+    const why = event === 'push' && pushGate?.reason ? ` (no skip: ${pushGate.reason})` : '';
+    return { lane: 'full', reason: `${event || 'unknown event'}: every job${why}`, jobs: everyJob(true) };
   }
 
   const runAll = (why) => ({ lane: 'full', reason: `FAIL OPEN, every job: ${why}`, jobs: everyJob(true) });
@@ -459,6 +518,133 @@ export async function fetchPullRequestFiles({ api, repo, number, token, fetchImp
     files.push(...batch);
     if (files.length >= FILES_API_CAP) throw new Error(`${files.length} files reaches the API cap; the list is truncated`);
     if (batch.length < 100) return files;
+  }
+}
+
+const HEX40 = /^[0-9a-f]{40}$/;
+
+/**
+ * May this push to main skip its core jobs? Returns `{ skip, reason, tree?, runId? }`
+ * and NEVER throws: every error is `skip: false`. `skip` is true only when ALL of:
+ *
+ *   1. `before` is a real commit and the push is a fast-forward of it;
+ *   2. none of `GATE_INPUTS` changed between `before` and `sha`, judged from a
+ *      complete compare (300 files is the compare API's cap; at the cap the
+ *      list may be truncated and a gate input could hide past it);
+ *   3. an unexpired `<prefix><tree><suffix>` artifact, no older than
+ *      `MAX_RECORD_AGE_MS`, exists, uploaded by a run of THIS repository's
+ *      ci.yml on a pull_request from THIS repository;
+ *   4. that run's CURRENT state, read now and not from the artifact, is
+ *      `completed`/`success` (a re-run that failed flips it), and its latest
+ *      attempt's `Record the tested tree` job concluded `success`;
+ *   5. the run's head commit carries the SAME `ci.yml` and `scripts/ci-lanes.mjs`
+ *      blobs as the pushed commit (`RECORD_DEFINITION`).
+ *
+ * 🔴 WHO CAN FORGE A RECORD, AND WHAT (5) IS FOR. A pull_request run executes
+ * the PR's own copy of ci.yml, so ANY pull request whose branch edits ci.yml
+ * can upload an artifact under any name without testing anything, a
+ * same-repository branch just as easily as a fork. Excluding forks (3) removes
+ * the people without write access; it does not make a same-repository run
+ * honest. (5) narrows that, and only that: a run may vouch only if the workflow
+ * and classifier on its head are byte-for-byte the ones on the pushed commit,
+ * so the record was uploaded by the DEFINITION main is about to trust (the real
+ * `record-tree` condition and its real tree computation), not by an edited
+ * copy. It binds the workflow definition to the pushed commit. It does NOT
+ * bind the artifact's name to the tree the run tested by any independent
+ * means: that the name carries the tested tree is a property of that trusted
+ * definition, and is as good as it is. The run actually executed its MERGE
+ * commit's copies; where those differ from its head's, they came from main as
+ * it was then.
+ */
+export async function pushGate({ api, repo, token, sha, before, fetchImpl = fetch, now = Date.now() }) {
+  const no = (reason) => ({ skip: false, reason });
+  try {
+    if (!HEX40.test(sha ?? '')) return no('no pushed sha');
+    if (!HEX40.test(before ?? '') || /^0+$/.test(before)) return no('no previous main tip to compare with');
+    const get = async (path) => {
+      const res = await fetchImpl(`${api}/repos/${repo}/${path}`, {
+        headers: {
+          accept: 'application/vnd.github+json',
+          'x-github-api-version': '2022-11-28',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`${path.split('?')[0]} answered HTTP ${res.status}`);
+      return res.json();
+    };
+
+    const tree = (await get(`git/commits/${sha}`))?.tree?.sha;
+    if (!HEX40.test(tree ?? '')) return no('the pushed commit has no readable tree');
+
+    const cmp = await get(`compare/${before}...${sha}`);
+    if (cmp?.status !== 'ahead') return no(`the push is not a fast-forward of ${before} (compare: ${cmp?.status})`);
+    if (!Array.isArray(cmp.files) || cmp.files.length >= 300) return no('the compare file list is missing or may be truncated');
+    const touched = cmp.files
+      .flatMap((f) => [f?.filename, f?.previous_filename])
+      .filter((p) => GATE_INPUTS.includes(p));
+    if (touched.length) return no(`the push changes ${[...new Set(touched)].join(', ')}`);
+
+    const name = `${RECORD_ARTIFACT_PREFIX}${tree}${RECORD_ARTIFACT_SUFFIX}`;
+    const listed = await get(`actions/artifacts?name=${encodeURIComponent(name)}&per_page=100`);
+    if (!Array.isArray(listed?.artifacts)) return no('the artifact listing is not a list');
+    const fresh = (a) => {
+      const age = now - Date.parse(a.created_at);
+      return Number.isFinite(age) && age >= 0 && age <= MAX_RECORD_AGE_MS;
+    };
+    const candidates = listed.artifacts
+      .filter((a) => a?.name === name && a.expired === false && fresh(a))
+      .filter((a) => a.workflow_run && a.workflow_run.repository_id === a.workflow_run.head_repository_id)
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+      .slice(0, 5);
+    if (!candidates.length) return no(`no unexpired same-repository record under ${MAX_RECORD_AGE_MS / 86_400_000} days old named ${name}`);
+
+    const blobOf = async (path, ref) => {
+      const blob = (await get(`contents/${path}?ref=${ref}`))?.sha;
+      if (!HEX40.test(blob ?? '')) throw new Error(`no blob sha for ${path}@${ref}`);
+      return blob;
+    };
+    const pushed = {};
+    for (const path of RECORD_DEFINITION) pushed[path] = await blobOf(path, sha);
+
+    const rejected = [];
+    for (const a of candidates) {
+      const id = a.workflow_run.id;
+      const run = await get(`actions/runs/${id}`);
+      const why =
+        run?.event !== 'pull_request' ? `event ${run?.event}`
+        : run?.path !== WORKFLOW_PATH ? `workflow ${run?.path}`
+        : run?.head_repository?.full_name !== repo ? `head repository ${run?.head_repository?.full_name}`
+        : run?.status !== 'completed' ? `status ${run?.status}`
+        : run?.conclusion !== 'success' ? `conclusion ${run?.conclusion}`
+        : null;
+      if (why) {
+        rejected.push(`run ${id}: ${why}`);
+        continue;
+      }
+      const jobs = await get(`actions/runs/${id}/jobs?filter=latest&per_page=100`);
+      const record = (jobs?.jobs ?? []).filter((j) => j?.name === RECORD_JOB_NAME);
+      if (record.length !== 1 || record[0].conclusion !== 'success') {
+        rejected.push(`run ${id}: its latest ${RECORD_JOB_NAME} job is ${record.map((j) => j.conclusion).join(',') || 'absent'}`);
+        continue;
+      }
+      if (!HEX40.test(run.head_sha ?? '')) {
+        rejected.push(`run ${id}: no head sha`);
+        continue;
+      }
+      let differs = null;
+      for (const path of RECORD_DEFINITION) {
+        if ((await blobOf(path, run.head_sha)) !== pushed[path]) differs = path;
+      }
+      if (differs) {
+        rejected.push(`run ${id}: its head has a different ${differs} than the pushed commit`);
+        continue;
+      }
+      return { skip: true, reason: `matched run ${id}`, tree, runId: id };
+    }
+    return no(`a record exists but no run vouches for it (${rejected.join('; ')})`);
+  } catch (err) {
+    return no(`API error: ${err?.message ?? err}`);
   }
 }
 
@@ -549,6 +735,22 @@ async function main() {
     } catch (err) {
       input.filesError = String(err?.message ?? err);
     }
+  }
+
+  if (event === 'push') {
+    let before;
+    try {
+      before = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))?.before;
+    } catch {
+      before = undefined;
+    }
+    input.pushGate = await pushGate({
+      api: env.GITHUB_API_URL ?? 'https://api.github.com',
+      repo: env.GITHUB_REPOSITORY,
+      token: env.GITHUB_TOKEN,
+      sha: env.GITHUB_SHA,
+      before,
+    });
   }
 
   const d = decide(input);
