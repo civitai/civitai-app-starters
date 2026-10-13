@@ -1665,7 +1665,8 @@ export interface BlockWorkflowSnapshot {
    *
    * WHERE IT APPEARS today: the refusal for a pass-through `step` body
    * ({@link WorkflowBodyPassThroughStep}) whose `$type` is a training type
-   * (`'training'` or `'imageResourceTraining'`) when the host could not get a
+   * (`'training'` or `'imageResourceTraining'`, in any casing — the host
+   * compares `$type` case-insensitively) when the host could not get a
    * price quote for it. That refusal is `{ workflowId: 'failed', status:
    * 'failed', error, errorCode }` with no `cost`, and it is the reply to
    * `estimate()` (which rejects with `WorkflowEstimateError`), to `submit()`
