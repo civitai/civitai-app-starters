@@ -232,3 +232,77 @@ describe('<civitai-reaction>', () => {
     expect(el.count).toBe(4);
   });
 });
+
+/**
+ * A media-card is a pure aspect-ratio box with no intrinsic content width, and its
+ * `overflow: hidden` already gives it an automatic minimum size of 0 (CSS Flexbox
+ * 4.5). As a flex item in a ROW that resolves to zero and the card VANISHES — not
+ * "looks broken", invisible.
+ *
+ * 🔴 EVERY OTHER FIXTURE IN THIS FILE PINS `style="width: 240px"`, so the whole
+ * suite was structurally blind to this: the one dimension the defect lives on was
+ * held constant by the harness. These cases supply no width on purpose.
+ */
+describe('<civitai-media-card> as a flex item', () => {
+  const mountRaw = async (markup: string): Promise<HTMLElement> => {
+    scope?.remove();
+    scope = document.createElement('div');
+    scope.innerHTML = markup;
+    document.body.append(scope);
+    await Promise.all(
+      [...scope.querySelectorAll('*')]
+        .map((el) => (el as HTMLElement & { updateComplete?: Promise<boolean> }).updateComplete)
+        .filter(Boolean)
+    );
+    return scope.querySelector('#host') as HTMLElement;
+  };
+
+  const boxes = (host: HTMLElement) =>
+    [...host.querySelectorAll('civitai-media-card')].map((c) => c.getBoundingClientRect());
+
+  it('survives a row: three tiles in a <civitai-group> are visible and side by side', async () => {
+    const host = await mountRaw(
+      '<civitai-group id="host" style="width: 640px"><civitai-media-card></civitai-media-card>' +
+        '<civitai-media-card></civitai-media-card><civitai-media-card></civitai-media-card>' +
+        '</civitai-group>'
+    );
+    const rects = boxes(host);
+
+    expect(rects, 'three tiles').toHaveLength(3);
+    for (const r of rects) {
+      expect(r.width, 'a tile that resolves to zero width is INVISIBLE, not merely ugly')
+        .toBeGreaterThan(0);
+      expect(r.height, 'the aspect ratio takes the height down with the width').toBeGreaterThan(0);
+    }
+    expect(new Set(rects.map((r) => Math.round(r.y))).size, 'a row, not a column').toBe(1);
+  });
+
+  it('leaves a COLUMN stack alone — the floor is inline-axis only', async () => {
+    // The guard against the obvious wrong fix. `flex-basis` is the tempting knob and
+    // is wrong: <civitai-stack> is `flex-direction: column`, where a basis sets the
+    // MAIN size = HEIGHT, so every stacked card would silently change height. A
+    // `min-width` cannot reach the block axis. If someone swaps one for the other,
+    // this height assertion is what goes red.
+    const host = await mountRaw(
+      '<civitai-stack id="host" style="width: 300px"><civitai-media-card></civitai-media-card></civitai-stack>'
+    );
+    const [r] = boxes(host);
+
+    expect(Math.round(r.width), 'cross-axis stretch still fills the stack').toBe(300);
+    expect(
+      Math.round(r.height),
+      'height must come from aspect-ratio 2/3, never from a flex basis'
+    ).toBe(450);
+  });
+
+  it('does not overflow a container narrower than the floor', async () => {
+    // Why the floor is `min(<floor>, 100%)` and not a bare length: a bare one would
+    // push the card out of any slot narrower than it.
+    const host = await mountRaw(
+      '<div id="host" style="width: 100px"><civitai-media-card></civitai-media-card></div>'
+    );
+    const [r] = boxes(host);
+
+    expect(Math.round(r.width), 'the percentage wins in a narrow slot').toBe(100);
+  });
+});
