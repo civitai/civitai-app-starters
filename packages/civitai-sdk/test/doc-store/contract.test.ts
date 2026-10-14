@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -24,16 +23,14 @@ import {
  * So the fake agrees with the server where the contract speaks, and the client
  * builds the requests the contract describes and reads their replies back.
  *
- * 🔴 The vendored file is pinned by hash to civitai `main` (the routes are not
- * released yet, so civitai.com does not serve it). `scripts/check-storage-contract.sh`
- * diffs it against the live source; after the release it must be re-checked against
- * civitai.com and the pin below moved with it.
+ * The vendored file's drift guard is `scripts/check-storage-contract.sh` (a byte diff
+ * against civitai.com in CI's `schema-drift` job), and the scheduled re-vendor
+ * workflow refreshes it. Rate limits are ON here (`enforceRateLimits`): the contract
+ * pins them, and an app's own tests leave them off.
  */
 
 const CONTRACT_URL = new URL('../../schemas/app-block/storage-contract.v1.json', import.meta.url);
 const CONTRACT_BYTES = readFileSync(fileURLToPath(CONTRACT_URL));
-/** civitai/civitai@afcc3f78 (main, 2026-10-14) public/schemas/app-block/storage-contract.v1.json */
-const CONTRACT_SHA256 = 'f6c0ac122a508d9fc3fdbfdb55c2dad9fa949344d33a789a889c155765db1a0b';
 
 type Step = {
   as: string;
@@ -219,6 +216,7 @@ function fakesFor(c: Case): Record<string, FakeStorage> {
       createFakeStorage({
         manifest: { scopes: contract.defaultScopes, storage: contract.storage },
         limits: { viewerDocs: contract.limits.viewerDocs },
+        enforceRateLimits: true,
         ...(c.appStatus ? { appStatus: c.appStatus } : {}),
         ...(consent ? { consent } : {}),
         ...(c.storage === 'disabled' ? { disabled: true } : {}),
@@ -429,10 +427,6 @@ async function runCase(c: Case, mode: Mode) {
 // ---------------------------------------------------------------------------
 
 describe('the vendored contract', () => {
-  it('is the pinned bytes of civitai main (re-check against civitai.com after release)', () => {
-    expect(createHash('sha256').update(CONTRACT_BYTES).digest('hex')).toBe(CONTRACT_SHA256);
-  });
-
   it('uses no field, modifier or matcher this runner does not apply', () => {
     expect(Object.keys(contract).filter((k) => !TOP_LEVEL_KEYS.includes(k))).toEqual([]);
     expect(Object.keys(contract.conventions).filter((k) => !CONVENTION_KEYS.includes(k))).toEqual([]);

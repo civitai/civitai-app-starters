@@ -193,11 +193,6 @@ reading one.
 
 ## Document storage
 
-> **Targets server routes that are not live on civitai.com yet.** Until they ship,
-> every call rejects with a plain `ApiError` `404` (an HTML page, not the storage
-> envelope, so not a `StorageError` — and `get` does not read it as "no document").
-> The rest of this section describes the contract they ship with.
-
 An app declares its **collections** in its manifest, and `app.storage.collection(name)`
 reads and writes their JSON documents. `private` collections hold one key space per
 viewer; `shared` ones one key space every viewer reads, written under the policy the
@@ -884,10 +879,9 @@ entry.
 
 `createFakeStorage({ manifest })` is an in-memory document store behind the same
 `Http` seam the client uses, enforcing the server's rules: scopes and consent, write
-policies, the minimum-trust gate, anonymous readers, keys, limits and quotas, rate
-limits and the shared write budget, moderation, error codes and statuses. This
-package runs the platform's own storage contract against it, so where the contract
-speaks the fake and the server agree.
+policies, the minimum-trust gate, anonymous readers, keys, limits and quotas,
+moderation, error codes and statuses. This package runs the platform's own storage
+contract against it, so where the contract speaks the fake and the server agree.
 
 ```ts
 import { createFakeStorage } from '@civitai/sdk/testing';
@@ -900,12 +894,27 @@ const bob = fake.as({ viewer: { username: 'bob', trusted: false } }).storage;
 const anon = fake.as({ viewer: null }).storage;
 ```
 
-`fake.calls` records every request and answer. Options cover the clock (`now`),
-smaller `limits`, `consent` (revoked scopes, or `'unavailable'`), `appStatus`,
-`disabled` and a custom `moderate`; by default the scanner refuses the words in
-`FAKE_STORAGE_MODERATION`. It does not model moderator hides or the review-preview
-namespace, and at the `Http` seam there is no URL resolution — the client refuses
-the segments a URL would rewrite (`''`, `.`, `..`) before sending.
+**Rate limits are OFF by default**, so your own tests are never throttled. Pass
+`enforceRateLimits: true` to apply the server's — the per-minute and per-day windows
+for reads, private writes and deletes, marks and counters, and reports, plus the
+shared write budget — when you want to test how the app handles `rate_limited`
+(drive the clock with `now`).
+
+Where it differs from the server on purpose:
+
+- A declaration using a feature the platform has not shipped — `write: "owner"` or
+  `"anyone"`, `kind: "log"`/`maxEntries`, `ttlSeconds`, `dailyWritesPerAuthor` —
+  makes `createFakeStorage` throw, naming it, instead of failing per request. It is
+  not a manifest validator otherwise; `civitai app validate` is.
+- A list `nextCursor` is an opaque token, refused for any other collection, sort or
+  filter than the query that issued it. Treat it as opaque against the server too.
+
+`fake.calls` records every request and answer. Options also cover smaller `limits`,
+`consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom
+`moderate`; by default the scanner refuses the words in `FAKE_STORAGE_MODERATION`. It
+does not model moderator hides or the review-preview namespace, and at the `Http`
+seam there is no URL resolution — the client refuses the segments a URL would
+rewrite (`''`, `.`, `..`) before sending.
 
 ### The legacy key/value stores
 

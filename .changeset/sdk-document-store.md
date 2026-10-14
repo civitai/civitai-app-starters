@@ -7,12 +7,12 @@ Add the App Blocks document store client: `app.storage.collection<T>(name)` with
 `list` (one declared-index `where`, `sort`, `author: 'me'`, `markedBy: 'me'` +
 `mark`, `keyPrefix`, `limit`, `cursor`), `increment`, `mark` and `unmark`, plus
 `app.storage.info()` and a `StorageError` carrying the server's `code`, `status`,
-`details` and `retryAfter`. It targets `/api/v1/blocks/storage/…`, which is not
-live on civitai.com yet; until it is, every call rejects with a plain `404`.
+`details` and `retryAfter`, over `/api/v1/blocks/storage/…`.
 
 `@civitai/sdk/testing` gains `createFakeStorage({ manifest })`, an in-memory store
 at the client's `Http` seam that enforces the server's storage rules and passes
-the platform's storage contract.
+the platform's storage contract. Its rate limits are opt-in
+(`enforceRateLimits: true`), so an app's own tests are not throttled.
 
 The legacy key/value methods on `app.storage` (`get`, `set`, `delete`, `list`,
 `getQuota`) and `app.sharedStorage` are now `@deprecated`, with no change in

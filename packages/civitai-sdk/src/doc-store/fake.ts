@@ -13,6 +13,12 @@ import { createDocumentStorage, type DocumentStorage } from './index.js';
  * the contract does not exercise are ported from the server source and say so where
  * they diverge.
  *
+ * WHERE IT DIFFERS ON PURPOSE: rate limits apply only with `enforceRateLimits: true`;
+ * a declaration using a feature the platform has not shipped (`write: "owner"` or
+ * `"anyone"`, log collections, `ttlSeconds`, `dailyWritesPerAuthor`) is refused when
+ * the fake is CREATED rather than per request; and a list cursor is an opaque token
+ * bound to its whole query, not the server's sort-bound keyset string.
+ *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
  * namespace, and the token middleware's other refusals (revoked instance, context
@@ -30,14 +36,11 @@ const CONSENT_GATED = new Set([PUBLISH_SCOPE]);
 
 const COLLECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const TALLY_NAME = /^[a-z][a-z0-9_]{0,31}$/;
-const INDEX_PATH = /^[A-Za-z][A-Za-z0-9_]{0,31}(\.[A-Za-z][A-Za-z0-9_]{0,31}){0,2}$/;
 const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOT_ONLY = /^\.+$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const REPORT = 'report';
-const RESERVED_INDEX_NAMES = ['key', 'createdAt', 'updatedAt'];
 const INDEX_TYPES = ['string', 'number', 'boolean', 'time'] as const;
-const WRITE_POLICIES = ['own', 'anyone', 'owner', 'none'] as const;
 
 const B = {
   docBytes: 65536,
@@ -47,11 +50,7 @@ const B = {
   listLimitMax: 100,
   listLimitDefault: 25,
   getManyMax: 100,
-  cursorChars: 512,
   incrementMax: 100,
-  maxCollections: 16,
-  maxTallies: 8,
-  maxIndexes: 4,
 } as const;
 /** One document plus the request wrapper around it. */
 const BODY_LIMIT_BYTES = B.docBytes + 16 * 1024;
@@ -153,6 +152,13 @@ export interface FakeStorageOptions {
   disabled?: boolean;
   /** Override the per-app and per-viewer ceilings, e.g. a small `viewerDocs` to reach the quota. */
   limits?: Partial<typeof DEFAULT_LIMITS>;
+  /**
+   * Apply the server's rate limits: the per-minute and per-day windows (reads, private
+   * writes and deletes, marks and counters, reports) and the shared write budget.
+   * Default `false`, so an app's own tests are never throttled; turn it on to test how
+   * the app handles `rate_limited`.
+   */
+  enforceRateLimits?: boolean;
   /** The clock rate limits and timestamps read. Default `Date.now`. */
   now?: () => number;
   /**
@@ -192,110 +198,72 @@ export interface FakeStorage extends FakeStorageSession {
 
 type IndexType = (typeof INDEX_TYPES)[number];
 interface Decl {
-  kind: string;
   visibility: 'private' | 'shared';
-  write?: string;
+  /** Shared collections only: the two policies phase one serves. */
+  write?: 'own' | 'none';
   counters: string[];
   marks: string[];
   indexes: Map<string, IndexType>;
   showAuthor: boolean;
-  ttlSeconds?: unknown;
-  maxEntries?: unknown;
-  dailyWritesPerAuthor?: unknown;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** Declarations the platform does not serve yet, each with what to do instead. */
+const PHASED: { test: (raw: Record<string, unknown>) => boolean; what: string }[] = [
+  { test: (r) => r.write === 'owner', what: 'write "owner" (owner-written documents)' },
+  { test: (r) => r.write === 'anyone', what: 'write "anyone" (documents any viewer may edit)' },
+  { test: (r) => r.kind === 'log' || r.maxEntries !== undefined, what: 'kind "log" / maxEntries (log collections)' },
+  { test: (r) => r.ttlSeconds !== undefined, what: 'ttlSeconds (expiring documents)' },
+  { test: (r) => r.dailyWritesPerAuthor !== undefined, what: 'dailyWritesPerAuthor (per-collection write budgets)' },
+];
+
 /**
- * The declaration's SHAPE, every phased feature admitted — as the server reads an
- * approved manifest. A collection using a feature that is not built yet is refused at
- * use, per collection (`invalid_request`), exactly as the store does.
+ * Only what the fake needs to know the declared collections. It is NOT a manifest
+ * validator — `civitai app validate` and the platform's review are; a declaration it
+ * reads here may still be refused there. It refuses, at construction, the two things
+ * it cannot serve: a declaration it cannot read, and a feature the platform has not
+ * shipped (so a test never passes against storage that would not exist).
  */
 function parseManifest(manifest: unknown): Map<string, Decl> {
   const out = new Map<string, Decl>();
   if (!isObject(manifest) || manifest.storage === undefined) return out;
-  const errors: string[] = [];
   const storage = manifest.storage;
   if (!isObject(storage) || !isObject(storage.collections)) {
     throw new Error('createFakeStorage: manifest.storage.collections must be an object');
   }
-  for (const k of Object.keys(storage)) if (k !== 'collections') errors.push(`storage.${k} is not allowed`);
-  const names = Object.keys(storage.collections);
-  if (names.length === 0 || names.length > B.maxCollections) errors.push('storage.collections: 1 to 16 collections');
-  for (const name of names) {
+  const errors: string[] = [];
+  const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === 'string') : []);
+  for (const [name, raw] of Object.entries(storage.collections)) {
     const at = `storage.collections.${name}`;
-    const raw = storage.collections[name];
-    if (!COLLECTION_NAME.test(name)) errors.push(`${at}: invalid collection name`);
-    if (!isObject(raw)) {
-      errors.push(`${at} must be an object`);
+    if (!isObject(raw) || (raw.visibility !== 'private' && raw.visibility !== 'shared')) {
+      errors.push(`${at}: needs visibility "private" or "shared"`);
       continue;
     }
-    for (const k of Object.keys(raw)) {
-      if (!['kind', 'visibility', 'write', 'counters', 'marks', 'indexes', 'showAuthor', 'ttlSeconds', 'maxEntries', 'dailyWritesPerAuthor'].includes(k)) {
-        errors.push(`${at}.${k} is not allowed`);
-      }
-    }
-    if (raw.visibility !== 'private' && raw.visibility !== 'shared') {
-      errors.push(`${at}.visibility must be private or shared`);
-      continue;
+    for (const { test, what } of PHASED) {
+      if (test(raw)) errors.push(`${at}: ${what} is not available yet in App Storage`);
     }
     const shared = raw.visibility === 'shared';
-    if (raw.kind !== undefined && raw.kind !== 'docs' && raw.kind !== 'log') errors.push(`${at}.kind must be docs or log`);
-    if (!shared && raw.write !== undefined) errors.push(`${at}.write applies only to shared collections`);
-    if (shared && !(WRITE_POLICIES as readonly unknown[]).includes(raw.write)) {
-      errors.push(`${at}.write must be one of ${WRITE_POLICIES.join(', ')}`);
-    }
-    const tallies = (field: 'counters' | 'marks'): string[] => {
-      const list = raw[field];
-      if (list === undefined) return [];
-      if (!shared) errors.push(`${at}.${field} applies only to shared collections`);
-      if (!Array.isArray(list) || list.length > B.maxTallies) {
-        errors.push(`${at}.${field} must be an array of at most ${B.maxTallies} names`);
-        return [];
-      }
-      for (const n of list) {
-        if (typeof n !== 'string' || !TALLY_NAME.test(n) || n === REPORT) errors.push(`${at}.${field}: invalid name ${String(n)}`);
-      }
-      if (new Set(list).size !== list.length) errors.push(`${at}.${field}: duplicate name`);
-      return list as string[];
-    };
-    const counters = tallies('counters');
-    const marks = tallies('marks');
-    if (counters.some((c) => marks.includes(c))) errors.push(`${at}: a name is both a counter and a mark`);
-    if (raw.write === 'none' && counters.length === 0 && marks.length === 0) {
-      errors.push(`${at}: write "none" needs at least one counter or mark`);
+    if (shared && raw.write !== 'own' && raw.write !== 'none' && raw.write !== 'owner' && raw.write !== 'anyone') {
+      errors.push(`${at}: a shared collection needs write "own" or "none"`);
     }
     const indexes = new Map<string, IndexType>();
-    if (raw.indexes !== undefined) {
-      if (!isObject(raw.indexes) || Object.keys(raw.indexes).length > B.maxIndexes) {
-        errors.push(`${at}.indexes must map at most ${B.maxIndexes} field paths to a type`);
-      } else {
-        for (const [path, type] of Object.entries(raw.indexes)) {
-          if (!INDEX_PATH.test(path) || RESERVED_INDEX_NAMES.includes(path)) errors.push(`${at}.indexes: invalid path ${path}`);
-          else if (!(INDEX_TYPES as readonly unknown[]).includes(type)) errors.push(`${at}.indexes.${path}: invalid type`);
-          else indexes.set(path, type as IndexType);
-        }
-      }
-    }
-    if (raw.showAuthor !== undefined && (!shared || typeof raw.showAuthor !== 'boolean')) {
-      errors.push(`${at}.showAuthor must be a boolean on a shared collection`);
+    for (const [path, type] of Object.entries(isObject(raw.indexes) ? raw.indexes : {})) {
+      if ((INDEX_TYPES as readonly unknown[]).includes(type)) indexes.set(path, type as IndexType);
+      else errors.push(`${at}.indexes.${path}: type must be one of ${INDEX_TYPES.join(', ')}`);
     }
     const decl: Decl = {
-      kind: typeof raw.kind === 'string' ? raw.kind : 'docs',
       visibility: raw.visibility,
-      counters,
-      marks,
+      counters: shared ? names(raw.counters) : [],
+      marks: shared ? names(raw.marks) : [],
       indexes,
-      showAuthor: raw.showAuthor === true,
+      showAuthor: shared && raw.showAuthor === true,
     };
-    if (shared && typeof raw.write === 'string') decl.write = raw.write;
-    if (raw.ttlSeconds !== undefined) decl.ttlSeconds = raw.ttlSeconds;
-    if (raw.maxEntries !== undefined) decl.maxEntries = raw.maxEntries;
-    if (raw.dailyWritesPerAuthor !== undefined) decl.dailyWritesPerAuthor = raw.dailyWritesPerAuthor;
+    if (shared && (raw.write === 'own' || raw.write === 'none')) decl.write = raw.write;
     out.set(name, decl);
   }
-  if (errors.length > 0) throw new Error(`createFakeStorage: invalid storage declaration:\n- ${errors.join('\n- ')}`);
+  if (errors.length > 0) throw new Error(`createFakeStorage: cannot serve this storage declaration:\n- ${errors.join('\n- ')}`);
   return out;
 }
 
@@ -377,16 +345,6 @@ function storedSize(data: unknown): number {
   return utf8Length(JSON.stringify(data)) + separators;
 }
 
-const base64url = (text: string) =>
-  btoa(String.fromCharCode(...new TextEncoder().encode(text)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-const fromBase64url = (text: string) => {
-  const padded = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4);
-  return new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)));
-};
-
 // ---------------------------------------------------------------------------
 // The fake
 // ---------------------------------------------------------------------------
@@ -424,6 +382,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   const userUsage = new Map<string, Usage>();
   const windows = new Map<string, { count: number; resetAt: number }>();
   const budgets = new Map<number, number[]>();
+  const cursors = new Map<string, { binding: string; value: string | number; key: string }>();
+  const issueCursor = (binding: string, value: string | number, key: string) => {
+    const token = `c${(cursors.size + 1).toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    cursors.set(token, { binding, value, key });
+    return token;
+  };
 
   const scopeOf = (ctx: Ctx, coll: string): number => {
     if (collections.get(coll)!.visibility === 'shared') return 0;
@@ -440,6 +404,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
 
   /** A fixed window from the first request; every request counts, refused ones too. */
   function charge(bucket: RateBucket, uid: number | null) {
+    if (!options.enforceRateLimits) return;
     const { max, windowSeconds } = RATE[bucket];
     const id = `${bucket}:${uid === null ? 'ip' : `u:${uid}`}`;
     const t = now();
@@ -456,7 +421,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   /** Three continuously refilling buckets; each slot is the instant that bucket is full again. */
-  function reserveSharedWrite(uid: number) {
+  function reserveSharedWrite(uid: number): (rejected: boolean) => void {
+    if (!options.enforceRateLimits) return () => undefined;
     const t = now();
     const full = (budgets.get(uid) ?? [t, t, t]).map((f) => Math.max(f, t));
     let wait = 0;
@@ -487,22 +453,11 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
 
   // --- store ---------------------------------------------------------------
 
-  function assertCollection(name: string): Decl {
-    const decl = collections.get(name)!;
-    if (decl.ttlSeconds !== undefined) throw invalid('ttlSeconds is not supported yet', { collection: name });
-    if (decl.kind === 'log' || decl.maxEntries !== undefined) {
-      throw invalid('log collections are not supported yet', { collection: name });
-    }
-    if (decl.dailyWritesPerAuthor !== undefined) {
-      throw invalid('dailyWritesPerAuthor is not supported yet', { collection: name });
-    }
-    if ((decl.write ?? 'own') === 'anyone') throw invalid('write: anyone is not supported yet', { collection: name });
-    return decl;
-  }
+  /** Phased features were refused at construction, so every declared collection is servable. */
+  const declOf = (name: string): Decl => collections.get(name)!;
 
   function assertShareWritable(decl: Decl) {
     if (decl.visibility !== 'shared') return;
-    if (decl.write === 'owner') throw refuse('write_policy', 'only the app owner writes this collection');
     if (decl.write === 'none') throw refuse('write_policy', 'documents in this collection are written by counters only');
   }
 
@@ -641,7 +596,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   function getMany(ctx: Ctx, coll: string, keys: unknown[]) {
-    assertCollection(coll);
     if (keys.length > B.getManyMax) throw invalid(`getMany takes at most ${B.getManyMax} keys`);
     keys.forEach(assertKey);
     if (keys.length === 0) return [];
@@ -654,7 +608,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   function writeDoc(ctx: Ctx, coll: string, key: string, data: unknown, ifVersion: number | undefined) {
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
     assertShareWritable(decl);
@@ -708,7 +662,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   function remove(ctx: Ctx, coll: string, key: string, ifVersion: number | undefined) {
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
     assertShareWritable(decl);
@@ -732,7 +686,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   function increment(ctx: Ctx, coll: string, key: string, counter: string, by = 1) {
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     assertKey(key);
     requireShared(decl, 'counters');
     if (!TALLY_NAME.test(counter) || !decl.counters.includes(counter)) {
@@ -778,7 +732,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   function setMark(ctx: Ctx, coll: string, key: string, name: string, on: boolean) {
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     assertKey(key);
     assertMarkName(decl, name);
     const viewer = requireViewer(ctx);
@@ -825,31 +779,15 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     return { kind: 'index', desc, name: field, type };
   }
 
-  const sortTag = (sort: Sort) => {
-    const dir = sort.desc ? 'd' : 'a';
-    switch (sort.kind) {
-      case 'key':
-        return `k${dir}`;
-      case 'createdAt':
-        return `c${dir}`;
-      case 'updatedAt':
-        return `u${dir}`;
-      case 'tally':
-        return `t${dir}`;
-      case 'index':
-        return `${sort.type === 'string' ? 's' : 'n'}${dir}`;
-    }
-  };
-
-  /** The sort value, as the cursor carries it; `undefined` = not in this ordering. */
+  /** The value a document sorts by; `undefined` = not in this ordering. */
   function sortValue(sort: Sort, d: DocRow): string | number | undefined {
     switch (sort.kind) {
       case 'key':
         return '';
       case 'createdAt':
-        return d.createdAt * 1000;
+        return d.createdAt;
       case 'updatedAt':
-        return d.updatedAt * 1000;
+        return d.updatedAt;
       case 'tally':
         return (sort.tally === 'counter' ? d.counters : d.markCounts).get(sort.name) ?? 0;
       case 'index': {
@@ -860,37 +798,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
   }
 
-  function decodeCursor(sort: Sort, cursor: string): { value: string | number; key: string } {
-    const bad = () => invalid('invalid cursor');
-    if (cursor.length > B.cursorChars) throw bad();
-    const first = cursor.indexOf('~');
-    const last = cursor.lastIndexOf('~');
-    if (first < 0 || last === first) throw bad();
-    const payload = cursor.slice(first + 1, last);
-    const key = cursor.slice(last + 1);
-    if (cursor.slice(0, first) !== sortTag(sort) || !KEY.test(key)) throw bad();
-    if (sort.kind === 'key') return { value: '', key };
-    if (sort.kind === 'index' && sort.type === 'string') {
-      if (!/^[A-Za-z0-9_-]*$/.test(payload)) throw bad();
-      return { value: fromBase64url(payload), key };
-    }
-    if (sort.kind === 'index') {
-      if (!/^-?[0-9.eE+-]{1,32}$/.test(payload) || !Number.isFinite(Number(payload))) throw bad();
-      return { value: Number(payload), key };
-    }
-    if (!new RegExp(`^[0-9]{1,${sort.kind === 'tally' ? 18 : 17}}$`).test(payload)) throw bad();
-    return { value: Number(payload), key };
-  }
-
-  function encodeCursor(sort: Sort, value: string | number, key: string) {
-    let payload = String(value);
-    if (sort.kind === 'key') payload = '';
-    else if (sort.kind === 'index' && sort.type === 'string') payload = base64url(payload);
-    return `${sortTag(sort)}~${payload}~${key}`;
-  }
-
   function list(ctx: Ctx, coll: string, q: ListQuery) {
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     const limit = q.limit ?? B.listLimitDefault;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > B.listLimitMax) throw invalid(`limit must be 1–${B.listLimitMax}`);
     const scope = scopeOf(ctx, coll);
@@ -935,8 +844,21 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const order = (a: { v: string | number; key: string }, b: { v: string | number; key: string }) =>
       (cmp(a.v, b.v) || cmp(a.key, b.key)) * dir;
     let ordered = keyed.map((x) => ({ d: x.d, v: x.v, key: x.d.key })).sort(order);
+    // OPAQUE, and bound to the query that issued it: a token for a stored position,
+    // refused (`invalid_request`) for any other collection, sort or filter.
+    // (Stricter than the server, which binds a cursor to its sort only.)
+    const binding = JSON.stringify([
+      coll,
+      q.sort ?? 'key',
+      q.where ?? {},
+      q.keyPrefix ?? null,
+      q.author ?? null,
+      q.markedBy ?? null,
+      q.mark ?? null,
+    ]);
     if (q.cursor !== undefined) {
-      const cur = decodeCursor(sort, q.cursor);
+      const cur = cursors.get(q.cursor);
+      if (!cur || cur.binding !== binding) throw invalid('invalid cursor');
       const bound = { v: cur.value, key: cur.key };
       ordered = ordered.filter((x) => order(x, bound) > 0);
     }
@@ -945,7 +867,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const last = page[page.length - 1];
     return {
       items: page.map((x) => present(ctx, coll, x.d)),
-      nextCursor: ordered.length > limit && last ? encodeCursor(sort, last.v, last.key) : null,
+      nextCursor: ordered.length > limit && last ? issueCursor(binding, last.v, last.key) : null,
     };
   }
 
@@ -1172,7 +1094,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
             [...collections].map(([name, d]) => [
               name,
               {
-                kind: d.kind,
+                kind: 'docs',
                 visibility: d.visibility,
                 ...(d.visibility === 'shared' ? { write: d.write ?? 'own' } : {}),
                 counters: [...d.counters],
@@ -1208,7 +1130,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       throw refuse('collection_not_declared', `collection ${route.collection} is not declared`, { collection: route.collection });
     }
     const coll = route.collection;
-    const decl = assertCollection(coll);
+    const decl = declOf(coll);
     const shared = decl.visibility === 'shared';
 
     switch (route.op) {

@@ -3159,6 +3159,13 @@ export interface FakeStorageOptions {
     disabled?: boolean;
     /** Override the per-app and per-viewer ceilings, e.g. a small `viewerDocs` to reach the quota. */
     limits?: Partial<typeof DEFAULT_LIMITS>;
+    /**
+     * Apply the server's rate limits: the per-minute and per-day windows (reads, private
+     * writes and deletes, marks and counters, reports) and the shared write budget.
+     * Default `false`, so an app's own tests are never throttled; turn it on to test how
+     * the app handles `rate_limited`.
+     */
+    enforceRateLimits?: boolean;
     /** The clock rate limits and timestamps read. Default `Date.now`. */
     now?: () => number;
     /**

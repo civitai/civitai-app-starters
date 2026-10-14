@@ -4,11 +4,27 @@ import { StorageError } from '../../src/doc-store/index.js';
 import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js';
 
 /**
- * The fake's rules the contract does not reach: the shared write budget, the
- * window resets, sorts and filters beyond one case, byte quotas, deferred
- * features refused at use, and the manifest it is built from. Each expectation is
- * ported from the server source (`doc-store-api.ts`, `doc-store.ts`,
- * `shared-storage-rate-limit.ts` on civitai `main`), not read back from the fake.
+ * The fake's own behaviour beyond the contract run.
+ *
+ * 🔴 NOT CONTRACT-PINNED; CAN DRIFT FROM THE SERVER. These expectations were ported
+ * from the server source on civitai `main` (`doc-store-api.ts`, `doc-store.ts`,
+ * `shared-storage-rate-limit.ts`), not from the contract, so nothing re-checks them
+ * against the server when it changes. They are meant to move into upstream contract
+ * cases in a later civitai PR, and leave this file then:
+ *   - the shared write budget: burst 10 refilling every 6 min, the rejection bucket
+ *     (30 min), refunds on a refused write and none charged for an outage, per viewer;
+ *   - fixed-window resets and `retryAfter` values; anonymous reads sharing one window;
+ *   - typed `where` filters (number, boolean, time) and the one-filter limit;
+ *   - sorts by an index, a tally (absent = 0, key tiebreak in the sort direction),
+ *     `createdAt`; `keyPrefix`; `markedBy` + `mark`;
+ *   - authorship display (`username` only under `showAuthor`; `counter` authors);
+ *   - deleting a shared document drops its counters and marks; tallies never bump
+ *     `version`;
+ *   - byte quotas in the stored unit and their `ceiling`; `info()` usage figures;
+ *     `getMany`'s 100-key limit; an index value of the wrong type refusing a write.
+ *
+ * What is the FAKE's by design, not the server's: phased features refused at
+ * construction, rate limits off by default, and an opaque cursor bound to its query.
  */
 
 const SCOPES = ['apps:storage', 'apps:storage:publish'];
@@ -36,6 +52,8 @@ function make(extra: Partial<FakeStorageOptions> = {}, collections: Record<strin
     manifest: { scopes: SCOPES, storage: { collections } },
     viewer: { username: 'alice', id: 910_001 },
     now: () => t,
+    // On here: the budget and window tests below need it. See 'rate limits are opt-in'.
+    enforceRateLimits: true,
     ...extra,
   });
   return { fake, clock };
@@ -53,30 +71,44 @@ const refusal = (p: Promise<unknown>) =>
   );
 
 describe('the manifest', () => {
-  it('refuses a malformed declaration at construction', () => {
-    expect(() => make({}, { Bad: { visibility: 'private' } })).toThrow(/invalid collection name/);
-    expect(() => make({}, { p: { visibility: 'private', write: 'own' } })).toThrow(/write applies only to shared/);
-    expect(() => make({}, { p: { visibility: 'shared', write: 'own', marks: ['report'] } })).toThrow(/invalid name report/);
-    expect(() => make({}, { p: { visibility: 'shared', write: 'none' } })).toThrow(/at least one counter or mark/);
-    expect(() => make({}, { p: { visibility: 'shared', write: 'own', indexes: { key: 'string' } } })).toThrow(/invalid path key/);
+  it.each([
+    ['write "owner"', { visibility: 'shared', write: 'owner' }, /write "owner"/],
+    ['write "anyone"', { visibility: 'shared', write: 'anyone' }, /write "anyone"/],
+    ['kind "log"', { visibility: 'private', kind: 'log' }, /kind "log"/],
+    ['maxEntries', { visibility: 'private', maxEntries: 10 }, /log collections/],
+    ['ttlSeconds', { visibility: 'private', ttlSeconds: 3600 }, /ttlSeconds/],
+    ['dailyWritesPerAuthor', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 5 }, /dailyWritesPerAuthor/],
+  ])('a phased feature (%s) is refused when the fake is created, naming it', (_what, decl, message) => {
+    expect(() => make({}, { later: decl, prefs: { visibility: 'private' } })).toThrow(message);
+    expect(() => make({}, { later: decl })).toThrow(/storage\.collections\.later: .* is not available yet/);
   });
 
-  it.each([
-    ['write "anyone"', { visibility: 'shared', write: 'anyone' }],
-    ['ttlSeconds', { visibility: 'private', ttlSeconds: 3600 }],
-    ['kind "log"', { visibility: 'private', kind: 'log' }],
-    ['dailyWritesPerAuthor', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 5 }],
-  ])('a collection using a deferred feature (%s) is refused at use; the others keep working', async (_what, decl) => {
-    const { fake } = make({}, { later: decl, prefs: { visibility: 'private' } });
-    const e = await refusal(fake.storage.collection('later').put('k', {}));
-    expect(e.code).toBe('invalid_request');
-    expect(e.details).toEqual({ collection: 'later' });
-    await expect(fake.storage.collection('prefs').put('k', {})).resolves.toMatchObject({ version: 1 });
+  it('a declaration it cannot read is refused when the fake is created', () => {
+    expect(() => make({}, { p: { write: 'own' } })).toThrow(/needs visibility/);
+    expect(() => make({}, { p: { visibility: 'shared' } })).toThrow(/needs write "own" or "none"/);
+    expect(() => make({}, { p: { visibility: 'private', indexes: { at: 'date' } } })).toThrow(/type must be one of/);
   });
 
   it('a manifest without storage declares nothing', async () => {
     const fake = createFakeStorage({ manifest: { scopes: ['apps:storage'] } });
     expect((await refusal(fake.storage.collection('prefs').list())).code).toBe('collection_not_declared');
+  });
+});
+
+describe('rate limits are opt-in', () => {
+  it('off by default: no window and no shared write budget throttles an app\'s tests', async () => {
+    const { fake } = make({ enforceRateLimits: false });
+    const posts = fake.storage.collection('posts');
+    for (let i = 0; i < 15; i++) await posts.put(`p${i}`, {});
+    for (let i = 0; i < 40; i++) await fake.storage.collection('plays').increment('m', 'plays');
+    for (let i = 0; i < 25; i++) await posts.mark('p0', 'report');
+    await expect(posts.list({ limit: 100 })).resolves.toMatchObject({ items: { length: 15 } });
+  });
+
+  it('the default is off', async () => {
+    const fake = createFakeStorage({ manifest: { scopes: SCOPES, storage: { collections: COLLECTIONS } } });
+    for (let i = 0; i < 35; i++) await fake.storage.collection('plays').increment('m', 'plays');
+    expect((await fake.storage.collection('plays').get('m'))!.counters.plays).toBe(35);
   });
 });
 
@@ -194,11 +226,20 @@ describe('lists', () => {
     expect((await refusal(posts.list({ markedBy: 'me' }))).code).toBe('invalid_request');
   });
 
-  it('a cursor is bound to its sort', async () => {
+  it('a cursor is opaque and bound to its whole query', async () => {
     const { posts } = await seeded();
-    const { nextCursor } = await posts.list({ sort: 'rank', limit: 1 });
-    expect(nextCursor).toMatch(/^na~/);
-    expect((await refusal(posts.list({ sort: 'key', cursor: nextCursor! }))).code).toBe('invalid_request');
+    const first = await posts.list({ sort: 'rank', limit: 1 });
+    expect(first.items.map((d) => d.key)).toEqual(['b:1']);
+    const cursor = first.nextCursor!;
+    // Opaque: neither the last key nor its sort value is readable from it.
+    expect(cursor).not.toContain('b:1');
+    expect(cursor).not.toContain('-1');
+    // The same query continues…
+    expect(await keys(posts.list({ sort: 'rank', limit: 1, cursor }))).toEqual(['a:1']);
+    // …any other sort, filter or collection is refused.
+    expect((await refusal(posts.list({ sort: 'key', cursor }))).code).toBe('invalid_request');
+    expect((await refusal(posts.list({ sort: 'rank', where: { status: 'open' }, cursor }))).code).toBe('invalid_request');
+    expect((await refusal(posts.list({ sort: 'rank', author: 'me', cursor }))).code).toBe('invalid_request');
     expect((await refusal(posts.list({ cursor: 'garbage' }))).code).toBe('invalid_request');
   });
 });

@@ -43,95 +43,38 @@ const envelope = (status: number, code: string, details?: Record<string, unknown
     ...(details ? { details } : {}),
   });
 
-describe('request shapes', () => {
-  it('get / getMany / put / create / delete', async () => {
-    const r = recorder((method, path) => {
-      if (path.includes('/_get/')) return { items: [WIRE_DOC, null] };
-      if (method === 'DELETE') return { deleted: true };
-      return WIRE_DOC;
-    });
-    const posts = r.storage.collection('posts');
-    await posts.get('p1');
-    await posts.getMany(['p1', 'p2']);
-    await posts.put('p1', { title: 'a' });
-    await posts.put('p1', { title: 'b' }, { ifVersion: 0 });
-    await posts.create({ title: 'c' });
-    await posts.delete('p1');
-    await posts.delete('p1', { ifVersion: 7 });
-
-    expect(r.sent.map((s) => `${s.method} ${s.path}`)).toEqual([
-      'GET blocks/storage/posts/p1',
-      'POST blocks/storage/_get/posts',
-      'PUT blocks/storage/posts/p1',
-      'PUT blocks/storage/posts/p1',
-      'POST blocks/storage/posts',
-      'DELETE blocks/storage/posts/p1',
-      'DELETE blocks/storage/posts/p1',
-    ]);
-    expect(r.sent[0]!.opts.body).toBeUndefined();
-    expect(r.sent[1]!.opts.body).toEqual({ keys: ['p1', 'p2'] });
-    // What goes on the wire: an unconditional put carries no `ifVersion` at all,
-    // and `ifVersion: 0` (create-only) is sent, not dropped as falsy.
-    expect(JSON.stringify(r.sent[2]!.opts.body)).toBe('{"data":{"title":"a"}}');
-    expect(JSON.stringify(r.sent[3]!.opts.body)).toBe('{"data":{"title":"b"},"ifVersion":0}');
-    expect(r.sent[4]!.opts.body).toEqual({ data: { title: 'c' } });
-    expect(r.sent[5]!.opts.query).toEqual({ ifVersion: undefined });
-    expect(r.sent[5]!.opts.body).toBeUndefined();
-    expect(r.sent[6]!.opts.query).toEqual({ ifVersion: 7 });
+/**
+ * Request shapes ONLY where the contract's client pass (`contract.test.ts`) cannot see
+ * them: that pass already sends get, getMany, put/delete with a non-zero `ifVersion`,
+ * create, list with `where`/`sort`/`author`/`limit`/`cursor`, increment with and
+ * without `by`, mark, unmark and info through this client and checks the fake's
+ * answer, so a wrong path, verb or body there fails it. What it does not reach:
+ * `ifVersion: 0`, a `Date` filter, `markedBy`/`mark`/`keyPrefix`, encoding, and the
+ * segments a URL would rewrite (the fake sits below URL resolution).
+ */
+describe('request shapes the contract run does not cover', () => {
+  it('`ifVersion: 0` (only if absent) is sent, not dropped as falsy', async () => {
+    const r = recorder((method) => (method === 'DELETE' ? { deleted: false } : WIRE_DOC));
+    await r.storage.collection('posts').put('p1', { title: 'b' }, { ifVersion: 0 });
+    await r.storage.collection('posts').delete('p1', { ifVersion: 0 });
+    expect(JSON.stringify(r.sent[0]!.opts.body)).toBe('{"data":{"title":"b"},"ifVersion":0}');
+    expect(r.sent[1]!.opts.query).toEqual({ ifVersion: 0 });
   });
 
-  it('list sends one parameter per field, where[...] per filter, a Date as ISO', async () => {
+  it('list: a Date filter as ISO; markedBy, mark and keyPrefix as their own parameters', async () => {
     const r = recorder(() => ({ items: [], nextCursor: null }));
-    await r.storage.collection('posts').list();
     await r.storage.collection('posts').list({
       where: { at: new Date('2026-01-02T03:04:05.006Z') },
-      sort: '-counter:views',
-      author: 'me',
       markedBy: 'me',
       mark: 'vote',
       keyPrefix: 'k:',
-      limit: 7,
-      cursor: 'ta~3~p9',
     });
-    expect(r.sent.map((s) => `${s.method} ${s.path}`)).toEqual(['GET blocks/storage/posts', 'GET blocks/storage/posts']);
-    // Absent fields stay undefined, so the URL builder drops them and the server's defaults apply.
-    expect(Object.entries(r.sent[0]!.opts.query!).filter(([, v]) => v !== undefined)).toEqual([]);
-    expect(Object.fromEntries(Object.entries(r.sent[1]!.opts.query!).filter(([, v]) => v !== undefined))).toEqual({
+    expect(Object.fromEntries(Object.entries(r.sent[0]!.opts.query!).filter(([, v]) => v !== undefined))).toEqual({
       'where[at]': '2026-01-02T03:04:05.006Z',
-      sort: '-counter:views',
-      author: 'me',
       markedBy: 'me',
       mark: 'vote',
       keyPrefix: 'k:',
-      limit: 7,
-      cursor: 'ta~3~p9',
     });
-  });
-
-  it('increment / mark / unmark / info', async () => {
-    const r = recorder((method, path) => {
-      if (path.includes('/counters/')) return { value: 9 };
-      if (path.includes('/marks/')) return method === 'PUT' ? { marked: true, count: 2 } : { marked: false, count: 1 };
-      return { collections: {}, limits: {}, usage: {} };
-    });
-    const plays = r.storage.collection('plays');
-    await plays.increment('m1', 'plays');
-    await plays.increment('m1', 'plays', 3);
-    await plays.mark('m1', 'vote');
-    await plays.unmark('m1', 'vote');
-    await r.storage.info();
-    expect(r.sent.map((s) => `${s.method} ${s.path}`)).toEqual([
-      'POST blocks/storage/plays/m1/counters/plays',
-      'POST blocks/storage/plays/m1/counters/plays',
-      'PUT blocks/storage/plays/m1/marks/vote',
-      'DELETE blocks/storage/plays/m1/marks/vote',
-      'GET blocks/storage',
-    ]);
-    // No body at all without `by`: the server's default applies.
-    expect(r.sent[0]!.opts.body).toBeUndefined();
-    expect(r.sent[1]!.opts.body).toEqual({ by: 3 });
-    // A mark carries no payload.
-    expect(r.sent[2]!.opts.body).toBeUndefined();
   });
 
   it('encodes every caller-supplied segment', async () => {

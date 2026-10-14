@@ -5,6 +5,12 @@ name: Re-vendor canonical schema
 # mirror at packages/civitai-app-sdk/schemas/app-block/v1.json when it drifts, and
 # opens a PR. Keeps the mirror in parity without a human noticing the guard went red.
 # (JS twin of the civitai/cli automation.)
+#
+# It also re-vendors the App Blocks document-store CONTRACT
+# (packages/civitai-sdk/schemas/app-block/storage-contract.v1.json, guarded by
+# scripts/check-storage-contract.sh) on the same cron, guard and PR: one more
+# byte-mirror of a file civitai.com publishes on the same release cut. Its script
+# writes no changeset — that file is not published (see the script's header).
 
 on:
   schedule:
@@ -126,6 +132,10 @@ jobs:
         if: steps.guard.outputs.open == ''
         run: ./scripts/revendor-canonical-schema.sh
 
+      - name: Re-vendor storage contract
+        if: steps.guard.outputs.open == ''
+        run: ./scripts/revendor-storage-contract.sh
+
       - name: Detect changes
         id: changed
         if: steps.guard.outputs.open == ''
@@ -153,15 +163,20 @@ jobs:
       # `pattern`, and four `not` clauses on `outputDir`). An ADDITIVE change
       # passing is also the DESIGNED path, not a surprise — this repo types the
       # field first so the ledger is green when the bytes arrive.
-      - name: Validate SDK against the re-vendored schema
+      - name: Validate SDK against the re-vendored schema and contract
         if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @civitai/app-sdk typecheck
           pnpm --filter @civitai/app-sdk test
           pnpm --filter @civitai/app-sdk build
+          # The storage contract runs against `createFakeStorage` and the client in
+          # this suite, so a contract change the fake does not satisfy fails HERE
+          # and no PR opens — the fake needs a code change first.
+          pnpm --filter @civitai/sdk typecheck
+          pnpm --filter @civitai/sdk test
 
-      - name: Open PR if schema changed
+      - name: Open PR if the schema or contract changed
         if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         # SHA-pinned to an EXACT commit, asserted by
         # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
@@ -187,10 +202,19 @@ jobs:
           token: ${{ secrets.CHANGESETS_TOKEN }}
           branch: ${{ env.REVENDOR_BRANCH }}
           delete-branch: true
-          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema"
-          title: "chore(sdk): re-vendor canonical app-block manifest schema"
+          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema / storage contract"
+          title: "chore(sdk): re-vendor canonical app-block manifest schema / storage contract"
           body: |
-            Automated re-vendor of the App Block manifest schema mirror at
+            Automated re-vendor of the App Block manifest schema mirror and/or
+            the document-store contract mirror — read the diff for which.
+
+            **Storage contract** (`packages/civitai-sdk/schemas/app-block/storage-contract.v1.json`,
+            from https://civitai.com/schemas/app-block/storage-contract.v1.json):
+            not published, so no changeset. Validated in-job: `@civitai/sdk`
+            typecheck + test passed, i.e. `createFakeStorage` and the client
+            still satisfy every contract case.
+
+            **Manifest schema** — automated re-vendor of the App Block manifest schema mirror at
             `packages/civitai-app-sdk/schemas/app-block/v1.json` to restore
             byte-parity with the server-published canonical
             (https://civitai.com/schemas/app-block/v1.json).
