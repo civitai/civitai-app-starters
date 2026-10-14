@@ -108,7 +108,7 @@ export class CivitaiChatModelPicker extends LightElement {
       const wanted = typed.toLowerCase();
       // "Default", by name or as typed, means what the Default row means: follow the viewer's default.
       if (wanted === 'default') return this.#pick(undefined);
-      const exact = this.models.find((model) => model.id.toLowerCase() === wanted || (model.source !== 'default' && model.label.toLowerCase() === wanted));
+      const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
       const [first] = this.#matches();
       this.#pick(first && !/^\S*[/:]\S*$/.test(typed) ? first.id : typed);
@@ -130,7 +130,9 @@ export class CivitaiChatModelPicker extends LightElement {
   #menu(): TemplateResult {
     const matches = this.#matches();
     const typed = this.query.trim();
-    const custom = typed !== '' && !this.models.some((model) => model.id === typed);
+    // Typing "default" shows the Default row, never "default" as a model id nothing serves.
+    const wantsDefault = typed.toLowerCase() === 'default';
+    const custom = typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
     const fallback = this.defaultModel ? `Your default: ${modelLabel(this.defaultModel, this.models)}` : "The app's default model";
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input
@@ -142,7 +144,7 @@ export class CivitaiChatModelPicker extends LightElement {
         @input=${(event: Event) => (this.query = (event.target as HTMLInputElement).value)}
       />
       <ul class="cvt-model-options" role="listbox" aria-label="Models">
-        ${typed === ''
+        ${typed === '' || wantsDefault
           ? html`<li>
               <button type="button" role="option" aria-selected=${String(!this.own)} @click=${() => this.#pick(undefined)}>
                 <span class="cvt-model-name">Default</span>

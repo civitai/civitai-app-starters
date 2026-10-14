@@ -542,6 +542,16 @@ describe('civitai-chat-model-picker', () => {
     await type('Default', true);
     expect(picks).toEqual([undefined, undefined]);
   });
+
+  it('offers the Default row, not "default" as a model id, when the search says default', async () => {
+    const { picks, type, picker } = await open({ value: 'q/quill', own: true });
+    await type('Default');
+    const options = [...picker.querySelectorAll('.cvt-model-options [role=option]')];
+    expect(options.map((option) => option.querySelector('.cvt-model-name')!.textContent)).toEqual(['Default']);
+    expect(picker.querySelector('.cvt-model-custom')).toBeNull();
+    (options[0] as HTMLButtonElement).click();
+    expect(picks).toEqual([undefined]);
+  });
 });
 
 describe('civitai-chat-generation-details', () => {

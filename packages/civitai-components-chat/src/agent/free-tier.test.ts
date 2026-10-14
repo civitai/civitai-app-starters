@@ -65,7 +65,10 @@ describe('free chat replies', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const offline = await request(freeTierFetch(inner, QWEN, unknown, () => ({ useFree: true, payWhenOut: false })));
     expect(calls).toEqual([]);
-    expect(humanize(new Error(((await offline.json()) as { error: { message: string } }).error.message)).message).toMatch(/couldn't be checked, so nothing was sent/);
+    expect(humanize(new Error(((await offline.json()) as { error: { message: string } }).error.message))).toMatchObject({
+      kind: 'free_tier_not_free',
+      message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies.",
+    });
   });
 
   it('never pays without permission: a used-up allowance becomes an error that says until when', async () => {
