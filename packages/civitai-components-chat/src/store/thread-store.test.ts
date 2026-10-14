@@ -194,6 +194,47 @@ describe('ThreadStore', () => {
     expect(submitted.at(-1)).toMatchObject({ externalId: 'cvt-head-CONV1-1' });
     expect(deps.api.updateWorkflow).toHaveBeenCalledWith('7-1', { metadata: expect.objectContaining({ turns: [expect.objectContaining({ assistant: { messages: [], status: 'done' } })] }) });
   });
+  it("keeps each chat's own model with it, so it comes back after a reload, and an older chat has none", async () => {
+    const { store, deps } = setup([head('7-1', { conversationId: 'A' }), head('8-1', { conversationId: 'B', model: 'b/own-model' })]);
+    const { conversation } = await store.open('A');
+    expect(conversation).not.toHaveProperty('model');
+
+    await store.setModel('  a/picked-model ');
+    expect(store.current?.model).toBe('a/picked-model');
+    const written = () => (deps.api.updateWorkflow.mock.calls.at(-1) as unknown as [string, { metadata: ConversationMetadata }])[1].metadata;
+    expect(written()).toMatchObject({ conversationId: 'A', model: 'a/picked-model' });
+
+    await store.setModel(undefined);
+    expect(store.current).not.toHaveProperty('model');
+    expect(written()).not.toHaveProperty('model');
+
+    expect((await store.open('B')).conversation.model).toBe('b/own-model');
+  });
+
+  it("leaves saving a model picked mid-reply to that reply, so the two writes cannot cross", async () => {
+    const { store, deps } = setup([head('7-1', { conversationId: 'A' })]);
+    await store.open('A');
+    const turn = store.appendUserTurn('more please', []);
+    await flush();
+    const writes = deps.api.updateWorkflow.mock.calls.length;
+
+    await store.setModel('d/mid-reply-model');
+    expect(deps.api.updateWorkflow.mock.calls.length).toBe(writes);
+
+    turn.assistant = { messages: [], status: 'done' };
+    await store.completeTurn(turn);
+    const last = deps.api.updateWorkflow.mock.calls.at(-1) as unknown as [string, { metadata: ConversationMetadata }];
+    expect(last[1].metadata).toMatchObject({ model: 'd/mid-reply-model', turns: [{ seq: 1 }, { seq: 2, assistant: { status: 'done' } }] });
+  });
+
+  it('saves a new chat\'s model with its first message', async () => {
+    const { store, submitted } = setup();
+    store.startNew();
+    await store.setModel('c/first-model');
+    store.appendUserTurn('hello', []);
+    await flush();
+    expect(submitted[0]?.metadata).toMatchObject({ conversationId: 'CONV1', model: 'c/first-model' });
+  });
 });
 
 describe('firstMessageTitle', () => {
@@ -218,4 +259,5 @@ describe('firstMessageTitle', () => {
     await standalone.store.refreshList();
     expect(standalone.store.summaries.map((s) => s.id)).toEqual(['PLAIN']);
   });
+
 });

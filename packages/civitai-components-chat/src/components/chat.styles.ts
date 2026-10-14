@@ -994,6 +994,158 @@ civitai-chat-composer {
   font-size: 16px;
 }
 
+/* The chat's model: a chip by the add button, its list opening above the message box. */
+.cvt-composer-box {
+  position: relative;
+}
+
+civitai-chat-model-picker {
+  display: contents;
+}
+
+.cvt-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 180px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cvt-model-chip:hover:not(:disabled),
+.cvt-model-chip[aria-expanded='true'] {
+  color: var(--civitai-color-text);
+  border-color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-model-chip:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-model-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-chip svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cvt-model-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 10;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  max-height: min(360px, 60vh);
+  padding: 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.cvt-model-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+
+.cvt-model-search:focus {
+  outline: none;
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-model-options {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.cvt-model-options button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-model-options button:hover,
+.cvt-model-options button:focus-visible {
+  background: var(--civitai-color-border);
+  outline: none;
+}
+
+.cvt-model-options button[aria-selected='true'] {
+  box-shadow: inset 2px 0 0 var(--civitai-color-primary);
+  font-weight: 600;
+}
+
+.cvt-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-price {
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-model-id {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-status {
+  margin: 0;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+}
+
 .cvt-recording {
   display: flex;
   align-items: center;

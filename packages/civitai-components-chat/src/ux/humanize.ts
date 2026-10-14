@@ -1,4 +1,4 @@
-export type ErrorKind = 'free_tier_exhausted' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
+export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
 
 export interface HumanError {
   kind: ErrorKind;
@@ -9,6 +9,7 @@ export interface HumanError {
 
 const WORDS: Record<ErrorKind, string> = {
   free_tier_exhausted: 'Your free replies are used up for now.',
+  free_tier_not_free: "This model has no free replies, and you chose free replies only.",
   insufficient_buzz: "You don't have enough Buzz for this.",
   blocked: 'That request was blocked by the safety filter. Try wording it differently.',
   auth: "Civitai didn't accept your sign-in. Please sign in again.",
@@ -24,6 +25,9 @@ export function humanize(error: unknown): HumanError {
   const detail = detailOf(error);
   const kind = kindOf(error, detail);
   if (kind === 'free_tier_exhausted') return { kind, message: freeTierMessage(detail), detail };
+  if (kind === 'free_tier_not_free' && /could not be checked/i.test(detail)) {
+    return { kind, message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies.", detail };
+  }
   return { kind, message: WORDS[kind], detail };
 }
 
@@ -44,6 +48,7 @@ function kindOf(error: unknown, detail: string): ErrorKind {
   const status = statusOf(error);
   const text = detail.toLowerCase();
   if (/free allowance used up/.test(text)) return 'free_tier_exhausted';
+  if (/model has no free replies|free replies could not be checked/.test(text)) return 'free_tier_not_free';
   if (status === 402 || /insufficient|not enough buzz|balance/.test(text)) return 'insufficient_buzz';
   if (/blocked|prohibited|moderat|violat|not allowed|safety/.test(text)) return 'blocked';
   if (status === 401 || status === 403) return 'auth';

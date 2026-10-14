@@ -25,6 +25,7 @@ export class CivitaiChatComposer extends LightElement {
     transcribing: { type: Boolean },
     heard: {},
     voiceLanguage: { attribute: 'voice-language' },
+    modelPicker: { attribute: false },
     text: { state: true },
     recording: { state: true },
     levels: { state: true },
@@ -42,6 +43,8 @@ export class CivitaiChatComposer extends LightElement {
   declare transcribing: boolean;
   declare heard: string;
   declare voiceLanguage: string;
+  /** Shown beside the add-file button, e.g. the chat's model picker; nothing while signed out. */
+  declare modelPicker: unknown;
   declare text: string;
   declare recording: boolean;
   declare levels: number[];
@@ -289,6 +292,7 @@ export class CivitaiChatComposer extends LightElement {
           <button class="cvt-icon-button" type="button" aria-label="Add a photo, video or audio file" ?disabled=${this.disabled} @click=${() => this.browse()}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           </button>
+          ${this.modelPicker ?? nothing}
           <span id="cvt-composer-hint" class="cvt-hint">Enter to send, Shift+Enter for a new line</span>
           ${this.voice && (canStreamPcm() || canRecord()) && !this.running ? this.#languagePicker() : nothing}
           ${this.voice && (canStreamPcm() || canRecord()) && !this.running

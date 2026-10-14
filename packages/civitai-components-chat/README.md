@@ -169,10 +169,28 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
 "Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings,
 each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
-label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
-generations may cost before the chat asks) are the settings. In Settings the viewer picks the
-assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
-serves (Custom); conversation titles always use the default.
+label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
+generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
+reply may write, its reasoning and tool-call arguments included, such as a file it writes; default
+16,384, kept within 1,024 to 32,768) are the settings. In Settings the viewer picks their default
+model from the default, `models`, or any model id the orchestrator's chat endpoint serves (Custom),
+and may set their own **Longest reply step** (`maxOutputTokens`), which wins over the page's;
+conversation titles always use the default model.
+
+Each chat has its own model. The button beside the add-file button shows it and opens a searchable
+list: the default, `models`, the orchestrator's own models, and the OpenRouter models the
+orchestrator routes that cost at most $8 per million output tokens and support tool calls (the
+assistant works only through tool calls), each with its price per million output tokens. A model
+whose known context window is smaller than a lower bound on what a reply needs (the viewer's reply
+cap, plus up to 24,000 tokens of conversation, plus about 10,000 for the instructions and tool
+definitions) is left out, so changing the cap changes the list. It is a lower bound, not a
+guarantee: a long latest message or a page's own tools can still need more. The default, `models`
+and the chat's current model always stay. The list
+comes from OpenRouter's public `GET https://openrouter.ai/api/v1/models` and the orchestrator's
+`GET /v1/models` (as the viewer), loaded once per session when the list is first opened; if either
+cannot be reached the list still offers the default, `models` and any typed model id. A reply uses
+the chat's own model, else the viewer's default from Settings, else `model`. A chat that never
+picked one follows the viewer's default, and the pick is saved with the chat.
 
 Settings' Assistant choice also sets how replies are paid for, when the orchestrator has a free daily
 allowance for the default model (`GET /v2/consumer/free-tier`; free requests carry
@@ -180,12 +198,14 @@ allowance for the default model (`GET /v2/consumer/free-tier`; free requests car
 also Buzz when a free reply has not started after 12 seconds (free work waits behind paid work);
 **Free** uses only free replies, and once they are used up a reply says until when and offers
 **Continue with Buzz**, which switches to Auto and runs it again; **Default** always uses Buzz. A
-listed or custom model uses its own free allowance first if it has one. Without a free tier the
-choice is the model alone.
+listed or custom model uses its own free allowance first if it has one. With **Free**, a model that
+has no free replies is never sent paid: the reply says the model isn't free and nothing is charged.
+Without a free tier the choice is the model alone.
 
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
-`/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
-(`/model default`, `/model <label of a listed model>`, `/model <id>`), and `/help` lists them.
+`/clear` (or `/new`) starts a new chat, `/model` shows or switches this chat's model
+(`/model default` goes back to the viewer's default, `/model <label of a listed model>`,
+`/model <id>`), and `/help` lists them.
 
 A page adds its own with `commands`, which can also replace or remove the built-ins:
 

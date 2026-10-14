@@ -4,8 +4,9 @@ import type { AppClient, BlockAppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
+import { buildModelList, usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
-import { SCOPE_PATTERN, chatConfig } from '../config.js';
+import { SCOPE_PATTERN, chatConfig, outputTokenCap } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
@@ -74,6 +75,8 @@ export class CivitaiChat extends LitElement {
     signingIn: { state: true },
     transcribing: { state: true },
     heard: { state: true },
+    modelList: { state: true },
+    modelsLoading: { state: true },
   };
 
   /** Signed in with at least `ai:write:budgeted`; the chat starts once it is set. */
@@ -134,6 +137,9 @@ export class CivitaiChat extends LitElement {
   declare signingIn: boolean;
   declare transcribing: boolean;
   declare heard: string;
+  /** What the model picker offers; the default and the page's models until the full list loads. */
+  declare modelList: ChatModelEntry[] | null;
+  declare modelsLoading: boolean;
 
   #session?: ChatSession;
   #models?: ModelDirectory;
@@ -166,6 +172,8 @@ export class CivitaiChat extends LitElement {
     this.signingIn = false;
     this.transcribing = false;
     this.heard = '';
+    this.modelList = null;
+    this.modelsLoading = false;
     this.#started = new Promise((resolve) => (this.#markStarted = resolve));
   }
 
@@ -293,6 +301,7 @@ export class CivitaiChat extends LitElement {
     const { settings } = session;
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
+    this.modelList = null;
     this.#models = new ModelDirectory(app.site, () => session.settings.allowMature);
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
@@ -545,17 +554,16 @@ export class CivitaiChat extends LitElement {
       clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
       model: {
         usage: `/model [${['default', ...chatConfig.models.map((model) => model.label.toLowerCase()), 'model id'].join(' | ')}]`,
-        help: "Show or switch the assistant's model",
-        run: (arg, { notify }) => {
+        help: "Show or switch this chat's model",
+        run: async (arg, { notify }) => {
           const session = this.#session;
           if (!session) return notify('Sign in first to choose a model.');
           if (!arg) {
             const others = ['default', ...chatConfig.models.map((model) => model.label.toLowerCase())].join(', ');
-            return notify(`The assistant uses ${modelName(session.settings.assistantModel, chatConfig.models)}. Switch with /model ${others}, or a model id.`);
+            return notify(`This chat uses ${this.#modelName(session)}. Switch it with /model ${others}, or a model id.`);
           }
-          const id = resolveModel(arg, chatConfig.models);
-          this.#updateSettings({ assistantModel: id });
-          notify(`The assistant now uses ${modelName(id, chatConfig.models)}, from the next reply.`);
+          await session.setChatModel(resolveModel(arg, chatConfig.models));
+          notify(`This chat now uses ${this.#modelName(session)}, from the next reply.`);
         },
       },
       help: {
@@ -564,6 +572,45 @@ export class CivitaiChat extends LitElement {
         run: (_arg, { notify }) => notify(Object.values(this.#commands()).map((command) => `${command.usage}: ${command.help}`).join('  ·  ')),
       },
     };
+  }
+
+  /** The open chat's model in words: its own, or the default it follows. */
+  #modelName(session: ChatSession): string {
+    const own = session.store.current?.model;
+    return own ? modelName(own, chatConfig.models) : `the default (${modelName(session.settings.assistantModel?.trim() || undefined, chatConfig.models)})`;
+  }
+
+  #loadModels(): void {
+    const session = this.#session;
+    if (!session || this.modelsLoading) return;
+    this.modelsLoading = true;
+    void session.modelCatalog
+      .load()
+      .then((list) => {
+        if (this.#session === session) this.modelList = list;
+      })
+      .catch((error: unknown) => console.warn('[chat-cvt] could not load the model list', error))
+      .finally(() => {
+        if (this.#session === session) this.modelsLoading = false;
+      });
+  }
+
+  #pickModel(model: string | undefined): void {
+    const session = this.#session;
+    if (!session) return;
+    void session.setChatModel(model).catch((error: unknown) => this.#toast("Could not save this chat's model; it applies until you reload.", error));
+  }
+
+  #modelPicker(session: ChatSession): TemplateResult {
+    return html`<civitai-chat-model-picker
+      .value=${session.assistantModel()}
+      ?own=${Boolean(session.store.current?.model)}
+      .defaultModel=${session.settings.assistantModel?.trim() || undefined}
+      .models=${usableModels(this.modelList ?? buildModelList({ openRouter: null, orchestration: null }), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
+      ?loading=${this.modelsLoading}
+      @cvt-model-open=${() => this.#loadModels()}
+      @cvt-model-pick=${(e: CustomEvent<{ model?: string }>) => this.#pickModel(e.detail.model)}
+    ></civitai-chat-model-picker>`;
   }
 
   async #send(text: string): Promise<void> {
@@ -876,6 +923,7 @@ export class CivitaiChat extends LitElement {
             ?transcribing=${this.transcribing}
             .heard=${this.heard}
             .voiceLanguage=${voiceLanguage(session.settings.voiceLanguage)}
+            .modelPicker=${this.#modelPicker(session)}
             @cvt-voice-language=${(e: CustomEvent<{ language: string }>) => session.updateSettings({ voiceLanguage: e.detail.language })}
             @cvt-voice-start=${(e: CustomEvent<{ live: boolean }>) => this.#voiceStart(e.detail.live)}
             @cvt-voice-phrase=${(e: CustomEvent<{ recording: Blob }>) => (this.#voice as LiveTranscript | undefined)?.add(e.detail.recording)}

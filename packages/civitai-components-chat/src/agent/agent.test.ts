@@ -235,3 +235,100 @@ describe('Agent', () => {
     expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'Sure, here it is.' }] }]);
   });
 });
+
+describe("Agent's output-token cap", () => {
+  function capped(maxOutputTokens?: () => number) {
+    const caps: { reply: unknown[]; title: unknown[] } = { reply: [], title: [] };
+    const model = new MockLanguageModelV3({
+      doStream: async (options) => {
+        caps.reply.push(options.maxOutputTokens);
+        return { stream: convertArrayToReadableStream(text('Done.')) as never };
+      },
+      doGenerate: async (options) => {
+        caps.title.push(options.maxOutputTokens);
+        return { content: [{ type: 'text', text: 'A title' }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] };
+      },
+    });
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const agent = new Agent({ model: () => model, store, jobs: new JobManager({} as never), toolSet: async () => ({}), attachments: () => [], ...(maxOutputTokens ? { maxOutputTokens } : {}) });
+    return { agent, caps };
+  }
+
+  it("sends the viewer's cap as each reply's maxOutputTokens, read at every reply, and leaves the title's alone", async () => {
+    let cap = 3_072;
+    const { agent, caps } = capped(() => cap);
+    await agent.send('write a big file');
+    cap = 20_480;
+    await agent.send('and another');
+    await vi.waitFor(() => expect(caps.title).toHaveLength(1));
+    expect(caps.reply).toEqual([3_072, 20_480]);
+    expect(caps.title).toEqual([24]);
+  });
+
+  it('uses 16,384 when nothing sets one, and keeps an out-of-range cap within 1,024 to 32,768', async () => {
+    const plain = capped();
+    await plain.agent.send('hi');
+    const huge = capped(() => 1_000_000);
+    await huge.agent.send('hi');
+    const tiny = capped(() => 12);
+    await tiny.agent.send('hi');
+    expect([...plain.caps.reply, ...huge.caps.reply, ...tiny.caps.reply]).toEqual([16_384, 32_768, 1_024]);
+  });
+});
+
+describe('a reply refused because the model has no free replies', () => {
+  const refusal = () => Object.assign(new Error('Model has no free replies'), { statusCode: 400 });
+
+  function refusing(reply: 'refused' | 'ok') {
+    const titles: unknown[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        if (reply === 'refused') throw refusal();
+        return { stream: convertArrayToReadableStream(text('Here.')) as never };
+      },
+      doGenerate: async () => {
+        titles.push('asked');
+        throw refusal();
+      },
+    });
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const agent = new Agent({ model: () => model, store, jobs: new JobManager({} as never), toolSet: async () => ({}), attachments: () => [] });
+    const errors: unknown[] = [];
+    agent.addEventListener('error', (e) => errors.push((e as CustomEvent).detail));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    return { agent, store, titles, errors, warn };
+  }
+
+  it('says so once, on the reply, and asks for no title', async () => {
+    const { agent, store, titles, errors } = refusing('refused');
+    await agent.send('hello');
+    // A title request would start right after the reply; give it the chance to.
+    await flushAll();
+    await flushAll();
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'free_tier_not_free' });
+    expect(errors).toHaveLength(1);
+    expect(titles).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the first-message title without a warning when only the title model is refused', async () => {
+    const { agent, store, titles, errors, warn } = refusing('ok');
+    await agent.send('a lighthouse at dusk');
+    await vi.waitFor(() => expect(titles).toHaveLength(1));
+    await flushAll();
+    expect(errors).toEqual([]);
+    expect(store.current!.title).toBe('a lighthouse at dusk');
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('could not name'))).toEqual([]);
+    vi.restoreAllMocks();
+  });
+});
+
+const flushAll = () => new Promise((resolve) => setTimeout(resolve, 0));

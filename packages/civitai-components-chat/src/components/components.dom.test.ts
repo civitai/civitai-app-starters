@@ -436,6 +436,122 @@ describe('civitai-chat-settings-dialog', () => {
     id.dispatchEvent(new Event('change'));
     expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime', assistantTier: 'auto' });
   });
+
+  it('shows a stored Free choice as unavailable when there are no free replies, and lets the viewer leave it', async () => {
+    const dialog = await mount('civitai-chat-settings-dialog', {
+      open: true,
+      settings: { theme: 'system', allowMature: false, autoRunLimit: 100, assistantTier: 'free' },
+      models: [],
+      freeAllowance: null,
+    });
+    const changes: unknown[] = [];
+    dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
+    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'Default', 'Custom…']);
+    expect(select.value).toBe('free');
+    expect(select.getAttribute('description')).toContain('replies are refused');
+
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+    expect(changes).toEqual([{ assistantModel: undefined, assistantTier: 'paid' }]);
+  });
+
+  it('sets the longest reply step within 1,024 to 32,768, showing 16,384 until the viewer picks one', async () => {
+    const { dialog, changes } = await settingsDialog(null);
+    const field = dialog.querySelector<HTMLInputElement>('civitai-number-input[label="Longest reply step"]')!;
+    expect(field.value).toBe('16384');
+    expect([field.getAttribute('min'), field.getAttribute('max')]).toEqual(['1024', '32768']);
+    const type = async (value: string) => {
+      field.value = value;
+      field.dispatchEvent(new Event('change'));
+      await dialog.updateComplete;
+    };
+
+    await type('6000');
+    await type('99999');
+    await type('12');
+    await type('');
+    expect(changes).toEqual([{ maxOutputTokens: 6_000 }, { maxOutputTokens: 32_768 }, { maxOutputTokens: 1_024 }, { maxOutputTokens: undefined }]);
+
+    // A stale stored value shows within the range.
+    dialog.settings = { ...dialog.settings, maxOutputTokens: 500 };
+    await dialog.updateComplete;
+    expect(field.value).toBe('1024');
+  });
+});
+
+describe('civitai-chat-model-picker', () => {
+  const models = [
+    { id: 'urn:air:page:default', label: 'Default', source: 'default' as const },
+    { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', source: 'openrouter' as const, pricePerMillion: 0.4 },
+    { id: 'q/quill', label: 'Quill', source: 'openrouter' as const, pricePerMillion: 1.3 },
+    // The longer name is listed first, so only an exact name match picks GPT-4o itself.
+    { id: 'openai/gpt-4o-mini', label: 'OpenAI: GPT-4o-mini', source: 'openrouter' as const, pricePerMillion: 0.6 },
+    { id: 'openai/gpt-4o', label: 'OpenAI: GPT-4o', source: 'openrouter' as const, pricePerMillion: 7.5 },
+  ];
+  const open = async (props: Partial<HTMLElementTagNameMap['civitai-chat-model-picker']>) => {
+    const picker = await mount('civitai-chat-model-picker', { models, ...props });
+    const picks: unknown[] = [];
+    picker.addEventListener('cvt-model-pick', (e) => picks.push((e as CustomEvent<{ model?: string }>).detail.model));
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    const selected = () => [...picker.querySelectorAll('[role=option][aria-selected=true] .cvt-model-name')].map((name) => name.textContent);
+    const type = async (text: string, enter = false) => {
+      const search = picker.querySelector<HTMLInputElement>('.cvt-model-search')!;
+      search.value = text;
+      search.dispatchEvent(new Event('input'));
+      await picker.updateComplete;
+      if (enter) search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    return { picker, picks, selected, type };
+  };
+
+  it("marks Default while the chat follows it, and the chat's own model once it has one, even when they are the same id", async () => {
+    expect((await open({ value: 'q/quill', own: false })).selected()).toEqual(['Default']);
+    document.body.replaceChildren();
+    expect((await open({ value: 'q/quill', own: true })).selected()).toEqual(['Quill']);
+  });
+
+  it('on Enter picks an exact id or name, keeps a typed id as is, and otherwise picks the first match', async () => {
+    const { picks, type, picker } = await open({ value: 'urn:air:page:default' });
+    const reopen = async () => {
+      picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+      await picker.updateComplete;
+    };
+    // A listed id it begins is not what was typed.
+    await type('z-ai/glm-5.3', true);
+    await reopen();
+    await type('Z-AI/GLM-5.3-FLASH', true);
+    await reopen();
+    // A model's own name, with a colon and a space, is not an id.
+    await type('OpenAI: GPT-4o', true);
+    await reopen();
+    await type('OpenAI: GPT-4o-m', true);
+    await reopen();
+    await type('someone/unlisted-model', true);
+    await reopen();
+    await type('quill', true);
+    expect(picks).toEqual(['z-ai/glm-5.3', 'z-ai/glm-5.3-flash', 'openai/gpt-4o', 'openai/gpt-4o-mini', 'someone/unlisted-model', 'q/quill']);
+  });
+
+  it('takes "default" on Enter, in any case, as following the default, never as pinning the page default model', async () => {
+    const { picks, type, picker } = await open({ value: 'q/quill', own: true });
+    await type('default', true);
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    await type('Default', true);
+    expect(picks).toEqual([undefined, undefined]);
+  });
+
+  it('offers the Default row, not "default" as a model id, when the search says default', async () => {
+    const { picks, type, picker } = await open({ value: 'q/quill', own: true });
+    await type('Default');
+    const options = [...picker.querySelectorAll('.cvt-model-options [role=option]')];
+    expect(options.map((option) => option.querySelector('.cvt-model-name')!.textContent)).toEqual(['Default']);
+    expect(picker.querySelector('.cvt-model-custom')).toBeNull();
+    (options[0] as HTMLButtonElement).click();
+    expect(picks).toEqual([undefined]);
+  });
 });
 
 describe('civitai-chat-generation-details', () => {
@@ -532,6 +648,25 @@ describe('civitai-chat-thread', () => {
 
     expect(thread.textContent).toContain('Your free replies are used up until 4:55 PM.');
     [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Continue with Buzz'))!.click();
+    expect(asked).toHaveLength(1);
+  });
+
+  it("offers to allow paid replies, without naming a price, when the model has no free replies", async () => {
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'hi', attachments: [] },
+      assistant: { messages: [], status: 'error' as const, error: "This model has no free replies, and you chose free replies only.", errorKind: 'free_tier_not_free' },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const asked: unknown[] = [];
+    thread.addEventListener('cvt-continue-paid', (e) => asked.push(e));
+
+    expect(thread.textContent).toContain('This model has no free replies');
+    expect(thread.textContent).not.toContain('Settings');
+    expect(thread.textContent).not.toMatch(/about 1|Buzz a reply|per reply/);
+    [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'))!.click();
     expect(asked).toHaveLength(1);
   });
 

@@ -120,6 +120,14 @@ export class CivitaiChatTurn extends LightElement {
         ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Continue with Buzz</civitai-button>` : nothing}
       </civitai-alert>`;
     }
+    // Free only, and this model has no free replies (or they could not be checked). What a paid reply
+    // costs depends on the model, so the offer names no price.
+    if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_not_free') {
+      return html`<civitai-alert color="info">
+        ${error}
+        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Allow paid replies and try again</civitai-button>` : nothing}
+      </civitai-alert>`;
+    }
     if (status === 'error') {
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}

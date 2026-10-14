@@ -14,6 +14,7 @@ import '@civitai/components/civitai-textarea/define';
 import { CivitaiChatChoiceCard } from './civitai-chat-choice-card.js';
 import { CivitaiChatPanel } from './civitai-chat-panel.js';
 import { CivitaiChatGenerationDetails } from './civitai-chat-generation-details.js';
+import { CivitaiChatModelPicker } from './civitai-chat-model-picker.js';
 import { CivitaiChatSettingsDialog } from './civitai-chat-settings-dialog.js';
 import { CivitaiChatSidebar } from './civitai-chat-sidebar.js';
 import { CivitaiChatThread } from './civitai-chat-thread.js';
@@ -26,6 +27,7 @@ import { defineCivitaiChatPostCard } from './lib/civitai-chat-post-card.js';
 const RUNTIME: Array<[string, CustomElementConstructor]> = [
   ['civitai-chat-choice-card', CivitaiChatChoiceCard],
   ['civitai-chat-generation-details', CivitaiChatGenerationDetails],
+  ['civitai-chat-model-picker', CivitaiChatModelPicker],
   ['civitai-chat-panel', CivitaiChatPanel],
   ['civitai-chat-turn', CivitaiChatTurn],
   ['civitai-chat-thread', CivitaiChatThread],

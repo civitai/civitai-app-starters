@@ -104,6 +104,7 @@ export class ThreadStore extends EventTarget {
       turns,
       ...(head?.metadata.posts ? { posts: head.metadata.posts } : {}),
       ...(head?.metadata.panels ? { panels: head.metadata.panels } : {}),
+      ...(typeof head?.metadata.model === 'string' && head.metadata.model.trim() ? { model: head.metadata.model.trim() } : {}),
     };
     const jobs = jobWorkflows.flatMap((workflow) => {
       const metadata = jobMetadataOf(workflow);
@@ -162,6 +163,23 @@ export class ThreadStore extends EventTarget {
     const conversation = this.current;
     if (!conversation) return;
     conversation.posts = { ...conversation.posts, [id]: post };
+    const head = this.#heads.get(conversation.id);
+    if (head) await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
+  }
+
+  /**
+   * Sets the open chat's own model (`undefined` follows the viewer's default again), from its next
+   * reply. Saved with the chat; a chat with nothing saved yet keeps it for its first save.
+   */
+  async setModel(model: string | undefined): Promise<void> {
+    const conversation = this.current;
+    if (!conversation) return;
+    const id = model?.trim();
+    if (id) conversation.model = id;
+    else delete conversation.model;
+    this.#emit('conversation-change');
+    // A reply still streaming saves it with that reply.
+    if (conversation.turns.at(-1)?.assistant.status === 'streaming') return;
     const head = this.#heads.get(conversation.id);
     if (head) await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
   }
@@ -272,6 +290,7 @@ export class ThreadStore extends EventTarget {
       ...(conversation.posts ? { posts: conversation.posts } : {}),
       ...(conversation.panels ? { panels: conversation.panels } : {}),
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
+      ...(conversation.model ? { model: conversation.model } : {}),
     };
   }
 
