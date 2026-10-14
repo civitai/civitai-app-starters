@@ -1,6 +1,6 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "3c6d553986",
+  "capturedFrom": "464b2023e8",
   "capturedAt": "2026-10-14",
   "messages": {
     "APP_STORAGE_DELETE": {
@@ -11,15 +11,18 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "deleted",
         "error",
         "ok"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "deleted",
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "APP_STORAGE_GET": {
@@ -29,14 +32,16 @@
         "value"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "value"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "value"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "APP_STORAGE_LIST": {
@@ -47,14 +52,16 @@
         "nextCursor"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "keys"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "keys"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "APP_STORAGE_QUOTA": {
@@ -67,7 +74,7 @@
         "usedBytes"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
@@ -76,8 +83,13 @@
         "rowCount",
         "usedBytes"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "APP_STORAGE_SET": {
@@ -88,14 +100,16 @@
         "sizeBytes"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "ok"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "BLOCK_ERROR": {
@@ -121,13 +135,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "CANCEL_WORKFLOW": {
@@ -137,25 +151,27 @@
         "snapshot"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
+      "errorKeys": "none",
       "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
+      "errorKeysFrom": "inventory",
       "failure": null
     },
     "CREATE_POST_FROM_APP": {
       "request": true,
       "reply": "CREATE_POST_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "ESTIMATE_WORKFLOW": {
@@ -165,25 +181,28 @@
         "snapshot"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
+      "errorKeys": "none",
       "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
+      "errorKeysFrom": "inventory",
       "failure": null
     },
     "ESTIMATE_WORKFLOW_BATCH": {
       "request": true,
       "reply": "ESTIMATE_BATCH_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "aggregate",
+        "snapshots"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_BUZZ_ACCOUNTS": {
@@ -193,13 +212,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_BUZZ_BALANCE": {
@@ -209,13 +228,13 @@
         "balance"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_BUZZ_TRANSACTIONS": {
@@ -225,13 +244,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_DAILY_COMPENSATION": {
@@ -241,13 +260,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_IMAGES_BY_IDS": {
@@ -257,13 +276,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_VIEWER": {
@@ -273,13 +292,13 @@
         "viewer"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "GET_WILDCARD_PACK": {
@@ -289,13 +308,13 @@
         "pack"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "NAVIGATE": {
@@ -309,12 +328,14 @@
         "purchased"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
-      "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
-      "failure": null
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "OPEN_CHECKPOINT_PICKER": {
       "request": true,
@@ -325,25 +346,33 @@
       "optionalReplyKeys": [
         "selected"
       ],
-      "replyKeysFrom": "host-source",
-      "framing": "legacy",
-      "errorKeys": null,
-      "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
-      "failure": null
-    },
-    "OPEN_IMAGE_PICKER": {
-      "request": true,
-      "reply": "IMAGE_PICKER_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "OPEN_IMAGE_PICKER": {
+      "request": true,
+      "reply": "IMAGE_PICKER_RESULT",
+      "replyKeys": [
+        "selected",
+        "selectedImages"
+      ],
+      "optionalReplyKeys": [
+        "selected",
+        "selectedImages"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "OPEN_IMAGE_UPLOAD": {
@@ -355,13 +384,13 @@
       "optionalReplyKeys": [
         "selected"
       ],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "OPEN_RESOURCE_PICKER": {
@@ -375,13 +404,13 @@
         "selected",
         "selectedResources"
       ],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "POLL_WORKFLOW": {
@@ -391,39 +420,43 @@
         "snapshot"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
+      "errorKeys": "none",
       "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
+      "errorKeysFrom": "inventory",
       "failure": null
     },
     "PREPARE_TRAINING_DATASET": {
       "request": true,
       "reply": "TRAINING_DATASET_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "PUBLISH_GENERATION_OUTPUTS": {
       "request": true,
       "reply": "PUBLISH_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "QUERY_APP_WORKFLOWS": {
@@ -433,13 +466,13 @@
         "result"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "REQUEST_CONSENT": {
@@ -458,11 +491,11 @@
         "token"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
+      "errorKeys": "none",
       "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
+      "errorKeysFrom": "inventory",
       "failure": null
     },
     "RESIZE_IFRAME": {
@@ -472,29 +505,33 @@
     "RUN_CONFIRMED_STEP": {
       "request": true,
       "reply": "CONFIRMED_STEP_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "RUN_TRAINING": {
       "request": true,
       "reply": "TRAINING_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SAVE_IMAGE": {
@@ -504,28 +541,32 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "ok"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SET_COLLECTION_FOLLOW": {
       "request": true,
       "reply": "COLLECTION_FOLLOW_RESULT",
-      "replyKeys": null,
-      "optionalReplyKeys": null,
-      "replyKeysFrom": "unknown",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SET_USER_CHECKPOINT": {
@@ -535,14 +576,16 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "ok"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_APPEND": {
@@ -552,13 +595,16 @@
         "key"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
-        "error"
+        "error",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_GET": {
@@ -568,14 +614,16 @@
         "item"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
         "item"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "item"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_GET_COUNT": {
@@ -585,13 +633,13 @@
         "count"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_GET_COUNTS": {
@@ -601,13 +649,13 @@
         "counts"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_LIST": {
@@ -618,13 +666,13 @@
         "nextCursor"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error"
       ],
       "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_REPORT": {
@@ -634,14 +682,18 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
-        "ok"
+        "ok",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "ok",
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_UNVOTE": {
@@ -651,13 +703,16 @@
         "count"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
-        "error"
+        "error",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_UPDATE": {
@@ -667,14 +722,18 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
         "error",
-        "ok"
+        "ok",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "ok",
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_VOTE": {
@@ -684,13 +743,16 @@
         "count"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
-        "error"
+        "error",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SHARED_WITHDRAW": {
@@ -701,13 +763,16 @@
         "ok"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
       "errorKeys": [
-        "error"
+        "error",
+        "rateLimit"
       ],
-      "optionalErrorKeys": [],
-      "errorKeysFrom": "host-source",
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
       "failure": "string"
     },
     "SUBMIT_WORKFLOW": {
@@ -717,11 +782,11 @@
         "snapshot"
       ],
       "optionalReplyKeys": [],
-      "replyKeysFrom": "host-source",
+      "replyKeysFrom": "inventory",
       "framing": "legacy",
-      "errorKeys": null,
+      "errorKeys": "none",
       "optionalErrorKeys": null,
-      "errorKeysFrom": "unknown",
+      "errorKeysFrom": "inventory",
       "failure": null
     },
     "TRACK_EVENT": {

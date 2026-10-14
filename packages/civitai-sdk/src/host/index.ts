@@ -214,10 +214,12 @@ export function createHost(transport: BlockTransport): Host {
         transport,
       });
       // The host spells "no failure" as `error: ''`, which the transport reads
-      // as a success — so a reply carrying neither the ids nor a message gets
-      // this far, and returning it would resolve `undefined` from a promise
-      // that says `number[]`. A caller reading that as "nothing published"
-      // would be guessing: images may well have been.
+      // as a success. A reply with no `result` at all is refused by the
+      // transport (the ledger says this reply nests under `result`), but one
+      // whose `result` lacks the ids gets this far, and returning it would
+      // resolve `undefined` from a promise that says `number[]`. A caller
+      // reading that as "nothing published" would be guessing: images may well
+      // have been.
       if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'number')) {
         throw new BridgeError(
           'malformed',
