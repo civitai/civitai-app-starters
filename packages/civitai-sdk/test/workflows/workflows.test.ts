@@ -743,6 +743,33 @@ describe('AppClient.workflows — watch and wait', () => {
     expect(await settled).toBe(reason);
     expect(calls).toHaveLength(1);
   });
+
+  it('an abort while the caller holds a yielded snapshot rejects on the next step, not after the interval', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+
+    const watching = workflows.watch(WORKFLOW_ID, { intervalMs: 5_000, signal: controller.signal });
+    await expect(watching.next()).resolves.toMatchObject({ value: { status: 'processing' } });
+    // The generator is paused at its `yield`: the abort fires before it resumes.
+    controller.abort(reason);
+
+    let outcome: unknown = 'pending';
+    void watching.next().then(
+      (r) => (outcome = r),
+      (e: unknown) => (outcome = e),
+    );
+    // 1 ms of fake time, far less than the 5 s interval.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe(reason);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toHaveLength(1);
+  });
 });
 
 describe('AppClient.workflows — which token reaches it', () => {

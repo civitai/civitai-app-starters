@@ -565,7 +565,7 @@ server text — log it and show your own copy.
 without one. The key is what lets the host recognise a submit that was sent
 twice — a retry after a dropped connection, a double press — as one request
 (for a `kind: 'training'` body or a step with a `quoteId`, see the note above:
-there the quote, not the key, identifies the run).
+there the key is not the run's identity).
 
 - Mint it **once per thing the viewer asked for**, keep it until that press has
   a known outcome, and reuse it on every retry. A key minted inside the retry

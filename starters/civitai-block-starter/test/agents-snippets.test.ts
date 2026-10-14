@@ -38,24 +38,31 @@ declare function showImages(urls: string[]): void;
 declare function askRetry(message: string): Promise<boolean>;
 `;
 
-/** Every ```ts / ```tsx fence, indented or not, de-indented by its opening fence's indent. */
+/**
+ * Every backtick fence whose info string's FIRST WORD is `ts`, `tsx` or
+ * `typescript` — so ```ts title="x.ts" counts — indented by spaces or tabs or
+ * not at all. Each body line loses as much of the opening fence's exact indent
+ * as it starts with. Tilde fences and other languages are not extracted.
+ */
 function extractSnippets(md: string): string[] {
   const snippets: string[] = [];
-  let open: { indent: number; lines: string[] } | null = null;
+  let open: { indent: string; lines: string[] } | null = null;
   for (const line of md.split('\n')) {
     if (!open) {
-      const m = /^( *)```(tsx?)\s*$/.exec(line);
-      if (m) open = { indent: m[1]!.length, lines: [] };
+      const m = /^([ \t]*)```[ \t]*(?:ts|tsx|typescript)(?:[ \t].*)?$/.exec(line);
+      if (m) open = { indent: m[1]!, lines: [] };
       continue;
     }
-    if (/^ *```\s*$/.test(line)) {
+    if (/^[ \t]*```[ \t]*$/.test(line)) {
       snippets.push(open.lines.join('\n'));
       open = null;
       continue;
     }
-    open.lines.push(line.slice(Math.min(open.indent, line.length - line.trimStart().length)));
+    let cut = 0;
+    while (cut < open.indent.length && line[cut] === open.indent[cut]) cut++;
+    open.lines.push(line.slice(cut));
   }
-  expect(open, 'AGENTS.md ends inside an unclosed ```ts fence').toBeNull();
+  expect(open, 'the markdown ends inside an unclosed ```ts fence').toBeNull();
   return snippets;
 }
 
@@ -91,7 +98,7 @@ describe('AGENTS.md code snippets', () => {
   const snippets = extractSnippets(readFileSync(AGENTS_MD, 'utf8'));
   const source = `${STAND_INS}\n${snippets.join('\n\n')}\nexport {};\n`;
 
-  it('finds the snippets this guide teaches', () => {
+  it('positive control: finds the snippets this guide teaches', () => {
     // A floor, not a pin: an extractor that silently matched nothing would
     // otherwise make the typecheck below vacuously green.
     expect(snippets.length).toBeGreaterThanOrEqual(3);
@@ -102,12 +109,45 @@ describe('AGENTS.md code snippets', () => {
     expect(typecheck(source)).toEqual([]);
   }, 60_000);
 
-  it('positive control: the same check rejects a submit without its idempotency key', () => {
+  it('negative control: the same check rejects a submit without its idempotency key', () => {
     const broken = source.replace(
       'app.workflows.submit(workflowBody, { idempotencyKey })',
       'app.workflows.submit(workflowBody, {})',
     );
     expect(broken).not.toBe(source);
     expect(typecheck(broken).some((d) => d.includes('idempotencyKey'))).toBe(true);
+  }, 60_000);
+});
+
+describe('the fence extractor', () => {
+  it('extracts ```typescript, an info string after the language, and tab-indented fences — each typechecks red', () => {
+    const md = [
+      '```typescript',
+      "const fromTypescriptFence: number = 'typescript';",
+      '```',
+      '',
+      '```ts title="example.ts"',
+      "const fromTitledFence: number = 'titled';",
+      '```',
+      '',
+      '-\titem',
+      '\t```ts',
+      "\tconst fromTabFence: number = 'tab';",
+      '\t```',
+      '',
+      '```bash',
+      'echo not typescript',
+      '```',
+    ].join('\n');
+
+    const snippets = extractSnippets(md);
+    expect(snippets).toEqual([
+      "const fromTypescriptFence: number = 'typescript';",
+      "const fromTitledFence: number = 'titled';",
+      "const fromTabFence: number = 'tab';",
+    ]);
+    for (const snippet of snippets) {
+      expect(typecheck(`${snippet}\nexport {};\n`).some((d) => d.includes('TS2322'))).toBe(true);
+    }
   }, 60_000);
 });
