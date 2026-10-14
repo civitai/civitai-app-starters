@@ -368,6 +368,36 @@ describe('civitai-chat', () => {
     expect(listed.map(([name]) => name)).not.toContain('urn:air:hosted:tiny-other');
   });
 
+  it("goes back to the viewer's own default when they type Default in the model list", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
+    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'z-ai/glm-5.3-prime' }));
+    const chat = document.createElement('civitai-chat');
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
+    const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
+    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
+
+    for (const typed of ['default', 'Default']) {
+      chip.click();
+      await chat.updateComplete;
+      const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
+      search.value = typed;
+      search.dispatchEvent(new Event('input'));
+      await chat.updateComplete;
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: z-ai/glm-5.3-prime'));
+      const own = root.querySelector('civitai-chat-model-picker')!.own;
+      expect(own).toBe(false);
+      // Pinned again for the second spelling.
+      root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
+      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
+    }
+  });
+
   it('lets a viewer stuck on Free with a model that has no free replies allow paid replies and get the reply', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     localStorage.setItem('cvt:settings', JSON.stringify({ assistantTier: 'free' }));

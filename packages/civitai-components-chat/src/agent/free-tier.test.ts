@@ -58,7 +58,7 @@ describe('free chat replies', () => {
     const response = await request(freeTierFetch(inner, 'z-ai/glm-5.3-flash', tier, () => ({ useFree: true, payWhenOut: false })));
     expect(calls).toEqual([]);
     const failed = humanize(new Error(((await response.json()) as { error: { message: string } }).error.message));
-    expect(failed).toMatchObject({ kind: 'free_tier_not_free', message: "This model isn't free. Allow paid replies in Settings to use it." });
+    expect(failed).toMatchObject({ kind: 'free_tier_not_free', message: "This model has no free replies, and you chose free replies only." });
 
     // Free replies that could not be checked are not a reason to pay either.
     const unknown = new FreeTier(async () => Promise.reject(new Error('offline')));

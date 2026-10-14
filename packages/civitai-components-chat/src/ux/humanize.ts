@@ -9,7 +9,7 @@ export interface HumanError {
 
 const WORDS: Record<ErrorKind, string> = {
   free_tier_exhausted: 'Your free replies are used up for now.',
-  free_tier_not_free: "This model isn't free. Allow paid replies in Settings to use it.",
+  free_tier_not_free: "This model has no free replies, and you chose free replies only.",
   insufficient_buzz: "You don't have enough Buzz for this.",
   blocked: 'That request was blocked by the safety filter. Try wording it differently.',
   auth: "Civitai didn't accept your sign-in. Please sign in again.",
@@ -26,7 +26,7 @@ export function humanize(error: unknown): HumanError {
   const kind = kindOf(error, detail);
   if (kind === 'free_tier_exhausted') return { kind, message: freeTierMessage(detail), detail };
   if (kind === 'free_tier_not_free' && /could not be checked/i.test(detail)) {
-    return { kind, message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies in Settings.", detail };
+    return { kind, message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies.", detail };
   }
   return { kind, message: WORDS[kind], detail };
 }

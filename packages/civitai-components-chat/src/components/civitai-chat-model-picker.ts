@@ -106,7 +106,9 @@ export class CivitaiChatModelPicker extends LightElement {
       // An exact id or name picks that model. A typed id (one word with / or :) is meant as is,
       // never swapped for a longer id it begins; anything else, like "OpenAI: GPT-4o", is a search.
       const wanted = typed.toLowerCase();
-      const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
+      // "Default", by name or as typed, means what the Default row means: follow the viewer's default.
+      if (wanted === 'default') return this.#pick(undefined);
+      const exact = this.models.find((model) => model.id.toLowerCase() === wanted || (model.source !== 'default' && model.label.toLowerCase() === wanted));
       if (exact) return this.#pick(exact.id);
       const [first] = this.#matches();
       this.#pick(first && !/^\S*[/:]\S*$/.test(typed) ? first.id : typed);

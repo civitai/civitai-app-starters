@@ -533,6 +533,15 @@ describe('civitai-chat-model-picker', () => {
     await type('quill', true);
     expect(picks).toEqual(['z-ai/glm-5.3', 'z-ai/glm-5.3-flash', 'openai/gpt-4o', 'openai/gpt-4o-mini', 'someone/unlisted-model', 'q/quill']);
   });
+
+  it('takes "default" on Enter, in any case, as following the default, never as pinning the page default model', async () => {
+    const { picks, type, picker } = await open({ value: 'q/quill', own: true });
+    await type('default', true);
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    await type('Default', true);
+    expect(picks).toEqual([undefined, undefined]);
+  });
 });
 
 describe('civitai-chat-generation-details', () => {
@@ -637,14 +646,15 @@ describe('civitai-chat-thread', () => {
       seq: 1,
       createdAt: '',
       user: { content: 'hi', attachments: [] },
-      assistant: { messages: [], status: 'error' as const, error: "This model isn't free. Allow paid replies in Settings to use it.", errorKind: 'free_tier_not_free' },
+      assistant: { messages: [], status: 'error' as const, error: "This model has no free replies, and you chose free replies only.", errorKind: 'free_tier_not_free' },
     };
     const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     const asked: unknown[] = [];
     thread.addEventListener('cvt-continue-paid', (e) => asked.push(e));
 
-    expect(thread.textContent).toContain("This model isn't free.");
+    expect(thread.textContent).toContain('This model has no free replies');
+    expect(thread.textContent).not.toContain('Settings');
     expect(thread.textContent).not.toMatch(/about 1|Buzz a reply|per reply/);
     [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'))!.click();
     expect(asked).toHaveLength(1);
