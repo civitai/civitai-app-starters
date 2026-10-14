@@ -160,11 +160,15 @@ describe('buildModelMessages', () => {
       turn(1, 'make a bike'),
       toolTurn(2, 'generate it', 'run_step', 'j'.repeat(1_000)),
       toolTurn(3, 'open a panel', 'open_panel', 'p'.repeat(1_000)),
-      toolTurn(4, 'read the file', 'sandbox__read_file', 'r'.repeat(40_000)),
-      turn(5, 'go'),
+      toolTurn(4, 'change it', 'update_panel', 'u'.repeat(1_000)),
+      toolTurn(5, 'post it', 'post_to_civitai', 'o'.repeat(1_000)),
+      toolTurn(6, 'ask me', 'ask_choice', 'a'.repeat(1_000)),
+      toolTurn(7, 'run a workflow', 'run_workflow', 'w'.repeat(1_000)),
+      toolTurn(8, 'read the file', 'sandbox__read_file', 'r'.repeat(40_000)),
+      turn(9, 'go'),
     ];
-    const messages = buildModelMessages(turns, () => undefined, { budget: 3_000 });
-    expect(results(messages)).toEqual([1_000, 1_000, RESULT_LEFT_OUT]);
+    const messages = buildModelMessages(turns, () => undefined, { budget: 5_000 });
+    expect(results(messages)).toEqual([1_000, 1_000, 1_000, 1_000, 1_000, 1_000, RESULT_LEFT_OUT]);
   });
 
   it('never leaves out a result in the latest turn, however far over budget', () => {
@@ -194,6 +198,19 @@ describe('buildModelMessages', () => {
     const marker = messages.findIndex((m) => typeof m.content === 'string' && /earlier turns omitted/.test(m.content));
     const pinned = messages.slice(0, marker);
     expect(pinned.map((m) => m.content)).toEqual(['task', b]);
+    expect(estimateTokens(pinned)).toBeLessThanOrEqual(Math.floor(budget * PINNED_SHARE));
+  });
+
+  it('counts the task against the share, so a large task leaves room for fewer answers', () => {
+    const big = 'w'.repeat(20_000);
+    const task = 'T'.repeat(1_500);
+    const [a, b] = ['A'.repeat(150), 'B'.repeat(150)];
+    const turns = [turn(1, task), choiceTurn(2, 'pick one'), turn(3, a), turn(4, big), choiceTurn(5, 'pick another'), turn(6, b), turn(7, big), turn(8, 'go')];
+    const budget = 2_000;
+    const messages = buildModelMessages(turns, () => undefined, { budget });
+    const marker = messages.findIndex((m) => typeof m.content === 'string' && /earlier turns omitted/.test(m.content));
+    const pinned = messages.slice(0, marker);
+    expect(pinned.map((m) => m.content)).toEqual([task, b]);
     expect(estimateTokens(pinned)).toBeLessThanOrEqual(Math.floor(budget * PINNED_SHARE));
   });
 
