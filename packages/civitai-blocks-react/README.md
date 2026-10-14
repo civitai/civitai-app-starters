@@ -7,6 +7,17 @@ Pairs with [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk)'
 `postMessage` contract. This package adds the transport that actually moves bytes
 and the React hooks block authors call.
 
+> **Starting a new block app? Start from
+> [`@civitai/sdk`](https://www.npmjs.com/package/@civitai/sdk).** The three
+> packages are layers over one host contract, and all three are supported:
+>
+> - **`@civitai/sdk`** is the client new block apps start on: `initialize()`,
+>   then `app.workflows`, `app.storage`, `app.site` and `app.host`.
+> - **`@civitai/app-sdk/blocks`** is the contract itself: the workflow body
+>   types, the manifest types and the host message shapes.
+> - **`@civitai/blocks-react`** (this package) is the React hook binding over
+>   that same contract.
+
 ## Install
 
 ```bash

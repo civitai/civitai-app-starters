@@ -1,6 +1,6 @@
 {
   "name": "@civitai/sdk",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
@@ -38,6 +38,7 @@
     "check:parity": "node scripts/check-host-parity.mjs",
     "gen:steps": "node scripts/gen-step-types.mjs",
     "check:steps": "node scripts/gen-step-types.mjs --check",
+    "gen:workflow-types": "node scripts/gen-workflow-types.mjs",
     "snapshot:host": "node scripts/snapshot-host-messages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
     "test": "vitest run",

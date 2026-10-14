@@ -24,9 +24,11 @@ Vite + React + TS) or at the React examples under
 
 - Vite + TypeScript strict, no framework, no JSX
 - `@civitai/sdk` — the host bridge (`initialize`, `app.host`, `app.onChange`)
-  plus the API clients (`app.site`, `app.storage`, `app.sharedStorage`,
-  `app.orchestration`). Its README is the reference; read `app.host`'s methods
-  from the installed types rather than from a list here.
+  plus the API clients (`app.site`, `app.workflows`, `app.storage`,
+  `app.sharedStorage`, `app.orchestration`). A block generates with
+  `app.workflows`, never `app.orchestration` (see Extending). Its README
+  (`node_modules/@civitai/sdk/README.md`) is the reference; read `app.host`'s
+  methods from the installed types rather than from a list here.
 - `@civitai/components` — the `<civitai-*>` elements. `import
   '@civitai/components/register'` in `src/block.ts` defines the generic kit:
   every element except the civitai.com vocabulary (`<civitai-avatar>`,
@@ -164,9 +166,10 @@ separate.
 - **Per-viewer storage** — `app.storage` (`get` / `set` / `list` /
   `getQuota`); refused for an anonymous viewer, so gate on
   `isSignedIn(app.viewer)`. Cross-viewer data: `app.sharedStorage`.
-- **Money calls — two rules the React hooks used to apply for you.** `@civitai/sdk`
-  has no Buzz-workflow or goods helper yet, so a block calls the `blocks/*`
-  routes through `app.site` and owns both of these itself:
+- **Money calls — two rules the React hooks used to apply for you.** Generation
+  goes through `app.workflows`; `@civitai/sdk` has no goods helper yet, so a
+  purchase calls the `blocks/goods/*` routes through `app.site`. Neither asks
+  for consent or mints a key for you, so a block owns both of these itself:
   1. **Consent first.** `ai:write:budgeted` and `goods:purchase:self` are
      CONSENT-GATED: the token lacks them until the viewer grants them in the
      host's dialog. Call `app.requestGrants([...])` before the call. It has
@@ -186,7 +189,8 @@ separate.
      pending UI in a `finally`. The `askConsent` helper below does the first;
      the snippets after it do the second. (`goods:read:self` is consent-exempt.)
   2. **One idempotency key per intent, reused on every retry.** Mint it BEFORE
-     the first attempt and send the SAME value on any retry: a retry with a new
+     the first attempt, keep it until that intent has a known outcome, and send
+     the SAME value on any retry: a retry with a new
      key is a second reservation of the viewer's Buzz. The key must match
      `^[A-Za-z0-9_-]{1,64}$` — no colons; check one you compose yourself with
      `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks`.
@@ -207,73 +211,117 @@ separate.
     }
   }
   ```
-- **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
+- **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then use
+  `app.workflows`. Do not hand-roll its routes through `app.site`: that returns
+  the raw reply, where an unconfirmed run is shaped exactly like a plain refusal.
 
   ```ts
-  import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+  import {
+    ApiError,
+    SubmissionUnconfirmedError,
+    type BlockWorkflowSnapshot,
+    type WorkflowBody,
+  } from '@civitai/sdk';
 
   generateButton.addEventListener('click', async () => {
+    // Generate stays held until THIS press is settled: a second press would
+    // mint a second key, and to the host a new key is a new generation.
+    if (generateButton.hasAttribute('loading')) return;
     generateButton.setAttribute('loading', '');
     try {
       if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
-      const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
-      const reply = await app.site.post<{ snapshot: BlockWorkflowSnapshot; submissionUnconfirmed?: true }>(
-        'blocks/workflows/submit',
-        {
-          body: workflowBody, // the workflow: steps + their inputs
-          idempotencyKey, // REQUIRED on this route — the request is refused without one
-        },
-      );
-      const { snapshot } = reply;
-      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`.
-      if (snapshot.status === 'failed') {
-        console.warn('submit failed:', snapshot.error); // server text: log it, never render it
-        if (reply.submissionUnconfirmed) {
-          // A training run the server could not confirm: it may be running, and charged.
-          showMessage('This could not be confirmed and may still be running. Check before retrying.');
-        } else if (snapshot.workflowId === 'failed') {
-          // The placeholder id: refused before anything ran.
-          showMessage('This generation could not start. Nothing was charged.');
-        } else {
-          // A real run that came back failed: Buzz may have been spent.
-          showMessage('This generation failed. Check your history before trying again.');
-        }
+
+      // 1. Price it. Nothing is charged or reserved. A refusal RESOLVES, with no `cost`.
+      const estimate = await app.workflows.estimate(workflowBody);
+      if (estimate.status === 'failed') {
+        console.warn('estimate refused:', estimate.errorCode, estimate.error); // server text: log it, never render it
+        showMessage('This generation could not be priced.');
         return;
       }
-      console.log(snapshot.workflowId); // a real run: poll it and render its progress here
+      if (!(await confirmSpend(estimate.cost?.total))) return; // the viewer said no: nothing was sent
+
+      // 2. ONE key for this press, minted outside the retry loop.
+      const idempotencyKey = crypto.randomUUID();
+      let outcomeUnknown = false; // has any attempt for this press ended without a known outcome?
+      let submitted: BlockWorkflowSnapshot;
+      for (;;) {
+        try {
+          submitted = await app.workflows.submit(workflowBody, { idempotencyKey });
+          break;
+        } catch (error) {
+          outcomeUnknown = true;
+          if (error instanceof SubmissionUnconfirmedError) {
+            // The run MAY be running and MAY have been charged. Do not resubmit:
+            // look for it with `app.workflows.list()`.
+            showMessage('We could not confirm this run. It may still be running. Check your history.');
+            return;
+          }
+          // An ApiError (a 5xx, a 409, …) or no answer at all: UNKNOWN, not "failed".
+          console.error(error instanceof ApiError ? error.status : error);
+          // Retry loops round with the SAME key. Dismissing leaves the outcome unknown.
+          if (!(await askRetry('We could not confirm this started.'))) {
+            showMessage('Check your history before generating again.');
+            return;
+          }
+        }
+      }
+
+      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`.
+      if (submitted.status !== 'failed') {
+        await follow(submitted.workflowId); // 3. started: follow it to a final status
+      } else if (submitted.workflowId !== 'failed') {
+        // A real run that came back failed: Buzz may have been spent.
+        console.warn('submit failed:', submitted.errorCode, submitted.error);
+        showMessage('This generation failed. Check your history before trying again.');
+      } else if (outcomeUnknown) {
+        // THIS attempt was refused, but an earlier one for this press may have
+        // started a run. Look for it with `app.workflows.list()`.
+        showMessage('We could not confirm this started. Check your history.');
+      } else {
+        // The placeholder id on a FIRST attempt: refused before anything ran.
+        console.warn('submit refused:', submitted.errorCode, submitted.error);
+        showMessage('This generation could not start. Nothing was charged.');
+      }
     } catch (error) {
-      console.error(error); // a non-2xx: an ApiError with `status` and `body`
-      showMessage('Something went wrong. Please try again.');
+      console.error(error); // consent or the estimate failed. Never "nothing was charged" here.
+      showMessage('Something went wrong. Check your history before trying again.');
     } finally {
-      generateButton.removeAttribute('loading'); // reset on every outcome, a rejection included
+      generateButton.removeAttribute('loading'); // only now may the viewer press again
     }
   });
+
+  async function follow(workflowId: string): Promise<void> {
+    try {
+      const done = await app.workflows.wait(workflowId); // the final snapshot, whichever status it is
+      if (done.status === 'succeeded') showImages(done.imageUrls ?? []);
+      else showMessage('This generation did not finish. Check your history before trying again.');
+    } catch (error) {
+      // Reading the run failed. That says nothing about the run: do NOT resubmit.
+      console.error(error);
+      showMessage('We lost track of this generation. It may still be running. Check your history.');
+    }
+  }
   ```
 
-  (`showMessage` stands for your own UI.) What lands where:
-  - **Resolved, `status: 'failed'`.** The route answers **200**, and
-    `app.site.post` throws only on a non-2xx, so without the `status` check a
-    failed submit looks like a started run. Three kinds of reply resolve this
-    way, and only the first may say "nothing was charged":
-    1. the placeholder id `'failed'` — a spend cap or limit refused it before
-       anything ran;
-    2. `submissionUnconfirmed: true` beside the snapshot — a training run the
-       server could not confirm, which may be running and may have spent;
-    3. a real `workflowId` — a run was created and came back failed, and Buzz
-       may have been spent.
+  (`workflowBody` is your `WorkflowBody`; `confirmSpend`, `showMessage`,
+  `showImages` and `askRetry` stand for your own UI. `askRetry` resolves `true`
+  when the viewer presses Retry and `false` when they dismiss it.)
 
-    The complete list of caps and replies is in `@civitai/blocks-react`'s
+  Why each branch is what it is, and the rules for `kind: 'training'` and
+  `quoteId` bodies (where the key is not the run's identity), are in
+  `node_modules/@civitai/sdk/README.md`: "Multi-step workflows", "A refusal is
+  an answer, not a throw", "When a submit rejects: the outcome is unknown",
+  "When a submit could not be confirmed" and "The idempotency key". Read those
+  rather than a restatement here. What they leave to this guide:
+  - 🔴 **Never offer a Buzz top-up on a resolved `'failed'`.** It is a cap or a
+    limit, and buying Buzz raises none of them; the complete list is in
+    `@civitai/blocks-react`'s
     [`useBuzzWorkflow` `submit` docs](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts)
-    (search "THE ONE COMPLETE LIST"); keep it there, not here. A refusal can
-    carry **no `cost`** (an unpriced training step), so check before reading
-    `cost.total`. `snapshot.error` is unsanitised server text — log it, show
-    your own copy. 🔴 **Never offer a Buzz top-up here**: buying Buzz raises
-    none of those caps.
-  - **Rejected — `catch`.** A non-2xx `ApiError`. This is where a viewer who is
-    genuinely **out of Buzz** lands (the orchestrator refuses the run; the route
-    answers 400), but so does any other bad request, with nothing structural to
-    tell them apart. If you want to offer a top-up (`app.host.openBuzzPurchase()`),
-    decide from the viewer's SPENDABLE balance, not from the rejection:
+    (search "THE ONE COMPLETE LIST"). A viewer who is genuinely **out of Buzz**
+    lands in the rejected branch instead, with nothing structural to tell it
+    apart from any other rejection. If you want to offer a top-up
+    (`app.host.openBuzzPurchase()`), decide from the viewer's SPENDABLE
+    balance, not from the rejection:
     `app.site.get('blocks/buzz')` returns `{ blue, green, yellow }`, needs
     `buzz:read:self` declared in `block.manifest.json` (consent-gated, so
     `askConsent` it first) and refuses an anonymous viewer. A block spends only
@@ -283,6 +331,11 @@ separate.
     `getTransport().snapshot.get().maxBrowsingLevel` from `@civitai/sdk`, the
     domain ceiling the server keys on) against the quoted cost, never all
     three.
+  - **`app.workflows.list()`** resolves `{ workflows, cursor }`: a page of the
+    workflows this app ran for this viewer.
+  - 🔴 **`app.workflows` needs the block token**, which is what this starter is
+    handed. Do not add `auth: "oauth"` to `block.manifest.json`: a block handed
+    an OAuth access token is answered `401` on every `app.workflows` call.
 
   🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
   skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`
@@ -291,12 +344,12 @@ separate.
   per-generation setting; for a page app, from `page.buzzBudgetPerGen`.
   - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate.** Set it to
     several times your worst-case run. A submit priced above it is refused — the
-    `status: 'failed'` snapshot above, with an `insufficient buzz budget` error —
-    nothing charged and nothing delivered, and for a page app it stays broken
-    until a new manifest version is approved.
+    `status: 'failed'` placeholder snapshot above, with an `insufficient buzz
+    budget` error — nothing charged and nothing delivered, and for a page app it
+    stays broken until a new manifest version is approved.
   - The `buzz-workflow` example in the civitai-app-starters repo is a complete
-    estimate → submit → poll flow, in React through the host bridge; this REST
-    route forwards to the same server procedure.
+    estimate → submit → poll flow, in React through the host bridge; the submit
+    route `app.workflows.submit` calls forwards to the same server procedure.
 - **Selling something (digital goods)** — declare a `goods` array in
   `block.manifest.json`, add `goods:purchase:self` (to sell) and
   `goods:read:self` (to read entitlements back) to `scopes`. Each good is

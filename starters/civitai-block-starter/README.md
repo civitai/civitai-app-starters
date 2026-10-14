@@ -52,7 +52,8 @@ app.host.autoResize(document.getElementById('root')!); // iframe follows content
 ```
 
 The whole demo is [`src/block.ts`](./src/block.ts). From the same `app` you also get
-`app.site` (the `/api/v1` REST API as the viewer), `app.storage` /
+`app.site` (the `/api/v1` REST API as the viewer), `app.workflows`
+(generation: `estimate`, `submit`, `wait`, `watch`, `cancel`, `list`), `app.storage` /
 `app.sharedStorage` (per-viewer and cross-viewer app storage),
 `app.requestGrants(scopes)`, and the host's own UI via `app.host` — `navigate`,
 `openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
@@ -60,10 +61,19 @@ The whole demo is [`src/block.ts`](./src/block.ts). From the same `app` you also
 [`@civitai/sdk` README](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#readme)
 documents each.
 
-🔴 **Running a generation from a block:** read the `@civitai/sdk` README's warning
-before calling `app.orchestration` — a block submits through
-`POST /api/v1/blocks/workflows/submit`, which carries the per-call Buzz budget,
-daily caps and attribution that a direct orchestrator call skips.
+🔴 **Running a generation from a block:** use `app.workflows`, not
+`app.orchestration`. It goes through the host's `/api/v1/blocks/workflows/*`
+routes, which carry the per-call Buzz budget, daily caps and attribution that a
+direct orchestrator call skips. It needs the block token this starter is handed
+and the `ai:write:budgeted` scope, which is consent-gated: declare it in
+`block.manifest.json` and ask with `app.requestGrants` before the first call.
+
+A `submit` that **rejects** has not told you the
+run does not exist: keep the key and retry with it, or look for the run with
+`app.workflows.list()`, and never tell the viewer nothing was charged.
+[`AGENTS.md`](./AGENTS.md) has the full handler (consent, every outcome of
+`submit`, the unconfirmed case); the `@civitai/sdk` README's "Multi-step
+workflows" section is the reference.
 
 The UI is the custom elements from [`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components)
 — `<civitai-button>`, `<civitai-text-input>`, `<civitai-select>`,
