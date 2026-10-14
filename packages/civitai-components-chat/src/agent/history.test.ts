@@ -23,7 +23,8 @@ function toolTurn(seq: number, content: string, toolName: string, result: string
   };
 }
 
-function choiceTurn(seq: number, content: string): Turn {
+/** A turn ending on `ask_choice`; `result` is what the tool returned (shown, or rejected). */
+function choiceTurn(seq: number, content: string, result: Record<string, unknown> = { shown: true }): Turn {
   const id = `ask${seq}`;
   return {
     seq,
@@ -33,7 +34,7 @@ function choiceTurn(seq: number, content: string): Turn {
       status: 'done',
       messages: [
         { role: 'assistant', content: [{ type: 'tool-call', toolCallId: id, toolName: 'ask_choice', input: { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] } }] },
-        { role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName: 'ask_choice', output: { type: 'json', value: { shown: true } } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName: 'ask_choice', output: { type: 'json', value: result as never } }] },
       ],
     },
   };
@@ -123,6 +124,31 @@ describe('buildModelMessages', () => {
       'make me a poster for a jazz night',
       'Art deco',
       'Gold and black',
+      '(8 earlier turns omitted)',
+      'now make it',
+      'reply 9',
+    ]);
+  });
+
+  it('pins only an answer to an ask_choice whose result reports shown: true, never one the card rejected', () => {
+    const big = 'w'.repeat(20_000);
+    const rejected = { error: 'options must be an array of 2 to 4 objects, each with a "label" string.', note: 'Nothing was shown. Call ask_choice again with options as an array.' };
+    const shown = { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' };
+    const turns = [
+      turn(1, 'make me a poster for a jazz night'),
+      turn(2, big),
+      choiceTurn(3, 'pick a style', shown),
+      turn(4, 'Art deco'),
+      turn(5, big),
+      choiceTurn(6, 'pick a palette', rejected),
+      turn(7, 'what happened?'),
+      turn(8, big),
+      turn(9, 'now make it'),
+    ];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 2_000 });
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.role))).toEqual([
+      'make me a poster for a jazz night',
+      'Art deco',
       '(8 earlier turns omitted)',
       'now make it',
       'reply 9',

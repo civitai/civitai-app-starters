@@ -197,7 +197,7 @@ earlier conversation a reply sends; raise it for a model with a large context wi
 turn always goes whole. When the rest is over the budget, earlier turns give way in this order:
 first their long tool results (over 400 characters), oldest turn first, each replaced by a note
 while its call stays; then whole turns, oldest first, with one "(N earlier turns omitted)" note in
-their place. The chat's first message (its task) and every answer to a set of options keep their
+their place. The chat's first message (its task) and every answer to a set of options the chat showed keep their
 user message even then, within a quarter of the budget: the task first (cut to fit if it must be),
 then the latest answers.
 

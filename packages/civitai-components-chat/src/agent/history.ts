@@ -22,7 +22,7 @@ export const PINNED_SHARE = 0.25;
  * Over `budget`, the earlier turns give way in this order, never the latest turn:
  * 1. their long tool results, oldest turn first (the call stays, its result becomes a note);
  * 2. whole turns, oldest first, with one `(N earlier turns omitted)` note where they were. The
- *    first message (the task) and every answer to an `ask_choice` keep their user message,
+ *    first message (the task) and every answer to a shown `ask_choice` keep their user message,
  *    within {@link PINNED_SHARE} of the budget: the task first, cut to fit, then the latest answers.
  */
 export function buildModelMessages(turns: Turn[], jobs: LiveLookup, { context, budget = contextBudget() }: { context?: string; budget?: number } = {}): ModelMessage[] {
@@ -83,14 +83,27 @@ function pinnedMessages(turns: Turn[], perTurn: ModelMessage[][], budget: number
   return pins;
 }
 
-/** The turn ended on an `ask_choice`, so the next user message is the pick. */
+/**
+ * The turn's last tool call was an `ask_choice` whose result says the options were shown, so the
+ * next user message is the pick. An `ask_choice` the card could not show reports no `shown: true`
+ * and is not a choice the user answered.
+ */
 function answersChoice(turn: Turn): boolean {
-  let lastTool: string | undefined;
+  let lastCall: { toolName: string; toolCallId: string } | undefined;
   for (const message of turn.assistant.messages) {
     if (message.role !== 'assistant' || typeof message.content === 'string') continue;
-    for (const part of message.content) if (part.type === 'tool-call') lastTool = part.toolName;
+    for (const part of message.content) if (part.type === 'tool-call') lastCall = part;
   }
-  return lastTool === ASK_CHOICE;
+  if (lastCall?.toolName !== ASK_CHOICE) return false;
+  for (const message of turn.assistant.messages) {
+    if (message.role !== 'tool') continue;
+    for (const part of message.content) {
+      if (part.type !== 'tool-result' || part.toolCallId !== lastCall.toolCallId || part.output.type !== 'json') continue;
+      const value = part.output.value as { shown?: unknown } | null;
+      if (value?.shown === true) return true;
+    }
+  }
+  return false;
 }
 
 function withoutLongResults(message: ModelMessage): ModelMessage {
