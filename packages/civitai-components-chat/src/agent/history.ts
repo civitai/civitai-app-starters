@@ -1,7 +1,10 @@
 import type { ModelMessage, ToolModelMessage } from 'ai';
 
 import { contextBudget } from '../config.js';
+import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import { POST_TOOL } from '../posting/post.js';
 import { ASK_CHOICE } from '../tools/build.js';
+import { isJobTool } from '../tools/catalog.js';
 import type { JobSummary } from '../orchestration/job.js';
 import type { PostSummary } from '../posting/post.js';
 import type { Turn } from '../types.js';
@@ -11,7 +14,14 @@ export type LiveLookup = (key: string) => { summary(): JobSummary | PostSummary 
 
 /** A tool result longer than this (as JSON) is what goes first when the history is over budget. */
 export const LONG_RESULT_CHARS = 400;
-export const RESULT_LEFT_OUT = '(Left out to save room. Call the tool again if you still need it.)';
+export const RESULT_LEFT_OUT = '(Left out to save room. If you still need it and the tool only reads, call it again.)';
+/**
+ * Results that report something the chat did (a generation, a post, a panel, a choice) are never
+ * left out: calling one of these tools again would do it again, and some spend Buzz.
+ */
+function keepsResult(toolName: string): boolean {
+  return isJobTool(toolName) || toolName === POST_TOOL || toolName === OPEN_PANEL || toolName === UPDATE_PANEL || toolName === ASK_CHOICE;
+}
 /** At most this share of the budget goes to messages kept from turns that are otherwise left out. */
 export const PINNED_SHARE = 0.25;
 
@@ -20,7 +30,8 @@ export const PINNED_SHARE = 0.25;
  * by its current state, so the assistant learns how it ended.
  *
  * Over `budget`, the earlier turns give way in this order, never the latest turn:
- * 1. their long tool results, oldest turn first (the call stays, its result becomes a note);
+ * 1. their long tool results, oldest turn first (the call stays, its result becomes a note), except
+ *    the results of tools that did something ({@link keepsResult});
  * 2. whole turns, oldest first, with one `(N earlier turns omitted)` note where they were. The
  *    first message (the task) and every answer to a shown `ask_choice` keep their user message,
  *    within {@link PINNED_SHARE} of the budget: the task first, cut to fit, then the latest answers.
@@ -64,10 +75,8 @@ function pinnedMessages(turns: Turn[], perTurn: ModelMessage[][], budget: number
   const task = last > 0 ? perTurn[0]![0] : undefined;
   if (task && typeof task.content === 'string') {
     // Cut to fit rather than lost: without its task a long chat no longer knows what it is for.
-    const chars = Math.floor(room * 3.5) - 40;
-    const content = estimateTokens([task]) <= room ? task.content : chars > 0 ? `${task.content.slice(0, chars)}…(cut)` : '';
-    if (content) {
-      const pin: ModelMessage = { role: 'user', content };
+    const pin = estimateTokens([task]) <= room ? ({ role: 'user', content: task.content } as ModelMessage) : cutToFit(task.content, room);
+    if (pin) {
       pins.set(0, pin);
       room -= estimateTokens([pin]);
     }
@@ -81,6 +90,19 @@ function pinnedMessages(turns: Turn[], perTurn: ModelMessage[][], budget: number
     room -= size;
   }
   return pins;
+}
+
+/**
+ * The task cut short enough that its estimate fits `room`, or `undefined` when nothing does. The
+ * estimate counts the message as JSON, so quotes, backslashes and newlines cost more than one
+ * character each; the cut shrinks until the escaped message fits.
+ */
+function cutToFit(content: string, room: number): ModelMessage | undefined {
+  for (let chars = Math.floor(room * 3.5) - 40; chars > 0; chars = Math.floor(chars * 0.8) - 1) {
+    const pin: ModelMessage = { role: 'user', content: `${content.slice(0, chars)}…(cut)` };
+    if (estimateTokens([pin]) <= room) return pin;
+  }
+  return undefined;
 }
 
 /**
@@ -111,7 +133,9 @@ function withoutLongResults(message: ModelMessage): ModelMessage {
   return {
     ...message,
     content: message.content.map((part) =>
-      part.type === 'tool-result' && JSON.stringify(part.output).length > LONG_RESULT_CHARS ? { ...part, output: { type: 'text' as const, value: RESULT_LEFT_OUT } } : part,
+      part.type === 'tool-result' && !keepsResult(part.toolName) && JSON.stringify(part.output).length > LONG_RESULT_CHARS
+        ? { ...part, output: { type: 'text' as const, value: RESULT_LEFT_OUT } }
+        : part,
     ),
   };
 }

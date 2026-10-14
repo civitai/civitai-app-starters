@@ -4,7 +4,7 @@ import type { ModelMessage } from 'ai';
 
 import { chatConfig, configureChat, contextBudget } from '../config.js';
 import type { Turn } from '../types.js';
-import { buildModelMessages, RESULT_LEFT_OUT } from './history.js';
+import { buildModelMessages, estimateTokens, PINNED_SHARE, RESULT_LEFT_OUT } from './history.js';
 
 function toolTurn(seq: number, content: string, toolName: string, result: string): Turn {
   const id = `c${seq}`;
@@ -153,6 +153,69 @@ describe('buildModelMessages', () => {
       'now make it',
       'reply 9',
     ]);
+  });
+
+  it('keeps the results of tools that did something, and leaves out a long read', () => {
+    const turns = [
+      turn(1, 'make a bike'),
+      toolTurn(2, 'generate it', 'run_step', 'j'.repeat(1_000)),
+      toolTurn(3, 'open a panel', 'open_panel', 'p'.repeat(1_000)),
+      toolTurn(4, 'read the file', 'sandbox__read_file', 'r'.repeat(40_000)),
+      turn(5, 'go'),
+    ];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 3_000 });
+    expect(results(messages)).toEqual([1_000, 1_000, RESULT_LEFT_OUT]);
+  });
+
+  it('never leaves out a result in the latest turn, however far over budget', () => {
+    const messages = buildModelMessages([turn(1, 'task'), toolTurn(2, 'read it', 'sandbox__read_file', 'r'.repeat(40_000))], () => undefined, { budget: 100 });
+    expect(results(messages)).toEqual([40_000]);
+  });
+
+  it('cuts a task to fit its share of the budget, even one the JSON estimate escapes', () => {
+    const budget = 2_000;
+    const room = Math.floor(budget * PINNED_SHARE);
+    for (const task of ['plain words '.repeat(500), '"\\'.repeat(2_500), 'line\n'.repeat(1_500)]) {
+      const messages = buildModelMessages([turn(1, task), turn(2, 'w'.repeat(20_000)), turn(3, 'go')], () => undefined, { budget });
+      const pin = messages[0]!;
+      expect(pin.role).toBe('user');
+      expect(typeof pin.content === 'string' && pin.content.endsWith('…(cut)')).toBe(true);
+      expect(typeof pin.content === 'string' && task.startsWith(pin.content.slice(0, -'…(cut)'.length))).toBe(true);
+      expect(estimateTokens([pin])).toBeLessThanOrEqual(room);
+    }
+  });
+
+  it('pins the latest answers first, and none past its share of the budget', () => {
+    const big = 'w'.repeat(20_000);
+    const [a, b] = ['A'.repeat(1_000), 'B'.repeat(1_000)];
+    const turns = [turn(1, 'task'), choiceTurn(2, 'pick one'), turn(3, a), turn(4, big), choiceTurn(5, 'pick another'), turn(6, b), turn(7, big), turn(8, 'go')];
+    const budget = 2_000;
+    const messages = buildModelMessages(turns, () => undefined, { budget });
+    const marker = messages.findIndex((m) => typeof m.content === 'string' && /earlier turns omitted/.test(m.content));
+    const pinned = messages.slice(0, marker);
+    expect(pinned.map((m) => m.content)).toEqual(['task', b]);
+    expect(estimateTokens(pinned)).toBeLessThanOrEqual(Math.floor(budget * PINNED_SHARE));
+  });
+
+  it("reads the shown flag from the last ask_choice's own result, not an earlier call's", () => {
+    const big = 'w'.repeat(20_000);
+    const twoAsks: Turn = {
+      seq: 3,
+      createdAt: '2026-09-23T00:00:00Z',
+      user: { content: 'pick a style', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'first', toolName: 'ask_choice', input: {} }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'first', toolName: 'ask_choice', output: { type: 'json', value: { shown: true } } }] },
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'second', toolName: 'ask_choice', input: {} }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'second', toolName: 'ask_choice', output: { type: 'json', value: { error: 'bad options' } } }] },
+        ],
+      },
+    };
+    const turns = [turn(1, 'task'), turn(2, big), twoAsks, turn(4, 'what happened?'), turn(5, big), turn(6, 'go')];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 2_000 });
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.role))).toEqual(['task', '(5 earlier turns omitted)', 'go', 'reply 6']);
   });
 
   it('follows configureChat({ contextBudgetTokens }), and the default again when it is unset', () => {

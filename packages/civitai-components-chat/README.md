@@ -196,7 +196,8 @@ picked one follows the viewer's default, and the pick is saved with the chat.
 earlier conversation a reply sends; raise it for a model with a large context window. The latest
 turn always goes whole. When the rest is over the budget, earlier turns give way in this order:
 first their long tool results (over 400 characters), oldest turn first, each replaced by a note
-while its call stays; then whole turns, oldest first, with one "(N earlier turns omitted)" note in
+while its call stays (never a generation's, a post's, a panel's or a choice's, which report what the
+chat did); then whole turns, oldest first, with one "(N earlier turns omitted)" note in
 their place. The chat's first message (its task) and every answer to a set of options the chat showed keep their
 user message even then, within a quarter of the budget: the task first (cut to fit if it must be),
 then the latest answers.
