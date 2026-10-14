@@ -173,7 +173,7 @@ label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestr
 generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
 reply may write, its reasoning and tool-call arguments included, such as a file it writes; default
 16,384, kept within 1,024 to 32,768) and `maxSteps` (the most steps, each one paid model request,
-one reply may take; default 10, kept within 2 to 50) are the settings. A reply's last allowed step
+one reply may take; default 10, kept within 2 to 1,000) are the settings. A reply's last allowed step
 cannot call tools and must say where things stand; a reply that used every step ends with **Continue**,
 which asks the assistant to carry on. In Settings the viewer picks their default
 model from the default, `models`, or any model id the orchestrator's chat endpoint serves (Custom),

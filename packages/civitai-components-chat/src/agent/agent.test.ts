@@ -365,10 +365,10 @@ describe('a reply that runs out of steps', () => {
     }
   });
 
-  it('keeps a configured budget within 2 to 50, and is 10 unset', () => {
+  it('keeps a configured budget within 2 to 1,000, and is 10 unset', () => {
     try {
       expect(stepLimit()).toBe(10);
-      for (const [value, limit] of [[1, 2], [7.4, 7], [400, 50], [Number.NaN, 10]] as const) {
+      for (const [value, limit] of [[1, 2], [7.4, 7], [400, 400], [1_000, 1_000], [5_000, 1_000], [Number.NaN, 10]] as const) {
         chatConfig.maxSteps = value;
         expect(stepLimit()).toBe(limit);
       }
