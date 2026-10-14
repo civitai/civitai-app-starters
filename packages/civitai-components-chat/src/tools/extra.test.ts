@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createMcpConnection, type McpCallOptions, type McpConnection } from '../mcp/clients.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+
+import { createMcpConnection, McpStreamLostError, type McpCallOptions, type McpConnection } from '../mcp/clients.js';
 import { fakeMcpServers, type FakeTool } from '../test-support/fake-mcp.js';
 import { toolResult } from '../test-support/fakes.js';
 import { EXTRA_TOOL_TIMEOUT_MS, extraToolSet, keepEnds } from './extra.js';
@@ -77,5 +79,83 @@ describe('extraToolSet', () => {
 
     expect(Object.keys(set)).toEqual(['sandbox__run_command']);
     expect(await set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [] })).toMatchObject({ error: 'exit 1' });
+  });
+});
+
+describe('a reply that never comes', () => {
+  const server = { id: 'sandbox', url: URL, label: 'Sandbox', token: () => 'tok' };
+  const tool = { name: 'run_command', inputSchema: { type: 'object' } };
+  const LOST = {
+    error: 'No reply from Sandbox; the run_command call may have finished.',
+    retryable: true,
+    note: 'Check its effect (for example by listing or reading the files it would change) before running it again.',
+  };
+
+  /** The fake server, except that a tool call's event stream sends `prefix` and then ends, or breaks, with no reply. */
+  function dropping(how: 'end' | 'break', prefix = ''): { fetch: typeof fetch; calls: () => number } {
+    const fake = fakeMcpServers({ [URL]: [{ name: 'run_command' }] });
+    let calls = 0;
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as { method?: string }) : {};
+      if (body.method !== 'tools/call') return fake.fetch(input, init);
+      calls++;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (prefix) controller.enqueue(new TextEncoder().encode(prefix));
+          if (how === 'end') controller.close();
+          else controller.error(new TypeError('network error'));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }) as typeof fetch;
+    return { fetch: fetchFn, calls: () => calls };
+  }
+
+  const within = <T>(promise: Promise<T>, ms: number) =>
+    Promise.race([promise, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`still waiting after ${ms} ms`)), ms))]);
+
+  it.each([
+    ['ends', 'end' as const, ''],
+    ['breaks', 'break' as const, ''],
+    ['ends after a progress note', 'end' as const, 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":1,"progress":1}}\n\n'],
+  ])('fails at once, as retryable, when the stream %s without it', async (_name, how, prefix) => {
+    const fake = dropping(how, prefix);
+    const connection = createMcpConnection({ url: URL, fetch: fake.fetch });
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
+    const started = Date.now();
+    const result = await within(set.sandbox__run_command!.execute!({ command: 'npm install' }, { toolCallId: 'c', messages: [] }) as Promise<unknown>, 2_000);
+    expect(result).toEqual(LOST);
+    expect(fake.calls()).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('fails the call with McpStreamLostError on the connection itself', async () => {
+    const connection = createMcpConnection({ url: URL, fetch: dropping('end').fetch });
+    await expect(within(connection.callTool('run_command', {}, { timeoutMs: EXTRA_TOOL_TIMEOUT_MS }), 2_000)).rejects.toBeInstanceOf(McpStreamLostError);
+  });
+
+  it('leaves a resumable stream (one with event ids) to the SDK, which reconnects for the reply', async () => {
+    const connection = createMcpConnection({ url: URL, fetch: dropping('end', 'id: ev-1\ndata: \n\n').fetch });
+    const error = await connection.callTool('run_command', {}, { timeoutMs: 300 }).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(McpStreamLostError);
+    expect(error).toMatchObject({ code: ErrorCode.RequestTimeout });
+  });
+
+  it('still answers normally when the reply does come', async () => {
+    const fake = fakeMcpServers({ [URL]: [{ name: 'run_command' }] });
+    const connection = createMcpConnection({ url: URL, fetch: fake.fetch });
+    expect((await connection.callTool('run_command', {})).content).toEqual([{ type: 'text', text: 'run_command ran' }]);
+  });
+
+  it('turns a timeout without progress into the same retryable error, not a thrown failure', async () => {
+    const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => Promise.reject(new McpError(ErrorCode.RequestTimeout, 'Request timed out'))) } as McpConnection;
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
+    expect(await set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [] })).toEqual(LOST);
+  });
+
+  it('still throws any other failure, which the assistant sees as a tool error', async () => {
+    const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => Promise.reject(new McpError(ErrorCode.InternalError, 'boom'))) } as McpConnection;
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
+    await expect(set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [] })).rejects.toThrow('boom');
   });
 });

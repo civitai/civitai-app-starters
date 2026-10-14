@@ -2,7 +2,8 @@ import type { SiteClient } from '@civitai/sdk';
 import { dynamicTool, jsonSchema, tool, type ToolSet } from 'ai';
 
 import type { McpConnection, McpTool } from '../mcp/clients.js';
-import { mcpResultToText, structuredOf } from '../mcp/result.js';
+import { mcpResultToText, structuredOf, textCapFor } from '../mcp/result.js';
+import { CACHE_HIT_NOTE, CACHED_TOOLS, cacheKey, cachedReply, forgetReply, rememberReply } from './fetch-cache.js';
 import { toolInfo } from '../orchestration/job.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
@@ -160,8 +161,32 @@ function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolC
     inputSchema: jsonSchema(withoutControls(mcpTool.inputSchema)),
     execute: async (input, { abortSignal }) => {
       const raw = (input ?? {}) as Record<string, unknown>;
-      const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal });
-      const text = mcpResultToText(result);
+      const call = async () => {
+        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal });
+        return { result, text: mcpResultToText(result, textCapFor(mcpTool.name)) };
+      };
+      // A page read twice in one chat costs the viewer twice and tells the assistant nothing new.
+      const key = CACHED_TOOLS.has(mcpTool.name) ? cacheKey(mcpTool.name, raw) : undefined;
+      if (key !== undefined) {
+        const cached = cachedReply(connection, ctx.conversationId, key);
+        if (cached) {
+          try {
+            return `${CACHE_HIT_NOTE}\n\n${await cached}`;
+          } catch {
+            // That read failed or was stopped; this call asks again.
+          }
+        }
+      }
+      const pending = call();
+      if (key !== undefined) {
+        const reply = pending.then(({ result, text }) => {
+          if (result.isError) throw new Error(text);
+          return text;
+        });
+        reply.catch(() => forgetReply(connection, ctx.conversationId, key, reply));
+        rememberReply(connection, ctx.conversationId, key, reply);
+      }
+      const { result, text } = await pending;
       if (result.isError) return { error: text, note: FAILED_NOTE };
       if (CAPTION_TOOLS.has(mcpTool.name) && typeof raw.mediaUrl === 'string' && ATTACHMENT_ID.test(raw.mediaUrl)) {
         ctx.onCaption(raw.mediaUrl, text);
