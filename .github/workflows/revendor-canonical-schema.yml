@@ -6,11 +6,13 @@ name: Re-vendor canonical schema
 # opens a PR. Keeps the mirror in parity without a human noticing the guard went red.
 # (JS twin of the civitai/cli automation.)
 #
-# It also re-vendors the App Blocks document-store CONTRACT
+# A SECOND, INDEPENDENT job (`revendor-storage-contract`) does the same for the
+# App Blocks document-store contract mirror
 # (packages/civitai-sdk/schemas/app-block/storage-contract.v1.json, guarded by
-# scripts/check-storage-contract.sh) on the same cron, guard and PR: one more
-# byte-mirror of a file civitai.com publishes on the same release cut. Its script
-# writes no changeset — that file is not published (see the script's header).
+# scripts/check-storage-contract.sh), published by civitai.com on the same release
+# cut. It has its OWN open-PR guard, branch and PR, so a contract failure (a 404,
+# or a contract the fake does not satisfy) can never stop the schema PR, and vice
+# versa. Its script writes no changeset — that file is not published.
 
 on:
   schedule:
@@ -66,6 +68,9 @@ env:
   # force-push a reviewer's commit away with the job green throughout. Pinned
   # by tests/guards/revendor-guard-gating.test.mjs.
   REVENDOR_BRANCH: automation/revendor-canonical-schema
+  # The contract job's branch — single-sourced for the same reason, and DISTINCT
+  # from the schema's, so each job's guard sees only its own PR.
+  CONTRACT_REVENDOR_BRANCH: automation/revendor-storage-contract
 
 jobs:
   revendor:
@@ -132,10 +137,6 @@ jobs:
         if: steps.guard.outputs.open == ''
         run: ./scripts/revendor-canonical-schema.sh
 
-      - name: Re-vendor storage contract
-        if: steps.guard.outputs.open == ''
-        run: ./scripts/revendor-storage-contract.sh
-
       - name: Detect changes
         id: changed
         if: steps.guard.outputs.open == ''
@@ -163,20 +164,15 @@ jobs:
       # `pattern`, and four `not` clauses on `outputDir`). An ADDITIVE change
       # passing is also the DESIGNED path, not a surprise — this repo types the
       # field first so the ledger is green when the bytes arrive.
-      - name: Validate SDK against the re-vendored schema and contract
+      - name: Validate SDK against the re-vendored schema
         if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @civitai/app-sdk typecheck
           pnpm --filter @civitai/app-sdk test
           pnpm --filter @civitai/app-sdk build
-          # The storage contract runs against `createFakeStorage` and the client in
-          # this suite, so a contract change the fake does not satisfy fails HERE
-          # and no PR opens — the fake needs a code change first.
-          pnpm --filter @civitai/sdk typecheck
-          pnpm --filter @civitai/sdk test
 
-      - name: Open PR if the schema or contract changed
+      - name: Open PR if schema changed
         if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         # SHA-pinned to an EXACT commit, asserted by
         # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
@@ -202,19 +198,10 @@ jobs:
           token: ${{ secrets.CHANGESETS_TOKEN }}
           branch: ${{ env.REVENDOR_BRANCH }}
           delete-branch: true
-          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema / storage contract"
-          title: "chore(sdk): re-vendor canonical app-block manifest schema / storage contract"
+          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema"
+          title: "chore(sdk): re-vendor canonical app-block manifest schema"
           body: |
-            Automated re-vendor of the App Block manifest schema mirror and/or
-            the document-store contract mirror — read the diff for which.
-
-            **Storage contract** (`packages/civitai-sdk/schemas/app-block/storage-contract.v1.json`,
-            from https://civitai.com/schemas/app-block/storage-contract.v1.json):
-            not published, so no changeset. Validated in-job: `@civitai/sdk`
-            typecheck + test passed, i.e. `createFakeStorage` and the client
-            still satisfy every contract case.
-
-            **Manifest schema** — automated re-vendor of the App Block manifest schema mirror at
+            Automated re-vendor of the App Block manifest schema mirror at
             `packages/civitai-app-sdk/schemas/app-block/v1.json` to restore
             byte-parity with the server-published canonical
             (https://civitai.com/schemas/app-block/v1.json).
@@ -264,3 +251,80 @@ jobs:
             nested-property ledger passes when the bytes arrive.
 
             _JS twin of the civitai/cli schema re-vendor automation._
+
+  # The storage-contract twin of the job above: the same steps, guard and action
+  # pins (the rationale for each is on the schema job), its own branch and PR.
+  revendor-storage-contract:
+    name: Re-vendor storage contract + open PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to clobber an open re-vendor PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$CONTRACT_REVENDOR_BRANCH" \
+                 --state open --json number --jq '.[0].number // empty')"
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          if [[ -n "$n" ]]; then
+            echo "::notice::PR #${n} is already open on ${CONTRACT_REVENDOR_BRANCH}. Skipping this run so a reviewer's commits on that branch are not force-pushed away. Merge or close it and the next run will re-vendor."
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.open == ''
+
+      - uses: actions/setup-node@v7
+        if: steps.guard.outputs.open == ''
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Re-vendor storage contract
+        if: steps.guard.outputs.open == ''
+        run: ./scripts/revendor-storage-contract.sh
+
+      - name: Detect changes
+        id: changed
+        if: steps.guard.outputs.open == ''
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The contract runs against `createFakeStorage` and the client in this suite,
+      # so a contract change the fake does not satisfy fails HERE and no PR opens —
+      # the fake needs a code change first, and that PR re-vendors the bytes too.
+      - name: Validate the fake and client against the re-vendored contract
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @civitai/sdk typecheck
+          pnpm --filter @civitai/sdk test
+
+      - name: Open PR if the contract changed
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.CHANGESETS_TOKEN }}
+          branch: ${{ env.CONTRACT_REVENDOR_BRANCH }}
+          delete-branch: true
+          commit-message: "chore(sdk): re-vendor the app-block storage contract"
+          title: "chore(sdk): re-vendor the app-block storage contract"
+          body: |
+            Automated re-vendor of the App Blocks document-store contract mirror at
+            `packages/civitai-sdk/schemas/app-block/storage-contract.v1.json` to
+            restore byte-parity with
+            https://civitai.com/schemas/app-block/storage-contract.v1.json — the
+            `check-storage-contract.sh` CI guard enforces it with `diff -u`.
+
+            Validated in-job before opening this PR: `@civitai/sdk` typecheck +
+            test passed against the re-vendored bytes, i.e. `createFakeStorage` and
+            the client still satisfy every contract case.
+
+            No changeset: the contract is not published (it is outside the
+            package's `files` and read only by the package's own tests).

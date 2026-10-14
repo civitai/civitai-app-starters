@@ -14,6 +14,10 @@ at the client's `Http` seam that enforces the server's storage rules and passes
 the platform's storage contract. Its rate limits are opt-in
 (`enforceRateLimits: true`), so an app's own tests are not throttled.
 
+A `401` whose body's `code` is `sign_in_required` is no longer retried with a
+re-minted token: it is about the viewer, not the token, so the retry only cost a
+second request. Every other `401` is still retried once.
+
 The legacy key/value methods on `app.storage` (`get`, `set`, `delete`, `list`,
 `getQuota`) and `app.sharedStorage` are now `@deprecated`, with no change in
 behaviour; they keep working until apps have moved to collections.

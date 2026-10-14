@@ -226,6 +226,21 @@ describe('lists', () => {
     expect((await refusal(posts.list({ markedBy: 'me' }))).code).toBe('invalid_request');
   });
 
+  it('a string index sorts by code point, as the server\'s COLLATE "C" does — not by UTF-16 unit', async () => {
+    const { fake } = make();
+    const posts = fake.storage.collection('posts');
+    // U+1F600 is a surrogate pair (0xD83D…), which UTF-16 `<` puts BEFORE U+FF01.
+    await posts.put('emoji', { status: '\u{1F600}' });
+    await posts.put('fullwidth', { status: '\uFF01' });
+    await posts.put('ascii', { status: 'z' });
+    expect('\u{1F600}' < '\uFF01').toBe(true); // the trap, as JavaScript sees it
+    expect(await keys(posts.list({ sort: 'status' }))).toEqual(['ascii', 'fullwidth', 'emoji']);
+    expect(await keys(posts.list({ sort: '-status' }))).toEqual(['emoji', 'fullwidth', 'ascii']);
+    // …and paging follows the same order.
+    const first = await posts.list({ sort: 'status', limit: 2 });
+    expect(await keys(posts.list({ sort: 'status', limit: 2, cursor: first.nextCursor! }))).toEqual(['emoji']);
+  });
+
   it('a cursor is opaque and bound to its whole query', async () => {
     const { posts } = await seeded();
     const first = await posts.list({ sort: 'rank', limit: 1 });
@@ -234,6 +249,9 @@ describe('lists', () => {
     // Opaque: neither the last key nor its sort value is readable from it.
     expect(cursor).not.toContain('b:1');
     expect(cursor).not.toContain('-1');
+    // Deterministic: the same calls on a fresh fake issue the same token.
+    const { posts: again } = await seeded();
+    expect((await again.list({ sort: 'rank', limit: 1 })).nextCursor).toBe(cursor);
     // The same query continues…
     expect(await keys(posts.list({ sort: 'rank', limit: 1, cursor }))).toEqual(['a:1']);
     // …any other sort, filter or collection is refused.

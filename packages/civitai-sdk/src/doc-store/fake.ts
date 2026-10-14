@@ -325,6 +325,20 @@ interface Ctx {
 const utf8Length = (text: string) => new TextEncoder().encode(text).length;
 
 /**
+ * String order as the server's `COLLATE "C"` columns sort: by Unicode code point
+ * (the byte order of UTF-8). JavaScript's `<` compares UTF-16 code units instead,
+ * which puts an astral character (a surrogate pair, 0xD800…) BEFORE U+E000–U+FFFF.
+ */
+function byCodePoint(a: string, b: string): number {
+  const x = Array.from(a, (c) => c.codePointAt(0)!);
+  const y = Array.from(b, (c) => c.codePointAt(0)!);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+  }
+  return x.length - y.length < 0 ? -1 : x.length > y.length ? 1 : 0;
+}
+
+/**
  * The stored unit: the length of the database's text form of the JSON, which puts a
  * space after every `:` and `,`. (Exact except where the two spell a number
  * differently, e.g. an exponent.)
@@ -384,7 +398,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   const budgets = new Map<number, number[]>();
   const cursors = new Map<string, { binding: string; value: string | number; key: string }>();
   const issueCursor = (binding: string, value: string | number, key: string) => {
-    const token = `c${(cursors.size + 1).toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    // Deterministic (a per-fake counter), so an app's snapshot tests are stable.
+    const token = `cursor_${cursors.size + 1}`;
     cursors.set(token, { binding, value, key });
     return token;
   };
@@ -840,7 +855,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       .map((d) => ({ d, v: sortValue(sort, d) }))
       .filter((x): x is { d: DocRow; v: string | number } => x.v !== undefined);
     const dir = sort.desc ? -1 : 1;
-    const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0);
+    const cmp = (a: string | number, b: string | number) =>
+      typeof a === 'string' && typeof b === 'string' ? byCodePoint(a, b) : a < b ? -1 : a > b ? 1 : 0;
     const order = (a: { v: string | number; key: string }, b: { v: string | number; key: string }) =>
       (cmp(a.v, b.v) || cmp(a.key, b.key)) * dir;
     let ordered = keyed.map((x) => ({ d: x.d, v: x.v, key: x.d.key })).sort(order);

@@ -263,6 +263,31 @@ function toStorageError(error: unknown): unknown {
 }
 
 /**
+ * The manifest's rule for a collection name. A name outside it can never be
+ * declared, and some of those (`_get`, `_drafts`) are ROUTES at that position, which
+ * the server answers with a route-level `not_found` — which `get` would read as "no
+ * such document". So such a name is refused here, before sending, with the code the
+ * server gives any undeclared collection.
+ */
+const COLLECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+
+function collectionSegment(name: string): string {
+  if (typeof name !== 'string' || !COLLECTION_NAME.test(name)) {
+    const status = 404;
+    const message = `collection ${JSON.stringify(name)} is not a valid collection name (refused before sending)`;
+    const details = { collection: name };
+    throw new StorageError(
+      status,
+      'collection_not_declared',
+      message,
+      { code: 'collection_not_declared', message, error: message, details },
+      details,
+    );
+  }
+  return name;
+}
+
+/**
  * A path segment from caller input. Encoded, so `/`, `?`, `#` and spaces stay
  * inside it; and refused when URL resolution would rewrite it — an empty segment
  * collapses and `.`/`..` are path steps, so each would address a different route.
@@ -294,7 +319,7 @@ export function createDocumentStorage(http: Http): DocumentStorage {
     collection<T extends object = Record<string, unknown>>(name: string): StorageCollection<T> {
       // Resolved per call, inside each async operation, so a bad name rejects that
       // call rather than throwing from `collection()` itself.
-      const coll = () => segment('collection', name);
+      const coll = () => collectionSegment(name);
       const docPath = (key: string) => `${BASE}/${coll()}/${segment('key', key)}`;
       const doc = (reply: unknown, op: string) => toDocument<T>(reply, `${name}.${op}`);
 

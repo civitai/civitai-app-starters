@@ -185,7 +185,8 @@ Routes are addressed by path, so a route `/api/v1` gains needs no release here:
 const images = await app.site.get('images', { query: { limit: 20, username: 'civitai' } });
 ```
 
-A `401` is retried once with a fresh token. Any failure the server answered is an
+A `401` is retried once with a fresh token — except one whose body's `code` is
+`sign_in_required`, which is about the viewer, not the token. Any failure the server answered is an
 `ApiError` carrying `status`, the parsed `body`, and the server's own message —
 while a request the browser never delivered (CORS, DNS, offline) surfaces as a
 fetch `TypeError` with no `status`, so test `error instanceof ApiError` before
@@ -246,9 +247,15 @@ const { limits, usage } = await app.storage.info();
   (`[-]key|createdAt|updatedAt|<index>|counter:<n>|mark:<n>`), `author: 'me'`,
   `markedBy: 'me'` with `mark`, `keyPrefix`, `limit` and `cursor`. `nextCursor` is
   `null` exactly on the last page; pass it back with the same query.
-- **Every refusal is a `StorageError`** (an `ApiError`) with the server's `code`,
-  `status` and `details`; `retryAfter` is set when the server named a wait. Branch
-  on `code`:
+- **A refusal in the storage envelope is a `StorageError`** (an `ApiError`) with
+  the server's `code`, `status` and `details`; `retryAfter` is set when the server
+  named a wait. So is a name or key the client refuses before sending (an invalid
+  collection name is `collection_not_declared`; a key of `''`, `.` or `..` is
+  `invalid_request`). Anything else arrives as it would from any route: a response
+  without the envelope (a proxy error page, a site without these routes) is a plain
+  `ApiError` with its `status`, a request that never got an answer (offline, CORS,
+  DNS) is the `fetch` `TypeError`, and a 2xx the client cannot read is a
+  `CivitaiError`. `get` reads only `not_found` as "no document". Branch on `code`:
 
 ```ts
 import { StorageError } from '@civitai/sdk';

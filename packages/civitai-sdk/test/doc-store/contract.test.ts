@@ -89,7 +89,7 @@ const CONVENTION_KEYS = ['blockedText', 'blockedLink', 'scannerDown', 'note', 'r
 
 /**
  * Steps the CLIENT has no way to send — a method, query parameter or body field
- * outside its API (most of them refused on purpose: TTL is a later phase, a mark
+ * outside its API, or a collection name it refuses before sending (most of them refused on purpose: TTL is a later phase, a mark
  * carries no payload). They run in the client pass through the same fake's raw
  * `Http`, and this ledger fails if the set grows or shrinks.
  */
@@ -100,6 +100,8 @@ const RAW_ONLY_STEPS = [
   'request errors #4 GET /prefs: query colour',
   'request errors #5 GET /prefs/k: query colour',
   'request errors #10 GET /prefs/k/extra: no client method for 3 segments',
+  'request errors #9 GET /_get: client refuses collection name _get',
+  'create with a server key, then batch get with a miss #3 GET /_get/prefs: client refuses collection name _get',
   'request errors #11 PATCH /prefs/k: no client method for PATCH',
 ];
 
@@ -268,6 +270,11 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
   };
   const why = (reason: string | null, run: ClientOp): ClientOp => (reason ? { raw: reason } : run);
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return { raw: `no client method for ${method}` };
+  // A collection position the client refuses to send (`_get` used as a collection):
+  // the client answers it locally, so the server's answer to it is a raw-only step.
+  if (seg[0] !== undefined && !(seg[0] === '_get' && method === 'POST') && !/^[a-z][a-z0-9_]{0,31}$/.test(seg[0])) {
+    return { raw: `client refuses collection name ${seg[0]}` };
+  }
 
   if (seg.length === 0 && method === 'GET') return why(strayQuery(() => false), { run: (s) => s.info() });
   if (seg.length === 1) {

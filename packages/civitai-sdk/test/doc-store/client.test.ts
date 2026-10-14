@@ -77,6 +77,28 @@ describe('request shapes the contract run does not cover', () => {
     });
   });
 
+  it.each(['_drafts', '_get', 'Bad', '', '..', '9lives', 'a-b', 'x'.repeat(33)])(
+    'refuses collection name %j before sending, as collection_not_declared — never a null from a route-level 404',
+    async (name) => {
+      const r = recorder(() => envelope(404, 'not_found'));
+      const coll = r.storage.collection(name);
+      const error = (await coll.get('k').catch((e: unknown) => e)) as StorageError;
+      expect(error).toBeInstanceOf(StorageError);
+      expect(error.code).toBe('collection_not_declared');
+      expect(error.status).toBe(404);
+      expect(error.details).toEqual({ collection: name });
+      await expect(coll.list()).rejects.toMatchObject({ code: 'collection_not_declared' });
+      expect(r.sent).toEqual([]);
+    },
+  );
+
+  it('sends a name at the edge of the rule (a, 32 chars, digits and _)', async () => {
+    const r = recorder(() => ({ items: [], nextCursor: null }));
+    await r.storage.collection('a').list();
+    await r.storage.collection(`a${'_9'.repeat(15)}b`).list();
+    expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/a', `blocks/storage/a${'_9'.repeat(15)}b`]);
+  });
+
   it('encodes every caller-supplied segment', async () => {
     const r = recorder(() => ({ value: 1 }));
     await r.storage.collection('c').increment('a:b/c d?e', 'n#1');
@@ -87,7 +109,6 @@ describe('request shapes the contract run does not cover', () => {
     ['key', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').get('')],
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').put('.', {})],
     ['key', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').delete('..')],
-    ['collection', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('..').list()],
     ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.')],
     ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', '')],
   ])('refuses a %s of %j before sending — a URL would rewrite it into another route', async (_what, _value, run) => {
