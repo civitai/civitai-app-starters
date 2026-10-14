@@ -15,7 +15,7 @@ import {
 } from '../transport.js';
 import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
 import { OriginMatcher } from '../origin-matcher.js';
-import { HOST_NOTIFICATIONS, HOST_REPLIES, type HostReply } from './host-replies.generated.js';
+import { HOST_NOTIFICATIONS, HOST_REPLIES, HOST_SNAPSHOT, type HostReply } from './host-replies.generated.js';
 import { VERSION } from '../../version.generated.js';
 
 /**
@@ -78,8 +78,11 @@ export function unanswerable(type: string): BridgeError {
   const message = HOST_NOTIFICATIONS.has(type)
     ? `${type} is fire-and-forget: the host never answers it, so request() would wait forever. ` +
       `Send it with notify()${instead ? `, or use ${instead}` : ''}.`
-    : `${type} is not a request the host answers, so request() would wait forever. ` +
-      (instead ? `Use ${instead} instead.` : 'See BREAKING.md for where bridge messages moved.');
+    : `${type} is not a request the host answered at civitai ${HOST_SNAPSHOT}, ` +
+      `the host snapshot @civitai/sdk ${VERSION} was built from, so request() would wait forever. ` +
+      (instead
+        ? `Use ${instead} instead.`
+        : 'If the host has added it since, upgrade @civitai/sdk; otherwise see BREAKING.md for where bridge messages moved.');
   return new BridgeError('invalid', type, message);
 }
 

@@ -10,7 +10,14 @@ export interface HostReply {
   readonly keys: readonly string[] | null;
 }
 
-/** Every request the host answers. A type absent here is one it never answers. */
+/** The civitai commit this ledger was read from. A request the host added after it is refused too. */
+export const HOST_SNAPSHOT = "3c6d553986";
+
+/**
+ * Every request the host answered at {@link HOST_SNAPSHOT}. A type absent here is refused.
+ * Reply names and framing are fixed at publish time: if the host renames a reply or moves a
+ * type to envelope framing, builds on this version stop receiving it until they upgrade.
+ */
 export const HOST_REPLIES: Readonly<Record<string, HostReply>> = {
   "APP_STORAGE_DELETE": {"reply":"APP_STORAGE_DELETE_RESULT","framing":"legacy","keys":["deleted","ok"]},
   "APP_STORAGE_GET": {"reply":"APP_STORAGE_GET_RESULT","framing":"legacy","keys":["value"]},

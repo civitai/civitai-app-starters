@@ -3,8 +3,8 @@
 '@civitai/app-sdk': patch
 ---
 
-`getTransport().request(type)` now settles for every request the host answers,
-and refuses at once what it never answers.
+`getTransport().request(type)` now receives the reply to every request type the host
+answered when this version was built, and refuses at once a type the host never answered.
 
 - The reply ledger is generated from the host's inventory (`snapshots/host-messages.json`,
   now carrying each request's reply name, framing and success keys) and covers all 43
@@ -15,7 +15,12 @@ and refuses at once what it never answers.
 - A type the host does not answer rejects immediately with a `BridgeError` of code
   `invalid` instead of waiting forever. A fire-and-forget message says to use `notify()`,
   and where BREAKING.md names a replacement the message names it (e.g. `GET_VIEWER` →
-  `app.site.get('blocks/me')`).
+  `app.site.get('blocks/me')`). The list of types is fixed at publish time, so a type
+  the host adds later is refused too, and the message names the SDK version and host
+  snapshot and says to upgrade.
+- The ledger does not know which page hosts the block. `GET_WILDCARD_PACK` is answered
+  only on full-page app hosts; in a model-page slot the host neither answers nor refuses
+  it, so that call still never settles. Pass a `signal` to bound it.
 - `SCOPES` (and `Scope`) gain the scopes the host now grants: `apps:storage`,
   `apps:storage:publish`, `apps:store:items:write`, `goods:read:self` and
   `goods:purchase:self`.

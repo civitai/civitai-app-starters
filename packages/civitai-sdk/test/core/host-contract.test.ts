@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { BridgeError } from '../../src/core/errors.js';
 import { unanswerable, unwrap } from '../../src/core/transports/iframe-transport.js';
+import { VERSION } from '../../src/version.generated.js';
 import { init, mountTransport } from '../support/iframe-host.js';
 
 /**
@@ -23,7 +24,7 @@ interface HostMessage {
 
 const snapshot = JSON.parse(
   readFileSync(new URL('../../snapshots/host-messages.json', import.meta.url), 'utf8'),
-) as { messages: Record<string, HostMessage> };
+) as { capturedFrom: string; messages: Record<string, HostMessage> };
 
 const requests = Object.entries(snapshot.messages).filter(([, m]) => m.request);
 const notifications = Object.entries(snapshot.messages)
@@ -62,6 +63,18 @@ describe('every host request settles through the transport', () => {
     const fields = fixture(type, host.replyKeys);
     const expected = host.replyKeys?.length === 1 && host.replyKeys[0] === 'result' ? fields.result : fields;
     await expect(exchange(type, host.reply, fields)).resolves.toEqual(expected);
+  });
+
+  // Where the host's reply literal could not be read, the payload decides: a
+  // reply nesting its value under `result` must come back unwrapped, not as
+  // `{ result }`. The flat case is the row above.
+  const unread = requests.filter(([, host]) => host.replyKeys === null);
+  it('has types whose reply keys could not be read', () => {
+    expect(unread.length).toBeGreaterThan(0);
+  });
+
+  it.each(unread)('%s unwraps a reply nested under result', async (type, host) => {
+    await expect(exchange(type, host.reply, { result: { nested: type } })).resolves.toEqual({ nested: type });
   });
 
   // Only where the host is seen sending a failure: one it never sends proves nothing.
@@ -112,8 +125,23 @@ describe('a request the host never answers', () => {
   // what a block sees the day the host drops it from the bridge.
   it('points a dropped GET_VIEWER at blocks/me, not /me', () => {
     expect(unanswerable('GET_VIEWER').message).toBe(
-      "GET_VIEWER is not a request the host answers, so request() would wait forever. " +
+      `GET_VIEWER is not a request the host answered at civitai ${snapshot.capturedFrom}, ` +
+        `the host snapshot @civitai/sdk ${VERSION} was built from, so request() would wait forever. ` +
         "Use app.site.get('blocks/me') instead.",
+    );
+  });
+
+  // The ledger is frozen at publish time. A type the host added afterwards is
+  // refused too, and the message must not tell that caller it was retired.
+  it('tells a caller of an unknown type to upgrade, naming the version and snapshot', async () => {
+    const { transport, deliver } = mountTransport();
+    deliver(init());
+    const error = await transport.request('SOME_NEWER_HOST_REQUEST', {}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BridgeError);
+    expect((error as BridgeError).message).toBe(
+      `SOME_NEWER_HOST_REQUEST is not a request the host answered at civitai ${snapshot.capturedFrom}, ` +
+        `the host snapshot @civitai/sdk ${VERSION} was built from, so request() would wait forever. ` +
+        'If the host has added it since, upgrade @civitai/sdk; otherwise see BREAKING.md for where bridge messages moved.',
     );
   });
 });
