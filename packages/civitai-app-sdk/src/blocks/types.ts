@@ -678,14 +678,17 @@ export interface ViewerInfo {
    */
   signedIn?: true;
   /**
-   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
-   * for the viewer id — it is scope-gated and audited per call. Still sent;
-   * scheduled for removal once block adoption of `useViewer()` is measured.
+   * @deprecated Init-time identity disclosure. For the viewer id use
+   * `useViewer()` (`GET_VIEWER`) in React, or `app.site.get('blocks/me')` from
+   * `@civitai/sdk` anywhere else — both are scope-gated and audited per call.
+   * Still sent; scheduled for removal once block adoption of `useViewer()` is
+   * measured.
    */
   id: number;
   /**
-   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
-   * for the username. Still sent; scheduled for removal alongside `id`.
+   * @deprecated Init-time identity disclosure. For the username use
+   * `useViewer()` (`GET_VIEWER`) in React, or `app.site.get('blocks/me')` from
+   * `@civitai/sdk` anywhere else. Still sent; scheduled for removal alongside `id`.
    */
   username: string | null;
   /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */

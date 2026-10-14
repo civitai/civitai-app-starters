@@ -208,6 +208,7 @@ jobs:
       - run: pnpm --filter @civitai/sdk check:layering
       - run: pnpm --filter @civitai/sdk check:parity
       - run: pnpm --filter @civitai/sdk check:steps
+      - run: pnpm --filter @civitai/sdk check:host-replies
       - run: pnpm --filter @civitai/sdk test
       - run: pnpm --filter @civitai/sdk build
 

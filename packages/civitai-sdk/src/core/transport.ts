@@ -21,7 +21,10 @@ export interface BlockSnapshot {
   context: BlockContext;
   token: BlockToken;
   settings: BlockSettings;
-  /** `null` for anonymous viewers. For identity, read `/me` from the API rather than this. */
+  /**
+   * `null` for anonymous viewers. For identity, read `app.site.get('blocks/me')`
+   * rather than this — not `site.get('me')`, which does not accept a block token.
+   */
   viewer: ViewerInfo | null;
   theme: Theme;
   blockInstanceId: string;
