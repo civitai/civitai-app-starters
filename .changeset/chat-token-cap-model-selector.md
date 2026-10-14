@@ -1,9 +1,0 @@
----
-'@civitai/components-chat': minor
----
-
-A reply step may now write up to 16,384 tokens (it was 1,200), so a reasoning model has room to reason and still call a tool, and the assistant can write a file larger than about 4 KB in one call. Viewers set their own limit in Settings (**Longest reply step**, 1,024 to 32,768), and pages set the default with `configureChat({ maxOutputTokens })`; a stored value out of range or not a number is kept within the range. Conversation titles keep their own small limit.
-
-Each chat now has its own model. A button beside the add-file button shows it and opens a searchable list of the default, the page's `models`, the orchestrator's own models, and the OpenRouter models the orchestrator routes that cost at most $8 per million output tokens and support tool calls, each with its price (a $0 model shows "$0/M out", not "Free"). Models whose known context window is below a lower bound on what a reply needs (the reply cap, the conversation budget and the measured instructions and tools) are left out; a model that passes can still run out of room on an unusually long turn. The list loads once per session, and when it cannot load the button still offers the default, the page's models and any model id. The chat's model is saved with it; a reply uses the chat's model, else the viewer's default from Settings, else the page's `model`, so older chats behave as before. `/model` now shows or switches the current chat's model, and `/model default` makes the chat follow the viewer's default again.
-
-With Settings' Assistant set to **Free**, a model without free replies is no longer sent paid: the reply fails with "This model has no free replies, and you chose free replies only." and nothing is charged. The reply offers **Allow paid replies and try again**, and Settings shows a stored Free choice as "Free (unavailable)" when there are no free replies, so the viewer can switch.
