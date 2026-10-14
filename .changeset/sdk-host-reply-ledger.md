@@ -3,8 +3,9 @@
 '@civitai/app-sdk': patch
 ---
 
-`getTransport().request(type)` now receives the reply to every request type the host
-answered when this version was built, and refuses at once a type the host never answered.
+`getTransport().request(type)` now knows the reply name and shape of every request type
+the host answered when this version was built, and refuses at once a type the host never
+answered.
 
 - The reply ledger is generated from the host's inventory (`snapshots/host-messages.json`,
   now carrying each request's reply name, framing and success keys) and covers all 43
@@ -18,9 +19,12 @@ answered when this version was built, and refuses at once a type the host never 
   `app.site.get('blocks/me')`). The list of types is fixed at publish time, so a type
   the host adds later is refused too, and the message names the SDK version and host
   snapshot and says to upgrade.
-- The ledger does not know which page hosts the block. `GET_WILDCARD_PACK` is answered
-  only on full-page app hosts; in a model-page slot the host neither answers nor refuses
-  it, so that call still never settles. Pass a `signal` to bound it.
+- Knowing the reply is not a promise that one comes: `request()` still has no deadline
+  of its own, and the host stays silent in some cases. `REQUEST_TOKEN`
+  (`getToken({ fresh: true })`) gets no reply while the host holds no token,
+  `GET_WILDCARD_PACK` gets none in a model-page slot (only full-page app hosts answer
+  it), and the host drops rate-limited or replayed requests without replying. Pass a
+  `signal` to bound any call that must settle.
 - `SCOPES` (and `Scope`) gain the scopes the host now grants: `apps:storage`,
   `apps:storage:publish`, `apps:store:items:write`, `goods:read:self` and
   `goods:purchase:self`.
