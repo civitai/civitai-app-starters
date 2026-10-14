@@ -22,6 +22,11 @@ export interface ChatConfig {
   /** New viewers' "ask before spending more than" limit, in Buzz; 0 asks every time. */
   autoRunLimit: number;
   /**
+   * The most steps (model requests) one reply may take; the last one must answer in words, and a reply
+   * that used them all offers Continue. 10 when unset, kept within 2 to 50. Each step is a paid request.
+   */
+  maxSteps?: number;
+  /**
    * The most tokens one step of a reply may write, reasoning and tool arguments included, unless the
    * viewer set their own in Settings. Kept within 1,024 to 32,768.
    */
@@ -57,6 +62,12 @@ export function outputTokenCap(value?: unknown): number {
 /** Changes what every chat on the page uses from its next reply; call it before the first chat starts. */
 export function configureChat(patch: Partial<ChatConfig>): void {
   Object.assign(chatConfig, Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)));
+}
+
+/** The step budget a reply uses: `chatConfig.maxSteps` rounded and kept within 2 to 50, else {@link MAX_STEPS}. */
+export function stepLimit(): number {
+  const value = chatConfig.maxSteps;
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(50, Math.max(2, Math.round(value))) : MAX_STEPS;
 }
 
 export const MAX_STEPS = 10;

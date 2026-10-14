@@ -11,6 +11,7 @@ import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
+import { CHOICE_INVALID, CHOICE_RETRY_NOTE, normalizeChoice } from './choice.js';
 import { FALLBACK_SEARCH_SCHEMA, searchModelsViaApi, type FallbackSearchArgs } from './site-fallback.js';
 
 export interface TurnToolContext {
@@ -140,10 +141,11 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
       required: ['question', 'options'],
       additionalProperties: false,
     }),
-    execute: async () => ({
-      shown: true,
-      note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.',
-    }),
+    // `awaitsUser` ends the reply; an input the card could not show does not, so the model can fix it.
+    execute: async (input) =>
+      normalizeChoice(input)
+        ? { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' }
+        : { error: CHOICE_INVALID, note: CHOICE_RETRY_NOTE },
   });
 
   return tools;

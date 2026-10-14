@@ -1,18 +1,23 @@
-import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, stepCountIs, streamText, type AssistantModelMessage, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 
-import { MAX_STEPS, outputTokenCap } from '../config.js';
+import { outputTokenCap, stepLimit } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ThreadStore } from '../store/thread-store.js';
-import { ASK_CHOICE } from '../tools/build.js';
 import type { Attachment, Turn } from '../types.js';
-import { humanize } from '../ux/humanize.js';
+import { humanize, type HumanError } from '../ux/humanize.js';
+import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
 import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
+import { stripToolMarkup } from './tool-markup.js';
 
-/** A tool that hands the next move to the viewer (an ask panel) ends the reply, so the assistant cannot act for them. */
+/**
+ * A tool that hands the next move to the viewer (an ask panel, a choice shown) ends the reply, so the
+ * assistant cannot act for them. A call whose result does not say so (a choice that could not be
+ * shown) does not, so the assistant can fix it in the same reply.
+ */
 const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
   steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
 
@@ -39,6 +44,11 @@ export interface AgentDeps {
   panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   now?(): Date;
+}
+
+/** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
+export interface AgentErrorDetail extends HumanError {
+  trace: ErrorTrace;
 }
 
 export interface LiveTurn {
@@ -90,8 +100,19 @@ export class Agent extends EventTarget {
     let completed: ModelMessage[] = [];
     let stepText = '';
     let streamError: unknown;
+    // Read once per reply, so a change applies from the next one.
+    const maxSteps = stepLimit();
+    // Steps whose answer started streaming; between one step's end and the next one's start its request is out.
+    let steps = 0;
+    let streaming = false;
+    let finished = 0;
+    let since = Date.now();
+    let toolsBuilt = false;
+    let failedAt: TraceContext | undefined;
+    const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
     try {
       const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
+      toolsBuilt = true;
       const hostInstructions = this.#deps.hostInstructions?.();
       const system = buildSystemPrompt({
         now: this.#deps.now?.() ?? new Date(),
@@ -107,31 +128,54 @@ export class Agent extends EventTarget {
         system,
         messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context }),
         tools,
-        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE), awaitsUser],
+        stopWhen: [stepCountIs(maxSteps), awaitsUser],
         abortSignal: controller.signal,
         maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
         temperature: 0.7,
         providerOptions: PROVIDER_OPTIONS,
         // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
+        prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
         onStepFinish: (step) => {
           completed = [...step.response.messages];
         },
       });
+      // Counted from the steps that started, not from what they said: a last step that returns nothing
+      // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
+      let forcedAt = -1;
       for await (const part of result.fullStream) {
-        if (part.type === 'start-step') stepText = '';
+        if (part.type === 'start-step') {
+          stepText = '';
+          steps++;
+          streaming = true;
+          if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
+        } else if (part.type === 'finish-step') {
+          finished++;
+          streaming = false;
+          since = Date.now();
+        }
         if (part.type === 'text-delta') stepText += part.text;
+        // Where it was when the first error came: the stream may still close its step after it.
+        if (part.type === 'error' && streamError === undefined) failedAt = where();
         if (part.type === 'error') streamError = part.error;
-        this.#onPart(part);
+        // The last step cannot call tools; tool-call syntax it writes as text is not shown (see tool-markup.ts).
+        if (forcedAt >= 0 && part.type === 'text-delta') this.#showForced(forcedAt, stripToolMarkup(stepText));
+        else this.#onPart(part);
       }
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else if (streamError !== undefined) this.#failed(turn, streamError);
-      else turn.assistant.status = 'done';
+      else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where());
+      else {
+        turn.assistant.status = 'done';
+        if (steps >= maxSteps) turn.assistant.ranOut = true;
+      }
     } catch (error) {
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else this.#failed(turn, error);
+      else this.#failed(turn, error, where());
     }
 
+    if (steps >= maxSteps) {
+      completed = withoutToolMarkup(completed);
+      stepText = stripToolMarkup(stepText);
+    }
     // A step cut short never reached onStepFinish; keep what the user already read.
     if (turn.assistant.status !== 'done' && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
     turn.assistant.messages = completed;
@@ -149,13 +193,32 @@ export class Agent extends EventTarget {
     }
   }
 
-  #failed(turn: Turn, error: unknown): void {
+  #failed(turn: Turn, error: unknown, where: TraceContext): void {
     turn.assistant.status = 'error';
     const human = humanize(error);
+    const trace = errorTrace(error, where);
     turn.assistant.error = human.message;
     turn.assistant.errorDetail = human.detail;
     turn.assistant.errorKind = human.kind;
-    this.dispatchEvent(new CustomEvent('error', { detail: human }));
+    turn.assistant.errorTrace = trace;
+    this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { ...human, trace } }));
+  }
+
+  /** Where the reply is, for an error's trace: a tool still running wins over the step's request or stream. */
+  #where(toolsBuilt: boolean, step: number, since: number, streaming: boolean): TraceContext {
+    const lastTool = [...(this.live?.parts ?? [])].reverse().find((part) => part.kind === 'tool');
+    const tool = lastTool?.kind === 'tool' ? { name: lastTool.toolName, state: lastTool.state } : undefined;
+    const stage = !toolsBuilt ? 'tools' : tool?.state === 'calling' ? 'tool' : streaming ? 'stream' : 'request';
+    return { stage, step: toolsBuilt ? step : 0, msIntoStep: Date.now() - since, ...(tool ? { lastTool: tool } : {}) };
+  }
+
+  /** The last step's words so far, cleaned, as one text part from where that step began. */
+  #showForced(at: number, text: string): void {
+    const live = this.live;
+    if (!live) return;
+    if (text === '') live.parts.splice(at);
+    else live.parts[at] = { kind: 'text', text };
+    this.#emit();
   }
 
   #onPart(part: TextStreamPart<ToolSet>): void {
@@ -208,4 +271,21 @@ export class Agent extends EventTarget {
   #emit(): void {
     this.dispatchEvent(new Event('change'));
   }
+}
+
+/** The reply's last assistant message with tool-call syntax taken out of its text, and dropped if nothing is left. */
+function withoutToolMarkup(messages: ModelMessage[]): ModelMessage[] {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant') return messages;
+  let cleaned: AssistantModelMessage;
+  if (typeof last.content === 'string') cleaned = { ...last, content: stripToolMarkup(last.content) };
+  else {
+    const content: Exclude<AssistantModelMessage['content'], string> = [];
+    for (const part of last.content) {
+      if (part.type !== 'text') content.push(part);
+      else if (stripToolMarkup(part.text) !== '') content.push({ ...part, text: stripToolMarkup(part.text) });
+    }
+    cleaned = { ...last, content };
+  }
+  return cleaned.content.length === 0 ? messages.slice(0, -1) : [...messages.slice(0, -1), cleaned];
 }

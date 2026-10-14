@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { chatConfig, configureChat } from '../config.js';
 import { flush } from '../test-support/fakes.js';
 import { defineElements } from './define.js';
 
@@ -433,6 +434,72 @@ describe('civitai-chat', () => {
     button()!.click();
     await vi.waitFor(() => expect(replies).toEqual([null]));
     expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantTier).toBe('auto');
+  });
+
+  it('offers Continue on a reply that ran out of steps, and Continue asks the assistant to carry on', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const sse = (...chunks: unknown[]) =>
+      new Response([...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`), 'data: [DONE]\n\n'].join(''), { headers: { 'content-type': 'text/event-stream' } });
+    const choice = { question: 'Which?', options: '[{"label":"A"}' };
+    const sent: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        if (!String(url).includes('chat/completions')) return new Response('{}');
+        const body = JSON.parse(String(init?.body)) as { messages: { role: string; content: unknown }[]; tool_choice?: unknown; stream?: boolean };
+        // Naming the chat is a separate, non-streamed request.
+        if (!body.stream) return new Response(JSON.stringify({ id: 't', choices: [{ index: 0, message: { role: 'assistant', content: 'Pomodoro' }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+        sent.push(JSON.stringify(body.messages.filter((m) => m.role === 'user').at(-1)?.content));
+        // A choice the card cannot show, then a forced last step that says nothing.
+        if (body.tool_choice === 'none') return sse({ id: 'r', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+        return sse(
+          { id: 'r', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: `c${sent.length}`, type: 'function', function: { name: 'ask_choice', arguments: JSON.stringify(choice) } }] }, finish_reason: null }] },
+          { id: 'r', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        );
+      }),
+    );
+    configureChat({ maxSteps: 2 });
+    try {
+      const chat = document.createElement('civitai-chat');
+      chat.mcp = { orchestration: false, site: false };
+      chat.app = fakeApp();
+      document.body.append(chat);
+      const root = chat.shadowRoot!;
+      await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+
+      await chat.send('build me a pomodoro timer');
+      const button = () => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread .cvt-ran-out civitai-button')].find((b) => b.textContent?.trim() === 'Continue');
+      await vi.waitFor(() => expect(button()).toBeDefined());
+      expect(sent).toHaveLength(2);
+
+      button()!.click();
+      await vi.waitFor(() => expect(sent).toHaveLength(4));
+      expect(sent[2]).toContain('Continue where you left off.');
+    } finally {
+      delete chatConfig.maxSteps;
+    }
+  });
+
+  it('reports a failed reply to the page as reply-error, with where it broke', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) =>
+        String(url).includes('chat/completions') ? new Response(JSON.stringify({ error: { message: 'upstream exploded' } }), { status: 422, headers: { 'content-type': 'application/json', 'x-request-id': 'req-7' } }) : new Response('{}'),
+      ),
+    );
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp();
+    const reported: { kind: string; trace: Record<string, unknown> }[] = [];
+    chat.addEventListener('reply-error', (event) => reported.push((event as CustomEvent).detail));
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+
+    await chat.send('hello');
+    await vi.waitFor(() => expect(reported).toHaveLength(1));
+    expect(reported[0]!.trace).toMatchObject({ stage: 'request', step: 1, statusCode: 422, requestId: 'req-7', name: 'AI_APICallError' });
   });
 
   it('still offers the default and a custom model id when neither model list can be reached', async () => {

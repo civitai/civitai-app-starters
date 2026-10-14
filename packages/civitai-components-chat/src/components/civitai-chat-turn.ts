@@ -1,6 +1,7 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { describeTrace } from '../agent/error-trace.js';
 import type { TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
@@ -110,9 +111,15 @@ export class CivitaiChatTurn extends LightElement {
   }
 
   #footer(): TemplateResult | typeof nothing {
-    const { status, error, errorDetail } = this.turn.assistant;
+    const { status, error, errorDetail, errorTrace } = this.turn.assistant;
     if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
+    if (status === 'done' && this.turn.assistant.ranOut) {
+      return html`<div class="cvt-note cvt-ran-out">
+        This took more steps than one reply allows.
+        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue')}>Continue</civitai-button>` : nothing}
+      </div>`;
+    }
     if (status === 'error' && error === CUT_OFF) return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
     if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
       return html`<civitai-alert color="info">
@@ -129,10 +136,12 @@ export class CivitaiChatTurn extends LightElement {
       </civitai-alert>`;
     }
     if (status === 'error') {
+      const shown = errorDetail && errorDetail !== error ? errorDetail : '';
+      const where = errorTrace ? describeTrace(errorTrace) : '';
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}
-        ${errorDetail && errorDetail !== error
-          ? html`<details class="cvt-error-details"><summary>Details</summary><code>${errorDetail}</code></details>`
+        ${shown || where
+          ? html`<details class="cvt-error-details"><summary>Details</summary>${shown ? html`<code>${shown}</code>` : nothing}${where ? html`<code class="cvt-error-trace">${where}</code>` : nothing}</details>`
           : nothing}
       </civitai-alert>`;
     }

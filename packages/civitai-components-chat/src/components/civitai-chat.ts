@@ -4,6 +4,7 @@ import type { AppClient, BlockAppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
+import type { AgentErrorDetail } from '../agent/agent.js';
 import { buildModelList, usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
 import { SCOPE_PATTERN, chatConfig, outputTokenCap } from '../config.js';
@@ -306,6 +307,10 @@ export class CivitaiChat extends LitElement {
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
+    // For the page's own telemetry: the words the viewer saw, and where the reply broke (`trace`).
+    session.agent.addEventListener('error', (event) => {
+      if (this.#session === session) this.dispatchEvent(new CustomEvent<AgentErrorDetail>('reply-error', { detail: (event as CustomEvent<AgentErrorDetail>).detail, bubbles: true, composed: true }));
+    });
     session.addEventListener('settings-change', this.#rerender);
     // A server's tools carry its label in the thread once they are listed.
     session.addEventListener('mcp-servers-change', this.#rerender);
@@ -913,7 +918,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

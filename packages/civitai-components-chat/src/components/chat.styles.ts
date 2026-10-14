@@ -1180,6 +1180,13 @@ civitai-chat-model-picker {
   color: var(--civitai-color-text);
 }
 
+.cvt-ran-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .cvt-transcribing {
   display: flex;
   align-items: center;
