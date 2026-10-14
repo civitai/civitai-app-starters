@@ -45,6 +45,9 @@
  *
  * This module declares no runtime value; it compiles to an empty ES module.
  */
+import type { BlockPickedImageInfo } from '@civitai/app-sdk/blocks';
+
+import type { ImagePickerMultiple } from './useImagePicker.js';
 import type {
   useAppStorage,
   useAppWorkflows,
@@ -75,6 +78,7 @@ import type {
   useGenerationResources,
   useGoodPurchase,
   useHostOrigin,
+  useImagePicker,
   useImageUpload,
   useNestedDocument,
   usePrepareTrainingDataset,
@@ -121,6 +125,7 @@ import type {
   UseGenerationResources,
   UseGoodPurchase,
   UseHostOrigin,
+  UseImagePicker,
   UseImageUpload,
   UseNestedDocument,
   UsePrepareTrainingDataset,
@@ -214,6 +219,7 @@ type _usePublishGenerationOutputs = Assert<
 >;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
+type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
 type _useRunConfirmedStep = Assert<
   Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>
@@ -229,5 +235,55 @@ type _useUploadImageBytes = Assert<
 type _useViewer = Assert<Exact<ReturnType<typeof useViewer>, UseViewer>>;
 type _useWildcardPack = Assert<Exact<ReturnType<typeof useWildcardPack>, UseWildcardPack>>;
 type _useWorkflowBatch = Assert<Exact<ReturnType<typeof useWorkflowBatch>, UseWorkflowBatch>>;
+
+/**
+ * `useImagePicker().open` is OVERLOADED, and `ReturnType` reads only the last
+ * signature, so the line above cannot see what each overload resolves with.
+ * This reads all three, in declaration order, with their option types.
+ *
+ * The third exists for a `multiple` decided at runtime
+ * (`open({ multiple: many ? { max: 3 } : undefined })`), which neither of the
+ * first two accepts. The last three assertions pin exactly that: the toggle's
+ * argument fits the third signature and neither of the others.
+ */
+type ImagePickerOpenSignatures = UseImagePicker['open'] extends {
+  (opts?: infer SingleOpts): infer SingleResult;
+  (opts: infer MultiOpts): infer MultiResult;
+  (opts: infer ToggleOpts): infer ToggleResult;
+}
+  ? {
+      singleOpts: SingleOpts;
+      single: SingleResult;
+      multiOpts: MultiOpts;
+      multi: MultiResult;
+      toggleOpts: ToggleOpts;
+      toggle: ToggleResult;
+    }
+  : never;
+type ImagePickerToggleArg = { multiple: ImagePickerMultiple | undefined };
+type _imagePickerSingle = Assert<
+  Exact<ImagePickerOpenSignatures['single'], Promise<BlockPickedImageInfo | null>>
+>;
+type _imagePickerMulti = Assert<
+  Exact<ImagePickerOpenSignatures['multi'], Promise<BlockPickedImageInfo[]>>
+>;
+type _imagePickerToggle = Assert<
+  Exact<
+    ImagePickerOpenSignatures['toggle'],
+    Promise<BlockPickedImageInfo | BlockPickedImageInfo[] | null>
+  >
+>;
+type _imagePickerToggleFits = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['toggleOpts'] ? true : false
+>;
+// Two assertions, not one against a union of the two option types: TypeScript
+// accepts `{ multiple: A | undefined }` for `{ multiple?: undefined } | { multiple: A }`
+// by splitting it across the union, which overload resolution never does.
+type _imagePickerToggleMissesSingle = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['singleOpts'] ? false : true
+>;
+type _imagePickerToggleMissesMulti = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['multiOpts'] ? false : true
+>;
 
 export {};

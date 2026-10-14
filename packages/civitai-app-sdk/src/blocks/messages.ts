@@ -15,6 +15,8 @@ import type {
   BlockResourcePickerType,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockImagePickerSource,
+  BlockPickedImageInfo,
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
@@ -931,6 +933,30 @@ export type ParentToBlockMessage =
       payload: { requestId: string; imageId: number; result: BlockImageScanResult };
     }
   | {
+      // Reply to OPEN_IMAGE_PICKER (the viewer picking from their OWN Civitai
+      // images). The iframe never receives the library or a search result, only
+      // what the viewer picked ({@link BlockPickedImageInfo}).
+      //
+      // TWO REPLY SHAPES, one per request shape, never mixed:
+      //   - single pick (no `multiple` on the request): `{ requestId, selected? }`.
+      //     `selected` is absent when nothing was picked — the hook resolves
+      //     to `null`.
+      //   - multi pick (`multiple` on the request): `{ requestId,
+      //     selectedImages }` — 1..max images, `[]` when nothing was picked.
+      //     `selected` is not set, and the list is always present.
+      //
+      // `error` is set only when the host REFUSES the request (an invalid
+      // `sources` or `multiple.max`, or a surface that does not offer the
+      // picker), and never beside a pick.
+      type: 'IMAGE_PICKER_RESULT';
+      payload: {
+        requestId: string;
+        selected?: BlockPickedImageInfo;
+        selectedImages?: BlockPickedImageInfo[];
+        error?: string;
+      };
+    }
+  | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
       // `error` string (e.g. "wrong-ecosystem"), distinct from the block
       // lifecycle error class.
@@ -1629,6 +1655,45 @@ export type BlockToParentMessage =
       };
     }
   | {
+      // Ask the host (PAGE surface) to open its picker over the VIEWER'S OWN
+      // Civitai images: the ones they posted and the ones they made with the
+      // generator. Host chrome, like OPEN_RESOURCE_PICKER: the block never
+      // lists the library and receives only what the viewer picked, as
+      // {@link BlockPickedImageInfo} on `IMAGE_PICKER_RESULT`. Images only.
+      // No scope is required and the block sends no token.
+      //
+      // The host decides what is pickable; {@link BlockPickedImageInfo} is the
+      // one place that states the rule and what a pick's fields mean.
+      // It refuses with `{ requestId, error }` for a `sources` that is not a
+      // non-empty array of known members and for a `multiple` whose `max` is
+      // not a whole number ≥ 1. A surface that does not offer the picker
+      // answers `unsupported on this host` the same way. In review mode, and
+      // for a block that is not ready, it answers at once as if nothing was
+      // picked, without showing a picker.
+      //
+      // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT. The host's generic
+      // `unsupported on this host` reply exists only for message types the host
+      // already knows, so against an older host this request ends at the caller's
+      // timeout rather than with an error reply.
+      type: 'OPEN_IMAGE_PICKER';
+      payload: {
+        requestId: string;
+        /**
+         * Which of the viewer's libraries to offer. OMIT the key for both. The
+         * host de-duplicates repeats and refuses an empty array or an unknown
+         * member.
+         */
+        sources?: BlockImagePickerSource[];
+        /**
+         * Ask for SEVERAL images in one picker session. `max` is a whole
+         * number ≥ 1; the host clamps anything above 20 to 20. The reply is
+         * then `selectedImages`, not `selected`. OMIT the key for a single
+         * pick.
+         */
+        multiple?: { max: number };
+      };
+    }
+  | {
       // Persist a viewer's checkpoint override via the host. `null` clears
       // the override and falls back to the publisher default.
       type: 'SET_USER_CHECKPOINT';
@@ -1951,6 +2016,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'OPEN_CHECKPOINT_PICKER',
   'OPEN_RESOURCE_PICKER',
   'OPEN_IMAGE_UPLOAD',
+  'OPEN_IMAGE_PICKER',
   'SET_USER_CHECKPOINT',
   'NAVIGATE',
   'REQUEST_SIGN_IN',

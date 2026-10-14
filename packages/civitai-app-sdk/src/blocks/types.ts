@@ -323,6 +323,78 @@ export type BlockNavigateScope = 'app' | 'site';
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
+ * Which of the viewer's own image libraries `OPEN_IMAGE_PICKER` (via
+ * `useImagePicker`) offers:
+ *  - `'posted'` — images the viewer has posted to Civitai.
+ *  - `'generated'` — outputs the viewer made with the Civitai generator.
+ *
+ * The request's `sources` narrows the picker to one of them; omitting it offers
+ * both. Images only — neither library offers video through this picker.
+ */
+export type BlockImagePickerSource = 'posted' | 'generated';
+
+/**
+ * One image the viewer picked from their own Civitai images
+ * (`IMAGE_PICKER_RESULT.selected` / `.selectedImages`, via `useImagePicker`).
+ * The host lists and filters the library in its own chrome; the block receives
+ * only what the viewer picked.
+ *
+ * WHAT IS PICKABLE is decided by the host, never by the block:
+ *  - `'posted'`: the viewer's own images that are in a published post, fully
+ *    scanned, not flagged, and rated.
+ *  - `'generated'`: the viewer's own succeeded generator outputs that carry a
+ *    rating the host recognises.
+ *  - Either way the image's rating has to be one the VIEWER'S OWN browsing
+ *    level on the site allows: the viewer is offered what they can already
+ *    browse. An unrated image is never pickable.
+ *
+ * 🔴 A PICK CAN BE A MATURE IMAGE. `nsfwLevel` is the image's rating and is
+ * never 0. The pick was offered to this viewer under this viewer's settings;
+ * nothing about it says anyone else may see it. An app that shows a pick to
+ * anybody other than the viewer who picked it has to gate that on `nsfwLevel`
+ * itself.
+ *
+ * WHAT `url`, `width` AND `height` ARE differs by library:
+ *  - `'posted'`: `url` is a RESIZED RENDITION of the image, not the original
+ *    file. `width` / `height` are the size that rendition is requested at, and
+ *    the host picks one with both sides within 64–2048 (a small original is
+ *    upscaled). The image CDN normally serves exactly that size; it can serve
+ *    the original instead while a rendition is still being produced. A posted
+ *    image with no rendition in that range (an extreme aspect ratio) is not
+ *    pickable.
+ *  - `'generated'`: `url` is the generator's own output URL, and `width` /
+ *    `height` are the output's own size, which can exceed 2048. 🔴 That URL
+ *    may be time-limited: use it promptly and do not store it.
+ *
+ * AS A GENERATION SOURCE: `url` is Civitai-hosted, so `{ url, width, height }`
+ * has the shape of a {@link BlockSourceImage} and passes the generation body's
+ * source-image URL check. That is all this type promises. The generation body
+ * still applies its own rules, including 64–2048 per side, which a generated
+ * pick can exceed.
+ */
+export interface BlockPickedImageInfo {
+  /** Which library the viewer picked it from. */
+  source: BlockImagePickerSource;
+  /** Civitai-hosted image URL. What it points at differs by `source`; see above. */
+  url: string;
+  /** Pixel width that goes with `url`; see above for each `source`. */
+  width: number;
+  /** Pixel height that goes with `url`; see above for each `source`. */
+  height: number;
+  /**
+   * The image's NSFW-level bitmask value (same scale as
+   * {@link BlockUploadedImageInfo.nsfwLevel}). Can be a mature level; never 0.
+   */
+  nsfwLevel: number;
+  /**
+   * The `Image` row id. Present for `source: 'posted'`; ABSENT for
+   * `source: 'generated'` (a generator output that was never posted has no
+   * `Image` row).
+   */
+  imageId?: number;
+}
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

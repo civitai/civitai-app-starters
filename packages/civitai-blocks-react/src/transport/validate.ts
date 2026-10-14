@@ -1747,6 +1747,58 @@ export function isValidResourcePickerResult(p: unknown): boolean {
   return true;
 }
 
+const IMAGE_PICKER_SOURCES = new Set<string>(['posted', 'generated']);
+
+/**
+ * One `BlockPickedImageInfo`: `source` one of the two libraries, a non-empty
+ * `url`, finite positive `width`/`height`, a finite `nsfwLevel`, and an
+ * `imageId` that is either ABSENT (a generated output has none) or a positive
+ * integer. Shared by the single-pick `selected` and every entry of the
+ * multi-pick `selectedImages`, so the two cannot drift on what a well-formed
+ * image is.
+ */
+function isValidPickedImage(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (typeof s.source !== 'string' || !IMAGE_PICKER_SOURCES.has(s.source)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (!isFiniteNumber(s.width) || s.width <= 0) return false;
+  if (!isFiniteNumber(s.height) || s.height <= 0) return false;
+  if (!isFiniteNumber(s.nsfwLevel)) return false;
+  if (s.imageId !== undefined) {
+    if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_IMAGE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockPickedImageInfo`.
+ *
+ * Multi pick: `selectedImages` is an array of the same shape (`[]` on dismiss).
+ * ONE malformed entry drops the whole reply: handing the caller the
+ * well-formed remainder would silently change which images it goes on to use.
+ *
+ * `error` (a refusal) must be a string when present, and a reply carrying one
+ * is accepted without looking further: `useImagePicker` throws on a PRESENT
+ * `error` before it reads `selected` / `selectedImages`. 🔴 Accepting it is
+ * load-bearing: dropping `{ requestId, error }` would leave the hook waiting
+ * out its whole human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidImagePickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading a pick
+  if (p.selected !== undefined && !isValidPickedImage(p.selected)) return false;
+  if (p.selectedImages !== undefined) {
+    if (!Array.isArray(p.selectedImages)) return false;
+    if (!p.selectedImages.every(isValidPickedImage)) return false;
+  }
+  return true;
+}
+
 /**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
@@ -1921,6 +1973,8 @@ export function payloadValidatorFor(
       return isValidCheckpointPickerResult;
     case 'RESOURCE_PICKER_RESULT':
       return isValidResourcePickerResult;
+    case 'IMAGE_PICKER_RESULT':
+      return isValidImagePickerResult;
     case 'USER_CHECKPOINT_SET':
       return isValidUserCheckpointSetResult;
     case 'SUSPEND':
