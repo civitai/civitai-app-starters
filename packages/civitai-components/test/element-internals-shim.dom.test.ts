@@ -123,6 +123,28 @@ describe('the ElementInternals shim under happy-dom', () => {
     expect(invalidEvents).toBe(1);
   });
 
+  it.each([
+    ['a disabled', '<civitai-text-input required disabled></civitai-text-input>'],
+    ['a readonly', '<civitai-text-input required readonly></civitai-text-input>'],
+    ['a fieldset[disabled]-nested', '<fieldset disabled><civitai-text-input required></civitai-text-input></fieldset>'],
+  ])('bars %s control from constraint validation, as the platform does', async (_case, markup) => {
+    document.body.innerHTML = markup;
+    const input = document.querySelector('civitai-text-input') as Lit & {
+      internals: ElementInternals;
+      checkValidity(): boolean;
+    };
+    await input.updateComplete;
+    let invalidEvents = 0;
+    input.addEventListener('invalid', () => (invalidEvents += 1));
+    // Still valueMissing (the element computes that itself) ...
+    expect(input.internals.validity.valueMissing).toBe(true);
+    // ... but barred: not a candidate, so it never blocks submit.
+    expect(input.internals.willValidate).toBe(false);
+    expect(input.checkValidity()).toBe(true);
+    expect(input.internals.reportValidity()).toBe(true);
+    expect(invalidEvents).toBe(0);
+  });
+
   it('records the value the control hands its form', async () => {
     const input = document.createElement('civitai-text-input') as Lit & { value: string };
     document.body.append(input);

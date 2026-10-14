@@ -24,10 +24,12 @@
  *
  * WHAT IT DOES. Only when `attachInternals` is ABSENT, it installs a minimal
  * stand-in covering what the elements call: `form` (the nearest ancestor
- * `<form>`), `labels`, `validity` / `validationMessage` / `willValidate` driven
- * by `setValidity`, `checkValidity` / `reportValidity` (which fire a cancelable
- * `invalid` event when invalid, as native ones do), `setFormValue`, `states`
- * and `shadowRoot`. In a real browser — or any DOM that grows the API — it does
+ * `<form>`), `labels`, `validity` / `validationMessage` driven by
+ * `setValidity`, `willValidate` (false for a disabled or readonly control, which
+ * the platform bars from constraint validation), `checkValidity` /
+ * `reportValidity` (which fire a cancelable `invalid` event when a validated
+ * control is invalid, as native ones do), `setFormValue`, `states` and
+ * `shadowRoot`. In a real browser — or any DOM that grows the API — it does
  * nothing at all.
  *
  * WHAT IT DOES NOT DO. It does not make `new FormData(form)` include a custom
@@ -88,8 +90,17 @@ class ElementInternalsShim {
     return this.#host.shadowRoot;
   }
 
+  /**
+   * Native rule for a form-associated custom element: it is BARRED from
+   * constraint validation when it is disabled (its own `disabled` attribute or
+   * a `<fieldset disabled>` ancestor) or has a `readonly` attribute. A barred
+   * control never reports invalid and never fires `invalid`. Simplified: the
+   * native exemption for content of a disabled fieldset's first `<legend>` is
+   * not modelled.
+   */
   get willValidate(): boolean {
-    return true;
+    const host = this.#host;
+    return !(host.hasAttribute('disabled') || host.hasAttribute('readonly') || host.closest('fieldset[disabled]'));
   }
 
   get validity(): ValidityState {
@@ -120,7 +131,7 @@ class ElementInternalsShim {
   }
 
   checkValidity(): boolean {
-    if (this.#validity.valid) return true;
+    if (!this.willValidate || this.#validity.valid) return true;
     this.#host.dispatchEvent(new Event('invalid', { cancelable: true }));
     return false;
   }
