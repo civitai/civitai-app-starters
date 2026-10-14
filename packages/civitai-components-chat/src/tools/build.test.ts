@@ -167,7 +167,7 @@ describe('fetch_page', () => {
   // 7,178 characters, as the onboarding page the eval read; its end is what a 4,000 cut lost.
   const PAGE = `# Build an app\n${'Step text that matters. '.repeat(298)}\nLAST LINE: run civitai app submit`.slice(0, 7_178);
 
-  it('reads a whole page of up to 16,000 characters', async () => {
+  it('reads a whole page of up to 17,000 characters', async () => {
     expect(PAGE.length).toBe(7_178);
     const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, PAGE)) } });
     const tools = buildToolSet(withFetch(), ctx);
@@ -175,11 +175,21 @@ describe('fetch_page', () => {
   });
 
   it('says how much of a longer page, or another tool’s long reply, was left out', async () => {
-    const long = 'x'.repeat(16_500);
+    const long = 'x'.repeat(17_500);
     const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, long)) } });
     const tools = buildToolSet(withFetch(), ctx);
-    expect(await run(tools.fetch_page, { url: 'https://developer.example/long' })).toBe(`${'x'.repeat(16_000)}\n…(500 more characters not shown)`);
-    expect(await run(tools.get_guide, {})).toBe(`${'x'.repeat(4_000)}\n…(12500 more characters not shown)`);
+    expect(await run(tools.fetch_page, { url: 'https://developer.example/long' })).toBe(`${'x'.repeat(17_000)}\n…(500 more characters not shown)`);
+    expect(await run(tools.get_guide, {})).toBe(`${'x'.repeat(4_000)}\n…(13500 more characters not shown)`);
+  });
+
+  it("passes the page server's own 16,000-character cut through whole, its marker included", async () => {
+    // What the server sends for a long page: a title line, its first 16,000 characters, then its marker.
+    const cut = `# A long docs page\n\n${'p'.repeat(16_000)}\n\n[Page truncated]`;
+    const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, cut)) } });
+    const tools = buildToolSet(withFetch(), ctx);
+    const text = (await run(tools.fetch_page, { url: 'https://developer.example/huge' })) as string;
+    expect(text).toBe(cut);
+    expect(text.endsWith('[Page truncated]')).toBe(true);
   });
 
   it('fetches a page once per chat, however often it is asked for, and again in another chat', async () => {

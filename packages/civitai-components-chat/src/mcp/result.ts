@@ -5,9 +5,15 @@ export const MAX_TEXT = 4_000;
 /**
  * Tools whose replies the assistant needs whole get a larger cap. A page read cut at 4,000
  * characters showed the assistant less than half of a docs page, and it fetched again hoping for
- * the rest; 16,000 characters is about 4,600 tokens by the package's 3.5-characters-a-token estimate.
+ * the rest.
+ *
+ * `fetch_page`'s server already cuts a page at 16,000 characters, and its reply adds a `# title`
+ * line in front and a `[Page truncated]` marker after. The cap here sits above that, so the
+ * server's own cut (and its marker) reaches the assistant unchanged; the 1,000 characters of
+ * headroom cover the title, blank lines and marker. It stays a bound for a server that does not
+ * cut. 17,000 characters is about 4,900 tokens by the package's 3.5-characters-a-token estimate.
  */
-export const TOOL_TEXT_CAP: Readonly<Record<string, number>> = { fetch_page: 16_000 };
+export const TOOL_TEXT_CAP: Readonly<Record<string, number>> = { fetch_page: 17_000 };
 
 /** The cap for one tool's reply to the assistant. */
 export function textCapFor(toolName: string): number {

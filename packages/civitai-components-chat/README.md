@@ -160,7 +160,7 @@ chat.mcpServers = [
 - **Results.** A reply goes back to the assistant as text. A long one keeps its first 2,000 and last
   6,000 characters with a note of how many were left out between, since a build or a test run prints
   its errors last. (Civitai's own tools keep the first 4,000 characters, and `fetch_page` the first
-  16,000, each with a note of how many more were not shown. A page `fetch_page` already read in this
+  17,000, which leaves the page server's own 16,000-character cut and its marker whole, each with a note of how many more were not shown. A page `fetch_page` already read in this
   chat is not fetched, or paid for, again: the assistant gets the same text, marked as already
   fetched, until the page reloads.)
 
