@@ -283,7 +283,14 @@ describe('civitai-chat', () => {
         { id: 'pricey/model', name: 'Pricey Model', pricing: { completion: '0.000015' }, supported_parameters: ['tools'] },
       ],
     };
-    const routable = { data: [{ id: 'cheap/model', owned_by: 'openrouter' }, { id: 'pricey/model', owned_by: 'openrouter' }] };
+    const routable = {
+      data: [
+        { id: 'cheap/model', owned_by: 'openrouter' },
+        { id: 'pricey/model', owned_by: 'openrouter' },
+        // Fits 1,024 + 24,000 tokens, not 16,384 + 24,000.
+        { id: 'urn:air:hosted:narrow-window', owned_by: 'civitai', context_length: 26_000 },
+      ],
+    };
     const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => {
       if (String(url) === 'https://openrouter.ai/api/v1/models') return new Response(JSON.stringify(openRouter));
       if (String(url).endsWith('/v1/models')) return new Response(JSON.stringify(routable));
@@ -302,6 +309,7 @@ describe('civitai-chat', () => {
     chip.click();
     await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.61/M out cheap/model'));
     expect(options().join(' | ')).not.toContain('Pricey');
+    expect(options().join(' | ')).not.toContain('narrow-window');
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'cheap';
     search.dispatchEvent(new Event('input'));
@@ -320,6 +328,12 @@ describe('civitai-chat', () => {
     expect(options()).toEqual(['Use “someone/unlisted-model” Any chat model id the Civitai orchestrator serves']);
     typed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: someone/unlisted-model'));
+    // A smaller reply cap leaves room for the narrow model, from the next look at the list.
+    root.querySelector('civitai-chat-settings-dialog')!.dispatchEvent(new CustomEvent('cvt-settings-change', { detail: { maxOutputTokens: 1_024 } }));
+    await chat.updateComplete;
+    chip.click();
+    await chat.updateComplete;
+    expect(options().join(' | ')).toContain('urn:air:hosted:narrow-window Hosted');
     // The list loaded once for the session.
     expect(fetch.mock.calls.filter(([url]) => String(url) === 'https://openrouter.ai/api/v1/models')).toHaveLength(1);
   });

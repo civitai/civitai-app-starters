@@ -4,9 +4,9 @@ import type { AppClient, BlockAppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
-import { buildModelList, type ChatModelEntry } from '../agent/model-list.js';
+import { buildModelList, usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
-import { SCOPE_PATTERN, chatConfig } from '../config.js';
+import { SCOPE_PATTERN, chatConfig, outputTokenCap } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
@@ -606,7 +606,7 @@ export class CivitaiChat extends LitElement {
       .value=${session.assistantModel()}
       ?own=${Boolean(session.store.current?.model)}
       .defaultModel=${session.settings.assistantModel?.trim() || undefined}
-      .models=${this.modelList ?? buildModelList({ openRouter: null, orchestration: null })}
+      .models=${usableModels(this.modelList ?? buildModelList({ openRouter: null, orchestration: null }), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
       ?loading=${this.modelsLoading}
       @cvt-model-open=${() => this.#loadModels()}
       @cvt-model-pick=${(e: CustomEvent<{ model?: string }>) => this.#pickModel(e.detail.model)}

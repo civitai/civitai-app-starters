@@ -211,6 +211,22 @@ describe('ThreadStore', () => {
     expect((await store.open('B')).conversation.model).toBe('b/own-model');
   });
 
+  it("leaves saving a model picked mid-reply to that reply, so the two writes cannot cross", async () => {
+    const { store, deps } = setup([head('7-1', { conversationId: 'A' })]);
+    await store.open('A');
+    const turn = store.appendUserTurn('more please', []);
+    await flush();
+    const writes = deps.api.updateWorkflow.mock.calls.length;
+
+    await store.setModel('d/mid-reply-model');
+    expect(deps.api.updateWorkflow.mock.calls.length).toBe(writes);
+
+    turn.assistant = { messages: [], status: 'done' };
+    await store.completeTurn(turn);
+    const last = deps.api.updateWorkflow.mock.calls.at(-1) as unknown as [string, { metadata: ConversationMetadata }];
+    expect(last[1].metadata).toMatchObject({ model: 'd/mid-reply-model', turns: [{ seq: 1 }, { seq: 2, assistant: { status: 'done' } }] });
+  });
+
   it('saves a new chat\'s model with its first message', async () => {
     const { store, submitted } = setup();
     store.startNew();

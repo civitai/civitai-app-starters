@@ -180,7 +180,10 @@ conversation titles always use the default model.
 Each chat has its own model. The button beside the add-file button shows it and opens a searchable
 list: the default, `models`, the orchestrator's own models, and the OpenRouter models the
 orchestrator routes that cost at most $8 per million output tokens and support tool calls (the
-assistant works only through tool calls), each with its price per million output tokens. The list
+assistant works only through tool calls), each with its price per million output tokens. A model
+whose known context window cannot hold the viewer's reply cap plus the conversation the chat sends
+(up to 24,000 tokens) is left out, so changing the cap changes the list; the default, `models` and
+the chat's current model always stay. The list
 comes from OpenRouter's public `GET https://openrouter.ai/api/v1/models` and the orchestrator's
 `GET /v1/models` (as the viewer), loaded once per session when the list is first opened; if either
 cannot be reached the list still offers the default, `models` and any typed model id. A reply uses
@@ -193,8 +196,9 @@ allowance for the default model (`GET /v2/consumer/free-tier`; free requests car
 also Buzz when a free reply has not started after 12 seconds (free work waits behind paid work);
 **Free** uses only free replies, and once they are used up a reply says until when and offers
 **Continue with Buzz**, which switches to Auto and runs it again; **Default** always uses Buzz. A
-listed or custom model uses its own free allowance first if it has one. Without a free tier the
-choice is the model alone.
+listed or custom model uses its own free allowance first if it has one. With **Free**, a model that
+has no free replies is never sent paid: the reply says the model isn't free and nothing is charged.
+Without a free tier the choice is the model alone.
 
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches this chat's model

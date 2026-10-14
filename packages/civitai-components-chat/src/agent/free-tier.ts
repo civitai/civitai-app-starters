@@ -17,6 +17,7 @@ export interface FreeTierStatus {
 }
 
 export const FREE_TIER_EXHAUSTED = 'free_tier_exhausted';
+export const FREE_TIER_NOT_FREE = 'free_tier_not_free';
 /** Free work waits behind all paid work; past this with no reply yet, a viewer who allows paying gets a paid one. */
 export const FREE_START_MS = 12_000;
 
@@ -114,6 +115,8 @@ export function freeTierFetch(inner: typeof fetch, air: string, freeTier: FreeTi
   return async (input, init) => {
     const { useFree, payWhenOut } = choice();
     if (useFree && !freeTier.loaded) await freeTier.refresh();
+    // Free only, and this model has no free replies (or they could not be checked): never send it paid.
+    if (useFree && !payWhenOut && !freeTier.modelFor(air)) return notFree(freeTier.loaded);
     if (!useFree || !freeTier.modelFor(air)) return inner(input, init);
     if (!freeTier.available(air)) return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
 
@@ -170,6 +173,12 @@ async function firstChunk(body: ReadableStream<Uint8Array>, ms: number): Promise
       },
     }),
   };
+}
+
+// A 400, so the AI SDK does not retry it as it would a 429.
+function notFree(checked: boolean): Response {
+  const message = checked ? 'Model has no free replies' : 'Free replies could not be checked';
+  return Response.json({ error: { message, code: FREE_TIER_NOT_FREE } }, { status: 400 });
 }
 
 // A 400, so the AI SDK does not retry it as it would a 429.

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { chatConfig } from '../config.js';
-import { buildModelList, ModelCatalog, OPENROUTER_MODELS_URL, priceLabel } from './model-list.js';
+import { buildModelList, ModelCatalog, OPENROUTER_MODELS_URL, priceLabel, usableModels, type ChatModelEntry } from './model-list.js';
 
 const DEFAULT = 'urn:air:qwen3:repository:huggingface:example/default@main';
 const LISTED = [{ id: 'g/listed', label: 'Listed G', note: 'Picked by the page.' }];
@@ -52,8 +52,18 @@ describe('buildModelList', () => {
     ]);
   });
 
-  it('shows the price per million output tokens', () => {
-    expect([8, 0.37, 0.042, 0, undefined].map((pricePerMillion) => priceLabel({ pricePerMillion }))).toEqual(['$8.00/M out', '$0.37/M out', '$0.042/M out', 'Free', '']);
+  it('shows the price per million output tokens, and a $0 model as $0, never "Free" (that is the free tier)', () => {
+    expect([8, 0.37, 0.042, 0, undefined].map((pricePerMillion) => priceLabel({ pricePerMillion }))).toEqual(['$8.00/M out', '$0.37/M out', '$0.042/M out', '$0/M out', '']);
+  });
+
+  it('carries each model\'s context window from whichever list states it', () => {
+    const list = buildModelList({
+      openRouter: { data: [{ id: 'k/windowed', name: 'Windowed', pricing: { completion: '0.000001' }, supported_parameters: ['tools'], context_length: 65_536 }, { id: 'm/orch-window', name: 'Orch Window', pricing: { completion: '0.000002' }, supported_parameters: ['tools'] }] },
+      orchestration: { data: [{ id: 'k/windowed', owned_by: 'openrouter' }, { id: 'm/orch-window', owned_by: 'openrouter', context_length: 40_960 }, { id: 'urn:air:small:hosted', owned_by: 'civitai', context_length: 13_312 }] },
+      defaultModel: DEFAULT,
+      listed: [],
+    });
+    expect(Object.fromEntries(list.map((entry) => [entry.id, entry.contextLength]))).toEqual({ [DEFAULT]: undefined, 'urn:air:small:hosted': 13_312, 'k/windowed': 65_536, 'm/orch-window': 40_960 });
   });
 });
 
@@ -94,5 +104,31 @@ describe('ModelCatalog', () => {
     const { catalog } = setup(async () => new Response('nope', { status: 500 }), async () => json(openRouter));
     // The page's default is always there, though neither list names it.
     expect((await catalog.load()).map((entry) => entry.id)).toEqual([chatConfig.model]);
+  });
+});
+
+describe('usableModels', () => {
+  const entry = (id: string, source: ChatModelEntry['source'], contextLength?: number): ChatModelEntry => ({ id, label: id, source, ...(contextLength ? { contextLength } : {}) });
+  const models = [
+    entry('page/default', 'default', 9_000),
+    entry('page/listed', 'listed', 9_100),
+    entry('hosted/exact', 'hosted', 29_000),
+    entry('hosted/one-short', 'hosted', 28_999),
+    entry('or/roomy', 'openrouter', 131_072),
+    entry('or/one-short', 'openrouter', 28_999),
+    entry('or/unknown', 'openrouter'),
+    entry('or/current', 'openrouter', 9_200),
+  ];
+
+  it('drops a model whose window cannot hold the reply cap plus the conversation budget, but never the default, listed or current one', () => {
+    // 5,000 + 24,000 = 29,000: exactly that fits, one less does not.
+    expect(usableModels(models, 5_000, 'or/current').map((model) => model.id)).toEqual(['page/default', 'page/listed', 'hosted/exact', 'or/roomy', 'or/unknown', 'or/current']);
+  });
+
+  it('filters against the cap in force, so changing it changes the list', () => {
+    expect(usableModels(models, 4_999).map((model) => model.id)).toEqual(['page/default', 'page/listed', 'hosted/exact', 'hosted/one-short', 'or/roomy', 'or/one-short', 'or/unknown']);
+    // The default cap: hosted models with 13,312 or 16,384 tokens cannot fit a request.
+    const hosted = [13_312, 262_144, 131_072, 16_384].map((length) => entry(`hosted/${length}`, 'hosted', length));
+    expect(usableModels(hosted, 16_384).map((model) => model.id)).toEqual(['hosted/262144', 'hosted/131072']);
   });
 });

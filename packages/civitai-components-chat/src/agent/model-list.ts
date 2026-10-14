@@ -1,4 +1,4 @@
-import { chatConfig, ORCH_URL, type ChatModelOption } from '../config.js';
+import { chatConfig, CONTEXT_BUDGET_TOKENS, ORCH_URL, type ChatModelOption } from '../config.js';
 
 /** OpenRouter's public model list: no key, and open to any origin. */
 export const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
@@ -17,6 +17,8 @@ export interface ChatModelEntry {
   source: 'default' | 'listed' | 'hosted' | 'openrouter';
   /** USD per million output tokens, when known. */
   pricePerMillion?: number;
+  /** The most tokens a request may hold, prompt and reply together, when either list says. */
+  contextLength?: number;
   note?: string;
 }
 
@@ -25,11 +27,21 @@ interface OpenRouterModel {
   name?: unknown;
   pricing?: { completion?: unknown };
   supported_parameters?: unknown;
+  context_length?: unknown;
 }
 
 interface OrchestrationModel {
   id?: unknown;
   owned_by?: unknown;
+  context_length?: unknown;
+}
+
+function contextOf(...models: ({ context_length?: unknown } | undefined)[]): { contextLength?: number } {
+  for (const model of models) {
+    const length = model?.context_length;
+    if (typeof length === 'number' && Number.isFinite(length) && length > 0) return { contextLength: length };
+  }
+  return {};
 }
 
 /** Per-token USD as OpenRouter writes it ("0.0000006") to USD per million, without float noise at the boundary. */
@@ -75,7 +87,7 @@ export function buildModelList({
     if (typeof model?.id === 'string' && model.id) routable.set(model.id, model);
   }
   for (const [id, model] of routable) {
-    if (model.owned_by !== 'openrouter') add({ id, label: id, source: 'hosted' });
+    if (model.owned_by !== 'openrouter') add({ id, label: id, source: 'hosted', ...contextOf(model) });
   }
 
   const priced: ChatModelEntry[] = [];
@@ -84,13 +96,22 @@ export function buildModelList({
     const price = perMillion(model.pricing?.completion);
     if (price === undefined || price > MAX_PRICE_PER_MILLION) continue;
     if (!Array.isArray(model.supported_parameters) || !model.supported_parameters.includes('tools')) continue;
-    priced.push({ id: model.id, label: typeof model.name === 'string' && model.name ? model.name : model.id, source: 'openrouter', pricePerMillion: price });
+    priced.push({
+      id: model.id,
+      label: typeof model.name === 'string' && model.name ? model.name : model.id,
+      source: 'openrouter',
+      pricePerMillion: price,
+      ...contextOf(model, routable.get(model.id)),
+    });
   }
   priced.sort((a, b) => a.label.localeCompare(b.label));
   for (const entry of priced) {
     const known = entries.get(entry.id);
     // The page's own entries keep their label and note, and gain the price.
-    if (known) known.pricePerMillion ??= entry.pricePerMillion;
+    if (known) {
+      known.pricePerMillion ??= entry.pricePerMillion;
+      known.contextLength ??= entry.contextLength;
+    }
     else add(entry);
   }
   return [...entries.values()];
@@ -148,10 +169,26 @@ async function getJson(doFetch: typeof fetch, url: string): Promise<unknown | nu
   }
 }
 
-/** "$0.60/M out", or "Free"; empty when the price is unknown. */
+/**
+ * "$0.60/M out"; empty when the price is unknown. A $0 model still costs Buzz per step, so it reads
+ * "$0/M out", never "Free", which would sound like the free tier.
+ */
 export function priceLabel(entry: Pick<ChatModelEntry, 'pricePerMillion'>): string {
   const price = entry.pricePerMillion;
   if (price === undefined) return '';
-  if (price === 0) return 'Free';
+  if (price === 0) return '$0/M out';
   return `$${price < 0.1 ? price.toFixed(3) : price.toFixed(2)}/M out`;
+}
+
+/**
+ * The models a reply can actually use at this output cap: a request holds up to
+ * {@link CONTEXT_BUDGET_TOKENS} of conversation plus `cap` of reply, so a model whose known context
+ * window is smaller is left out. A model with no known window stays, and so do the page's default,
+ * its listed models and `keep` (the chat's current model), whatever their window.
+ */
+export function usableModels(models: ChatModelEntry[], cap: number, keep?: string): ChatModelEntry[] {
+  const needed = cap + CONTEXT_BUDGET_TOKENS;
+  return models.filter(
+    (model) => model.source === 'default' || model.source === 'listed' || model.id === keep || model.contextLength === undefined || model.contextLength >= needed,
+  );
 }

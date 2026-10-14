@@ -461,6 +461,48 @@ describe('civitai-chat-settings-dialog', () => {
   });
 });
 
+describe('civitai-chat-model-picker', () => {
+  const models = [
+    { id: 'urn:air:page:default', label: 'Default', source: 'default' as const },
+    { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', source: 'openrouter' as const, pricePerMillion: 0.4 },
+    { id: 'q/quill', label: 'Quill', source: 'openrouter' as const, pricePerMillion: 1.3 },
+  ];
+  const open = async (props: Partial<HTMLElementTagNameMap['civitai-chat-model-picker']>) => {
+    const picker = await mount('civitai-chat-model-picker', { models, ...props });
+    const picks: unknown[] = [];
+    picker.addEventListener('cvt-model-pick', (e) => picks.push((e as CustomEvent<{ model?: string }>).detail.model));
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    const selected = () => [...picker.querySelectorAll('[role=option][aria-selected=true] .cvt-model-name')].map((name) => name.textContent);
+    const type = async (text: string, enter = false) => {
+      const search = picker.querySelector<HTMLInputElement>('.cvt-model-search')!;
+      search.value = text;
+      search.dispatchEvent(new Event('input'));
+      await picker.updateComplete;
+      if (enter) search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    return { picker, picks, selected, type };
+  };
+
+  it("marks Default while the chat follows it, and the chat's own model once it has one, even when they are the same id", async () => {
+    expect((await open({ value: 'q/quill', own: false })).selected()).toEqual(['Default']);
+    document.body.replaceChildren();
+    expect((await open({ value: 'q/quill', own: true })).selected()).toEqual(['Quill']);
+  });
+
+  it('takes a typed model id as is on Enter, never a longer listed id it begins, and a search word picks the first match', async () => {
+    const { picks, type, picker } = await open({ value: 'urn:air:page:default' });
+    await type('z-ai/glm-5.3', true);
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    await type('Z-AI/GLM-5.3-FLASH', true);
+    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await picker.updateComplete;
+    await type('quill', true);
+    expect(picks).toEqual(['z-ai/glm-5.3', 'z-ai/glm-5.3-flash', 'q/quill']);
+  });
+});
+
 describe('civitai-chat-generation-details', () => {
   it('shows the prompt and links the Civitai model it was made with, by name', async () => {
     const models = { get: vi.fn(async () => ({ href: '', name: 'Anima', versions: [{ id: 2945208, name: 'v1.0' }] })) };

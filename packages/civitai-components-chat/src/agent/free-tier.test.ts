@@ -30,15 +30,42 @@ function endpoint(answers: { free?: () => Response; paid?: () => Response } = {}
 const request = (doFetch: typeof fetch) => doFetch('https://orch/v1/chat/completions', { method: 'POST', body: '{"model":"x"}' });
 
 describe('free chat replies', () => {
-  it('goes out free while the model has allowance left, and paid for a model without one', async () => {
+  it('sends each tier × model as the viewer chose: free where it can, paid only where allowed, otherwise nothing', async () => {
+    const NOT_FREE_MODEL = 'z-ai/glm-5.3-flash';
+    const tiers = { auto: { useFree: true, payWhenOut: true }, free: { useFree: true, payWhenOut: false }, paid: { useFree: false, payWhenOut: true } };
+    const sent: Record<string, string> = {};
+    for (const [name, choice] of Object.entries(tiers)) {
+      for (const model of [QWEN, NOT_FREE_MODEL]) {
+        const tier = await loaded();
+        const { calls, inner } = endpoint();
+        const response = await request(freeTierFetch(inner, model, tier, () => choice));
+        sent[`${name} ${model === QWEN ? 'free model' : 'other model'}`] = calls.join(',') || `refused ${response.status}`;
+      }
+    }
+    expect(sent).toEqual({
+      'auto free model': 'free',
+      'auto other model': 'paid',
+      'free free model': 'free',
+      'free other model': 'refused 400',
+      'paid free model': 'paid',
+      'paid other model': 'paid',
+    });
+  });
+
+  it("refuses a model without free replies when the viewer allows only free ones, saying how to use it", async () => {
     const tier = await loaded();
     const { calls, inner } = endpoint();
+    const response = await request(freeTierFetch(inner, 'z-ai/glm-5.3-flash', tier, () => ({ useFree: true, payWhenOut: false })));
+    expect(calls).toEqual([]);
+    const failed = humanize(new Error(((await response.json()) as { error: { message: string } }).error.message));
+    expect(failed).toMatchObject({ kind: 'free_tier_not_free', message: "This model isn't free. Allow paid replies in Settings to use it." });
 
-    await request(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut: false })));
-    await request(freeTierFetch(inner, 'z-ai/glm-5.3-flash', tier, () => ({ useFree: true, payWhenOut: false })));
-    await request(freeTierFetch(inner, QWEN, tier, () => ({ useFree: false, payWhenOut: false })));
-
-    expect(calls).toEqual(['free', 'paid', 'paid']);
+    // Free replies that could not be checked are not a reason to pay either.
+    const unknown = new FreeTier(async () => Promise.reject(new Error('offline')));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const offline = await request(freeTierFetch(inner, QWEN, unknown, () => ({ useFree: true, payWhenOut: false })));
+    expect(calls).toEqual([]);
+    expect(humanize(new Error(((await offline.json()) as { error: { message: string } }).error.message)).message).toMatch(/couldn't be checked, so nothing was sent/);
   });
 
   it('never pays without permission: a used-up allowance becomes an error that says until when', async () => {

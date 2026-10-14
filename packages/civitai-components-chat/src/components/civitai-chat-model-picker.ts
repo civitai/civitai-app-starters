@@ -102,9 +102,12 @@ export class CivitaiChatModelPicker extends LightElement {
     } else if (event.key === 'Enter') {
       event.preventDefault();
       const typed = this.query.trim();
+      if (!typed) return;
+      // A typed model id is meant as is: never swap it for a longer id it happens to begin.
+      const exact = this.models.find((model) => model.id.toLowerCase() === typed.toLowerCase());
+      if (exact) return this.#pick(exact.id);
       const [first] = this.#matches();
-      if (first) this.#pick(first.id);
-      else if (typed) this.#pick(typed);
+      this.#pick(first && !/[/:]/.test(typed) ? first.id : typed);
     }
   };
 
