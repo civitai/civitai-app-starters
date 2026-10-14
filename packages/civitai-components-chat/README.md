@@ -148,8 +148,8 @@ chat.mcpServers = [
   A reply that never comes (the timeout passes with no progress, or the server ends or drops the
   call's event stream before answering) reaches the assistant as `{ error, retryable: true, note }`
   rather than a failure: the call may have done its work, so the note tells it to check the effect
-  before running it again. A stream the server made resumable (its events carry ids) is left to the
-  MCP client, which reconnects for the reply.
+  before running it again. A stream the server made resumable (its events carry non-empty ids) is left to
+  the MCP client, which reconnects for the reply.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply, on a new connection,
