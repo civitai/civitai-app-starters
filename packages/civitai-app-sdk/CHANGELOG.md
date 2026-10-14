@@ -1,5 +1,28 @@
 # @civitai/app-sdk
 
+## 0.70.0
+
+### Minor Changes
+
+- f70f171: **`useImagePicker()` lets the viewer pick from the images they already have on Civitai (#626).** `const { open } = useImagePicker()`, then `const image = await open()` opens the host's picker over the viewer's own posted images and generator outputs. It resolves with the image the viewer picked, `{ source, url, width, height, nsfwLevel, imageId? }`, or `null` if nothing was picked. The app never lists the library and receives only what was picked.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5855 is merged and deployed to civitai.com.** A host that predates it does not answer the message at all, so `open` waits out the human-interaction timeout (10 minutes) and then rejects with `RequestTimeoutError`.
+  - 🔴 **A pick can be a mature image.** The viewer is offered what their own browsing settings allow, so `nsfwLevel` can be a mature level (it is never `0`). An app that shows a pick to anyone other than the viewer who picked it has to gate that on `nsfwLevel` itself. The full rule for what is pickable, and what `url`, `width` and `height` mean for each library, is on the `BlockPickedImageInfo` type and in the `@civitai/blocks-react` README.
+  - **`url` is not the same thing for both libraries.** A `'posted'` pick's `url` is a resized copy with both sides between 64 and 2048 pixels, not the original file. A `'generated'` pick's `url` is the generator's own output link and may stop working after a while: use it promptly and do not store it.
+  - **Several images in one session.** `open({ multiple: { max } })` resolves with a **list** of up to `max` images, or `[]` if nothing was picked. `max` is a whole number of at least 1. A value above 20 (`IMAGE_PICKER_MULTIPLE_MAX`) is clamped to 20; `0`, a negative number or a fraction rejects before anything is sent. `open({ multiple: maybe ? { max } : undefined })` is accepted too, and resolves with either shape.
+  - **One library only.** `open({ sources: ['posted'] })` or `open({ sources: ['generated'] })` offers just that library. Leaving `sources` out offers both. An empty `sources`, or a value other than `'posted'` and `'generated'`, rejects before anything is sent.
+  - **`imageId` is set only on a `'posted'` pick.** A generator output that was never posted has no image id.
+  - **`null` and `[]` mean nothing was picked.** Usually the viewer closed the picker (a signed-out viewer sees it with a sign-in button, and closing it is the same). The host also answers that way at once, without showing a picker, while the app is viewed in review mode or is not ready.
+  - **A refusal rejects.** If the host refuses the request, `open` rejects with an `Error` carrying the host's message, for a single pick and a `multiple` pick alike. A `multiple` reply that carries no list rejects with `the host returned no image list`.
+  - **Page apps only.** On any other surface the host answers at once and `open` rejects with `unsupported on this host`.
+  - **No scope is needed**, and the request carries no token.
+  - **As a generation source:** a pick's `url` is Civitai-hosted, so `{ url, width, height }` passes the generation body's source-image URL check. Nothing more is promised: the generation body's own rules still apply, including 64 to 2048 pixels per side, which a generated pick can exceed.
+  - New exports from `@civitai/blocks-react`: `useImagePicker`, `IMAGE_PICKER_MULTIPLE_MAX`, and the types `UseImagePicker`, `ImagePickerOpenOptions` and `ImagePickerMultiple`.
+  - `@civitai/app-sdk`: the message union gains `OPEN_IMAGE_PICKER { requestId, sources?, multiple? }` and `IMAGE_PICKER_RESULT { requestId, selected?, selectedImages?, error? }`, plus the types `BlockImagePickerSource` and `BlockPickedImageInfo` on `./blocks`. `OPEN_IMAGE_PICKER` is added to `BLOCK_TO_PARENT_MESSAGE_TYPES`. Use this `@civitai/app-sdk` release or later with this `@civitai/blocks-react` release: an older one does not have the two types.
+  - The reply validator accepts `IMAGE_PICKER_RESULT` with a string `error`, or with `selected` / `selectedImages` whose every entry has a known `source`, a non-empty `url`, positive `width` and `height`, a numeric `nsfwLevel`, and an `imageId` that is either absent or a positive whole number. A list with one malformed entry is dropped whole.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** answers at once, with no picker to click through. New option `cannedImagePicks` is the viewer's library; it defaults to one posted image and one generated image. The mock keeps the images matching the request's `sources`, then answers a single pick with the first and a `multiple` pick with the first `max` (capped at 20). `null` or `[]` simulates a viewer who closes the picker. Like the host, it offers a repeated image once and drops an `imageId` from a generated image. It does not model browsing settings: it returns whatever `nsfwLevel` an entry carries. It answers an invalid `sources` or `multiple` with an error, and `unsupported on this host` on a model-slot `context`. It can be changed at runtime through `setScenario`.
+  - **`dev:live`:** refuses the request, because nothing a dev token can call lists the viewer's images. `open` rejects with `the image picker is not supported in dev:live — use dev:mock`.
+
 ## 0.69.1
 
 ### Patch Changes
@@ -636,15 +659,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                single measurements on one machine.
+                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1552,10 +1575,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                        after    @civitai/theme       0.3.1                   — 1 copy
-                                                                 @civitai/components  0.4.2                   — 1 copy
+                                                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                          after    @civitai/theme       0.3.1                   — 1 copy
+                                                                   @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
