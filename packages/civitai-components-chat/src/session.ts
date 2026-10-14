@@ -4,8 +4,9 @@ import type { LanguageModel, ToolSet } from 'ai';
 import { Agent } from './agent/agent.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
-import { createAssistantModel } from './agent/provider.js';
-import { chatConfig } from './config.js';
+import { ModelCatalog } from './agent/model-list.js';
+import { authedFetch, createAssistantModel } from './agent/provider.js';
+import { chatConfig, outputTokenCap } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
 import { McpServerPool, type ChatMcpOptions, type ChatMcpServer } from './mcp/servers.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
@@ -78,6 +79,8 @@ export class ChatSession extends EventTarget {
   readonly panels: PanelManager;
   readonly store: ThreadStore;
   readonly agent: Agent;
+  /** The models the picker offers, loaded once when it is first opened. */
+  readonly modelCatalog: ModelCatalog;
   settings: Settings;
 
   #orchestrationTools: Promise<McpTool[]> | null = null;
@@ -135,9 +138,11 @@ export class ChatSession extends EventTarget {
       hideMatureContent: () => !this.settings.allowMature,
       scope: options.scope,
     });
+    this.modelCatalog = new ModelCatalog({ orchestrationFetch: authedFetch(app) });
     this.agent = new Agent({
-      model: () => this.#model(this.settings.assistantModel?.trim() || chatConfig.model),
+      model: () => this.#model(this.assistantModel()),
       titleModel: () => this.#model(chatConfig.model),
+      maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
       store: this.store,
       jobs: this.jobs,
       posts: this.posts,
@@ -198,6 +203,17 @@ export class ChatSession extends EventTarget {
       this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
     }
     return model;
+  }
+
+  /** The model the open chat's next reply uses: its own, else the viewer's default, else the page's. */
+  assistantModel(): string {
+    return this.store.current?.model?.trim() || this.settings.assistantModel?.trim() || chatConfig.model;
+  }
+
+  /** Switches the open chat's model from its next reply; `undefined` makes it follow the viewer's default. */
+  async setChatModel(model: string | undefined): Promise<void> {
+    if (!this.store.current) this.store.startNew();
+    await this.store.setModel(model);
   }
 
   updateSettings(patch: Partial<Settings>): void {

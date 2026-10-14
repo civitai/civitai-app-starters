@@ -436,6 +436,29 @@ describe('civitai-chat-settings-dialog', () => {
     id.dispatchEvent(new Event('change'));
     expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime', assistantTier: 'auto' });
   });
+
+  it('sets the longest reply step within 1,024 to 32,768, showing 16,384 until the viewer picks one', async () => {
+    const { dialog, changes } = await settingsDialog(null);
+    const field = dialog.querySelector<HTMLInputElement>('civitai-number-input[label="Longest reply step"]')!;
+    expect(field.value).toBe('16384');
+    expect([field.getAttribute('min'), field.getAttribute('max')]).toEqual(['1024', '32768']);
+    const type = async (value: string) => {
+      field.value = value;
+      field.dispatchEvent(new Event('change'));
+      await dialog.updateComplete;
+    };
+
+    await type('6000');
+    await type('99999');
+    await type('12');
+    await type('');
+    expect(changes).toEqual([{ maxOutputTokens: 6_000 }, { maxOutputTokens: 32_768 }, { maxOutputTokens: 1_024 }, { maxOutputTokens: undefined }]);
+
+    // A stale stored value shows within the range.
+    dialog.settings = { ...dialog.settings, maxOutputTokens: 500 };
+    await dialog.updateComplete;
+    expect(field.value).toBe('1024');
+  });
 });
 
 describe('civitai-chat-generation-details', () => {

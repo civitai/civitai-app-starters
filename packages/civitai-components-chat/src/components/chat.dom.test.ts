@@ -232,25 +232,117 @@ describe('civitai-chat', () => {
     expect(slot.assignedElements().map((el) => el.textContent)).toEqual(['Welcome to Moodboard']);
   });
 
-  it('runs slash commands itself: switches the model and starts a new chat without asking the assistant', async () => {
-    const fetch = vi.fn(async (_url: unknown) => new Response('{}', { status: 503 }));
+  it("runs slash commands itself: switches this chat's model and starts a new chat without asking the assistant", async () => {
+    const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response('{}', { status: 400 }));
     vi.stubGlobal('fetch', fetch);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'viewer/default-model' }));
+    const app = fakeApp() as { orchestration: { submitWorkflow: ReturnType<typeof vi.fn> } };
+    const chat = document.createElement('civitai-chat');
+    // No tool servers, so a reply goes straight to the model.
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = app as never;
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-model-picker')).not.toBeNull());
+    const composer = root.querySelector('civitai-chat-composer')!;
+    const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
+    const toast = () => root.querySelector('civitai-toast-region')!.textContent ?? '';
+    const chip = () => root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
+    const replies = () =>
+      fetch.mock.calls.filter(([url]) => String(url).includes('chat/completions')).map(([, init]) => (JSON.parse(String(init?.body)) as { model: string }).model);
+
+    say('/model');
+    await vi.waitFor(() => expect(toast()).toContain('This chat uses the default (viewer/default-model).'));
+
+    say('/model z-ai/glm-5.3-flash');
+    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: z-ai/glm-5.3-flash'));
+    expect(toast()).toContain('This chat now uses z-ai/glm-5.3-flash, from the next reply.');
+    // The chat's own choice: the viewer's default stays as it was.
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('viewer/default-model');
+
+    await chat.send('a red bike');
+    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash']));
+    expect(app.orchestration.submitWorkflow.mock.calls[0]?.[0]).toMatchObject({ metadata: { model: 'z-ai/glm-5.3-flash' } });
+
+    say('/model default');
+    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: viewer/default-model'));
+    await chat.send('a blue bike');
+    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash', 'viewer/default-model']));
+
+    say('/clear');
+    await chat.updateComplete;
+    expect(replies()).toHaveLength(2);
+  });
+
+  it("picks this chat's model from a searchable list priced per million output tokens, or any model id", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const openRouter = {
+      data: [
+        { id: 'cheap/model', name: 'Cheap Model', pricing: { completion: '0.00000061' }, supported_parameters: ['tools'] },
+        { id: 'pricey/model', name: 'Pricey Model', pricing: { completion: '0.000015' }, supported_parameters: ['tools'] },
+      ],
+    };
+    const routable = { data: [{ id: 'cheap/model', owned_by: 'openrouter' }, { id: 'pricey/model', owned_by: 'openrouter' }] };
+    const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => {
+      if (String(url) === 'https://openrouter.ai/api/v1/models') return new Response(JSON.stringify(openRouter));
+      if (String(url).endsWith('/v1/models')) return new Response(JSON.stringify(routable));
+      return new Response('{}', { status: 400 });
+    });
+    vi.stubGlobal('fetch', fetch);
     const chat = document.createElement('civitai-chat');
     chat.app = fakeApp();
     document.body.append(chat);
     const root = chat.shadowRoot!;
-    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
-    const composer = root.querySelector('civitai-chat-composer')!;
-    const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
+    const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
+    expect(chip.textContent).toContain('Default');
+    const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
 
-    say('/model z-ai/glm-5.3-flash');
-    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('z-ai/glm-5.3-flash'));
-    say('/model default');
-    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined());
-    say('/clear');
+    chip.click();
+    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.61/M out cheap/model'));
+    expect(options().join(' | ')).not.toContain('Pricey');
+    const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
+    search.value = 'cheap';
+    search.dispatchEvent(new Event('input'));
     await chat.updateComplete;
-    expect(fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('chat/completions'))).toEqual([]);
+    root.querySelector<HTMLButtonElement>('.cvt-model-options button')!.click();
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: cheap/model'));
+    expect(chip.textContent).toContain('Cheap Model');
+    expect(root.querySelector('.cvt-model-menu')).toBeNull();
+
+    chip.click();
+    await chat.updateComplete;
+    const typed = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
+    typed.value = 'someone/unlisted-model';
+    typed.dispatchEvent(new Event('input'));
+    await chat.updateComplete;
+    expect(options()).toEqual(['Use “someone/unlisted-model” Any chat model id the Civitai orchestrator serves']);
+    typed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: someone/unlisted-model'));
+    // The list loaded once for the session.
+    expect(fetch.mock.calls.filter(([url]) => String(url) === 'https://openrouter.ai/api/v1/models')).toHaveLength(1);
+  });
+
+  it('still offers the default and a custom model id when neither model list can be reached', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))));
+    const chat = document.createElement('civitai-chat');
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
+    root.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-menu')).not.toBeNull());
+    // Loading ends, and the picker does not keep saying it is loading.
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-status')).toBeNull());
+    const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
+    expect(options()).toEqual(["Default The app's default model"]);
+    const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
+    search.value = 'z-ai/glm-5.3-flash';
+    search.dispatchEvent(new Event('input'));
+    await chat.updateComplete;
+    expect(options()).toEqual(['Use “z-ai/glm-5.3-flash” Any chat model id the Civitai orchestrator serves']);
   });
 
   it("runs the page's own slash commands, and lets it replace or remove the built-ins", async () => {

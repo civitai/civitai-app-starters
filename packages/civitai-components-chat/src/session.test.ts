@@ -61,6 +61,80 @@ describe('ChatSession', () => {
   });
 });
 
+describe("ChatSession's model and output cap, as the reply request carries them", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function setup(stored: Record<string, unknown> = {}) {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const replies: { model?: unknown; max_tokens?: unknown }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        if (!String(url).includes('chat/completions')) return new Response('{}');
+        replies.push(JSON.parse(String(init?.body)));
+        // A 400 fails the reply at once: a 5xx would be retried with a backoff.
+        return new Response('{}', { status: 400 });
+      }),
+    );
+    const heads = Object.entries(stored).map(([conversationId, model]) => ({
+      id: `head-${conversationId}`,
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+      metadata: { v: 2, app: 'chat-cvt', conversationId, title: 'Saved', titleSource: 'llm', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z', turns: [], ...(model ? { model } : {}) },
+    }));
+    const app = {
+      getToken: async () => 'token',
+      site: {},
+      orchestration: {
+        submitWorkflow: vi.fn(async () => ({ id: `7-${Math.random()}`, cost: { total: 0 } })),
+        queryWorkflows: vi.fn(async (query: { tags: string[] }) => ({ items: heads.filter((head) => query.tags.every((tag) => head.tags.includes(tag))), next: '' })),
+      },
+    } as never;
+    const session = new ChatSession(app, { mcp: () => ({ orchestration: false, site: false }) });
+    return { session, replies };
+  }
+
+  it("asks with the chat's own model, else the viewer's default, else the page's, from the next reply", async () => {
+    const { session, replies } = setup();
+    session.newConversation();
+    await session.send('one');
+    session.updateSettings({ assistantModel: ' viewer/default-model ' });
+    await session.send('two');
+    await session.setChatModel('chat/own-model');
+    await session.send('three');
+    await session.setChatModel(undefined);
+    await session.send('four');
+    session.newConversation();
+    await session.send('five');
+    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'viewer/default-model', 'chat/own-model', 'viewer/default-model', 'viewer/default-model']);
+  });
+
+  it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
+    const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
+    session.updateSettings({ assistantModel: 'viewer/default-model' });
+    await session.openConversation('PICKED');
+    await session.send('again');
+    await session.openConversation('OLD');
+    await session.send('again');
+    expect(replies.map((reply) => reply.model)).toEqual(['saved/chat-model', 'viewer/default-model']);
+  });
+
+  it("sends the viewer's output cap as max_tokens, 16,384 when unset, and a stale stored value kept within range", async () => {
+    const { session, replies } = setup();
+    session.newConversation();
+    await session.send('default');
+    session.updateSettings({ maxOutputTokens: 7_000 });
+    await session.send('mine');
+    session.updateSettings({ maxOutputTokens: 300 });
+    await session.send('stale');
+    session.updateSettings({ maxOutputTokens: 'lots' as never });
+    await session.send('garbage');
+    expect(replies.map((reply) => reply.max_tokens)).toEqual([16_384, 7_000, 1_024, 16_384]);
+  });
+});
+
 describe('ChatSession with added MCP servers', () => {
   const ORCH = chatConfig.orchestrationMcpUrl;
   const SANDBOX = 'https://sandbox.example/mcp';

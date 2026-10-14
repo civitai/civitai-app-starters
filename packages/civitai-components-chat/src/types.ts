@@ -58,6 +58,8 @@ export interface Conversation {
   posts?: Record<string, SavedPost>;
   /** Panels the assistant built, by handle. */
   panels?: Record<string, SavedPanel>;
+  /** The assistant's model for this chat; unset, it follows the viewer's default. */
+  model?: string;
 }
 
 export interface ConversationSummary {
@@ -88,6 +90,7 @@ export interface ConversationMetadata {
   posts?: Record<string, SavedPost>;
   panels?: Record<string, SavedPanel>;
   scope?: string;
+  model?: string;
 }
 
 export interface JobMetadata {
@@ -107,9 +110,15 @@ export interface Settings {
   theme: Theme;
   allowMature: boolean;
   autoRunLimit: number;
+  /**
+   * The viewer's own cap on what one step of a reply may write; the page's default when unset. Left
+   * out of `defaultSettings()` on purpose: saving any setting writes the whole object, which would
+   * freeze today's default for this viewer and hide a later change of `configureChat({ maxOutputTokens })`.
+   */
+  maxOutputTokens?: number;
   /** Sent with every request as the user's standing instructions to the assistant. */
   customInstructions?: string;
-  /** The assistant's model for this viewer; the configured default when unset. */
+  /** The model a chat uses when it has none of its own; the configured default when unset. */
   assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;

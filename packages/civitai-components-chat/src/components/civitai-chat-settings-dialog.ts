@@ -1,6 +1,7 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { live } from 'lit/directives/live.js';
 
-import { CUSTOM_INSTRUCTIONS_MAX, RETENTION_DAYS, type ChatModelOption } from '../config.js';
+import { CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap, type ChatModelOption } from '../config.js';
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
@@ -120,6 +121,23 @@ export class CivitaiChatSettingsDialog extends LightElement {
         : nothing}`;
   }
 
+  #outputTokens(): TemplateResult {
+    return html`<civitai-number-input
+      label="Longest reply step"
+      description=${`The most tokens the assistant may write in one step, its thinking and any file it writes included: ${OUTPUT_TOKENS_MIN.toLocaleString('en-US')} to ${OUTPUT_TOKENS_MAX.toLocaleString('en-US')}. Raise it if replies stop short or files come out cut off.`}
+      min=${OUTPUT_TOKENS_MIN}
+      max=${OUTPUT_TOKENS_MAX}
+      step="1024"
+      .value=${live(String(outputTokenCap(this.settings.maxOutputTokens)))}
+      @change=${(event: Event) => {
+        const typed = (event.target as HTMLInputElement).value.trim();
+        // Cleared, it goes back to the page's default; anything else is kept within the range.
+        this.#change({ maxOutputTokens: typed === '' || !Number.isFinite(Number(typed)) ? undefined : outputTokenCap(Number(typed)) });
+        this.requestUpdate();
+      }}
+    ></civitai-number-input>`;
+  }
+
   #note(value: string, free: FreeAllowance | null): string {
     const back = free?.resetAt ? ` until ${free.resetAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
     if (value === AUTO) {
@@ -146,6 +164,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
           @change=${(event: Event) => this.#change({ autoRunLimit: Number((event.target as HTMLInputElement).value) })}
         ></civitai-select>
         ${this.#model()}
+        ${this.#outputTokens()}
         <civitai-textarea
           label="Custom instructions"
           description="Sent with every message. Tell the assistant about you, your style, or how you like answers."

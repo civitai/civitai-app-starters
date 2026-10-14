@@ -1,6 +1,6 @@
 import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 
-import { MAX_OUTPUT_TOKENS, MAX_STEPS } from '../config.js';
+import { MAX_STEPS, outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ThreadStore } from '../store/thread-store.js';
@@ -24,6 +24,8 @@ export interface AgentDeps {
   model(): LanguageModel;
   /** Naming a conversation is a few words; it need not use a costly model the viewer picked. */
   titleModel?(): LanguageModel;
+  /** The most one step of the reply may write, read at the start of every reply; the page's default when absent. */
+  maxOutputTokens?(): number;
   store: ThreadStore;
   jobs: JobManager;
   posts?: PostManager;
@@ -107,7 +109,7 @@ export class Agent extends EventTarget {
         tools,
         stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE), awaitsUser],
         abortSignal: controller.signal,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
         temperature: 0.7,
         providerOptions: PROVIDER_OPTIONS,
         // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
