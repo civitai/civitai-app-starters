@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { partsFromMessages } from './agent/parts.js';
 import { chatConfig } from './config.js';
-import type { ChatMcpServer } from './mcp/servers.js';
+import type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
+import type { ChatToolResult } from './tools/gate.js';
 import { ChatSession, type McpServerErrorDetail } from './session.js';
 import { fakeMcpServers, type FakeTool } from './test-support/fake-mcp.js';
 import { flush } from './test-support/fakes.js';
@@ -328,5 +329,123 @@ describe('ChatSession with added MCP servers', () => {
     const set = await session.toolSet(turn);
     expect(Object.keys(set).filter((name) => name.includes('__'))).toEqual(['good__run_command']);
     expect(servers[SANDBOX]!.initializes).toBe(0);
+  });
+});
+
+describe('ChatSession host controls', () => {
+  const ORCH = chatConfig.orchestrationMcpUrl;
+  const SANDBOX = 'https://sandbox.example/mcp';
+  const turn = { conversationId: 'c1', seq: 1 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  type Options = NonNullable<ConstructorParameters<typeof ChatSession>[1]>;
+
+  function setup(options: Omit<Options, 'mcp'> & { orchestration?: ChatMcpOptions['orchestration'] } = {}, sandbox: FakeTool[] = []) {
+    const fake = fakeMcpServers({ [ORCH]: ['run_step', 'run_workflow', 'find_services', 'get_input_schema'].map((name) => ({ name })), [SANDBOX]: sandbox });
+    vi.stubGlobal('fetch', fake.fetch);
+    const app = { getToken: async () => 'app-token', site: {}, orchestration: {}, requestGrants: async () => true } as never;
+    const { orchestration, ...rest } = options;
+    const session = new ChatSession(app, {
+      mcp: () => ({ site: false, ...(orchestration !== undefined ? { orchestration } : {}), mcpServers: sandbox.length ? [{ id: 'sandbox', url: SANDBOX, token: () => 'tok' }] : [] }),
+      ...rest,
+    });
+    return { session };
+  }
+
+  const run = async (set: ToolSet, name: string, input: Record<string, unknown> = {}) =>
+    set[name]!.execute!(input, { toolCallId: 'call-1', messages: [], abortSignal: new AbortController().signal });
+
+  it('leaves out the orchestration tools the page excludes, and the panels that run through run_step, keeping the read-only ones', async () => {
+    const all = Object.keys(await setup().session.toolSet(turn));
+    // Positive control: without the exclude, all of them are offered.
+    expect(all).toEqual(expect.arrayContaining(['run_step', 'run_workflow', 'open_panel', 'find_services', 'get_input_schema']));
+
+    const { session } = setup({ orchestration: { exclude: ['run_step', 'run_workflow'] } });
+    const names = Object.keys(await session.toolSet(turn));
+    expect(names).toEqual(expect.arrayContaining(['find_services', 'get_input_schema', 'ask_choice']));
+    for (const name of ['run_step', 'run_workflow', 'open_panel']) expect(names).not.toContain(name);
+    expect((await session.catalog()).orchestration.map((tool) => tool.name)).toEqual(['find_services', 'get_input_schema']);
+  });
+
+  it("refuses a call the page's beforeToolCall refuses: the assistant gets the reason as an error and the server is never called", async () => {
+    const calls: unknown[] = [];
+    const asked: unknown[] = [];
+    const { session } = setup(
+      {
+        beforeToolCall: () => (name, input, context) => {
+          asked.push([name, input, context]);
+          return name === 'sandbox__run_command' && (input as { command?: string }).command === 'app create' ? { refuse: 'Confirm the checklist first.' } : { allow: true };
+        },
+      },
+      [{ name: 'run_command', run: (args) => (calls.push(args), { content: [{ type: 'text', text: 'ran' }] }) }],
+    );
+    const set = await session.toolSet(turn);
+
+    const refused = await run(set, 'sandbox__run_command', { command: 'app create' });
+    expect(refused).toEqual({ error: 'Confirm the checklist first.', note: expect.stringContaining('nothing ran') });
+    expect(calls).toEqual([]);
+    // Positive control: an allowed call reaches the server.
+    expect(await run(set, 'sandbox__run_command', { command: 'ls' })).toBe('ran');
+    expect(calls).toEqual([{ command: 'ls' }]);
+    expect(asked).toEqual([
+      ['sandbox__run_command', { command: 'app create' }, { conversationId: 'c1', signal: expect.any(AbortSignal) }],
+      ['sandbox__run_command', { command: 'ls' }, { conversationId: 'c1', signal: expect.any(AbortSignal) }],
+    ]);
+  });
+
+  it('refuses every call when beforeToolCall throws, so a broken gate lets nothing by', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const calls: unknown[] = [];
+    const { session } = setup({ beforeToolCall: () => () => Promise.reject(new Error('gate down')) }, [
+      { name: 'run_command', run: (args) => (calls.push(args), { content: [{ type: 'text', text: 'ran' }] }) },
+    ]);
+    expect(await run(await session.toolSet(turn), 'sandbox__run_command', { command: 'ls' })).toMatchObject({ error: 'The page could not check this call.' });
+    expect(calls).toEqual([]);
+  });
+
+  it('reports each finished call once as a tool-result event, built-in, added-server and page tools alike', async () => {
+    const { session } = setup(
+      {
+        beforeToolCall: () => (name) => (name === 'find_services' ? { refuse: 'not here' } : undefined),
+        hostTools: () => ({
+          pin: { description: 'Pin it', inputSchema: { type: 'object', properties: {} }, execute: () => ({ pinned: true }) },
+          broken: {
+            description: 'Fails',
+            inputSchema: { type: 'object', properties: {} },
+            execute: () => {
+              throw new Error('no board');
+            },
+          },
+        }),
+      },
+      [{ name: 'run_command' }],
+    );
+    const results: ChatToolResult[] = [];
+    session.addEventListener('tool-result', (event) => results.push((event as CustomEvent<ChatToolResult>).detail));
+    const set = await session.toolSet(turn);
+
+    await run(set, 'sandbox__run_command', { command: 'ls' });
+    await run(set, 'pin', { id: 1 });
+    await run(set, 'broken');
+    await run(set, 'find_services', { query: 'flux' });
+    await run(set, 'ask_choice', { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] });
+
+    expect(results.map(({ name, isError }) => [name, isError])).toEqual([
+      ['sandbox__run_command', false],
+      ['pin', false],
+      ['broken', true],
+      ['find_services', true],
+      ['ask_choice', false],
+    ]);
+    expect(results[0]).toEqual({ name: 'sandbox__run_command', input: { command: 'ls' }, output: 'run_command ran', isError: false });
+    expect(results[1]).toMatchObject({ input: { id: 1 }, output: { pinned: true } });
+    expect(results[3]).toMatchObject({ refused: 'not here', output: { error: 'not here' } });
+    // The job tool keeps what it is: its own description and type, behind the same gate.
+    expect(set.run_step!.description).toContain('Runs in the background');
+    expect(set.run_step!.type).toBe('dynamic');
   });
 });

@@ -30,6 +30,7 @@ import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { extraToolSet } from './tools/extra.js';
+import { gateToolSet, type ChatToolGate, type ChatToolResult } from './tools/gate.js';
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { voiceLanguage } from './voice/languages.js';
@@ -59,6 +60,8 @@ export interface SessionOptions {
   mcp?(): ChatMcpOptions;
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** Asked before every tool call; read at the start of every reply. Each result is reported as a `tool-result` event. */
+  beforeToolCall?(): ChatToolGate | undefined;
   /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
   ask?(message: string, refs: string[]): void;
   compose?(message: string, refs: string[]): void;
@@ -176,10 +179,13 @@ export class ChatSession extends EventTarget {
   /** Read at every turn, so switching a server on or off applies from the next reply. */
   async catalog(): Promise<ToolCatalog> {
     const { orchestration = true, site = true } = this.#options.mcp?.() ?? {};
-    const [orchestrationTools, siteTools] = await Promise.all([
+    const excluded = new Set(typeof orchestration === 'object' && orchestration !== null ? (orchestration.exclude ?? []) : []);
+    const [allOrchestration, siteTools] = await Promise.all([
       orchestration ? this.#loadOrchestration() : [],
       site ? (this.#siteTools ??= loadSiteTools(this.siteMcp)) : [],
     ]);
+    // Left out before anything is built from the list: the tools, the panels that run through run_step, and the rules about them.
+    const orchestrationTools = allOrchestration.filter((tool) => !excluded.has(tool.name));
     this.#runTools = new Map(orchestrationTools.filter((tool) => isJobTool(tool.name)).map((tool) => [tool.name, toolInfo(tool.name, tool.inputSchema)]));
     return { orchestration: orchestrationTools, site: siteTools };
   }
@@ -384,7 +390,10 @@ export class ChatSession extends EventTarget {
     turn.assistant.status = 'done';
   }
 
-  /** The assistant's tools for one reply: built-in, then the added servers', then the page's. */
+  /**
+   * The assistant's tools for one reply: built-in, then the added servers', then the page's, each behind
+   * the page's `beforeToolCall` and reported once as a `tool-result` event when it finishes.
+   */
   async toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
@@ -395,7 +404,11 @@ export class ChatSession extends EventTarget {
       resolveArgs: (args) => this.resolveArgs(args),
     });
     this.#hostToolNames = new Set(Object.keys(host));
-    return { ...builtIn, ...host };
+    return gateToolSet({ ...builtIn, ...host }, {
+      conversationId: turn.conversationId,
+      gate: this.#options.beforeToolCall?.(),
+      onResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
+    });
   }
 
   async #builtInTools(turn: { conversationId: string; seq: number }): Promise<ToolSet> {

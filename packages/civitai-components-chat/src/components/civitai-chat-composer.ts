@@ -17,6 +17,7 @@ export class CivitaiChatComposer extends LightElement {
   static override properties: PropertyDeclarations = {
     running: { type: Boolean },
     disabled: { type: Boolean },
+    holdReason: { attribute: false },
     uploads: { attribute: false },
     refs: { attribute: false },
     placeholder: {},
@@ -33,6 +34,8 @@ export class CivitaiChatComposer extends LightElement {
 
   declare running: boolean;
   declare disabled: boolean;
+  /** While set, Send is off and this shows above the box; typing, files and Stop still work. */
+  declare holdReason?: string;
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
   declare placeholder: string;
@@ -96,7 +99,7 @@ export class CivitaiChatComposer extends LightElement {
 
   get #canSend(): boolean {
     const hasContent = this.text.trim() !== '' || this.uploads.some((u) => u.attachment) || this.refs.length > 0;
-    return hasContent && !this.running && !this.disabled && !this.#uploading && !this.transcribing;
+    return hasContent && !this.running && !this.disabled && !this.holdReason && !this.#uploading && !this.transcribing;
   }
 
   async #record(): Promise<void> {
@@ -321,6 +324,7 @@ export class CivitaiChatComposer extends LightElement {
       @files=${(event: CustomEvent<{ files: File[] }>) => emit(this, 'cvt-files', { files: event.detail.files })}
       @rejected=${(event: CustomEvent<{ reason: string }>) => emit(this, 'cvt-files-rejected', event.detail)}
     >
+      ${this.holdReason ? html`<div class="cvt-composer-hold" role="status">${this.holdReason}</div>` : nothing}
       <div class="cvt-composer-box">
         ${this.#suggestions()}
         ${items.length ? html`<civitai-chat-attachment-strip removable size="sm" .items=${items} @remove=${this.#onRemove}></civitai-chat-attachment-strip>` : nothing}

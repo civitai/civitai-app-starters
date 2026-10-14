@@ -97,8 +97,10 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `toolViews` | How calls of any tool show, by tool name, including built-in and Civitai ones: `activity` (the line shown while it runs) and `render(call)`, which replaces the card with a lit template, DOM node or string; return `undefined` to keep the default. `call` is `{ name, input, state, output, error }`. |
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
-| `mcp` | `{ orchestration?: boolean, site?: boolean }`, both on by default: making media, and Civitai model search. |
+| `mcp` | `{ orchestration?: boolean \| { exclude: string[] }, site?: boolean }`, both on by default: making media, and Civitai model search. `orchestration: { exclude: ['run_step', 'run_workflow'] }` keeps the service lookups but never runs (or charges for) a generation; the panels, which run through `run_step`, go with it. Other tools that charge per call, such as `transcribe_audio`, stay unless they are listed too; the microphone button transcribes on its own, not through the assistant, so neither `exclude` nor `beforeToolCall` stops voice input from charging. |
 | `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
+| `holdReason` | While set (also `hold-reason`), nothing is sent to the assistant: the message box keeps what the viewer typed, Send is off and the box shows this text, e.g. "The sandbox is starting…". Stop still works. The chat also holds by itself, as "Connecting to *label*…", while an added server is listing its tools (at most 15 s). |
+| `beforeToolCall` | `(name, input, { conversationId, signal }) => { refuse: string } \| { allow: true }` (or a promise of one), asked before every tool call: Civitai's, an added server's and the page's own. A refusal stops the call before anything runs and the assistant gets the reason as the tool's error; a hook that throws refuses too. `signal` aborts when the viewer stops the reply: the reply stops at once even if the hook never answers, and the call never runs. See [Gating tool calls](#gating-tool-calls). |
 | `scope` | Set before `app`. Keeps the page's chats and preferences apart from every other page's. |
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
@@ -106,6 +108,25 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `addFiles(files)`,
 `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+
+### Gating tool calls
+
+`beforeToolCall` and the `tool-result` event let a page decide on, and watch, every tool call the
+assistant makes, whichever server or page defines the tool:
+
+```ts
+chat.beforeToolCall = (name, input) =>
+  name === 'workspace__run_command' && /app create/.test(String((input as { command?: string }).command))
+    ? { refuse: 'Confirm the feature list first.' }
+    : { allow: true };
+
+chat.addEventListener('tool-result', (event) => {
+  const { name, input, output, isError, refused } = (event as CustomEvent<ChatToolResult>).detail;
+});
+```
+
+`tool-result` fires once per finished call (it bubbles and is composed). `isError` is true for a
+refused call (with `refused` set to the reason), a tool that threw, and an output carrying `error`.
 
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.

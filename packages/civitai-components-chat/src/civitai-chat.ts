@@ -7,7 +7,8 @@ export type { ErrorTrace as ChatErrorTrace } from './agent/error-trace.js';
 export { holdSharedPanel, takeSharedPanel, type SharedPanel } from './panels/share.js';
 export { popupSignIn } from './auth/popup.js';
 export type { ChatFile, ChatTool, ChatToolCall, ChatToolContext, ChatToolView } from './tools/host.js';
-export type { ChatMcpServer } from './mcp/servers.js';
+export type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
+export type { ChatToolDecision, ChatToolGate, ChatToolResult } from './tools/gate.js';
 export type { ChatCommand, ChatCommandContext, ChatCommands, ChatCommandsOption } from './ux/commands.js';
 
 /** Registers `<civitai-chat>`; the rest of the chat loads once it has a signed-in `app`. Safe to call more than once. */

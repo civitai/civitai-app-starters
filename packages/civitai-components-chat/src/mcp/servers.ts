@@ -17,8 +17,13 @@ export interface ChatMcpServer {
 
 /** Which MCP servers the assistant may use. */
 export interface ChatMcpOptions {
-  /** Civitai's generation tools; on unless `false`. */
-  orchestration?: boolean;
+  /**
+   * Civitai's generation tools; on unless `false`. `{ exclude }` keeps them on but leaves out the named
+   * tools, e.g. `{ exclude: ['run_step', 'run_workflow'] }` for a page where the assistant should look
+   * services up but never run (and pay for) one; the panels, which run through `run_step`, go with it.
+   * Other tools that charge per call, such as `transcribe_audio`, stay unless they are named too.
+   */
+  orchestration?: boolean | { exclude?: ReadonlyArray<string> };
   /** Civitai model search; on unless `false`. */
   site?: boolean;
   /** More servers, whose tools are added to the assistant's. */
@@ -52,12 +57,14 @@ interface Entry {
   named: { name: string; tool: McpTool }[];
   /** Reported once until it answers again, so a server that stays down is not announced every reply. */
   failing: boolean;
+  /** Its tools are being listed right now; bounded by the listing timeout. */
+  listing: boolean;
 }
 
 export interface McpServerPoolDeps {
   /** A server could not be reached or would not list its tools; its tools are left out. */
   onError(server: ChatMcpServer, error: unknown): void;
-  /** A server listed its tools, so what the chat shows for them may change. */
+  /** A server listed its tools, or gave up listing them, so what the chat shows for them may change. */
   onListed?(): void;
   /** How long a server may take to list its tools; `LIST_TIMEOUT_MS` unless set. */
   listTimeoutMs?: number;
@@ -79,6 +86,11 @@ export class McpServerPool {
 
   get servers(): ChatMcpServer[] {
     return [...this.#entries.values()].map((entry) => entry.server);
+  }
+
+  /** The servers whose tools are being listed right now, so a reply sent now would go without them. */
+  get listing(): ChatMcpServer[] {
+    return [...this.#entries.values()].filter((entry) => entry.listing).map((entry) => entry.server);
   }
 
   sync(servers: ReadonlyArray<ChatMcpServer> | undefined = []): void {
@@ -106,7 +118,7 @@ export class McpServerPool {
   }
 
   #open(server: ChatMcpServer): Entry {
-    const entry: Entry = { server, connection: null, tools: null, named: [], failing: false };
+    const entry: Entry = { server, connection: null, tools: null, named: [], failing: false, listing: false };
     try {
       entry.connection = this.#connect(entry);
     } catch (error) {
@@ -131,11 +143,20 @@ export class McpServerPool {
     const { connection } = entry;
     try {
       // Named once per listing, so a skipped tool is warned about once, not at every reply.
-      entry.tools ??= withTimeout(connection!.listTools(), this.#deps.listTimeoutMs ?? LIST_TIMEOUT_MS, 'the server did not list its tools in time').then((tools) => {
-        entry.named = this.#named(entry.server, tools);
-        this.#deps.onListed?.();
-        return tools;
-      });
+      if (!entry.tools) {
+        entry.listing = true;
+        entry.tools = withTimeout(connection!.listTools(), this.#deps.listTimeoutMs ?? LIST_TIMEOUT_MS, 'the server did not list its tools in time')
+          .then((tools) => {
+            entry.named = this.#named(entry.server, tools);
+            return tools;
+          })
+          .finally(() => {
+            entry.listing = false;
+          });
+        // Told after `listing` is clear, so a listener reading it sees the server as done, either way.
+        const told = () => this.#deps.onListed?.();
+        entry.tools.then(told, told);
+      }
       await entry.tools;
       // Dropped or replaced while it listed: its connection is closed.
       if (this.#entries.get(entry.server.id) !== entry) return null;
