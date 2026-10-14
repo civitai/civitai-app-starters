@@ -88,6 +88,18 @@ describe('gateToolSet', () => {
       .finally(() => warn.mockRestore());
   });
 
+  it('ends at once when the reply was already stopped and the gate never answers', async () => {
+    const execute = vi.fn(async () => 'ran');
+    const gate = () => new Promise<ChatToolDecision>(() => undefined);
+    const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+    const stop = new AbortController();
+    stop.abort();
+    const call = tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: stop.signal }) as Promise<unknown>;
+    const settled = await Promise.race([call.then(() => 'resolved', () => 'rejected'), new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500))]);
+    expect(settled).toBe('rejected');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('still runs an allowed call that was not stopped', async () => {
     const execute = vi.fn(async () => 'ran');
     const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate: async () => ({ allow: true }), onResult: () => undefined });

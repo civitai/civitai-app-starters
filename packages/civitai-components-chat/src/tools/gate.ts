@@ -95,8 +95,11 @@ async function decide(gate: ChatToolGate | undefined, name: string, input: unkno
 /** `value`, or `undefined` as soon as `signal` aborts, whichever comes first. */
 function untilAborted<T>(value: T | Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
   if (!signal) return Promise.resolve(value);
-  // Stopped already: the gate's answer is not waited for, and a rejection it gives is not left unhandled.
-  if (signal.aborted) return Promise.resolve(value).then(() => undefined, () => undefined);
+  if (signal.aborted) {
+    // Stopped already: the gate's answer is not waited for, and a rejection it gives is not left unhandled.
+    Promise.resolve(value).catch(() => undefined);
+    return Promise.resolve(undefined);
+  }
   return new Promise<T | undefined>((resolve, reject) => {
     const stop = () => resolve(undefined);
     signal.addEventListener('abort', stop, { once: true });
