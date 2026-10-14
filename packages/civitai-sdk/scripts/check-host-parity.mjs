@@ -64,6 +64,16 @@ for (const [type, known] of hostRequests) {
   if (ours.framing !== known.framing) {
     problems.push(`${type}: the transport reads a ${ours.framing} reply; the host sends ${known.framing}.`);
   }
+  // The transport tells a failure from a success by a top-level `error` string, so
+  // an error reply the host declares without a REQUIRED `error` would resolve.
+  if (Array.isArray(known.errorKeys)) {
+    if (!known.errorKeys.includes('error') || (known.optionalErrorKeys ?? []).includes('error')) {
+      problems.push(`${type}: the host's error reply carries no required \`error\`, so the transport would resolve it.`);
+    }
+    if (ours.framing !== 'legacy') {
+      problems.push(`${type}: the host fails it with an \`error\` string, but the transport reads ${ours.framing} framing.`);
+    }
+  }
   if (!same(ours.keys, known.replyKeys)) {
     problems.push(
       `${type}: the transport expects keys ${JSON.stringify(ours.keys)}; the host sends ${JSON.stringify(known.replyKeys)}.`,

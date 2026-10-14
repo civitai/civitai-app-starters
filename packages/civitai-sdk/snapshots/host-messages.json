@@ -6,58 +6,97 @@
     "APP_STORAGE_DELETE": {
       "request": true,
       "reply": "APP_STORAGE_DELETE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "deleted",
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "deleted",
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "APP_STORAGE_GET": {
       "request": true,
       "reply": "APP_STORAGE_GET_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "value"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "value"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "APP_STORAGE_LIST": {
       "request": true,
       "reply": "APP_STORAGE_LIST_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "keys",
         "nextCursor"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "keys"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "APP_STORAGE_QUOTA": {
       "request": true,
       "reply": "APP_STORAGE_QUOTA_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "limitBytes",
         "limitRows",
         "rowCount",
         "usedBytes"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "APP_STORAGE_SET": {
       "request": true,
       "reply": "APP_STORAGE_SET_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "ok",
         "sizeBytes"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "BLOCK_ERROR": {
       "request": false,
@@ -78,118 +117,186 @@
     "CANCEL_APP_WORKFLOW": {
       "request": true,
       "reply": "CANCEL_APP_WORKFLOW_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "CANCEL_WORKFLOW": {
       "request": true,
       "reply": "WORKFLOW_CANCELED",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "snapshot"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "CREATE_POST_FROM_APP": {
       "request": true,
       "reply": "CREATE_POST_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "ESTIMATE_WORKFLOW": {
       "request": true,
       "reply": "ESTIMATE_RESULT",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "snapshot"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "ESTIMATE_WORKFLOW_BATCH": {
       "request": true,
       "reply": "ESTIMATE_BATCH_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_BUZZ_ACCOUNTS": {
       "request": true,
       "reply": "BUZZ_ACCOUNTS_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_BUZZ_BALANCE": {
       "request": true,
       "reply": "BUZZ_BALANCE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "balance"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_BUZZ_TRANSACTIONS": {
       "request": true,
       "reply": "BUZZ_TRANSACTIONS_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_DAILY_COMPENSATION": {
       "request": true,
       "reply": "DAILY_COMPENSATION_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_IMAGES_BY_IDS": {
       "request": true,
       "reply": "IMAGES_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_VIEWER": {
       "request": true,
       "reply": "VIEWER_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "viewer"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "GET_WILDCARD_PACK": {
       "request": true,
       "reply": "WILDCARD_PACK_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "pack"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "NAVIGATE": {
       "request": false,
@@ -198,87 +305,142 @@
     "OPEN_BUZZ_PURCHASE": {
       "request": true,
       "reply": "BUZZ_PURCHASE_RESULT",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "purchased"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "OPEN_CHECKPOINT_PICKER": {
       "request": true,
       "reply": "CHECKPOINT_PICKER_RESULT",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "selected"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "OPEN_IMAGE_PICKER": {
       "request": true,
       "reply": "IMAGE_PICKER_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "OPEN_IMAGE_UPLOAD": {
       "request": true,
       "reply": "IMAGE_UPLOAD_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "selected"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "OPEN_RESOURCE_PICKER": {
       "request": true,
       "reply": "RESOURCE_PICKER_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "selected",
         "selectedResources"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [
+        "selected",
+        "selectedResources"
+      ],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "POLL_WORKFLOW": {
       "request": true,
       "reply": "WORKFLOW_STATUS",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "snapshot"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "PREPARE_TRAINING_DATASET": {
       "request": true,
       "reply": "TRAINING_DATASET_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "PUBLISH_GENERATION_OUTPUTS": {
       "request": true,
       "reply": "PUBLISH_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "QUERY_APP_WORKFLOWS": {
       "request": true,
       "reply": "APP_WORKFLOWS_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "result"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "REQUEST_CONSENT": {
       "request": false,
@@ -292,12 +454,16 @@
       "request": true,
       "reply": "TOKEN_REFRESH_RESPONSE",
       "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "token"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "RESIZE_IFRAME": {
       "request": false,
@@ -306,158 +472,257 @@
     "RUN_CONFIRMED_STEP": {
       "request": true,
       "reply": "CONFIRMED_STEP_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "RUN_TRAINING": {
       "request": true,
       "reply": "TRAINING_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SAVE_IMAGE": {
       "request": true,
       "reply": "SAVE_IMAGE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SET_COLLECTION_FOLLOW": {
       "request": true,
       "reply": "COLLECTION_FOLLOW_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": null,
-      "replyKeysFrom": "unknown"
+      "optionalReplyKeys": null,
+      "replyKeysFrom": "unknown",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SET_USER_CHECKPOINT": {
       "request": true,
       "reply": "USER_CHECKPOINT_SET",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_APPEND": {
       "request": true,
       "reply": "SHARED_APPEND_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "key"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_GET": {
       "request": true,
       "reply": "SHARED_GET_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "item"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "item"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_GET_COUNT": {
       "request": true,
       "reply": "SHARED_GET_COUNT_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "count"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_GET_COUNTS": {
       "request": true,
       "reply": "SHARED_GET_COUNTS_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "counts"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_LIST": {
       "request": true,
       "reply": "SHARED_LIST_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "items",
         "nextCursor"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_REPORT": {
       "request": true,
       "reply": "SHARED_REPORT_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_UNVOTE": {
       "request": true,
       "reply": "SHARED_UNVOTE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "count"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_UPDATE": {
       "request": true,
       "reply": "SHARED_UPDATE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_VOTE": {
       "request": true,
       "reply": "SHARED_VOTE_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "count"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SHARED_WITHDRAW": {
       "request": true,
       "reply": "SHARED_WITHDRAW_RESULT",
-      "framing": "legacy",
-      "failure": "string",
       "replyKeys": [
         "deleted",
         "ok"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "host-source",
+      "failure": "string"
     },
     "SUBMIT_WORKFLOW": {
       "request": true,
       "reply": "WORKFLOW_SUBMITTED",
-      "framing": "legacy",
-      "failure": null,
       "replyKeys": [
         "snapshot"
       ],
-      "replyKeysFrom": "host-source"
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "host-source",
+      "framing": "legacy",
+      "errorKeys": null,
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "unknown",
+      "failure": null
     },
     "TRACK_EVENT": {
       "request": false,

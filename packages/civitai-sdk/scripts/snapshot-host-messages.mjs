@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
+import { parseInventory } from './lib/host-inventory.mjs';
+
 const DEFAULT_SOURCE = resolve(
   process.cwd(),
   '../../../../civitai/repo/src/components/AppBlocks/hostHandlerParity.ts',
@@ -16,24 +18,7 @@ const SCOPES_SOURCE = '../../shared/constants/block-scope.constants.ts';
 const source = resolve(process.argv[2] ?? DEFAULT_SOURCE);
 const text = readFileSync(source, 'utf8');
 
-const messages = {};
-const entry = /^ {2}([A-Z_]+): \{\n([\s\S]*?)^ {2}\},$/gm;
-for (const [, name, body] of text.matchAll(entry)) {
-  // The inventory's `reply` is prose in places ("X (or a Y push when ...)"), so
-  // the snapshot keeps the reply NAME and the sentence it came from separately.
-  const declared = body.match(/reply: '([^']*)'/)?.[1] ?? '';
-  const reply = declared.match(/^[A-Z_]+/)?.[0] ?? '';
-  // The inventory may one day declare the success keys itself; prefer that.
-  const declaredKeys = body.match(/replyKeys: \[([^\]]*)\]/)?.[1];
-  messages[name] = {
-    request: /request: true/.test(body),
-    reply,
-    ...(declared === reply ? {} : { replyNote: declared }),
-    ...(declaredKeys === undefined
-      ? {}
-      : { declaredKeys: [...declaredKeys.matchAll(/'([A-Za-z_$][\w$]*)'/g)].map((m) => m[1]) }),
-  };
-}
+const messages = parseInventory(text);
 
 if (Object.keys(messages).length === 0) {
   throw new Error(`no INVENTORY entries parsed from ${source} — the shape changed`);
@@ -111,35 +96,54 @@ for (const file of readdirSync(hostDir).sort()) {
 // A scan that silently matches nothing would leave every reply shape unknown.
 if (literalCount === 0) throw new Error(`no send('<REPLY>', { … }) literals found beside ${source}`);
 
+/**
+ * Key names (sorted) across the literals, `requestId` left out; a key missing from
+ * any one of them is optional. `null` when there is no literal to read.
+ */
+function inferKeys(literals) {
+  if (literals.length === 0) return null;
+  const names = new Set(literals.flat().map((m) => m.key));
+  names.delete('requestId');
+  const sorted = [...names].sort();
+  return { names: sorted, optional: sorted.filter((k) => !literals.every((l) => l.some((m) => m.key === k))) };
+}
+
 for (const message of Object.values(messages)) {
+  const { declared } = message;
+  delete message.declared;
   if (!message.request) continue;
   const literals = sends.get(message.reply) ?? [];
   // A failure is any literal naming `error`. A literal built by spreading another
   // object is unreadable here, so it counts for neither side.
   const failures = literals.filter((l) => l.some((m) => m.key === 'error'));
   const successes = literals.filter((l) => !failures.includes(l) && !l.some((m) => 'spread' in m));
-  const objectError = failures.some((l) => l.find((m) => m.key === 'error').value.startsWith('{'));
-  message.framing = objectError ? 'envelope' : 'legacy';
-  // How a failure arrives, or null where no literal reports one: the host may
-  // never fail that reply (REQUEST_TOKEN is exempt from the host's NACK), or
-  // fail it in-band (a workflow reply carries a failed `snapshot`).
-  message.failure = failures.length === 0 ? null : objectError ? 'object' : 'string';
 
-  if (message.declaredKeys) {
-    message.replyKeys = message.declaredKeys;
-    message.replyKeysFrom = 'inventory';
-  } else if (successes.length > 0) {
-    const keys = new Set(successes.flat().map((m) => m.key));
-    keys.delete('requestId');
-    message.replyKeys = [...keys].sort();
-    message.replyKeysFrom = 'host-source';
+  // What the inventory declares wins over what the literals suggest; a list it
+  // declares is never empty (the parser test pins that against a real inventory).
+  const reply = declared.replyKeys ? declared.replyKeys : inferKeys(successes);
+  message.replyKeys = reply ? reply.names : null;
+  message.optionalReplyKeys = reply ? reply.optional : null;
+  message.replyKeysFrom = declared.replyKeys ? 'inventory' : reply ? 'host-source' : 'unknown';
+
+  if (declared.errorKeys === 'none' || (declared.errorKeys && typeof declared.errorKeys === 'object')) {
+    // The inventory's error reply is by definition a top-level `error` STRING.
+    message.framing = 'legacy';
+    message.errorKeys = declared.errorKeys === 'none' ? 'none' : declared.errorKeys.names;
+    message.optionalErrorKeys = declared.errorKeys === 'none' ? null : declared.errorKeys.optional;
+    message.errorKeysFrom = 'inventory';
   } else {
-    // The host builds this reply somewhere a literal scan cannot read (a gate
-    // module's helper, a spread). Unknown, not empty.
-    message.replyKeys = null;
-    message.replyKeysFrom = 'unknown';
+    const objectError = failures.some((l) => l.find((m) => m.key === 'error').value.startsWith('{'));
+    message.framing = objectError ? 'envelope' : 'legacy';
+    // Unknown, not 'none': a literal scan cannot prove the host never fails it.
+    const inferred = inferKeys(failures);
+    message.errorKeys = inferred ? inferred.names : null;
+    message.optionalErrorKeys = inferred ? inferred.optional : null;
+    message.errorKeysFrom = inferred ? 'host-source' : 'unknown';
   }
-  delete message.declaredKeys;
+  // How a failure arrives, or null where none is known: 'none' means the host
+  // never fails at top level (REQUEST_TOKEN; workflows fail in-band, inside a
+  // `snapshot`).
+  message.failure = Array.isArray(message.errorKeys) ? (message.framing === 'envelope' ? 'object' : 'string') : null;
 }
 
 let capturedFrom = 'unknown';
