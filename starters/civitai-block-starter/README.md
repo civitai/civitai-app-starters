@@ -68,18 +68,7 @@ direct orchestrator call skips. It needs the block token this starter is handed
 and the `ai:write:budgeted` scope, which is consent-gated: declare it in
 `block.manifest.json` and ask with `app.requestGrants` before the first call.
 
-```ts
-const estimate = await app.workflows.estimate(body); // prices it; nothing is charged
-if (estimate.status === 'failed') throw new Error('Not priced.'); // a refusal RESOLVES: branch on `status`
-
-const idempotencyKey = crypto.randomUUID(); // one per press, reused on every retry of it
-const submitted = await app.workflows.submit(body, { idempotencyKey });
-if (submitted.status === 'failed') throw new Error('Not started, or failed.'); // which one: see AGENTS.md
-
-const done = await app.workflows.wait(submitted.workflowId); // the final snapshot
-```
-
-That is the happy path only. A `submit` that **rejects** has not told you the
+A `submit` that **rejects** has not told you the
 run does not exist: keep the key and retry with it, or look for the run with
 `app.workflows.list()`, and never tell the viewer nothing was charged.
 [`AGENTS.md`](./AGENTS.md) has the full handler (consent, every outcome of
