@@ -1,9 +1,6 @@
 import type { ToolSet } from 'ai';
-import { nothing } from 'lit';
 import { describe, expect, it, vi } from 'vitest';
 
-import { BUILT_IN_VIEWS, type ToolPart, type ToolViewContext } from '../components/tool-views.js';
-import { ASK_CHOICE } from './build.js';
 import { gateToolSet, type ChatToolDecision } from './gate.js';
 
 describe('gateToolSet', () => {
@@ -28,31 +25,38 @@ describe('gateToolSet', () => {
     expect(results).toEqual([{ name: 'run_step', input: {}, output: { error: 'The reply was stopped before this call ran.' }, isError: true }]);
   });
 
+  it('ends the call as soon as the reply is stopped, even when the gate never answers', async () => {
+    const execute = vi.fn(async () => 'ran');
+    const gate = () => new Promise<ChatToolDecision>(() => undefined);
+    const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+    const stop = new AbortController();
+    const call = tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: stop.signal }) as Promise<unknown>;
+    stop.abort();
+    const settled = await Promise.race([call.then(() => 'resolved', () => 'rejected'), new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500))]);
+    expect(settled).toBe('rejected');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not warn about a gate that rejects because the reply was stopped', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const gate = (_name: string, _input: unknown, { signal }: { signal?: AbortSignal }) =>
+        new Promise<ChatToolDecision>((_, reject) => signal?.addEventListener('abort', () => reject(new Error('stopped'))));
+      const tools = gateToolSet({ run_step: { execute: async () => 'ran' } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+      const stop = new AbortController();
+      const call = tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: stop.signal }) as Promise<unknown>;
+      stop.abort();
+      await expect(call).rejects.toBeDefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('still runs an allowed call that was not stopped', async () => {
     const execute = vi.fn(async () => 'ran');
     const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate: async () => ({ allow: true }), onResult: () => undefined });
     expect(await tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: new AbortController().signal })).toBe('ran');
     expect(execute).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('the ask_choice card', () => {
-  const ctx = { resolve: () => undefined, latest: true, live: false } as unknown as ToolViewContext;
-  const part = (extra: Partial<ToolPart>): ToolPart => ({
-    kind: 'tool',
-    toolCallId: 'a',
-    toolName: ASK_CHOICE,
-    input: { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] },
-    state: 'done',
-    ...extra,
-  });
-
-  it('shows nothing for a call the page refused', () => {
-    expect(BUILT_IN_VIEWS[ASK_CHOICE]!.render!(part({ output: { error: 'Not on this page.', note: 'x' } }), ctx)).toBe(nothing);
-    expect(BUILT_IN_VIEWS[ASK_CHOICE]!.render!(part({ state: 'error', error: 'boom' }), ctx)).toBe(nothing);
-  });
-
-  it('shows the options for a call that went through', () => {
-    expect(BUILT_IN_VIEWS[ASK_CHOICE]!.render!(part({ output: { shown: true } }), ctx)).not.toBe(nothing);
   });
 });

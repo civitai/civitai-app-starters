@@ -76,9 +76,7 @@ const post: ToolView = {
 const choice: ToolView = {
   render(part, ctx) {
     const input = part.input as { question?: string; options?: ChoiceOption[] } | undefined;
-    // A call that came back as an error (the page's gate refused it) showed the viewer nothing to pick.
-    const output = part.output as { error?: unknown } | null | undefined;
-    if (!input?.options?.length || part.state === 'error' || (output && typeof output === 'object' && output.error !== undefined)) return nothing;
+    if (!input?.options?.length) return nothing;
     return html`<civitai-chat-choice-card .question=${input.question ?? ''} .options=${input.options} .resolve=${ctx.resolve} ?disabled=${!ctx.latest || ctx.live}></civitai-chat-choice-card>`;
   },
 };

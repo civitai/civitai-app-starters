@@ -81,13 +81,29 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
 async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string, signal?: AbortSignal): Promise<string | undefined> {
   if (!gate) return undefined;
   try {
-    const decision = await gate(name, input, signal ? { conversationId, signal } : { conversationId });
+    // Stop ends the wait even when the page never answers: a pending gate does not hold the reply open.
+    const decision = await untilAborted(gate(name, input, signal ? { conversationId, signal } : { conversationId }), signal);
     if (decision && typeof decision === 'object' && 'refuse' in decision) return String(decision.refuse || 'Refused.');
     return undefined;
   } catch (error) {
-    console.warn(`[chat-cvt] beforeToolCall threw for "${name}"; the call is refused`, error);
+    // A gate that rejects because the reply was stopped did what `signal` asks; that is not a broken gate.
+    if (!signal?.aborted) console.warn(`[chat-cvt] beforeToolCall threw for "${name}"; the call is refused`, error);
     return 'The page could not check this call.';
   }
+}
+
+/** `value`, or `undefined` as soon as `signal` aborts, whichever comes first. */
+function untilAborted<T>(value: T | Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+  if (!signal) return Promise.resolve(value);
+  if (signal.aborted) return Promise.resolve(undefined);
+  return new Promise<T | undefined>((resolve, reject) => {
+    const stop = () => resolve(undefined);
+    signal.addEventListener('abort', stop, { once: true });
+    Promise.resolve(value).then(
+      (result) => (signal.removeEventListener('abort', stop), resolve(result)),
+      (error: unknown) => (signal.removeEventListener('abort', stop), reject(error)),
+    );
+  });
 }
 
 function isErrorOutput(output: unknown): boolean {
