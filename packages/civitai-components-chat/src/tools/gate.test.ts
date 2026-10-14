@@ -53,6 +53,41 @@ describe('gateToolSet', () => {
     }
   });
 
+  it('leaves no unhandled rejection when the reply was already stopped and the gate rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const execute = vi.fn(async () => 'ran');
+      const gate = async (_name: string, _input: unknown, { signal }: { signal?: AbortSignal }) => {
+        signal?.throwIfAborted();
+        return { allow: true } as const;
+      };
+      const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+      const stop = new AbortController();
+      stop.abort();
+      await expect(tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: stop.signal })).rejects.toBeDefined();
+      // Give an unhandled rejection the turn it needs to surface; vitest fails the run on one.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn about a gate that throws at once because the reply was already stopped', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const gate = (_name: string, _input: unknown, { signal }: { signal?: AbortSignal }): ChatToolDecision => {
+      signal?.throwIfAborted();
+      return { allow: true };
+    };
+    const tools = gateToolSet({ run_step: { execute: async () => 'ran' } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+    const stop = new AbortController();
+    stop.abort();
+    return expect(tools.run_step!.execute!({}, { toolCallId: 't', messages: [], abortSignal: stop.signal }))
+      .rejects.toBeDefined()
+      .then(() => expect(warn).not.toHaveBeenCalled())
+      .finally(() => warn.mockRestore());
+  });
+
   it('still runs an allowed call that was not stopped', async () => {
     const execute = vi.fn(async () => 'ran');
     const tools = gateToolSet({ run_step: { execute } } as unknown as ToolSet, { conversationId: 'c', gate: async () => ({ allow: true }), onResult: () => undefined });
