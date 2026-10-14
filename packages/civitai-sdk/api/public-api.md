@@ -145,7 +145,7 @@ export interface SignIn extends TokenSessionOptions {
 }
 
 /** Every scope an app can hold, as the site names them. */
-export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'models:read:self', 'posts:write:self', 'social:tip:self', 'user:read:self'];
+export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'apps:store:items:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'goods:purchase:self', 'goods:read:self', 'models:read:self', 'posts:write:self', 'social:tip:self', 'user:read:self'];
 
 export type Scope = (typeof SCOPES)[number];
 
@@ -2578,7 +2578,10 @@ export interface BlockSnapshot {
     context: BlockContext;
     token: BlockToken;
     settings: BlockSettings;
-    /** `null` for anonymous viewers. For identity, read `/me` from the API rather than this. */
+    /**
+     * `null` for anonymous viewers. For identity, read `app.site.get('blocks/me')`
+     * rather than this — not `site.get('me')`, which does not accept a block token.
+     */
     viewer: ViewerInfo | null;
     theme: Theme;
     blockInstanceId: string;

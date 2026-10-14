@@ -1,27 +1,63 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "973767bb21",
-  "capturedAt": "2026-09-21",
+  "capturedFrom": "3c6d553986",
+  "capturedAt": "2026-10-14",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
-      "reply": "APP_STORAGE_DELETE_RESULT"
+      "reply": "APP_STORAGE_DELETE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "deleted",
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "APP_STORAGE_GET": {
       "request": true,
-      "reply": "APP_STORAGE_GET_RESULT"
+      "reply": "APP_STORAGE_GET_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "value"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "APP_STORAGE_LIST": {
       "request": true,
-      "reply": "APP_STORAGE_LIST_RESULT"
+      "reply": "APP_STORAGE_LIST_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "keys",
+        "nextCursor"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "APP_STORAGE_QUOTA": {
       "request": true,
-      "reply": "APP_STORAGE_QUOTA_RESULT"
+      "reply": "APP_STORAGE_QUOTA_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "APP_STORAGE_SET": {
       "request": true,
-      "reply": "APP_STORAGE_SET_RESULT"
+      "reply": "APP_STORAGE_SET_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "ok",
+        "sizeBytes"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "BLOCK_ERROR": {
       "request": false,
@@ -31,53 +67,129 @@
       "request": false,
       "reply": ""
     },
+    "BLOCK_MESSAGE_REJECTED": {
+      "request": false,
+      "reply": ""
+    },
     "BLOCK_READY": {
       "request": false,
       "reply": ""
     },
     "CANCEL_APP_WORKFLOW": {
       "request": true,
-      "reply": "CANCEL_APP_WORKFLOW_RESULT"
+      "reply": "CANCEL_APP_WORKFLOW_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "CANCEL_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_CANCELED"
+      "reply": "WORKFLOW_CANCELED",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "snapshot"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "CREATE_POST_FROM_APP": {
       "request": true,
-      "reply": "CREATE_POST_RESULT"
+      "reply": "CREATE_POST_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "ESTIMATE_WORKFLOW": {
       "request": true,
-      "reply": "ESTIMATE_RESULT"
+      "reply": "ESTIMATE_RESULT",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "snapshot"
+      ],
+      "replyKeysFrom": "host-source"
+    },
+    "ESTIMATE_WORKFLOW_BATCH": {
+      "request": true,
+      "reply": "ESTIMATE_BATCH_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "GET_BUZZ_ACCOUNTS": {
       "request": true,
-      "reply": "BUZZ_ACCOUNTS_RESULT"
+      "reply": "BUZZ_ACCOUNTS_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_BUZZ_BALANCE": {
       "request": true,
-      "reply": "BUZZ_BALANCE_RESULT"
+      "reply": "BUZZ_BALANCE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "balance"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_BUZZ_TRANSACTIONS": {
       "request": true,
-      "reply": "BUZZ_TRANSACTIONS_RESULT"
+      "reply": "BUZZ_TRANSACTIONS_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_DAILY_COMPENSATION": {
       "request": true,
-      "reply": "DAILY_COMPENSATION_RESULT"
+      "reply": "DAILY_COMPENSATION_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_IMAGES_BY_IDS": {
       "request": true,
-      "reply": "IMAGES_RESULT"
+      "reply": "IMAGES_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_VIEWER": {
       "request": true,
-      "reply": "VIEWER_RESULT"
+      "reply": "VIEWER_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "viewer"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "GET_WILDCARD_PACK": {
       "request": true,
-      "reply": "WILDCARD_PACK_RESULT"
+      "reply": "WILDCARD_PACK_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "pack"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "NAVIGATE": {
       "request": false,
@@ -85,31 +197,88 @@
     },
     "OPEN_BUZZ_PURCHASE": {
       "request": true,
-      "reply": "BUZZ_PURCHASE_RESULT"
+      "reply": "BUZZ_PURCHASE_RESULT",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "purchased"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "OPEN_CHECKPOINT_PICKER": {
       "request": true,
-      "reply": "CHECKPOINT_PICKER_RESULT"
+      "reply": "CHECKPOINT_PICKER_RESULT",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "host-source"
+    },
+    "OPEN_IMAGE_PICKER": {
+      "request": true,
+      "reply": "IMAGE_PICKER_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "OPEN_IMAGE_UPLOAD": {
       "request": true,
-      "reply": "IMAGE_UPLOAD_RESULT"
+      "reply": "IMAGE_UPLOAD_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "OPEN_RESOURCE_PICKER": {
       "request": true,
-      "reply": "RESOURCE_PICKER_RESULT"
+      "reply": "RESOURCE_PICKER_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "selected",
+        "selectedResources"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "POLL_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_STATUS"
+      "reply": "WORKFLOW_STATUS",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "snapshot"
+      ],
+      "replyKeysFrom": "host-source"
+    },
+    "PREPARE_TRAINING_DATASET": {
+      "request": true,
+      "reply": "TRAINING_DATASET_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "PUBLISH_GENERATION_OUTPUTS": {
       "request": true,
-      "reply": "PUBLISH_RESULT"
+      "reply": "PUBLISH_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "QUERY_APP_WORKFLOWS": {
       "request": true,
-      "reply": "APP_WORKFLOWS_RESULT"
+      "reply": "APP_WORKFLOWS_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "result"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "REQUEST_CONSENT": {
       "request": false,
@@ -122,67 +291,173 @@
     "REQUEST_TOKEN": {
       "request": true,
       "reply": "TOKEN_REFRESH_RESPONSE",
-      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)"
+      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "token"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "RESIZE_IFRAME": {
       "request": false,
       "reply": ""
     },
+    "RUN_CONFIRMED_STEP": {
+      "request": true,
+      "reply": "CONFIRMED_STEP_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
+    },
+    "RUN_TRAINING": {
+      "request": true,
+      "reply": "TRAINING_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
+    },
     "SAVE_IMAGE": {
       "request": true,
-      "reply": "SAVE_IMAGE_RESULT"
+      "reply": "SAVE_IMAGE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SET_COLLECTION_FOLLOW": {
       "request": true,
-      "reply": "COLLECTION_FOLLOW_RESULT"
+      "reply": "COLLECTION_FOLLOW_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": null,
+      "replyKeysFrom": "unknown"
     },
     "SET_USER_CHECKPOINT": {
       "request": true,
-      "reply": "USER_CHECKPOINT_SET"
+      "reply": "USER_CHECKPOINT_SET",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_APPEND": {
       "request": true,
-      "reply": "SHARED_APPEND_RESULT"
+      "reply": "SHARED_APPEND_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "key"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_GET": {
       "request": true,
-      "reply": "SHARED_GET_RESULT"
+      "reply": "SHARED_GET_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "item"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_GET_COUNT": {
       "request": true,
-      "reply": "SHARED_GET_COUNT_RESULT"
+      "reply": "SHARED_GET_COUNT_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "count"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_GET_COUNTS": {
       "request": true,
-      "reply": "SHARED_GET_COUNTS_RESULT"
+      "reply": "SHARED_GET_COUNTS_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "counts"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_LIST": {
       "request": true,
-      "reply": "SHARED_LIST_RESULT"
+      "reply": "SHARED_LIST_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "items",
+        "nextCursor"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_REPORT": {
       "request": true,
-      "reply": "SHARED_REPORT_RESULT"
+      "reply": "SHARED_REPORT_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_UNVOTE": {
       "request": true,
-      "reply": "SHARED_UNVOTE_RESULT"
+      "reply": "SHARED_UNVOTE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "count"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_UPDATE": {
       "request": true,
-      "reply": "SHARED_UPDATE_RESULT"
+      "reply": "SHARED_UPDATE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_VOTE": {
       "request": true,
-      "reply": "SHARED_VOTE_RESULT"
+      "reply": "SHARED_VOTE_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "count"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SHARED_WITHDRAW": {
       "request": true,
-      "reply": "SHARED_WITHDRAW_RESULT"
+      "reply": "SHARED_WITHDRAW_RESULT",
+      "framing": "legacy",
+      "failure": "string",
+      "replyKeys": [
+        "deleted",
+        "ok"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "SUBMIT_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_SUBMITTED"
+      "reply": "WORKFLOW_SUBMITTED",
+      "framing": "legacy",
+      "failure": null,
+      "replyKeys": [
+        "snapshot"
+      ],
+      "replyKeysFrom": "host-source"
     },
     "TRACK_EVENT": {
       "request": false,
@@ -191,14 +466,19 @@
   },
   "scopes": [
     "ai:write:budgeted",
+    "apps:storage",
+    "apps:storage:publish",
     "apps:storage:read",
     "apps:storage:shared:read",
     "apps:storage:shared:write",
     "apps:storage:write",
+    "apps:store:items:write",
     "buzz:read:self",
     "collections:read:private",
     "collections:read:self",
     "collections:write:self",
+    "goods:purchase:self",
+    "goods:read:self",
     "models:read:self",
     "posts:write:self",
     "social:tip:self",

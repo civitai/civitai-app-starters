@@ -82,12 +82,12 @@ describe('IframeTransport requests', () => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
     const sent = posted.at(-1)!.msg as { type: string; payload: { requestId: string } };
-    expect(sent.type).toBe('BUZZ_GET_ACCOUNTS');
+    expect(sent.type).toBe('GET_BUZZ_ACCOUNTS');
 
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId: sent.payload.requestId, result: { accounts: [] } },
     });
 
@@ -98,7 +98,7 @@ describe('IframeTransport requests', () => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
     const { requestId } = (posted.at(-1)!.msg as { payload: { requestId: string } }).payload;
 
     const scans: unknown[] = [];
@@ -108,7 +108,7 @@ describe('IframeTransport requests', () => {
     expect(scans).toEqual([{ requestId, blocked: true }]);
 
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId, result: { accounts: [{ type: 'blue', balance: 9 }] } },
     });
     await expect(pending).resolves.toEqual({ accounts: [{ type: 'blue', balance: 9 }] });
@@ -119,7 +119,7 @@ describe('IframeTransport requests', () => {
     deliver(init());
     const controller = new AbortController();
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {}, { signal: controller.signal });
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {}, { signal: controller.signal });
     controller.abort(new Error('caller gave up'));
 
     await expect(pending).rejects.toThrow('caller gave up');
@@ -127,14 +127,14 @@ describe('IframeTransport requests', () => {
 
   it('queues a request sent before init and answers it after', async () => {
     const { transport, posted, deliver } = mountTransport();
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
 
     deliver(init());
-    const sent = posted.find((p) => p.msg.type === 'BUZZ_GET_ACCOUNTS')!.msg as {
+    const sent = posted.find((p) => p.msg.type === 'GET_BUZZ_ACCOUNTS')!.msg as {
       payload: { requestId: string };
     };
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId: sent.payload.requestId, result: { accounts: [{ type: 'blue', balance: 4 }] } },
     });
 
