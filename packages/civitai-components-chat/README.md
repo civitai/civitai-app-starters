@@ -182,7 +182,7 @@ list: the default, `models`, the orchestrator's own models, and the OpenRouter m
 orchestrator routes that cost at most $8 per million output tokens and support tool calls (the
 assistant works only through tool calls), each with its price per million output tokens. A model
 whose known context window is smaller than a lower bound on what a reply needs (the viewer's reply
-cap, plus up to 24,000 tokens of conversation, plus about 10,000 for the instructions and tool
+cap, plus the conversation budget (`contextBudgetTokens`, 24,000 by default), plus about 10,000 for the instructions and tool
 definitions) is left out, so changing the cap changes the list. It is a lower bound, not a
 guarantee: a long latest message or a page's own tools can still need more. The default, `models`
 and the chat's current model always stay. The list
@@ -191,6 +191,15 @@ comes from OpenRouter's public `GET https://openrouter.ai/api/v1/models` and the
 cannot be reached the list still offers the default, `models` and any typed model id. A reply uses
 the chat's own model, else the viewer's default from Settings, else `model`. A chat that never
 picked one follows the viewer's default, and the pick is saved with the chat.
+
+`contextBudgetTokens` (default 24,000, by the estimate of 3.5 characters a token) is about how much
+earlier conversation a reply sends; raise it for a model with a large context window. The latest
+turn always goes whole. When the rest is over the budget, earlier turns give way in this order:
+first their long tool results (over 400 characters), oldest turn first, each replaced by a note
+while its call stays; then whole turns, oldest first, with one "(N earlier turns omitted)" note in
+their place. The chat's first message (its task) and every answer to a set of options keep their
+user message even then, within a quarter of the budget: the task first (cut to fit if it must be),
+then the latest answers.
 
 Settings' Assistant choice also sets how replies are paid for, when the orchestrator has a free daily
 allowance for the default model (`GET /v2/consumer/free-tier`; free requests carry

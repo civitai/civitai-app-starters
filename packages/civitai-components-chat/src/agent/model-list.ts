@@ -1,4 +1,4 @@
-import { chatConfig, CONTEXT_BUDGET_TOKENS, ORCH_URL, REQUEST_OVERHEAD_TOKENS, type ChatModelOption } from '../config.js';
+import { chatConfig, contextBudget, ORCH_URL, REQUEST_OVERHEAD_TOKENS, type ChatModelOption } from '../config.js';
 
 /** OpenRouter's public model list: no key, and open to any origin. */
 export const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
@@ -182,14 +182,14 @@ export function priceLabel(entry: Pick<ChatModelEntry, 'pricePerMillion'>): stri
 
 /**
  * Leaves out models whose known context window is below a LOWER BOUND on what a reply needs: `cap`
- * of reply, {@link CONTEXT_BUDGET_TOKENS} of history and {@link REQUEST_OVERHEAD_TOKENS} of system
+ * of reply, {@link contextBudget} of history and {@link REQUEST_OVERHEAD_TOKENS} of system
  * prompt and tools. It is not a guarantee: the latest turn is never trimmed, and a page's own tools
  * and instructions add more, so a model that passes can still run out of room. A model with no known
  * window stays, and so do the page's default, its listed models and `keep` (the chat's current
  * model), whatever their window.
  */
 export function usableModels(models: ChatModelEntry[], cap: number, keep?: string): ChatModelEntry[] {
-  const needed = cap + CONTEXT_BUDGET_TOKENS + REQUEST_OVERHEAD_TOKENS;
+  const needed = cap + contextBudget() + REQUEST_OVERHEAD_TOKENS;
   return models.filter(
     (model) => model.source === 'default' || model.source === 'listed' || model.id === keep || model.contextLength === undefined || model.contextLength >= needed,
   );
