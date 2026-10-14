@@ -8,7 +8,8 @@
     "**/*.css",
     "**/*.define.js",
     "**/elements/register.js",
-    "**/elements/register-site.js"
+    "**/elements/register-site.js",
+    "**/testing/happy-dom.js"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -27,6 +28,10 @@
     "./internals": {
       "types": "./dist/elements/internals.d.ts",
       "import": "./dist/elements/internals.js"
+    },
+    "./testing/happy-dom": {
+      "types": "./dist/testing/happy-dom.d.ts",
+      "import": "./dist/testing/happy-dom.js"
     },
     "./civitai-button": {
       "types": "./dist/elements/civitai-button.d.ts",

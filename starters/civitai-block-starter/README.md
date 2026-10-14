@@ -134,7 +134,7 @@ and the declaration are never introduced separately.
 | `npm run dev:harness` | Same, with the local dev harness. **Use this for offline iteration.** |
 | `npm run build` | Production bundle in `dist/`. Also validates `block.manifest.json`. |
 | `npm run typecheck` | TypeScript strict check. |
-| `npm test` | Drives the block through the real bridge in happy-dom ([`test/block.test.ts`](./test/block.test.ts)). |
+| `npm test` | Drives the block through the real bridge in happy-dom ([`test/block.test.ts`](./test/block.test.ts)). `vitest.config.ts` loads `@civitai/components/testing/happy-dom`, which gives happy-dom the `ElementInternals` that `<civitai-button>` and the form controls need. |
 | `npm run preview` | Serve the production bundle locally. |
 
 There is no `dev:live` (run local code against the real backend) here yet: the
@@ -164,7 +164,8 @@ submitting.
 ## Registering the block
 
 Submit with the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)).
-After a one-time `civitai login`, run `civitai app validate` then
+(No global `civitai`? Prefix each command with `npx -y @civitai/cli@latest`
+instead.) After a one-time `civitai login`, run `civitai app validate` then
 `civitai app submit` — the latter validates, packages the project, and uploads it
 for review; a moderator reviews and approves it. Before submitting, self-run the
 [first-review checklist](https://developer.civitai.com/apps/guide/first-review.md). The platform owns the build +

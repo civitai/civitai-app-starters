@@ -38,7 +38,16 @@ Vite + React + TS) or at the React examples under
   `<civitai-workflow-button>` — each needs its own
   `@civitai/components/<tag>/define`). The full contract
   (every tag, attribute, event, `::part` and slot) is
-  `node_modules/@civitai/components/custom-elements.json`.
+  `node_modules/@civitai/components/custom-elements.json`; the package README
+  (`node_modules/@civitai/components/README.md`, § Elements) has worked
+  examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements'
+  reference: it is the `data-civitai-ui` contract for HAND-WRITTEN HTML
+  (`<div data-civitai-ui="text-input"><label>…<input>`), which the
+  `<civitai-*>` elements do not use. Here, write `<civitai-text-input>`.
+- Tests run in happy-dom, which has no `ElementInternals`;
+  `vitest.config.ts` loads `@civitai/components/testing/happy-dom` so
+  `<civitai-button>` and the form controls can be created there. Keep that
+  setup file, and do not write your own `attachInternals` polyfill.
 - `@civitai/theme` — the `--civitai-*` tokens (`src/main.ts` imports its CSS).
 - `@civitai/app-sdk` — `@civitai/app-sdk/blocks` for the slot/viewer predicates,
   scope names and manifest types; `@civitai/app-sdk/vite` for
@@ -76,6 +85,9 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
 │   └── dev/harness.ts      # local BLOCK_INIT simulator (`npm run dev:harness`)
 └── test/block.test.ts      # drives the block through the real bridge (happy-dom)
 ```
+
+`scratch/` is gitignored and outside both `tsconfig.json` and the vitest run:
+put throwaway probes and experiments there, never in `src/` or `test/`.
 
 ## Patterns to keep
 
@@ -395,5 +407,9 @@ separate.
 | `src/**` | `npm run typecheck && npm test`, then `npm run dev:harness` and look |
 | `vite.config.ts`, env wiring | `npm run build` |
 | `block.manifest.json` | `npm run build` (the manifest is validated on every dev boot and build); before submitting, `civitai app validate` |
+
+No `civitai` on this machine's PATH (a sandbox, a fresh CI runner)? Run any
+`civitai …` command as `npx -y @civitai/cli@latest …` instead, e.g.
+`npx -y @civitai/cli@latest app validate`.
 
 Before `civitai app submit`, self-run the [first-review checklist](https://developer.civitai.com/apps/guide/first-review.md) — what a reviewer checks first.

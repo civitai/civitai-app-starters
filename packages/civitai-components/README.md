@@ -288,9 +288,38 @@ enforced rather than asserted: `pnpm --filter @civitai/components test` runs a
 
 Scope, precisely: the menu is the only element in this package that touches the
 popover API (grep `showPopover`, `hidePopover`, `:popover-open` — the hits are one
-file), so it was the only one that could not mount. The `dom` project covers
-**it**; the other elements are covered in a real browser, where they have always
-been fine.
+file), so it was the only one that could not mount **without a setup file**. The
+form controls are the other exception — see the next paragraph. Element
+*behaviour* is covered in a real browser.
+
+**Form controls need one setup file: `@civitai/components/testing/happy-dom`.**
+happy-dom implements no `ElementInternals` (measured on 20.9.0, 20.14.6 and
+21.0.1), and every form-associated element calls `attachInternals()` on
+construction: `<civitai-button>`, `<civitai-checkbox>`, `<civitai-number-input>`,
+`<civitai-radio-group>`, `<civitai-segmented-control>`, `<civitai-select>`,
+`<civitai-slider>`, `<civitai-switch>`, `<civitai-text-input>` and
+`<civitai-textarea>`. Without the shim each throws
+`TypeError: this.attachInternals is not a function`.
+
+```ts
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    environment: 'happy-dom',
+    setupFiles: ['@civitai/components/testing/happy-dom'],
+  },
+});
+```
+
+It installs a minimal stand-in **only when `attachInternals` is absent** (a real
+browser is untouched): `form` (the nearest ancestor `<form>`), `validity` /
+`checkValidity()` / `reportValidity()` driven by the element's own
+`setValidity()` calls, `setFormValue`, `states`. It does **not** make
+`new FormData(form)` see a control's value or run `form.reset()` callbacks —
+test those in a real browser. The elements themselves deliberately do not guard
+against a missing `attachInternals`: that would let a real page lose form
+association silently. `test/element-internals-shim.dom.test.ts` enumerates the
+form-associated elements from `custom-elements.json` and constructs each one.
 
 `jsdom` is **measured, not gated** — it is not in this repo's CI at all. With the
 same test, `<civitai-menu>` mounts and opens without throwing on **jsdom 25.0.1**

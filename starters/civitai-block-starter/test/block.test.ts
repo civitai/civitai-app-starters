@@ -316,35 +316,43 @@ describe('embedded load', () => {
 });
 
 describe('the "Open on Civitai" link', () => {
-  test('a deployed block host links to its own run page', async () => {
-    await withAttachInternals(checkRunLink);
-  });
+  // `<civitai-button>` is form-associated; it constructs here only because
+  // vitest.config.ts loads `@civitai/components/testing/happy-dom`.
+  test('a deployed block host links to its own run page', checkRunLink);
 });
 
-/**
- * `<civitai-button>` is form-associated and calls attachInternals(), which
- * happy-dom does not implement (real browsers do). A minimal stand-in, for the
- * duration of `fn` only, so the element can upgrade and render.
- */
-async function withAttachInternals(fn: () => Promise<void> | void): Promise<void> {
-  const proto = HTMLElement.prototype as unknown as { attachInternals?: () => unknown };
-  const hadInternals = 'attachInternals' in proto;
-  if (!hadInternals) {
-    proto.attachInternals = () => ({
-      form: null,
-      setFormValue() {},
-      setValidity() {},
-      checkValidity: () => true,
-      reportValidity: () => true,
-      states: new Set(),
-    });
-  }
-  try {
-    await fn();
-  } finally {
-    if (!hadInternals) delete proto.attachInternals;
-  }
-}
+describe('the echo control', () => {
+  test('typing into the input and clicking the button echoes the text', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    const input = field('echo-input') as HTMLElement & { updateComplete: Promise<unknown> };
+    const button = field('echo-button') as HTMLElement & { updateComplete: Promise<unknown> };
+    await input.updateComplete;
+    await button.updateComplete;
+
+    // Type the way a viewer does: into the input INSIDE the element.
+    const inner = input.shadowRoot!.querySelector('input')!;
+    inner.value = 'hello there';
+    inner.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    button.click();
+
+    expect(field('echo')!.textContent).toBe('You said: hello there');
+  });
+
+  test('what was typed survives a host snapshot change', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    const input = field('echo-input') as HTMLElement & { value: string };
+    input.value = 'kept';
+    fromHost({ type: 'THEME_CHANGE', payload: { theme: 'dark' } });
+    await vi.waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+    expect(field('echo-input')).toBe(input);
+    expect(input.value).toBe('kept');
+  });
+});
 
 async function checkRunLink() {
   {
@@ -419,12 +427,10 @@ describe('every <civitai-*> element the starter uses is defined', () => {
     await mounted;
     collect();
     // 2. The direct-load card, both branches.
-    await withAttachInternals(() => {
-      renderDirectLoadFallback(root, 'my-app.civit.ai');
-      collect();
-      renderDirectLoadFallback(root, 'localhost');
-      collect();
-    });
+    renderDirectLoadFallback(root, 'my-app.civit.ai');
+    collect();
+    renderDirectLoadFallback(root, 'localhost');
+    collect();
     // 3. The start-error state.
     __resetTransport();
     getTransport({ allowedParentOrigins: [HOST_ORIGIN] });
