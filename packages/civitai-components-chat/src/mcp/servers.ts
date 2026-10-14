@@ -21,6 +21,7 @@ export interface ChatMcpOptions {
    * Civitai's generation tools; on unless `false`. `{ exclude }` keeps them on but leaves out the named
    * tools, e.g. `{ exclude: ['run_step', 'run_workflow'] }` for a page where the assistant should look
    * services up but never run (and pay for) one; the panels, which run through `run_step`, go with it.
+   * Other tools that charge per call, such as `transcribe_audio`, stay unless they are named too.
    */
   orchestration?: boolean | { exclude?: ReadonlyArray<string> };
   /** Civitai model search; on unless `false`. */

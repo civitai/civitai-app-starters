@@ -7,9 +7,10 @@ export type ChatToolDecision = { allow: true } | { refuse: string } | void;
  * Asked before every tool call the assistant makes (Civitai's, an added server's, the page's), with the
  * input as the assistant wrote it. `{ refuse }` stops the call: nothing runs, and the assistant gets
  * the reason as the tool's error; anything else lets it run. A hook that throws (or rejects) refuses,
- * so a broken gate never lets a call by.
+ * so a broken gate never lets a call by. `signal` aborts when the viewer stops the reply; a call whose
+ * reply was stopped while the gate decided does not run, whatever the gate answers.
  */
-export type ChatToolGate = (name: string, input: unknown, context: { conversationId: string }) => ChatToolDecision | Promise<ChatToolDecision>;
+export type ChatToolGate = (name: string, input: unknown, context: { conversationId: string; signal?: AbortSignal }) => ChatToolDecision | Promise<ChatToolDecision>;
 
 /** One finished tool call, as the `tool-result` event reports it. */
 export interface ChatToolResult {
@@ -29,6 +30,8 @@ export interface GateDeps {
   onResult(result: ChatToolResult): void;
 }
 
+const STOPPED = 'The reply was stopped before this call ran.';
+
 export const REFUSED_BY_PAGE_NOTE =
   'The page did not allow this call, and nothing ran. Do not call it again with the same input; do what the error asks, or tell the user in plain words.';
 
@@ -47,7 +50,13 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
     gated[name] = {
       ...tool,
       execute: async (input: unknown, options: Parameters<typeof execute>[1]) => {
-        const refused = await decide(deps.gate, name, input, deps.conversationId);
+        const signal = (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
+        const refused = await decide(deps.gate, name, input, deps.conversationId, signal);
+        if (signal?.aborted) {
+          // Stopped while the gate decided: nothing runs, a confirmation that comes late included.
+          deps.onResult({ name, input, output: { error: STOPPED }, isError: true });
+          throw signal.reason ?? new Error(STOPPED);
+        }
         if (refused !== undefined) {
           const output = { error: refused, note: REFUSED_BY_PAGE_NOTE };
           deps.onResult({ name, input, output, isError: true, refused });
@@ -69,10 +78,10 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
 }
 
 /** The refusal, or `undefined` to let the call run. */
-async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string): Promise<string | undefined> {
+async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string, signal?: AbortSignal): Promise<string | undefined> {
   if (!gate) return undefined;
   try {
-    const decision = await gate(name, input, { conversationId });
+    const decision = await gate(name, input, signal ? { conversationId, signal } : { conversationId });
     if (decision && typeof decision === 'object' && 'refuse' in decision) return String(decision.refuse || 'Refused.');
     return undefined;
   } catch (error) {

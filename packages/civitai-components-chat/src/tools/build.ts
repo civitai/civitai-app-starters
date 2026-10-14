@@ -53,7 +53,8 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
         description: `${mcpTool.description ?? ''}${JOB_SUFFIX}`,
         inputSchema: jsonSchema(withoutControls(mcpTool.inputSchema)),
         execute: async (input, { toolCallId }) => {
-          // Taken before any await, so parallel calls number in call order.
+          // Taken before any await here, so parallel calls number in the order they start: call order,
+          // unless a page's beforeToolCall answers them out of order.
           const index = ++jobCount;
           const job = ctx.jobs.create({
             id: jobId(ctx.seq, index),
