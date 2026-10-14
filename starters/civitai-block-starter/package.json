@@ -58,7 +58,7 @@
   "dependencies": {
     "@civitai/app-sdk": "^0.70.0",
     "@civitai/components": "^0.9.3",
-    "@civitai/sdk": "^0.12.0",
+    "@civitai/sdk": "^0.12.1",
     "@civitai/theme": "^0.5.2"
   },
   "devDependencies": {
