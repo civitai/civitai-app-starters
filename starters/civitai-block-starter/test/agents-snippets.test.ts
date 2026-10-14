@@ -39,15 +39,18 @@ declare function askRetry(message: string): Promise<boolean>;
 `;
 
 /**
- * Every backtick fence whose info string's FIRST WORD is `ts`, `tsx` or
- * `typescript` — so ```ts title="x.ts" counts — indented by spaces or tabs or
- * not at all. Each body line loses as much of the opening fence's exact indent
- * as it starts with. Tilde fences and other languages are not extracted.
+ * Fences opened by EXACTLY three backticks whose info string's first word is
+ * `ts`, `tsx` or `typescript` (so ```ts title="x.ts" counts), indented by
+ * spaces or tabs or not at all, and closed by the next line that is exactly
+ * three backticks (optionally indented). Fences of four or more backticks,
+ * tilde fences and other languages are not extracted. Each body line loses as
+ * much of the opening fence's exact indent as it starts with. Lines split on
+ * LF or CRLF.
  */
 function extractSnippets(md: string): string[] {
   const snippets: string[] = [];
   let open: { indent: string; lines: string[] } | null = null;
-  for (const line of md.split('\n')) {
+  for (const line of md.split(/\r?\n/)) {
     if (!open) {
       const m = /^([ \t]*)```[ \t]*(?:ts|tsx|typescript)(?:[ \t].*)?$/.exec(line);
       if (m) open = { indent: m[1]!, lines: [] };
@@ -120,6 +123,15 @@ describe('AGENTS.md code snippets', () => {
 });
 
 describe('the fence extractor', () => {
+  it('finds the same snippets in AGENTS.md checked out with CRLF line endings', () => {
+    const lf = readFileSync(AGENTS_MD, 'utf8').replace(/\r\n/g, '\n');
+    const crlf = lf.replace(/\n/g, '\r\n');
+    expect(crlf).not.toBe(lf);
+    const fromLf = extractSnippets(lf);
+    expect(fromLf.length).toBeGreaterThanOrEqual(3);
+    expect(extractSnippets(crlf)).toEqual(fromLf);
+  });
+
   it('extracts ```typescript, an info string after the language, and tab-indented fences — each typechecks red', () => {
     const md = [
       '```typescript',
