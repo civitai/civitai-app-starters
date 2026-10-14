@@ -42,8 +42,10 @@ declare function askRetry(message: string): Promise<boolean>;
  * Fences opened by EXACTLY three backticks whose info string's first word is
  * `ts`, `tsx` or `typescript` (so ```ts title="x.ts" counts), indented by
  * spaces or tabs or not at all, and closed by the next line that is exactly
- * three backticks (optionally indented). Fences of four or more backticks,
- * tilde fences and other languages are not extracted. Each body line loses as
+ * three backticks (optionally indented, optionally followed by spaces or
+ * tabs). Fences of four or more backticks, tilde fences and other languages are
+ * not extracted themselves, but only ts fences are tracked, so a ```ts block
+ * nested inside another kind of fence is still extracted. Each body line loses as
  * much of the opening fence's exact indent as it starts with. Lines split on
  * LF or CRLF.
  */
