@@ -8,7 +8,8 @@
  * `<|tool_call…|>` special tokens, `<function=…>…</function>`, and a bare JSON
  * `{"name": …, "arguments": …}` object). A shape it does not know passes through unchanged; a false
  * strip costs a sentence of a reply that could not call a tool anyway. An opener with no closer is
- * cut to the end, so a partial stream never shows half a call.
+ * cut to the end, so a partial stream hides a call from its opener on; an opener still arriving
+ * (`<tool_ca`) shows until the delta that completes it.
  */
 export function stripToolMarkup(text: string): string {
   const out = withoutJsonCalls(

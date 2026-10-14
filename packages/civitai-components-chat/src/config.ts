@@ -23,7 +23,9 @@ export interface ChatConfig {
   autoRunLimit: number;
   /**
    * The most steps (model requests) one reply may take; the last one must answer in words, and a reply
-   * that used them all offers Continue. 10 when unset, kept within 2 to {@link MAX_STEPS_LIMIT}. Each step is a paid request.
+   * that used them all offers Continue. 10 when unset, kept within 2 to {@link MAX_STEPS_LIMIT}. Each step is a paid request,
+   * and each re-sends every earlier step of the same reply: nothing trims those, so with a large
+   * value a long reply can outgrow the model's context window and end in an error before its last step.
    */
   maxSteps?: number;
   /**
