@@ -110,6 +110,11 @@ export interface SharedListResult {
  * 🔴 EVERY FAILURE REJECTS. No path here resolves to mean "not written" or
  * "could not read". A caller that must not act on a partial view branches on the
  * rejection, never on an empty result.
+ *
+ * @deprecated The legacy cross-user store. Declare a `shared` collection under
+ * `storage.collections` and use `app.storage.collection(name)`, which has counters,
+ * marks and authorship built in. This keeps working, unchanged, until the apps that
+ * use it have moved.
  */
 export interface SharedStorageClient {
   /**

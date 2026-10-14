@@ -21,6 +21,7 @@ import {
   createSharedStorageClient,
   type SharedStorageClient,
 } from '../shared-storage/index.js';
+import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
 import { createWorkflowsClient, type WorkflowsClient } from '../workflows/index.js';
@@ -41,15 +42,26 @@ export interface AppClient {
    */
   readonly site: SiteClient;
   /**
-   * The viewer's own per-app key/value store.
+   * App storage. Two stores share this property while apps migrate:
    *
-   * 🔴 Requires the block token the host mints: an app that authenticated with
-   * an OAuth access token has no per-viewer app storage, and every call here is
-   * refused. An anonymous viewer is refused too — gate on `viewer` rather than
-   * reading an empty result as "nothing stored".
+   * - **The document store** — `collection(name)` and `info()`: the collections
+   *   the app declares under `storage.collections` in its manifest, private or
+   *   shared, with counters, marks, declared indexes and conditional writes.
+   *   Use this for anything new.
+   * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
+   *   `getQuota`, each `@deprecated`. It keeps working, unchanged, until the apps
+   *   that use it have moved; nothing is copied between the two.
+   *
+   * 🔴 Both require the block token the host mints: an app that authenticated
+   * with an OAuth access token is refused. The legacy store refuses an anonymous
+   * viewer outright; the document store lets one read SHARED collections only.
    */
-  readonly storage: StorageClient;
+  readonly storage: StorageClient & DocumentStorage;
   /**
+   * @deprecated Declare a `shared` collection under `storage.collections` and use
+   * `app.storage.collection(name)`. This store keeps working, unchanged, until the
+   * apps that use it have moved.
+   *
    * This app's CROSS-USER store — one namespace every viewer of this app reads
    * and writes, which is what makes a shared feed or a "popular" rail possible.
    *
@@ -213,15 +225,19 @@ function createAppClient(
   // clients' routes live under the same base URL, so a `siteUrl` override
   // redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. None of the three `blocks/*` clients needs an exemption
-  // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`
-  // and `blocks/workflows/*`, which that namespace already excludes, and
-  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts` and
-  // `test/workflows/seam.test.ts` pin the three `BASE` values there textually.
+  // diagnosis applies. None of the four `blocks/*` clients needs an exemption
+  // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`,
+  // `blocks/storage/*` and `blocks/workflows/*`, which that namespace already excludes, and
+  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts`,
+  // `test/doc-store/client.test.ts` and `test/workflows/seam.test.ts` pin the four
+  // `BASE` values there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   return {
     site: createSiteClient(siteHttp),
-    storage: createStorageClient(siteHttp),
+    // One object, two stores, no shared names: the legacy five and the document
+    // store's `collection`/`info`. Spread rather than chained so neither keeps a
+    // reference to the other.
+    storage: { ...createStorageClient(siteHttp), ...createDocumentStorage(siteHttp) },
     sharedStorage: createSharedStorageClient(siteHttp),
     workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),
     orchestration: createOrchestrationClient(

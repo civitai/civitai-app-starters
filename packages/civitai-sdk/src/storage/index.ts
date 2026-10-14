@@ -67,7 +67,13 @@ export interface StorageQuota {
  * not act on a partial view branches on the rejection, never on an empty result.
  */
 export interface StorageClient {
-  /** The value, or `null` when the key is unset. Rejects on any refusal. */
+  /**
+   * The value, or `null` when the key is unset. Rejects on any refusal.
+   *
+   * @deprecated The legacy per-viewer key/value store. Declare a `private`
+   * collection under `storage.collections` and use `app.storage.collection(name)`;
+   * this keeps working, unchanged, until the apps that use it have moved.
+   */
   get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
 
   /**
@@ -79,6 +85,10 @@ export interface StorageClient {
    *
    * A value of `undefined` is stored as `null`: it does not survive JSON, and
    * the server writes `null` for an absent value rather than refusing.
+   *
+   * @deprecated The legacy per-viewer key/value store. Declare a `private`
+   * collection under `storage.collections` and use `app.storage.collection(name)`;
+   * this keeps working, unchanged, until the apps that use it have moved.
    */
   set<T = unknown>(
     key: string,
@@ -86,10 +96,22 @@ export interface StorageClient {
     opts?: StorageCallOptions,
   ): Promise<{ ok: true; sizeBytes: number }>;
 
-  /** Idempotent. `deleted: false` means the key was already absent — a success. */
+  /**
+   * Idempotent. `deleted: false` means the key was already absent — a success.
+   *
+   * @deprecated The legacy per-viewer key/value store. Declare a `private`
+   * collection under `storage.collections` and use `app.storage.collection(name)`;
+   * this keeps working, unchanged, until the apps that use it have moved.
+   */
   delete(key: string, opts?: StorageCallOptions): Promise<{ ok: true; deleted: boolean }>;
 
-  /** One page of keys, ordered by key ascending. Values are not returned. */
+  /**
+   * One page of keys, ordered by key ascending. Values are not returned.
+   *
+   * @deprecated The legacy per-viewer key/value store. Declare a `private`
+   * collection under `storage.collections` and use `app.storage.collection(name)`;
+   * this keeps working, unchanged, until the apps that use it have moved.
+   */
   list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
 
   /**
@@ -97,6 +119,10 @@ export interface StorageClient {
    *
    * It reports neither the key-length cap nor the per-value cap, so a write
    * that fits the numbers here can still be refused.
+   *
+   * @deprecated The legacy per-viewer key/value store. Declare a `private`
+   * collection under `storage.collections` and use `app.storage.collection(name)`;
+   * this keeps working, unchanged, until the apps that use it have moved.
    */
   getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
 }

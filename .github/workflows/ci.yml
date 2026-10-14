@@ -143,6 +143,11 @@ jobs:
       # Runs the bare script (curl + diff only) — no node/pnpm needed.
       - run: ./scripts/check-canonical-schema.sh
 
+      # The document-store contract @civitai/sdk vendors for its fake and client
+      # suite, byte-diffed the same way. Until civitai.com serves it (it ships with
+      # the storage routes) the script diffs against civitai/civitai main and says so.
+      - run: ./scripts/check-storage-contract.sh
+
   starter-pins:
     name: Starter pins vs published
     needs: lanes

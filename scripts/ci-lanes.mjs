@@ -236,9 +236,12 @@ export const RULES = Object.freeze([
   { glob: '.github/workflows/ci.yml', jobs: ALL },
   { glob: 'scripts/ci-lanes.mjs', jobs: ALL },
 
-  // schema-drift: curl + diff of ONE vendored file.
+  // schema-drift: curl + diff of the vendored manifest schema…
   { glob: 'packages/civitai-app-sdk/schemas/app-block/v1.json', jobs: ['schema-drift'] },
   { glob: 'scripts/check-canonical-schema.sh', jobs: ['schema-drift'] },
+  // …and the document-store contract @civitai/sdk vendors, byte-diffed the same way.
+  { glob: 'packages/civitai-sdk/schemas/app-block/storage-contract.v1.json', jobs: ['schema-drift'] },
+  { glob: 'scripts/check-storage-contract.sh', jobs: ['schema-drift'] },
 
   // starter-pins: every starter/example pin, bounded by the LOCAL package versions.
   { glob: 'starters/**/package.json', jobs: ['starter-pins'] },

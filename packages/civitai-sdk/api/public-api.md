@@ -26,15 +26,26 @@ export interface AppClient {
      */
     readonly site: SiteClient;
     /**
-     * The viewer's own per-app key/value store.
+     * App storage. Two stores share this property while apps migrate:
      *
-     * 🔴 Requires the block token the host mints: an app that authenticated with
-     * an OAuth access token has no per-viewer app storage, and every call here is
-     * refused. An anonymous viewer is refused too — gate on `viewer` rather than
-     * reading an empty result as "nothing stored".
+     * - **The document store** — `collection(name)` and `info()`: the collections
+     *   the app declares under `storage.collections` in its manifest, private or
+     *   shared, with counters, marks, declared indexes and conditional writes.
+     *   Use this for anything new.
+     * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
+     *   `getQuota`, each `@deprecated`. It keeps working, unchanged, until the apps
+     *   that use it have moved; nothing is copied between the two.
+     *
+     * 🔴 Both require the block token the host mints: an app that authenticated
+     * with an OAuth access token is refused. The legacy store refuses an anonymous
+     * viewer outright; the document store lets one read SHARED collections only.
      */
-    readonly storage: StorageClient;
+    readonly storage: StorageClient & DocumentStorage;
     /**
+     * @deprecated Declare a `shared` collection under `storage.collections` and use
+     * `app.storage.collection(name)`. This store keeps working, unchanged, until the
+     * apps that use it have moved.
+     *
      * This app's CROSS-USER store — one namespace every viewer of this app reads
      * and writes, which is what makes a shared feed or a "popular" rail possible.
      *
@@ -269,6 +280,11 @@ export interface SharedListResult {
  * 🔴 EVERY FAILURE REJECTS. No path here resolves to mean "not written" or
  * "could not read". A caller that must not act on a partial view branches on the
  * rejection, never on an empty result.
+ *
+ * @deprecated The legacy cross-user store. Declare a `shared` collection under
+ * `storage.collections` and use `app.storage.collection(name)`, which has counters,
+ * marks and authorship built in. This keeps working, unchanged, until the apps that
+ * use it have moved.
  */
 export interface SharedStorageClient {
     /**
@@ -383,7 +399,13 @@ export interface StorageQuota {
  * not act on a partial view branches on the rejection, never on an empty result.
  */
 export interface StorageClient {
-    /** The value, or `null` when the key is unset. Rejects on any refusal. */
+    /**
+     * The value, or `null` when the key is unset. Rejects on any refusal.
+     *
+     * @deprecated The legacy per-viewer key/value store. Declare a `private`
+     * collection under `storage.collections` and use `app.storage.collection(name)`;
+     * this keeps working, unchanged, until the apps that use it have moved.
+     */
     get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
     /**
      * Upsert one key. Resolves only when the write landed.
@@ -394,26 +416,236 @@ export interface StorageClient {
      *
      * A value of `undefined` is stored as `null`: it does not survive JSON, and
      * the server writes `null` for an absent value rather than refusing.
+     *
+     * @deprecated The legacy per-viewer key/value store. Declare a `private`
+     * collection under `storage.collections` and use `app.storage.collection(name)`;
+     * this keeps working, unchanged, until the apps that use it have moved.
      */
     set<T = unknown>(key: string, value: T, opts?: StorageCallOptions): Promise<{
         ok: true;
         sizeBytes: number;
     }>;
-    /** Idempotent. `deleted: false` means the key was already absent — a success. */
+    /**
+     * Idempotent. `deleted: false` means the key was already absent — a success.
+     *
+     * @deprecated The legacy per-viewer key/value store. Declare a `private`
+     * collection under `storage.collections` and use `app.storage.collection(name)`;
+     * this keeps working, unchanged, until the apps that use it have moved.
+     */
     delete(key: string, opts?: StorageCallOptions): Promise<{
         ok: true;
         deleted: boolean;
     }>;
-    /** One page of keys, ordered by key ascending. Values are not returned. */
+    /**
+     * One page of keys, ordered by key ascending. Values are not returned.
+     *
+     * @deprecated The legacy per-viewer key/value store. Declare a `private`
+     * collection under `storage.collections` and use `app.storage.collection(name)`;
+     * this keeps working, unchanged, until the apps that use it have moved.
+     */
     list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
     /**
      * This viewer's usage against this viewer's caps, in the stored unit.
      *
      * It reports neither the key-length cap nor the per-value cap, so a write
      * that fits the numbers here can still be refused.
+     *
+     * @deprecated The legacy per-viewer key/value store. Declare a `private`
+     * collection under `storage.collections` and use `app.storage.collection(name)`;
+     * this keeps working, unchanged, until the apps that use it have moved.
      */
     getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
 }
+
+/**
+ * A refusal from the document store, in its one envelope `{ code, message, error, details? }`.
+ * Branch on `code`; `status` and `body` are {@link ApiError}'s, as sent.
+ */
+export declare class StorageError extends ApiError {
+    readonly code: StorageErrorCode;
+    /** E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. */
+    readonly details?: Record<string, unknown>;
+    constructor(status: number, code: StorageErrorCode, message: string, body: unknown, details?: Record<string, unknown>, options?: ErrorOptions);
+    /** Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503). */
+    get retryAfter(): number | undefined;
+}
+
+export interface DocumentCallOptions {
+    signal?: AbortSignal;
+}
+
+/** Who wrote a document, as every reader sees it. Never a numeric user id. */
+export type DocumentAuthor = 
+/**
+ * A viewer. `isViewer` is whether that is the viewer reading it; `username` is
+ * present only when the collection declares `showAuthor` (and the user has one).
+ */
+{
+    kind: 'user';
+    isViewer: boolean;
+    username?: string;
+}
+
+export interface StorageDocument<T extends object = Record<string, unknown>> {
+    key: string;
+    data: T;
+    /** +1 on every `data` write. Counter and mark changes do not move it. */
+    version: number;
+    /** Revived from the wire's ISO string, once, here. */
+    createdAt: Date;
+    updatedAt: Date;
+    author: DocumentAuthor;
+    /** Declared counters of a shared collection; `{}` on a private one. */
+    counters: Record<string, number>;
+    /** Declared mark counts of a shared collection (never `report`'s); `{}` on a private one. */
+    marks: Record<string, number>;
+    /** The viewer's own marks on this document; `null` for an anonymous viewer. */
+    viewer: {
+        marks: string[];
+    } | null;
+}
+
+/** A `time` index filters by an ISO-8601 string or epoch milliseconds; a `Date` is sent as ISO. */
+export type DocumentWhereValue = string | number | boolean | Date;
+
+export interface DocumentListQuery {
+    /**
+     * Equality on ONE declared index: `{ status: 'open' }`. An undeclared field is
+     * refused `index_not_declared`, more than one field `invalid_request`.
+     */
+    where?: Record<string, DocumentWhereValue>;
+    /**
+     * `[-]key | createdAt | updatedAt | <index> | counter:<name> | mark:<name>`; a
+     * leading `-` is descending. The server's default is `key`.
+     */
+    sort?: string;
+    /** Only documents the viewer authored. */
+    author?: 'me';
+    /** With {@link DocumentListQuery.mark}: only documents the viewer marked with it. */
+    markedBy?: 'me';
+    mark?: string;
+    keyPrefix?: string;
+    /** The server bounds it and applies its own default; this client sends none. */
+    limit?: number;
+    /** A `nextCursor` from the previous page of the SAME query. */
+    cursor?: string;
+}
+
+export interface DocumentPage<T extends object = Record<string, unknown>> {
+    items: StorageDocument<T>[];
+    /** `null` exactly when this was the last page. Passed through as the server sent it. */
+    nextCursor: string | null;
+}
+
+export interface WriteOptions extends DocumentCallOptions {
+    /**
+     * Write only if the document is at this version — `0` means only if it does not
+     * exist yet. A mismatch rejects with `version_conflict` and
+     * `details.currentVersion`.
+     */
+    ifVersion?: number;
+}
+
+export interface StorageCollection<T extends object = Record<string, unknown>> {
+    /** The document, or `null` when there is none (missing, hidden and absent read alike). */
+    get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
+    /** One round trip; the result is in the order of `keys`, `null` for each miss. */
+    getMany(keys: readonly string[], opts?: DocumentCallOptions): Promise<(StorageDocument<T> | null)[]>;
+    /** Create or replace the document at `key`. */
+    put(key: string, data: T, opts?: WriteOptions): Promise<StorageDocument<T>>;
+    /** Create a document under a key the server chooses (a sortable id). */
+    create(data: T, opts?: DocumentCallOptions): Promise<StorageDocument<T>>;
+    /** Idempotent: `deleted: false` means there was nothing to delete. */
+    delete(key: string, opts?: WriteOptions): Promise<{
+        deleted: boolean;
+    }>;
+    /** One page. Follow `nextCursor` with the same query for the next one. */
+    list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
+    /**
+     * Add `by` (the server's default when omitted) to a declared counter of a
+     * shared document. In a `write: "none"` collection the first increment of an
+     * absent key creates the document.
+     */
+    increment(key: string, counter: string, by?: number, opts?: DocumentCallOptions): Promise<{
+        value: number;
+    }>;
+    /**
+     * Set the viewer's mark on a shared document — a declared mark, or the
+     * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
+     * never exposed.
+     */
+    mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
+        marked: true;
+        count?: number;
+    }>;
+    /** Remove the viewer's mark. Idempotent. */
+    unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
+        marked: false;
+        count?: number;
+    }>;
+}
+
+export type StorageIndexType = 'string' | 'number' | 'boolean' | 'time';
+
+/** One declared collection, as the server reads the app's approved manifest. */
+export interface StorageCollectionInfo {
+    kind: string;
+    visibility: 'private' | 'shared';
+    /** Shared collections only. */
+    write?: string;
+    counters: string[];
+    marks: string[];
+    indexes: Record<string, StorageIndexType>;
+    showAuthor: boolean;
+}
+
+export interface StorageUsage {
+    /** The STORED unit (the database's own measure of the JSON), which the ceilings bind in. */
+    bytes: number;
+    docs: number;
+}
+
+/** Render these, never a compiled-in figure: they are the server's and can move. */
+export interface StorageLimits {
+    docBytes: number;
+    appBytes: number;
+    appDocs: number;
+    viewerBytes: number;
+    viewerDocs: number;
+    listLimitMax: number;
+    getManyMax: number;
+    rate: {
+        readsPerMinute: number;
+        privateWritesPerMinute: number;
+        marksAndCountersPerMinute: number;
+        reportsPerDay: number;
+        sharedWritesBurst: number;
+        sharedWritesPerDay: number;
+    };
+}
+
+export interface StorageInfo {
+    collections: Record<string, StorageCollectionInfo>;
+    limits: StorageLimits;
+    usage: {
+        app: StorageUsage;
+        viewer: StorageUsage;
+    };
+}
+
+/** The document store's surface on `app.storage`. */
+export interface DocumentStorage {
+    /** A declared collection. Nothing is sent until an operation is called. */
+    collection<T extends object = Record<string, unknown>>(name: string): StorageCollection<T>;
+    /** The declared collections, the limits and the usage so far. Signed-in viewers only. */
+    info(opts?: DocumentCallOptions): Promise<StorageInfo>;
+}
+
+/**
+ * Every code the server documents for these routes. The type stays open
+ * (`string & {}`) so a code a later server adds still reaches the caller.
+ */
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable' | (string & {});
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -2539,6 +2771,8 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
+export type Http = <T>(method: string, path: string, opts?: RequestOptions) => Promise<T>;
+
 /** Anything this package throws on purpose, so one `catch` can tell it from a bug. */
 export declare class CivitaiError extends Error {
     constructor(message: string, options?: ErrorOptions);
@@ -2870,4 +3104,91 @@ export declare function createFakeTransport(snapshot?: Partial<BlockSnapshot>): 
 
 /** Test-only. */
 export declare function __resetTransport(): void;
+
+/** The default scanner's words: the contract's `conventions`, so a test can reach each refusal. */
+export declare const FAKE_STORAGE_MODERATION: Readonly<{
+    blockedText: "contract-blocked-term";
+    blockedLink: "https://contract-blocked.example/x";
+    scannerDown: "contract-scanner-down";
+}>;
+
+export declare function createFakeStorage(options: FakeStorageOptions): FakeStorage;
+
+export interface FakeStorageViewer {
+    /** The viewer's identity in this fake, and what `showAuthor` collections display. */
+    username: string;
+    /**
+     * The viewer's numeric user id, as the platform keys it. Internal: no response
+     * carries it, which a test can check by choosing a distinctive one. Default: a
+     * small number assigned on first use.
+     */
+    id?: number;
+    /** Passes the minimum-trust gate on shared writes. Default `true`. */
+    trusted?: boolean;
+    /** `details.reason` when untrusted. Default `account_too_new`. */
+    untrustedReason?: string;
+}
+
+/** Who is calling: a viewer (or `null`, anonymous) holding a token of some kind and scopes. */
+export interface FakeStorageCaller {
+    /** Default: the fake's `viewer`. `null` is an anonymous viewer with a token. */
+    viewer?: FakeStorageViewer | null;
+    /** `block` (default), `dev` (the developer's own namespace) or `none` (no token at all). */
+    token?: 'block' | 'dev' | 'none';
+    /** The token's scopes. Default: the manifest's `scopes`. */
+    scopes?: readonly string[];
+}
+
+export type FakeModerationVerdict = 'blocked' | 'link' | 'unavailable' | null;
+
+export interface FakeStorageOptions {
+    /** The app's manifest; `storage.collections` is what the fake enforces. */
+    manifest: {
+        scopes?: readonly string[];
+        storage?: unknown;
+    };
+    /** The default caller's viewer. Default `{ username: 'viewer' }`; `null` for anonymous. */
+    viewer?: FakeStorageViewer | null;
+    /** Default `approved`; anything else refuses every call `not_eligible`. */
+    appStatus?: string;
+    /** Consent state: scopes the viewer revoked, or `unavailable` (the marker could not be read). */
+    consent?: {
+        revoked: readonly string[];
+    } | 'unavailable';
+    /** `true` answers every data operation `storage_disabled`, as a server with no database does. */
+    disabled?: boolean;
+    /** Override the per-app and per-viewer ceilings, e.g. a small `viewerDocs` to reach the quota. */
+    limits?: Partial<typeof DEFAULT_LIMITS>;
+    /** The clock rate limits and timestamps read. Default `Date.now`. */
+    now?: () => number;
+    /**
+     * Classify one string (a value, an object key or a document key) of a shared write.
+     * Default: {@link FAKE_STORAGE_MODERATION}'s words.
+     */
+    moderate?: (text: string) => FakeModerationVerdict;
+}
+
+/** One request as the fake received it, and what it answered. */
+export interface FakeStorageCall {
+    method: string;
+    path: string;
+    query: Record<string, string | string[]>;
+    body: unknown;
+    status: number;
+    response: unknown;
+}
+
+export interface FakeStorageSession {
+    /** The `Http` seam, as this caller. */
+    readonly http: Http;
+    /** The real client over that seam. */
+    readonly storage: DocumentStorage;
+}
+
+export interface FakeStorage extends FakeStorageSession {
+    /** The same store, as a different caller. */
+    as(caller: FakeStorageCaller): FakeStorageSession;
+    /** Every request received, in order, by any caller. */
+    readonly calls: FakeStorageCall[];
+}
 ```
