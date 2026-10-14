@@ -680,6 +680,38 @@ describe('AppClient.workflows — watch and wait', () => {
     expect(urls).toHaveLength(2);
   });
 
+  it('an abort DURING the back-off after a failed read rejects at once, not when the back-off ends', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(503, { message: 'unavailable' }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+
+    let outcome: unknown = 'pending';
+    void workflows
+      .wait(WORKFLOW_ID, { intervalMs: 0, signal: controller.signal })
+      .then(
+        (s) => (outcome = s),
+        (e: unknown) => (outcome = e),
+      );
+    await vi.advanceTimersByTimeAsync(0);
+    // The good read and the failed one have happened; the back-off has begun.
+    expect(calls).toHaveLength(2);
+    expect(outcome).toBe('pending');
+
+    controller.abort(reason);
+    // 1 ms of fake time: far less than the shortest back-off. Settling here
+    // means the abort ended the back-off itself rather than waiting it out.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe(reason);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toHaveLength(2);
+  });
+
   it('stops reading when the caller stops watching', async () => {
     const { workflows, calls } = await client([
       () => json(200, { snapshot: snapshot('processing') }),
@@ -709,6 +741,33 @@ describe('AppClient.workflows — watch and wait', () => {
     controller.abort(reason);
 
     expect(await settled).toBe(reason);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('an abort while the caller holds a yielded snapshot rejects on the next step, not after the interval', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+
+    const watching = workflows.watch(WORKFLOW_ID, { intervalMs: 5_000, signal: controller.signal });
+    await expect(watching.next()).resolves.toMatchObject({ value: { status: 'processing' } });
+    // The generator is paused at its `yield`: the abort fires before it resumes.
+    controller.abort(reason);
+
+    let outcome: unknown = 'pending';
+    void watching.next().then(
+      (r) => (outcome = r),
+      (e: unknown) => (outcome = e),
+    );
+    // 1 ms of fake time, far less than the 5 s interval.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe(reason);
+
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(calls).toHaveLength(1);
   });
 });
