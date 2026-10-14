@@ -61,6 +61,14 @@ export function configureChat(patch: Partial<ChatConfig>): void {
 
 export const MAX_STEPS = 10;
 export const CONTEXT_BUDGET_TOKENS = 24_000;
+/**
+ * What a reply sends besides the conversation history: the system prompt and the built-in tools'
+ * definitions. Measured 2026-10-14 at 7,206 tokens (the package's own 3.5-characters-a-token
+ * estimate, longest custom instructions, posting on, the recorded tool catalogs in test-fixtures),
+ * rounded up to leave room for a page's own tools and instructions. `request-overhead.test.ts`
+ * re-measures it and fails if the prompt or catalogs outgrow it.
+ */
+export const REQUEST_OVERHEAD_TOKENS = 10_000;
 export const RETENTION_DAYS = 30;
 export const CUSTOM_INSTRUCTIONS_MAX = 1_500;
 export const HOST_INSTRUCTIONS_MAX = 4_000;

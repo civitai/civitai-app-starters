@@ -87,9 +87,12 @@ export class CivitaiChatSettingsDialog extends LightElement {
     const custom = this.customModel || !listed;
     const free = this.freeAllowance;
     const tier = this.settings.assistantTier ?? 'auto';
-    const value = custom ? CUSTOM : current || (!free ? DEFAULT : tier === 'free' ? FREE : tier === 'paid' ? DEFAULT : AUTO);
+    // A stored "Free" stays on show when free replies are gone, so the viewer sees why replies are
+    // refused and can pick something else (picking the option already shown would change nothing).
+    const stuck = !free && !current && !custom && tier === 'free';
+    const value = custom ? CUSTOM : current || (stuck ? FREE : !free ? DEFAULT : tier === 'free' ? FREE : tier === 'paid' ? DEFAULT : AUTO);
     const data = [
-      ...(free ? [{ value: AUTO, label: 'Auto' }, { value: FREE, label: 'Free' }] : []),
+      ...(free ? [{ value: AUTO, label: 'Auto' }, { value: FREE, label: 'Free' }] : stuck ? [{ value: FREE, label: 'Free (unavailable)' }] : []),
       { value: DEFAULT, label: 'Default' },
       ...this.models.map((model) => ({ value: model.id, label: model.label })),
       { value: CUSTOM, label: 'Custom…' },
@@ -145,7 +148,10 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ? `Free replies while they last (${free.left} left), then about 1 Buzz a reply.`
         : `Free replies are used up${back}; about 1 Buzz a reply meanwhile.`;
     }
-    if (value === FREE) return free && free.left > 0 ? `Only free replies: ${free.left} left.` : `Free replies are used up${back}.`;
+    if (value === FREE) {
+      if (!free) return "Free replies aren't available right now, so replies are refused. Pick Default to pay for them with Buzz.";
+      return free.left > 0 ? `Only free replies: ${free.left} left.` : `Free replies are used up${back}.`;
+    }
     if (value === DEFAULT) return 'About 1 Buzz a reply.';
     if (value === CUSTOM) return 'Any chat model the Civitai orchestrator serves; what a reply costs depends on the model.';
     return this.models.find((model) => model.id === value)?.note ?? '';

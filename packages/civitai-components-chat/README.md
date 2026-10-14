@@ -181,9 +181,11 @@ Each chat has its own model. The button beside the add-file button shows it and 
 list: the default, `models`, the orchestrator's own models, and the OpenRouter models the
 orchestrator routes that cost at most $8 per million output tokens and support tool calls (the
 assistant works only through tool calls), each with its price per million output tokens. A model
-whose known context window cannot hold the viewer's reply cap plus the conversation the chat sends
-(up to 24,000 tokens) is left out, so changing the cap changes the list; the default, `models` and
-the chat's current model always stay. The list
+whose known context window is smaller than a lower bound on what a reply needs (the viewer's reply
+cap, plus up to 24,000 tokens of conversation, plus about 10,000 for the instructions and tool
+definitions) is left out, so changing the cap changes the list. It is a lower bound, not a
+guarantee: a long latest message or a page's own tools can still need more. The default, `models`
+and the chat's current model always stay. The list
 comes from OpenRouter's public `GET https://openrouter.ai/api/v1/models` and the orchestrator's
 `GET /v1/models` (as the viewer), loaded once per session when the list is first opened; if either
 cannot be reached the list still offers the default, `models` and any typed model id. A reply uses

@@ -287,8 +287,8 @@ describe('civitai-chat', () => {
       data: [
         { id: 'cheap/model', owned_by: 'openrouter' },
         { id: 'pricey/model', owned_by: 'openrouter' },
-        // Fits 1,024 + 24,000 tokens, not 16,384 + 24,000.
-        { id: 'urn:air:hosted:narrow-window', owned_by: 'civitai', context_length: 26_000 },
+        // Fits 1,024 + 34,000 tokens of reply, history, prompt and tools; not 16,384 + 34,000.
+        { id: 'urn:air:hosted:narrow-window', owned_by: 'civitai', context_length: 36_000 },
       ],
     };
     const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => {
@@ -336,6 +336,73 @@ describe('civitai-chat', () => {
     expect(options().join(' | ')).toContain('urn:air:hosted:narrow-window Hosted');
     // The list loaded once for the session.
     expect(fetch.mock.calls.filter(([url]) => String(url) === 'https://openrouter.ai/api/v1/models')).toHaveLength(1);
+  });
+
+  it("keeps listing and marking this chat's own model even when its window is too small for the cap", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const routable = {
+      data: [
+        { id: 'urn:air:hosted:tiny-current', owned_by: 'civitai', context_length: 13_312 },
+        { id: 'urn:air:hosted:tiny-other', owned_by: 'civitai', context_length: 16_384 },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => (String(url).endsWith('/v1/models') && !String(url).includes('openrouter') ? new Response(JSON.stringify(routable)) : new Response('{}', { status: 400 }))),
+    );
+    const chat = document.createElement('civitai-chat');
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
+    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model urn:air:hosted:tiny-current' } }));
+    const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: urn:air:hosted:tiny-current'));
+
+    chip.click();
+    const names = () => [...root.querySelectorAll('.cvt-model-options .cvt-model-name')].map((name) => name.textContent);
+    // Wait for the hosted list itself, not for an absence that holds before anything renders.
+    await vi.waitFor(() => expect(names()).toContain('urn:air:hosted:tiny-current'));
+    const listed = [...root.querySelectorAll('.cvt-model-options [role=option]')].map((option) => [option.querySelector('.cvt-model-name')!.textContent, option.getAttribute('aria-selected')]);
+    expect(listed).toContainEqual(['urn:air:hosted:tiny-current', 'true']);
+    expect(listed.map(([name]) => name)).not.toContain('urn:air:hosted:tiny-other');
+  });
+
+  it('lets a viewer stuck on Free with a model that has no free replies allow paid replies and get the reply', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    localStorage.setItem('cvt:settings', JSON.stringify({ assistantTier: 'free' }));
+    const replies: (string | null)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        const target = String(url);
+        if (target.includes('free-tier')) {
+          return new Response(JSON.stringify({ enabled: true, models: [{ key: 'default-chat', airs: ['urn:air:only:the-default'], remaining: 5, windows: [{ limit: 10, remaining: 5 }] }] }));
+        }
+        if (target.includes('chat/completions')) {
+          replies.push(new Headers(init?.headers).get('X-Civitai-Tier'));
+          return new Response('{}', { status: 400 });
+        }
+        return new Response('{}');
+      }),
+    );
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model z-ai/not-free' } }));
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('.cvt-model-chip')!.title).toBe('Model for this chat: z-ai/not-free'));
+
+    await chat.send('a red bike');
+    const button = () => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'));
+    await vi.waitFor(() => expect(button()).toBeDefined());
+    expect(replies).toEqual([]);
+
+    button()!.click();
+    await vi.waitFor(() => expect(replies).toEqual([null]));
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantTier).toBe('auto');
   });
 
   it('still offers the default and a custom model id when neither model list can be reached', async () => {

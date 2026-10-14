@@ -103,11 +103,13 @@ export class CivitaiChatModelPicker extends LightElement {
       event.preventDefault();
       const typed = this.query.trim();
       if (!typed) return;
-      // A typed model id is meant as is: never swap it for a longer id it happens to begin.
-      const exact = this.models.find((model) => model.id.toLowerCase() === typed.toLowerCase());
+      // An exact id or name picks that model. A typed id (one word with / or :) is meant as is,
+      // never swapped for a longer id it begins; anything else, like "OpenAI: GPT-4o", is a search.
+      const wanted = typed.toLowerCase();
+      const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
       const [first] = this.#matches();
-      this.#pick(first && !/[/:]/.test(typed) ? first.id : typed);
+      this.#pick(first && !/^\S*[/:]\S*$/.test(typed) ? first.id : typed);
     }
   };
 

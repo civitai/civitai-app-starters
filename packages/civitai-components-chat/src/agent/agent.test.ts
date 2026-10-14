@@ -279,3 +279,56 @@ describe("Agent's output-token cap", () => {
     expect([...plain.caps.reply, ...huge.caps.reply, ...tiny.caps.reply]).toEqual([16_384, 32_768, 1_024]);
   });
 });
+
+describe('a reply refused because the model has no free replies', () => {
+  const refusal = () => Object.assign(new Error('Model has no free replies'), { statusCode: 400 });
+
+  function refusing(reply: 'refused' | 'ok') {
+    const titles: unknown[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        if (reply === 'refused') throw refusal();
+        return { stream: convertArrayToReadableStream(text('Here.')) as never };
+      },
+      doGenerate: async () => {
+        titles.push('asked');
+        throw refusal();
+      },
+    });
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const agent = new Agent({ model: () => model, store, jobs: new JobManager({} as never), toolSet: async () => ({}), attachments: () => [] });
+    const errors: unknown[] = [];
+    agent.addEventListener('error', (e) => errors.push((e as CustomEvent).detail));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    return { agent, store, titles, errors, warn };
+  }
+
+  it('says so once, on the reply, and asks for no title', async () => {
+    const { agent, store, titles, errors } = refusing('refused');
+    await agent.send('hello');
+    // A title request would start right after the reply; give it the chance to.
+    await flushAll();
+    await flushAll();
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'free_tier_not_free' });
+    expect(errors).toHaveLength(1);
+    expect(titles).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the first-message title without a warning when only the title model is refused', async () => {
+    const { agent, store, titles, errors, warn } = refusing('ok');
+    await agent.send('a lighthouse at dusk');
+    await vi.waitFor(() => expect(titles).toHaveLength(1));
+    await flushAll();
+    expect(errors).toEqual([]);
+    expect(store.current!.title).toBe('a lighthouse at dusk');
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('could not name'))).toEqual([]);
+    vi.restoreAllMocks();
+  });
+});
+
+const flushAll = () => new Promise((resolve) => setTimeout(resolve, 0));

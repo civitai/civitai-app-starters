@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { chatConfig } from '../config.js';
+import { chatConfig, CONTEXT_BUDGET_TOKENS, REQUEST_OVERHEAD_TOKENS } from '../config.js';
 import { buildModelList, ModelCatalog, OPENROUTER_MODELS_URL, priceLabel, usableModels, type ChatModelEntry } from './model-list.js';
 
 const DEFAULT = 'urn:air:qwen3:repository:huggingface:example/default@main';
@@ -112,17 +112,21 @@ describe('usableModels', () => {
   const models = [
     entry('page/default', 'default', 9_000),
     entry('page/listed', 'listed', 9_100),
-    entry('hosted/exact', 'hosted', 29_000),
-    entry('hosted/one-short', 'hosted', 28_999),
+    entry('hosted/exact', 'hosted', 39_000),
+    entry('hosted/one-short', 'hosted', 38_999),
     entry('or/roomy', 'openrouter', 131_072),
-    entry('or/one-short', 'openrouter', 28_999),
+    entry('or/one-short', 'openrouter', 38_999),
     entry('or/unknown', 'openrouter'),
     entry('or/current', 'openrouter', 9_200),
   ];
 
   it('drops a model whose window cannot hold the reply cap plus the conversation budget, but never the default, listed or current one', () => {
-    // 5,000 + 24,000 = 29,000: exactly that fits, one less does not.
+    // 5,000 of reply + 24,000 of history + 10,000 of prompt and tools = 39,000: exactly that fits, one less does not.
     expect(usableModels(models, 5_000, 'or/current').map((model) => model.id)).toEqual(['page/default', 'page/listed', 'hosted/exact', 'or/roomy', 'or/unknown', 'or/current']);
+  });
+
+  it('counts the measured prompt-and-tools overhead, not only history and reply', () => {
+    expect(CONTEXT_BUDGET_TOKENS + REQUEST_OVERHEAD_TOKENS).toBe(34_000);
   });
 
   it('filters against the cap in force, so changing it changes the list', () => {
