@@ -51,6 +51,7 @@ export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
   const app = await waitForHost(root);
 
   const view = createView();
+  wireEcho(view);
   const update = () => {
     syncTheme(app);
     fill(view, app);
@@ -126,6 +127,11 @@ VIEW.innerHTML = `
       <civitai-text size="sm">Viewer:</civitai-text>
       <civitai-badge variant="light" data-field="viewer"></civitai-badge>
     </civitai-group>
+    <civitai-group gap="sm">
+      <civitai-text-input label="Say something" name="message" data-field="echo-input"></civitai-text-input>
+      <civitai-button data-field="echo-button">Echo</civitai-button>
+    </civitai-group>
+    <civitai-text size="sm" data-field="echo"></civitai-text>
   </civitai-stack>
 `;
 
@@ -141,6 +147,19 @@ function createView(): View {
     root,
     field: (name) => root.querySelector<HTMLElement>(`[data-field="${name}"]`)!,
   };
+}
+
+/**
+ * The demo's one control: the button echoes what was typed into the input.
+ * Wired ONCE, when the view is built — `fill` runs on every snapshot change and
+ * must not add listeners. The echo is written with `textContent`, like every
+ * other value here. `test/block.test.ts` types into the input and clicks.
+ */
+function wireEcho(view: View): void {
+  const input = view.field('echo-input') as HTMLElement & { value: string };
+  view.field('echo-button').addEventListener('click', () => {
+    view.field('echo').textContent = input.value === '' ? '' : `You said: ${input.value}`;
+  });
 }
 
 /**

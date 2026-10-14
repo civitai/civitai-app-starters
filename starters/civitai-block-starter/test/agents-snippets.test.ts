@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -164,4 +164,37 @@ describe('the fence extractor', () => {
       expect(typecheck(`${snippet}\nexport {};\n`).some((d) => d.includes('TS2322'))).toBe(true);
     }
   }, 60_000);
+});
+
+/**
+ * Every `node_modules/@civitai/<pkg>/<file>` AGENTS.md sends a reader to must
+ * exist in the package this starter installs AND be in that package's published
+ * `files` — so a renamed or unshipped file fails here, not in the reader's
+ * sandbox. (Inside the workspace `node_modules/@civitai/*` links to the local
+ * package, so `files` is what decides whether the tarball has it.)
+ */
+describe('AGENTS.md package pointers', () => {
+  const md = readFileSync(AGENTS_MD, 'utf8');
+  const pointers = [...new Set([...md.matchAll(/node_modules\/(@civitai\/[a-z-]+)\/([A-Za-z0-9_.-]+\.(?:md|json))/g)].map((m) => `${m[1]}/${m[2]}`))];
+
+  it('positive control: finds the element reference pointer', () => {
+    expect(pointers).toContain('@civitai/components/custom-elements.json');
+  });
+
+  it.each(pointers)('%s exists and is published', (pointer) => {
+    const [scope, name, file] = pointer.split('/');
+    const pkgDir = join(STARTER, 'node_modules', scope!, name!);
+    expect(existsSync(join(pkgDir, file!)), `${pointer} is not in the installed package`).toBe(true);
+    const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { files?: string[] };
+    expect(pkg.files ?? [], `${pointer} is not in ${scope}/${name}'s published files`).toContain(file);
+  });
+
+  it('the vitest setup file is a declared export of @civitai/components', () => {
+    const config = readFileSync(join(STARTER, 'vitest.config.ts'), 'utf8');
+    expect(config).toContain("setupFiles: ['@civitai/components/testing/happy-dom']");
+    const pkg = JSON.parse(
+      readFileSync(join(STARTER, 'node_modules/@civitai/components/package.json'), 'utf8'),
+    ) as { exports: Record<string, unknown> };
+    expect(Object.keys(pkg.exports)).toContain('./testing/happy-dom');
+  });
 });
