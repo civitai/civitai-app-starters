@@ -82,9 +82,11 @@ function toolCallId(init: RequestInit | undefined): string | number | undefined 
  * A tool call's reply may come on an event stream. Should that stream end, or break, before the reply
  * for `id` is on it, the SDK waits out the whole timeout (610 s for an added server's tools) for a reply
  * that cannot come any more. This passes the stream through unchanged and, at its end, adds an error
- * reply for `id` in its place, so the call fails at once. Not when the call was stopped or the
- * connection closed (that is already an error), and not when the server sent event ids: such a stream
- * can be resumed, and the SDK reconnects for the reply itself.
+ * reply for `id` in its place, so the call fails at once. Not when the connection closed or its
+ * transport was stopped (the request's signal is the transport's own, not the tool call's; either is
+ * already an error), and not when the server sent a non-empty event id: such a stream can be resumed,
+ * and the SDK reconnects for the reply itself. An empty `id:` resets the last event id, which leaves
+ * nothing to resume from, so it does not count.
  */
 function guardReplyStream(response: Response, id: string | number, signal: AbortSignal | undefined, isClosed: () => boolean): Response {
   const type = response.headers.get('content-type') ?? '';
@@ -102,7 +104,7 @@ function guardReplyStream(response: Response, id: string | number, signal: Abort
     for (const event of events) {
       const data: string[] = [];
       for (const line of event.split(/\r?\n/)) {
-        if (/^id:/.test(line)) resumable = true;
+        if (/^id:[ \t]*\S/.test(line)) resumable = true;
         else if (/^data:/.test(line)) data.push(line.slice(5).replace(/^ /, ''));
       }
       if (data.length === 0) continue;

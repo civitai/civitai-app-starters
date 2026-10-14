@@ -141,6 +141,20 @@ describe('a reply that never comes', () => {
     expect(error).toMatchObject({ code: ErrorCode.RequestTimeout });
   });
 
+  it.each([['id:'], ['id: ']])('does not count an empty event id (%j) as resumable: the call still fails at once', async (line) => {
+    const connection = createMcpConnection({ url: URL, fetch: dropping('end', `${line}\ndata: \n\n`).fetch });
+    await expect(within(connection.callTool('run_command', {}, { timeoutMs: EXTRA_TOOL_TIMEOUT_MS }), 2_000)).rejects.toBeInstanceOf(McpStreamLostError);
+  });
+
+  it('throws when the viewer stopped the call, rather than reporting a lost reply', async () => {
+    // The SDK turns an abort into a RequestTimeout McpError, the same code a lost reply has.
+    const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => Promise.reject(new McpError(ErrorCode.RequestTimeout, 'AbortError: stopped'))) } as McpConnection;
+    const set = extraToolSet([{ server, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
+    const stop = new AbortController();
+    stop.abort();
+    await expect(set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [], abortSignal: stop.signal })).rejects.toThrow('AbortError: stopped');
+  });
+
   it('still answers normally when the reply does come', async () => {
     const fake = fakeMcpServers({ [URL]: [{ name: 'run_command' }] });
     const connection = createMcpConnection({ url: URL, fetch: fake.fetch });

@@ -57,7 +57,8 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
           try {
             result = await connection.callTool(tool.name, args, options);
           } catch (error) {
-            if (!replyLost(error)) throw error;
+            // A stopped call's abort comes back as a timeout error too; it is the viewer's stop, not a lost reply.
+            if (abortSignal?.aborted || !replyLost(error)) throw error;
             // The call may well have done its work; only its answer is missing. "Do not call it again"
             // would be wrong, and so would running it blindly again.
             return { error: `No reply from ${server.label?.trim() || server.id}; the ${tool.name} call may have finished.`, retryable: true, note: LOST_NOTE };
