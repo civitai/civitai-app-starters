@@ -33,6 +33,11 @@ export interface ChatConfig {
    * viewer set their own in Settings. Kept within 1,024 to 32,768.
    */
   maxOutputTokens: number;
+  /**
+   * About how many tokens of earlier conversation a reply sends, by the 3.5-characters-a-token
+   * estimate; {@link CONTEXT_BUDGET_TOKENS} when unset. Raise it for a model with a large window.
+   */
+  contextBudgetTokens?: number;
 }
 
 /** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
@@ -96,3 +101,9 @@ export const conversationTag = (id: string): string => `cvt:conv:${id}`;
 export const scopeTag = (scope: string): string => `cvt:scope:${scope}`;
 /** Tag-safe, and short enough to leave room for the rest of the tag. */
 export const SCOPE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
+/** The history budget a reply uses: `chatConfig.contextBudgetTokens` when it is a positive number, else {@link CONTEXT_BUDGET_TOKENS}. */
+export function contextBudget(): number {
+  const value = chatConfig.contextBudgetTokens;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : CONTEXT_BUDGET_TOKENS;
+}
