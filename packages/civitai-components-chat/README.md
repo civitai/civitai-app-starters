@@ -172,7 +172,12 @@ each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id
 label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
 reply may write, its reasoning and tool-call arguments included, such as a file it writes; default
-16,384, kept within 1,024 to 32,768) are the settings. In Settings the viewer picks their default
+16,384, kept within 1,024 to 32,768) and `maxSteps` (the most steps, each one paid model request,
+one reply may take; default 10, kept within 2 to 1,000; every step re-sends the reply's earlier steps
+untrimmed, so with a large value a long reply can outgrow the model's context window and fail before
+its last step) are the settings. A reply's last allowed step
+cannot call tools and must say where things stand; a reply that used every step ends with **Continue**,
+which asks the assistant to carry on. In Settings the viewer picks their default
 model from the default, `models`, or any model id the orchestrator's chat endpoint serves (Custom),
 and may set their own **Longest reply step** (`maxOutputTokens`), which wins over the page's;
 conversation titles always use the default model.
@@ -241,6 +246,15 @@ whatever it is told); it defaults to the first of the browser's languages the mo
 Browsers without audio worklets cut the recording into phrases at pauses and transcribe each with
 `transcribe_audio` (about 1 Buzz a phrase). Stop puts the text in the message box to edit; the arrow
 sends it once the last words are back. Recordings stop by themselves after two minutes.
+
+## When a reply fails
+
+A reply that fails fires `reply-error` on the chat, for the page's own telemetry: `detail` is
+`{ kind, message, detail, trace }`, where `message` is what the viewer saw and `trace` (type
+`ChatErrorTrace`) says where it broke: `stage` (`tools`, `request`, `stream` or `tool`), `step`, the
+last tool call, and for a service error its `statusCode`, host, `cause`, request id and the first 500
+characters of the response body. The viewer sees a one-line summary of it under Details; it is not
+saved with the conversation.
 
 ## Panels
 

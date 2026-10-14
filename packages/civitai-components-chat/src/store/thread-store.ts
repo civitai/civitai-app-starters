@@ -338,7 +338,10 @@ function lastSeq(metadata: ConversationMetadata): number {
 
 function saved(turn: Turn): SavedTurn {
   const { assistant, ...rest } = turn;
-  return assistant.status === 'streaming' ? rest : { ...rest, assistant };
+  if (assistant.status === 'streaming') return rest;
+  // The trace is for this session's diagnostics only: a response body may carry the reply's text.
+  const { errorTrace: _trace, ...kept } = assistant;
+  return { ...rest, assistant: kept };
 }
 
 function persistable(attachment: Attachment): Attachment {

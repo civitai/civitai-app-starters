@@ -9,8 +9,9 @@ import { POST_TOOL, type PostManager } from '../posting/post.js';
 import type { ModelDirectory } from '../store/models.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { JOB_TOOLS } from '../tools/catalog.js';
+import { normalizeChoice } from '../tools/choice.js';
 import type { ChatToolCall, ChatToolView } from '../tools/host.js';
-import type { Attachment, ChoiceOption, ModelRecommendation } from '../types.js';
+import type { Attachment, ModelRecommendation } from '../types.js';
 import { emit } from './light.js';
 import { mediaActions } from './media-actions.js';
 
@@ -75,9 +76,10 @@ const post: ToolView = {
 
 const choice: ToolView = {
   render(part, ctx) {
-    const input = part.input as { question?: string; options?: ChoiceOption[] } | undefined;
-    if (!input?.options?.length) return nothing;
-    return html`<civitai-chat-choice-card .question=${input.question ?? ''} .options=${input.options} .resolve=${ctx.resolve} ?disabled=${!ctx.latest || ctx.live}></civitai-chat-choice-card>`;
+    // The same reading the tool reported on, so a choice it called shown is one that renders.
+    const choice = normalizeChoice(part.input);
+    if (!choice) return nothing;
+    return html`<civitai-chat-choice-card .question=${choice.question} .options=${choice.options} .resolve=${ctx.resolve} ?disabled=${!ctx.latest || ctx.live}></civitai-chat-choice-card>`;
   },
 };
 

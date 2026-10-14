@@ -1,9 +1,9 @@
 import type { WorkflowTemplate } from '@civitai/sdk';
-import { jsonSchema, tool, type ToolSet } from 'ai';
+import { APICallError, jsonSchema, tool, type ToolSet } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_STEPS } from '../config.js';
+import { chatConfig, configureChat, MAX_STEPS, stepLimit } from '../config.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { ThreadStore } from '../store/thread-store.js';
 import { workflow } from '../test-support/fakes.js';
@@ -58,7 +58,7 @@ function setup(
   const generate = vi.fn(async () => ({ job: 'gen1-1', status: 'running', note: 'Started.' }));
   const tools: ToolSet = {
     generate_image: tool({ inputSchema: jsonSchema<{ prompt: string }>({ type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] }), execute: generate }),
-    [ASK_CHOICE]: tool({ inputSchema: jsonSchema({ type: 'object', properties: { question: { type: 'string' } } }), execute: async () => ({ shown: true }) }),
+    [ASK_CHOICE]: tool({ inputSchema: jsonSchema({ type: 'object', properties: { question: { type: 'string' } } }), execute: async () => ({ shown: true, awaitsUser: true }) }),
   };
   const agent = new Agent({
     model: () => model,
@@ -85,6 +85,7 @@ describe('Agent', () => {
     const turn = store.current!.turns[0]!;
     expect(turn.assistant.status).toBe('done');
     expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] }]);
+    expect(turn.assistant.ranOut).toBeUndefined();
     expect(seen.map((parts) => (parts[0]?.kind === 'text' ? parts[0].text : ''))).toContain('Hi ');
     expect(agent.running).toBe(false);
   });
@@ -172,6 +173,7 @@ describe('Agent', () => {
     expect(JSON.stringify((prompts.at(-1) as unknown[])[0])).toContain('you cannot call tools now');
     expect(JSON.stringify((prompts[0] as unknown[])[0])).not.toContain('you cannot call tools now');
     expect(store.current!.turns[0]!.assistant.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: 'Sorry, that did not work.' }] });
+    expect(store.current!.turns[0]!.assistant.ranOut).toBe(true);
   });
 
   it('keeps the words the user already read when they stop a reply', async () => {
@@ -332,3 +334,147 @@ describe('a reply refused because the model has no free replies', () => {
 });
 
 const flushAll = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+const empty = (): StreamPart[] => [
+  { type: 'stream-start', warnings: [] },
+  { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+];
+const tries = (count: number) => Array.from({ length: count }, (_, i) => toolCall('generate_image', { prompt: `try ${i}` }, `call_${i}`));
+
+describe('a reply that runs out of steps', () => {
+  it('is marked ranOut when its forced last step says nothing at all, as Qwen did', async () => {
+    const { agent, store, toolChoices } = setup([...tries(MAX_STEPS - 1), empty()]);
+    await agent.send('build me a pomodoro timer');
+    const { assistant } = store.current!.turns[0]!;
+    expect(toolChoices).toHaveLength(MAX_STEPS);
+    expect(assistant.status).toBe('done');
+    expect(assistant.ranOut).toBe(true);
+    // 9 tool steps, 9 results, and nothing from the silent last step.
+    expect(assistant.messages).toHaveLength(18);
+  });
+
+  it('takes its step budget from configureChat({ maxSteps }), read at every reply', async () => {
+    try {
+      configureChat({ maxSteps: 3 });
+      const { agent, store, toolChoices } = setup([...tries(2), empty()]);
+      await agent.send('make a bike');
+      expect(toolChoices).toEqual([{ type: 'auto' }, { type: 'auto' }, { type: 'none' }]);
+      expect(store.current!.turns[0]!.assistant.ranOut).toBe(true);
+    } finally {
+      delete chatConfig.maxSteps;
+    }
+  });
+
+  it('keeps a configured budget within 2 to 1,000, and is 10 unset', () => {
+    try {
+      expect(stepLimit()).toBe(10);
+      for (const [value, limit] of [[1, 2], [7.4, 7], [400, 400], [1_000, 1_000], [5_000, 1_000], [Number.NaN, 10]] as const) {
+        chatConfig.maxSteps = value;
+        expect(stepLimit()).toBe(limit);
+      }
+    } finally {
+      delete chatConfig.maxSteps;
+    }
+  });
+});
+
+/** Run (a-glm) turn 1 of the App Assistant evaluation: GLM's forced last step, as shown to the viewer. */
+const GLM_LAST_STEP =
+  '<tool_call>sandbox__list_dir<arg_key>path</arg_key><arg_value>pomodoro-glm</arg_value></tool_call><tool_call>sandbox__read_file<arg_key>path</arg_key><arg_value>pomodoro-glm/src/block.ts</arg_value></tool_call>';
+
+describe("tool-call markup in a reply's last step", () => {
+  it('is not kept or shown, and the reply still offers to continue', async () => {
+    const { agent, store, seen } = setup([...tries(MAX_STEPS - 1), text('<tool_call>sandbox__list_dir<arg_key>path', '</arg_key><arg_value>pomodoro-glm</arg_value></tool_call>', GLM_LAST_STEP.slice(GLM_LAST_STEP.indexOf('<tool_call>sandbox__read_file')))]);
+    await agent.send('build me a pomodoro timer');
+    const { assistant } = store.current!.turns[0]!;
+    expect(JSON.stringify(assistant.messages)).not.toContain('tool_call');
+    expect(JSON.stringify(seen)).not.toContain('tool_call');
+    expect(assistant.messages).toHaveLength(18);
+    expect(assistant.ranOut).toBe(true);
+  });
+
+  it('keeps the words around it', async () => {
+    const { agent, store } = setup([...tries(MAX_STEPS - 1), text('I read the files but ran out of steps. ', GLM_LAST_STEP, ' Say continue and I will carry on.')]);
+    await agent.send('build me a pomodoro timer');
+    expect(store.current!.turns[0]!.assistant.messages.at(-1)).toEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'I read the files but ran out of steps.  Say continue and I will carry on.' }],
+    });
+  });
+
+  it('is left alone in any earlier step, where a model may mean to show code', async () => {
+    const { agent, store } = setup([text('Write it like <tool_call>x</tool_call>.')]);
+    await agent.send('how do tool calls look?');
+    expect(JSON.stringify(store.current!.turns[0]!.assistant.messages)).toContain('<tool_call>x</tool_call>');
+  });
+});
+
+describe("an errored reply's trace", () => {
+  function failing(responses: Parameters<typeof setup>[0]) {
+    const made = setup(responses);
+    const errors: { trace: unknown }[] = [];
+    made.agent.addEventListener('error', (event) => errors.push((event as CustomEvent).detail));
+    return { ...made, errors };
+  }
+
+  it('says the request failed, at which step, with what, and sends it with the error event', async () => {
+    const { agent, store, errors } = failing([toolCall('generate_image', { prompt: 'a' }), new TypeError('Failed to fetch')]);
+    await agent.send('make a bike');
+    const { errorTrace } = store.current!.turns[0]!.assistant;
+    expect(errorTrace).toMatchObject({ stage: 'request', step: 2, name: 'TypeError', message: 'Failed to fetch', lastTool: { name: 'generate_image', state: 'done' } });
+    expect(errors[0]!.trace).toEqual(errorTrace);
+  });
+
+  it("keeps a service error's status, host, request id, body and cause", async () => {
+    const failure = new APICallError({
+      message: 'Failed to process successful response',
+      url: 'https://orchestration.example/v1/chat/completions?token=secret',
+      requestBodyValues: {},
+      statusCode: 200,
+      responseHeaders: { 'x-request-id': 'req-42' },
+      responseBody: 'x'.repeat(2_000),
+      cause: new SyntaxError('Unexpected token < in JSON at position 0'),
+      isRetryable: false,
+    });
+    const { agent, store } = failing([failure]);
+    await agent.send('hello');
+    expect(store.current!.turns[0]!.assistant.errorTrace).toEqual({
+      stage: 'request',
+      step: 1,
+      msIntoStep: expect.any(Number),
+      name: 'AI_APICallError',
+      message: 'Failed to process successful response',
+      statusCode: 200,
+      isRetryable: false,
+      host: 'orchestration.example',
+      responseBody: 'x'.repeat(500),
+      cause: 'Unexpected token < in JSON at position 0',
+      requestId: 'req-42',
+    });
+  });
+
+  it('says the stream failed when a malformed chunk came after the answer started', async () => {
+    const { agent, store } = failing([
+      [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 't' },
+        { type: 'text-delta', id: 't', delta: 'Hi' },
+        { type: 'error', error: Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError', cause: new SyntaxError("Expected property name or '}' in JSON at position 1") }) },
+      ],
+    ]);
+    await agent.send('hello');
+    expect(store.current!.turns[0]!.assistant.errorTrace).toMatchObject({ stage: 'stream', step: 1, name: 'AI_JSONParseError', cause: "Expected property name or '}' in JSON at position 1" });
+  });
+
+  it('says the tools failed when they could not be built, before any request', async () => {
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const model = new MockLanguageModelV3({ doStream: async () => ({ stream: convertArrayToReadableStream(text('no')) as never }) });
+    const agent = new Agent({ model: () => model, store, jobs: new JobManager({} as never), toolSet: async () => Promise.reject(new Error('MCP listTools timed out')), attachments: () => [] });
+    await agent.send('hello');
+    expect(store.current!.turns[0]!.assistant.errorTrace).toMatchObject({ stage: 'tools', step: 0, message: 'MCP listTools timed out' });
+  });
+});

@@ -22,6 +22,13 @@ export interface ChatConfig {
   /** New viewers' "ask before spending more than" limit, in Buzz; 0 asks every time. */
   autoRunLimit: number;
   /**
+   * The most steps (model requests) one reply may take; the last one must answer in words, and a reply
+   * that used them all offers Continue. 10 when unset, kept within 2 to {@link MAX_STEPS_LIMIT}. Each step is a paid request,
+   * and each re-sends every earlier step of the same reply: nothing trims those, so with a large
+   * value a long reply can outgrow the model's context window and end in an error before its last step.
+   */
+  maxSteps?: number;
+  /**
    * The most tokens one step of a reply may write, reasoning and tool arguments included, unless the
    * viewer set their own in Settings. Kept within 1,024 to 32,768.
    */
@@ -59,7 +66,15 @@ export function configureChat(patch: Partial<ChatConfig>): void {
   Object.assign(chatConfig, Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)));
 }
 
+/** The step budget a reply uses: `chatConfig.maxSteps` rounded and kept within 2 to {@link MAX_STEPS_LIMIT}, else {@link MAX_STEPS}. */
+export function stepLimit(): number {
+  const value = chatConfig.maxSteps;
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(MAX_STEPS_LIMIT, Math.max(2, Math.round(value))) : MAX_STEPS;
+}
+
 export const MAX_STEPS = 10;
+/** The most steps a page may configure: high enough for a long agentic task, a ceiling against a typo. */
+export const MAX_STEPS_LIMIT = 1_000;
 export const CONTEXT_BUDGET_TOKENS = 24_000;
 /**
  * What a reply sends besides the conversation history: the system prompt and the built-in tools'

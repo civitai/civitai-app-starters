@@ -684,6 +684,58 @@ describe('civitai-chat-thread', () => {
     expect(alert.querySelector('details')!.textContent).toContain('workflow 6-1');
   });
 
+  it('offers to continue a reply that ran out of steps', async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'paint a cabin', attachments: [] }, assistant: { messages: [], status: 'done' as const, ranOut: true } };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const asked: unknown[] = [];
+    thread.addEventListener('cvt-continue', (e) => asked.push(e));
+
+    expect(thread.querySelector('.cvt-ran-out')?.textContent).toContain('This took more steps than one reply allows.');
+    [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.trim() === 'Continue')!.click();
+    expect(asked).toHaveLength(1);
+  });
+
+  it('says where a failed reply broke, under Details', async () => {
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'hi', attachments: [] },
+      assistant: {
+        messages: [],
+        status: 'error' as const,
+        error: 'Something went wrong on our side.',
+        errorDetail: 'Failed to process successful response',
+        errorTrace: { stage: 'stream' as const, step: 3, msIntoStep: 40, message: 'Failed to process successful response', statusCode: 200, cause: 'Unexpected token' },
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('.cvt-error-trace')?.textContent).toBe('stream · step 3 · HTTP 200 · cause: Unexpected token');
+  });
+
+  it('shows a choice whose options came as a JSON string, as the tool accepted it', async () => {
+    const input = { question: 'How should breaks work?', options: '[{"label":"Manual switch"},{"label":"Auto cycle"}]' };
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'build me a pomodoro timer', attachments: [] },
+      assistant: {
+        messages: [
+          { role: 'assistant' as const, content: [{ type: 'tool-call' as const, toolCallId: 'c1', toolName: 'ask_choice', input }] },
+          { role: 'tool' as const, content: [{ type: 'tool-result' as const, toolCallId: 'c1', toolName: 'ask_choice', output: { type: 'json' as const, value: { shown: true, awaitsUser: true } } }] },
+        ],
+        status: 'done' as const,
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never, posts: { available: false } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const card = thread.querySelector('civitai-chat-choice-card')!;
+    await (card as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const labels = [...(card.shadowRoot ?? card).querySelectorAll('button, civitai-button')].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(expect.arrayContaining(['Manual switch', 'Auto cycle']));
+  });
+
   it('keeps showing that the assistant is busy after a tool finishes and before the next words arrive', async () => {
     const turn = { seq: 1, createdAt: '', user: { content: 'hi', attachments: [] }, assistant: { messages: [], status: 'streaming' as const } };
     const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'find_services', input: {}, state: 'done', output: 'x' }] };
