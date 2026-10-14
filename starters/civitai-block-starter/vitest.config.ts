@@ -14,8 +14,9 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     setupFiles: ['@civitai/components/testing/happy-dom'],
+    // `include` alone keeps `scratch/` (the gitignored probe dir, see
+    // AGENTS.md) out of the run; an `exclude` here would only REPLACE vitest's
+    // default exclude list.
     include: ['test/**/*.test.ts'],
-    // `scratch/` is the gitignored place for throwaway probes (see AGENTS.md).
-    exclude: ['node_modules/**', 'scratch/**'],
   },
 });

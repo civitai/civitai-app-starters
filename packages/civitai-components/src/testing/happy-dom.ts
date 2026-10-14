@@ -159,8 +159,10 @@ export function installElementInternalsShim(): boolean {
     value: attachInternals,
   });
 
-  const scope = globalThis as unknown as { ElementInternals?: unknown };
-  scope.ElementInternals ??= ElementInternalsShim;
+  // Deliberately NOT installed as `globalThis.ElementInternals`: no element
+  // reads that global, and the `form-associated-custom-elements` capability
+  // probe does — exposing the stand-in there would make the probe report
+  // FormData / form.reset() support this shim does not provide.
   return true;
 }
 

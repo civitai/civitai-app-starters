@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ELEMENT_INTERNALS_SHIM, installElementInternalsShim } from '../src/testing/happy-dom.js';
+import { missingCapabilities } from '../src/elements/capabilities.js';
 import '../src/elements/register-site.js';
 import '../src/sdk/civitai-sign-in-button.define.js';
 import '../src/sdk/civitai-workflow-button.define.js';
@@ -129,6 +130,17 @@ describe('the ElementInternals shim under happy-dom', () => {
     await input.updateComplete;
     const internals = (input as unknown as { internals: { formValue: unknown } }).internals;
     expect(internals.formValue).toBe('a prompt');
+  });
+
+  it('does not make the capability probe claim form-associated support it lacks', () => {
+    // The shim stands in for attachInternals only. FormData, form.reset() and
+    // the form="id" attribute still do not work under happy-dom, so the
+    // `form-associated-custom-elements` probe must keep reporting it missing,
+    // while `element-internals` (what the shim does provide) reads present.
+    const missing = missingCapabilities();
+    expect(missing).toContain('form-associated-custom-elements');
+    expect(missing).not.toContain('element-internals');
+    expect((globalThis as { ElementInternals?: unknown }).ElementInternals).toBeUndefined();
   });
 
   it('refuses a second attachInternals on one element, as the platform does', () => {
