@@ -878,6 +878,12 @@ civitai-chat-composer {
   padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
+.cvt-composer-hold {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-composer-box {
   display: grid;
   gap: 8px;

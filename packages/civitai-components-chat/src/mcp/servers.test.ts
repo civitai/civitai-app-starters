@@ -101,4 +101,22 @@ describe('McpServerPool', () => {
     expect(await pool.tools()).toEqual([]);
     expect(servers[A]!.initializes).toBe(0);
   });
+
+  it('names the servers still listing their tools, and tells its listener only once each is done, listed or not', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fake = fakeMcpServers({ [A]: tools('run_command'), [B]: tools('ping') });
+    vi.stubGlobal('fetch', fake.fetch);
+    fake.servers[B]!.hang = 1;
+    const seen: string[][] = [];
+    const pool = new McpServerPool({ onError: () => undefined, onListed: () => seen.push(pool.listing.map((s) => s.id)), listTimeoutMs: 400 });
+    pool.sync([server('a', A), server('b', B)]);
+    expect(pool.listing).toEqual([]);
+
+    const loading = pool.tools();
+    expect(pool.listing.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(names(await loading)).toEqual(['a__run_command']);
+    expect(pool.listing).toEqual([]);
+    // a listed while b still hung; then b gave up.
+    expect(seen).toEqual([['b'], []]);
+  });
 });

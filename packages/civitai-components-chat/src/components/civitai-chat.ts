@@ -13,10 +13,11 @@ import { modelName, parseCommand, resolveCommands, resolveModel, type ChatComman
 import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
-import type { ChatMcpServer } from '../mcp/servers.js';
+import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
 import type { ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
 import { applyTheme } from '../settings.js';
 import type { ModelDirectory } from '../store/models.js';
+import type { ChatToolGate, ChatToolResult } from '../tools/gate.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
 import type { Attachment, Settings } from '../types.js';
@@ -58,6 +59,8 @@ export class CivitaiChat extends LitElement {
     systemPrompt: { attribute: false },
     mcp: { attribute: false },
     mcpServers: { attribute: false },
+    holdReason: { attribute: 'hold-reason' },
+    beforeToolCall: { attribute: false },
     scope: {},
     panelLinkBase: { attribute: 'panel-link-base' },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
@@ -100,8 +103,11 @@ export class CivitaiChat extends LitElement {
   declare instructions?: string | (() => string | undefined);
   /** Replaces the built-in persona and rules, or edits them (a function gets the defaults); read at every reply. */
   declare systemPrompt?: string | ((defaults: string) => string);
-  /** Switches the assistant's Civitai tool servers: `orchestration` makes things, `site` finds Civitai models. */
-  declare mcp: { orchestration?: boolean; site?: boolean };
+  /**
+   * Switches the assistant's Civitai tool servers: `orchestration` makes things, `site` finds Civitai models.
+   * `orchestration: { exclude: [...] }` keeps it on without the named tools, e.g. `['run_step', 'run_workflow']`.
+   */
+  declare mcp: Pick<ChatMcpOptions, 'orchestration' | 'site'>;
   /**
    * More MCP servers whose tools the assistant may use, e.g. ones made for this viewer whose address is
    * known only at runtime. Each tool is offered as `${id}__${tool}`. A new array opens the servers it adds
@@ -109,6 +115,20 @@ export class CivitaiChat extends LitElement {
    * value to the current one changes nothing.
    */
   declare mcpServers?: ReadonlyArray<ChatMcpServer>;
+  /**
+   * While set, nothing is sent to the assistant: the message box keeps what the viewer typed and shows
+   * this instead, e.g. "The sandbox is starting…" until the tools a first reply needs are there. A reply
+   * already running can still be stopped. The chat also holds on its own while an added MCP server is
+   * still listing its tools (at most 15 s).
+   */
+  declare holdReason?: string;
+  /**
+   * Asked before every tool call the assistant makes, Civitai's, an added server's or the page's own:
+   * return `{ refuse: 'why' }` to stop it (nothing runs; the assistant gets the reason as the tool's
+   * error), anything else to let it run. A hook that throws refuses. Each finished call is then
+   * reported as a `tool-result` event.
+   */
+  declare beforeToolCall?: ChatToolGate;
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
   /**
@@ -294,6 +314,7 @@ export class CivitaiChat extends LitElement {
       hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
       systemPrompt: () => this.systemPrompt,
       mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
+      beforeToolCall: () => this.beforeToolCall,
       // While a reply is still coming the message waits in the box instead of being dropped.
       ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
       compose: (message, refs) => this.#composeWith(message, refs),
@@ -310,6 +331,10 @@ export class CivitaiChat extends LitElement {
     // A server's tools carry its label in the thread once they are listed.
     session.addEventListener('mcp-servers-change', this.#rerender);
     session.freeTier.addEventListener('change', this.#rerender);
+    session.addEventListener('tool-result', (event) => {
+      if (this.#session !== session) return;
+      this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: (event as CustomEvent<ChatToolResult>).detail, bubbles: true, composed: true }));
+    });
     session.addEventListener('mcp-server-error', (event) => {
       const { server, error } = (event as CustomEvent<McpServerErrorDetail>).detail;
       this.#toast(`Could not reach ${server.label?.trim() || server.id}; its tools are off for now.`, error);
@@ -563,7 +588,7 @@ export class CivitaiChat extends LitElement {
             return notify(`This chat uses ${this.#modelName(session)}. Switch it with /model ${others}, or a model id.`);
           }
           await session.setChatModel(resolveModel(arg, chatConfig.models));
-          notify(`This chat now uses ${this.#modelName(session)}, from the next reply.`);
+          notify(this.#switchedModel(session));
         },
       },
       help: {
@@ -572,6 +597,20 @@ export class CivitaiChat extends LitElement {
         run: (_arg, { notify }) => notify(Object.values(this.#commands()).map((command) => `${command.usage}: ${command.help}`).join('  ·  ')),
       },
     };
+  }
+
+  /**
+   * What `/model <x>` says it did. `/model` changes this chat only, so with a stored default it also says
+   * which model new chats get, and where that default is changed.
+   */
+  #switchedModel(session: ChatSession): string {
+    const stored = session.settings.assistantModel?.trim() || undefined;
+    if (!stored) return `This chat now uses ${this.#modelName(session)}, from the next reply.`;
+    const fallback = `your default, ${modelName(stored, chatConfig.models)} (Settings → Assistant)`;
+    const own = session.store.current?.model;
+    return own
+      ? `This chat now uses ${modelName(own, chatConfig.models)}, from the next reply. New chats use ${fallback}.`
+      : `This chat now follows ${fallback}, from the next reply.`;
   }
 
   /** The open chat's model in words: its own, or the default it follows. */
@@ -613,10 +652,24 @@ export class CivitaiChat extends LitElement {
     ></civitai-chat-model-picker>`;
   }
 
+  /** Why nothing may be sent right now: the page's `holdReason`, or an added server still listing its tools. */
+  #held(session: ChatSession | undefined): string | undefined {
+    const reason = this.holdReason?.trim();
+    if (reason) return reason;
+    const listing = session?.mcpServers.listing ?? [];
+    return listing.length ? `Connecting to ${listing.map((server) => server.label?.trim() || server.id).join(', ')}…` : undefined;
+  }
+
   async #send(text: string): Promise<void> {
     const session = this.#session;
     if (!session && this.signIn) return this.#signInThen(() => this.#send(text), text);
     if (!session || session.agent.running || !this.app) return;
+    if (this.#held(session)) {
+      // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
+      const composer = await this.#composer();
+      if (composer && !composer.draft) composer.draft = text;
+      return;
+    }
     if (!(await this.#ensureAiGrant(this.app))) {
       const composer = await this.#composer();
       if (composer && !composer.draft) composer.draft = text;
@@ -917,6 +970,7 @@ export class CivitaiChat extends LitElement {
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}
+            .holdReason=${this.#held(session)}
             .uploads=${this.uploads}
             .refs=${this.refs}
             voice
