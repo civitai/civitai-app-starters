@@ -680,6 +680,38 @@ describe('AppClient.workflows — watch and wait', () => {
     expect(urls).toHaveLength(2);
   });
 
+  it('an abort DURING the back-off after a failed read rejects at once, not when the back-off ends', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing') }),
+      () => json(503, { message: 'unavailable' }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+
+    let outcome: unknown = 'pending';
+    void workflows
+      .wait(WORKFLOW_ID, { intervalMs: 0, signal: controller.signal })
+      .then(
+        (s) => (outcome = s),
+        (e: unknown) => (outcome = e),
+      );
+    await vi.advanceTimersByTimeAsync(0);
+    // The good read and the failed one have happened; the back-off has begun.
+    expect(calls).toHaveLength(2);
+    expect(outcome).toBe('pending');
+
+    controller.abort(reason);
+    // 1 ms of fake time: far less than the shortest back-off. Settling here
+    // means the abort ended the back-off itself rather than waiting it out.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe(reason);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toHaveLength(2);
+  });
+
   it('stops reading when the caller stops watching', async () => {
     const { workflows, calls } = await client([
       () => json(200, { snapshot: snapshot('processing') }),

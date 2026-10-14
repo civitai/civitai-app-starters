@@ -492,15 +492,15 @@ Do **one of two things, and never mint a new key for that press**:
 🔴 **For a `kind: 'training'` body and a step body carrying a `quoteId`, the
 key is not the run's identity.** The host does not use the client key on those
 two; the run is identified by the confirmed quote (a step) or by the training
-run itself. A submit that names a **new** quote is a new run, whatever key it
-carries. So after an unknown outcome on one of these, check
+run itself. So after an unknown outcome on one of these, check
 `app.workflows.list()` **before** asking the viewer to confirm another quote.
 
 What this client can promise stops there. Matching a repeated key to an
 existing run is done by the host and the orchestrator, not here; it is not
-guaranteed to match, and the host remembers a key only for a limited time. So
-`list()` is the check that does not depend on it: when a retry is late, or
-fails again, look there before telling the viewer nothing ran.
+guaranteed to match, and the host remembers a key only for a limited time.
+`list()` does not settle it either: a listed workflow carries no idempotency
+key, so it cannot be tied to a press for certain, and a run missing from it is
+not proof that nothing ran.
 
 ```ts
 import { ApiError, SubmissionUnconfirmedError } from '@civitai/sdk';

@@ -181,13 +181,15 @@ export interface WorkflowsClient {
    * {@link WorkflowsClient.list}. Never mint a new key for the same viewer
    * action: to the host a new key is a new generation. That matching is the
    * host's and the orchestrator's, is not guaranteed, and is not something
-   * this client can verify; `list` is the check that does not depend on it.
+   * this client can verify. Nor does `list` settle it: a listed workflow
+   * carries no idempotency key, and a run missing from it is not proof that
+   * nothing ran.
    *
    * 🔴 For a `kind: 'training'` body and a step body carrying a `quoteId` the
    * key is NOT the run's identity: the host does not use it there, and
-   * identifies the run by the confirmed quote or the training run. A submit
-   * naming a new quote is a new run. After an unknown outcome on one of
-   * these, check `list` before asking the viewer to confirm another quote.
+   * identifies the run by the confirmed quote or the training run. After an
+   * unknown outcome on one of these, check `list` before asking the viewer to
+   * confirm another quote.
    *
    * This client does not retry a failed submit itself; it only re-sends once
    * after refreshing an expired token, as every call does.
