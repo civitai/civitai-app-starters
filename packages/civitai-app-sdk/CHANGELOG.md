@@ -1,5 +1,19 @@
 # @civitai/app-sdk
 
+## 0.71.0
+
+### Minor Changes
+
+- a53587e: **The manifest gains an optional `storage` (document-store collections) declaration, typed and validated.** `storage.collections` maps a collection name to a declaration discriminated on `visibility`: a `private` collection (a key space per viewer) or a `shared` one (one key space for the app, which must declare `write`: `own`, `none`, or the reserved `anyone` / `owner`). A collection may also declare `kind`, `indexes` (field path → `string` | `number` | `boolean` | `time`), and on a shared collection `counters`, `marks` and `showAuthor`.
+
+  - **Types.** `BlockManifestV1.storage`, plus the exported `BlockStorageDeclaration`, `BlockStorageCollectionDeclaration`, `BlockStoragePrivateCollectionDeclaration`, `BlockStorageSharedCollectionDeclaration`, `BlockStorageIndexes` and `BlockStorageIndexType` from `@civitai/app-sdk/blocks` and `@civitai/app-sdk/manifest`.
+  - **Scopes.** `BLOCK_SCOPES.APPS_STORAGE` (`apps:storage`) and `BLOCK_SCOPES.APPS_STORAGE_PUBLISH` (`apps:storage:publish`). `BLOCK_SCOPE_PATTERN` now accepts 2 segments as well as 3 or 4, because `apps:storage` has two.
+  - **Schema.** Re-vendors the canonical App Block manifest schema from https://civitai.com/schemas/app-block/v1.json, which now declares `storage` and the two scopes. `defineBlock` validates against it: 1 to 16 collections named `^[a-z][a-z0-9_]{0,31}$`; a shared collection must declare `write` and a private one carries none of the shared-only fields; a `write: "none"` collection declares at least one counter or mark; at most 8 counters and 8 marks, never `report`; at most 4 indexes, never named `key`, `createdAt` or `updatedAt`; no other keys at any level.
+  - 🔴 **This is a tightening, which is why the bump is `minor`.** The schema root allows undeclared keys, so until now a top-level `storage` key of any shape passed `defineBlock` unvalidated. A manifest that already carries a `storage` key that does not match the declaration above now fails.
+  - **Not checked locally:** the scope couplings (any collection needs `apps:storage`; a viewer-written shared collection needs `apps:storage:publish`) and the reserved features (`kind: "log"`, `ttlSeconds`, `dailyWritesPerAuthor`, `write: "anyone"` / `"owner"`), which validate here and are refused at submit. See `KNOWN_GAPS['storage-server-only-rules']`. The platform's manifest validator remains authoritative.
+  - This types the declaration only. It adds no storage client.
+  - **Docs.** The pass-through step's `maxBuzz` docs no longer say the per-call budget is "capped at 1000". The budget has a platform default and a separate platform cap; the docs now link the pinned limits table at https://developer.civitai.com/apps/guide/text-to-image.md#limits-table. `@civitai/sdk` carries a generated copy of that doc comment, which is why it gets a `patch` here.
+
 ## 0.70.1
 
 ### Patch Changes
@@ -694,15 +708,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                        single measurements on one machine.
+                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1610,10 +1624,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                            after    @civitai/theme       0.3.1                   — 1 copy
-                                                                     @civitai/components  0.4.2                   — 1 copy
+                                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                              after    @civitai/theme       0.3.1                   — 1 copy
+                                                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
