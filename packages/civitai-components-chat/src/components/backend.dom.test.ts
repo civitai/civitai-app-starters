@@ -163,11 +163,15 @@ describe('<civitai-chat> on a host backend', () => {
     await settle();
     expect(toasts()).toHaveLength(1);
 
+    const model = () => root(chat).querySelector('civitai-chat-model-picker')!.value;
     const picker = root(chat).querySelector('civitai-chat-model-picker')!;
     picker.dispatchEvent(new CustomEvent('cvt-model-pick', { detail: { model: 'host/big' }, bubbles: true, composed: true }));
     await vi.waitFor(() => expect(toasts()).toHaveLength(2));
     await settle();
     expect(toasts().slice(1)).toEqual(["Could not save this chat's model; it applies until you reload."]);
+    // Not kept with the chat, but switched: the next reply uses it.
+    await chat.updateComplete;
+    expect(model()).toBe('host/big');
 
     const sidebar = root(chat).querySelector('civitai-chat-sidebar')!;
     const id = sidebar.currentId;
@@ -182,6 +186,8 @@ describe('<civitai-chat> on a host backend', () => {
     await vi.waitFor(() => expect(toasts()).toHaveLength(4));
     await settle();
     expect(toasts().slice(3)).toEqual(["Could not save this chat's model; it applies until you reload."]);
+    await chat.updateComplete;
+    expect(model()).toBe('host/default-model');
   });
 
   it('opens no shared panel: panels run on Civitai', async () => {
@@ -256,6 +262,23 @@ describe('<civitai-chat> without a backend (the default)', () => {
     const civitai = urls.filter(isCivitaiRequest);
     expect(civitai).toEqual(expect.arrayContaining(['https://orchestration.civitai.com/v1/chat/completions']));
     expect(civitai.length).toBeGreaterThan(1);
+  });
+
+  it("says /model applies until reload when the orchestrator could not save the chat's model, and switches it", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // Every orchestrator route but the model answers 404, so saving the model on the chat's head fails.
+    spyOnRequests();
+    const chat = await mount((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = fakeApp() as never;
+    });
+    await chat.send('hello');
+    await vi.waitFor(() => expect(threadText(chat)).toContain('Hello there.'));
+    root(chat).querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { detail: { text: '/model vendor/other-model' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-toast-region')?.textContent).toContain("Could not save this chat's model; it applies until you reload."));
+    expect(root(chat).querySelector('civitai-toast-region')?.textContent).not.toContain('/model did not work.');
+    await chat.updateComplete;
+    expect(root(chat).querySelector('civitai-chat-model-picker')!.value).toBe('vendor/other-model');
   });
 
   it('needs an app to start, keeps chats on the orchestrator, and still offers files and voice', async () => {

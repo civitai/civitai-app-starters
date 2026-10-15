@@ -195,6 +195,46 @@ describe('HostThreadStore', () => {
     expect(failed.map((detail) => detail.id)).toEqual(['C1']);
   });
 
+  it('keeps a chat deleted while its reply was still running: the reply saves nothing and lists nothing', async () => {
+    const store = memoryStore();
+    const ids = ['C1', 'C2'];
+    const threads = new HostThreadStore({ store, newId: () => ids.shift()! });
+    const turn = threads.appendUserTurn('delete me', []);
+    await threads.remove('C1');
+    threads.startNew();
+    turn.assistant = { messages: [{ role: 'assistant', content: 'partial' }], status: 'aborted' };
+    await threads.completeTurn(turn);
+    expect([...store.records.keys()]).toEqual([]);
+    expect(threads.summaries.map((summary) => summary.id)).toEqual([]);
+  });
+
+  it('keeps a chat deleted after the viewer moved to a new one, before its reply ended', async () => {
+    const store = memoryStore();
+    const ids = ['C1', 'C2'];
+    const threads = new HostThreadStore({ store, newId: () => ids.shift()! });
+    const turn = threads.appendUserTurn('delete me', []);
+    threads.startNew();
+    await threads.remove('C1');
+    turn.assistant = { messages: [{ role: 'assistant', content: 'partial' }], status: 'done' };
+    await threads.completeTurn(turn);
+    expect([...store.records.keys()]).toEqual([]);
+    expect(threads.summaries.map((summary) => summary.id)).toEqual([]);
+  });
+
+  it('saves a chat again when its delete failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    store.delete = async () => {
+      throw new Error('locked');
+    };
+    const threads = new HostThreadStore({ store, newId: () => 'C1' });
+    const turn = threads.appendUserTurn('keep me', []);
+    await expect(threads.remove('C1')).rejects.toThrow('locked');
+    turn.assistant.status = 'done';
+    await threads.completeTurn(turn);
+    expect(store.records.get('C1')!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+  });
+
   it('deletes only after a save still on its way, so the save cannot bring the chat back', async () => {
     const store = memoryStore();
     let release!: () => void;

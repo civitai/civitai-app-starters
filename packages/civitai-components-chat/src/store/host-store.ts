@@ -28,6 +28,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #saves = new Map<string, Promise<void>>();
   /** The conversation each turn belongs to: a reply ends in its own chat even after the viewer opened another. */
   #owners = new WeakMap<Turn, Conversation>();
+  /** Deleted in this session: nothing saves one again or puts it back in the list, whatever still runs for it. */
+  #removed = new Set<string>();
 
   constructor(deps: HostThreadStoreDeps) {
     super();
@@ -184,17 +186,31 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   async remove(id: string): Promise<void> {
+    // Marked first: a reply still running for it, or a title on its way, must not save it back.
+    this.#removed.add(id);
     // A save still on its way would otherwise bring the conversation back after the delete.
     await this.#saves.get(id);
-    await this.#deps.store.delete(id, this.#scope());
+    try {
+      await this.#deps.store.delete(id, this.#scope());
+    } catch (error) {
+      // Still there: it saves again like any other chat.
+      this.#removed.delete(id);
+      throw error;
+    }
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
     if (this.current?.id === id) this.current = null;
     this.#emit('list-change');
     this.#emit('conversation-change');
   }
 
-  /** Saves the conversation as it is when its turn in the queue comes. */
+  /**
+   * Saves the conversation as it is when its turn in the queue comes. Every save of a chat this session
+   * holds passes here, so this is the one place a deleted one is kept from being saved back
+   * (`#touchSummary` keeps it off the list); a rename of a chat not open loads it first, and a deleted
+   * one is not found.
+   */
   #save(conversation: Conversation): Promise<void> {
+    if (this.#removed.has(conversation.id)) return Promise.resolve();
     return this.#queue(conversation.id, () => this.#deps.store.save(this.#record(conversation)));
   }
 
@@ -224,6 +240,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   #touchSummary(conversation: Conversation): void {
+    if (this.#removed.has(conversation.id)) return;
     const summary: ListedConversation = { id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt };
     this.summaries = [summary, ...this.summaries.filter((s) => s.id !== conversation.id)];
     this.#emit('list-change');
