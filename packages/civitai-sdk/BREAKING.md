@@ -204,8 +204,8 @@ bridge already called, so behaviour is identical on both transports.
 - **Anonymous viewers may NEVER write or vote.** An anon write is rejected by the write scope's own binding in
   `withBlockScope`, before the handler runs, so it surfaces as **`403`** rather than the handler's own `401`.
 - **Authenticated writers must clear a minimum-trust gate.** After the anon check, writes call
-  `assertSharedWriteTrust` — account age, paid tier, and verified email *or* a linked OAuth account. A signed-in
-  viewer is not automatically a permitted writer.
+  `assertSharedWriteTrust` — account age, completed onboarding, not banned or muted, and verified email *or* a
+  linked OAuth account. A signed-in viewer is not automatically a permitted writer.
 - **Tenancy is structural, not checked.** Every query interpolates a schema name derived from the **verified
   token**, never from client input. An app cannot address another app's shared storage because it cannot name it.
 - **Rate limits are per-operation and per-namespace**, so one operation cannot starve another — browsing a feed

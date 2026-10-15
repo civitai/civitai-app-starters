@@ -336,7 +336,7 @@ every viewer reads and writes, unlike `app.storage`, which is private per viewer
 Five methods: `list`, `get`, `append`, `update`, `withdraw`.
 
 ```ts
-const { items, nextCursor } = await app.sharedStorage.list({ prefix: 'deck:' });
+const { items, nextCursor } = await app.sharedStorage.list({ limit: 20 }); // newest first
 const { key } = await app.sharedStorage.append({ title: 'My deck', data: { cards } });
 const row = await app.sharedStorage.get(key);        // null when hidden or absent
 await app.sharedStorage.update(key, { title: 'Renamed' });
@@ -362,9 +362,9 @@ other.** This is the opposite of `app.storage`, so do not carry that gate over:
   supported path — and may **never** write. An anon write is a `403` from the
   scope binding, not the `401` a missing token gives.
 - **A signed-in viewer is not automatically a permitted writer.** Writes clear a
-  server-side minimum-trust gate (account age, paid tier, verified email or a
-  linked OAuth account). Treat a write refusal as a normal outcome with a real
-  message in the UI, not an unexpected error.
+  server-side minimum-trust gate (account age, completed onboarding, verified
+  email or a linked OAuth account, not banned or muted). Treat a write refusal
+  as a normal outcome with a real message in the UI, not an unexpected error.
 
 So gate the write affordances on `app.viewer`, and render the reads regardless.
 
@@ -379,7 +379,9 @@ that type-checks:
   `app.storage`'s, absence proves the scan completed.
 - **`append` takes no key.** The server mints a ULID and returns it, so one
   viewer cannot overwrite another's row. Use `update` for an in-place edit of a
-  row this viewer authored.
+  row this viewer authored. It also means `list`'s `prefix` is no namespace of
+  yours: a prefix you choose (`'deck:'`) matches none of the rows `append`
+  creates. Put what you filter by in `data` and filter the page yourself.
 - **`value` is `unknown` on the way out.** The row was written by some other
   viewer's copy of your app, possibly an older version, so its shape is a fact
   about the data rather than a promise the client can make. Narrow it yourself.

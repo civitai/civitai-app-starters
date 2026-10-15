@@ -933,8 +933,10 @@ export interface MockStorageScenario {
    * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
    * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
    * bytes (`octet_length(value::jsonb::text)`), which is larger for every
-   * container — up to ~1.5x for a long array. So this ceiling is up to half
-   * again more generous than production's, and unlike the mock's other known
+   * container — ~1.5x for a long array of small integers, and measured up to
+   * 44.4x for a numeric-heavy one (an array of `1e308`). So this ceiling is
+   * more generous than production's, by a factor that depends on the data,
+   * and unlike the mock's other known
    * divergences that error is PERMISSIVE: a fixture that fits here can be
    * rejected live. civitai/civitai-app-starters#347. Size against
    * `getQuota()`, and treat a local pass as evidence, not proof.
@@ -4756,7 +4758,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             //    counts STORED bytes, `octet_length(value::jsonb::text)`.
             //    `jsonb`'s canonical text inserts a space after every `:` and
             //    every `,`, so stored > wire for every container — approaching
-            //    1.5x for a long array. This gate therefore ADMITS writes
+            //    1.5x for a long array of small integers, and up to 44.4x for
+            //    a numeric-heavy one (`1e308` is stored as its 309 digits).
+            //    This gate therefore ADMITS writes
             //    production rejects. Permissive: a local pass that is not
             //    real, which is the direction that ships a bug.
             //

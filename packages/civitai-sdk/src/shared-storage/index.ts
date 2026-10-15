@@ -59,7 +59,11 @@ export interface SharedItem {
 }
 
 export interface SharedListQuery {
-  /** Narrows to keys starting with this. Escaped server-side against LIKE wildcards. */
+  /**
+   * Narrows to keys starting with this. Escaped server-side against LIKE wildcards.
+   * `append` mints every key as a ULID, so a prefix of your own choosing matches
+   * none of the rows it creates.
+   */
   prefix?: string;
   /** The server bounds this and applies its own default; this client sends none. */
   limit?: number;
@@ -104,8 +108,9 @@ export interface SharedListResult {
  *   write is refused by the scope binding before the handler runs, so it arrives
  *   as **403**, not the 401 a missing token gives.
  * - A signed-in viewer is not automatically a permitted writer: writes clear a
- *   minimum-trust gate (account age, paid tier, verified email or a linked OAuth
- *   account). Treat a write refusal as a normal outcome and say so in the UI.
+ *   minimum-trust gate (account age, completed onboarding, verified email or a
+ *   linked OAuth account, not banned or muted). Treat a write refusal as a
+ *   normal outcome and say so in the UI.
  *
  * 🔴 EVERY FAILURE REJECTS. No path here resolves to mean "not written" or
  * "could not read". A caller that must not act on a partial view branches on the

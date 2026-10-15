@@ -2,9 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { getTransport } from '@civitai/blocks-react';
 import { Harness as MockHost } from '@civitai/blocks-react/testing';
-// 🔴 `/live` is the REAL backend. This app spends no Buzz, but it does read and
-// write YOUR real per-viewer storage there. It has its own subpath (never
-// `/testing`) so the import line itself says so.
+// 🔴 `/live` is the REAL backend. This app spends no Buzz, and its storage calls
+// are forwarded there but refused (`401`: a local harness has no civitai.com
+// browser session). It has its own subpath (never `/testing`) so the import
+// line itself says so.
 import { createLiveHost } from '@civitai/blocks-react/live';
 
 import manifest from '../block.manifest.json' with { type: 'json' };
