@@ -172,7 +172,8 @@ them, and `reply-error`'s `detail.message` is the same text. Answer with a non-2
 on a 4xx status (`{ "error": "…" }`, `{ "message": "…" }` and a plain-text body work too; the first
 500 characters are shown, and an HTML page is never shown). A 5xx body is never shown, since it is
 more often a stack trace or an upstream provider's error than words for the viewer: the viewer gets a
-plain sentence, and the body stays in `reply-error`'s `detail.trace.responseBody`. An error after the
+plain sentence, `detail.detail` (shown under Details and saved with the turn) only names the status,
+and the body stays in `reply-error`'s `detail.trace.responseBody`, which is neither saved nor shown whole. An error after the
 stream started is a frame of the same shape, `data: {"error":{"message":"…"}}`, and is shown. Without
 a message the viewer sees a plain sentence that names neither Civitai nor Buzz.
 
@@ -223,10 +224,16 @@ interface ChatConversation {
   then a `save` of the same record with the new title (and the chat's `scope`), queued behind any
   save of it still on its way.
 - `delete` removes a conversation; the chat waits for any save of it still on its way first.
-- Any method may reject, and the viewer sees a short note: "Could not load your chats." for `list`,
-  "Could not open that chat." for `load` when they open one (at start-up the chat opens a new one instead), "Could not delete that chat." for `delete`, and "Could not
-  save this chat. It is saved again with your next message." for `save`. Every save carries the whole
+- Any method may reject, and the viewer sees one short note per failure: "Could not load your
+  chats." for `list` ("Could not load older chats." for a later page), "Could not open that chat."
+  for `load` when they open one (at start-up the chat opens a new one instead), "Could not delete
+  that chat." for `delete`, and for `save` "Could not save this chat. It is saved again with your next
+  message." once per message sent, "Could not rename that chat." for a rename, or "Could not save this
+  chat's model; it applies until you reload." for a model change. Every save carries the whole
   conversation, so the next one that succeeds makes up for one that failed.
+- Every method must settle (resolve or reject), with a timeout of the host's own if its server can
+  hang: saves of a conversation wait for each other, and opening, renaming or deleting it waits for
+  its saves, so a save that never settles holds that conversation back for the rest of the session.
 
 Conversations are the host's to keep, for as long as it likes; the chat stores nothing on the page
 but preferences (in `localStorage`, by `scope`).

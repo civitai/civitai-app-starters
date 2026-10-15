@@ -56,7 +56,12 @@ export function humanizeHost(error: unknown): HumanError {
   // A host's gateway has no free tier: those kinds would offer Civitai's "Continue with Buzz".
   const human = found.kind === 'free_tier_exhausted' || found.kind === 'free_tier_not_free' ? { ...found, kind: 'unknown' as const } : found;
   const said = hostMessage(inner);
-  return { ...human, message: said ?? HOST_WORDS[human.kind] ?? human.message };
+  const status = (inner as { statusCode?: unknown } | null)?.statusCode;
+  // A 5xx body never reaches the viewer, also not as `detail`: the AI SDK makes a JSON body's message
+  // the error's own message, which would be shown under Details, saved with the turn and sent in
+  // `reply-error`. The body stays in the reply's trace, which is neither saved nor shown whole.
+  const detail = typeof status === 'number' && status >= 500 ? `The server answered ${status}.` : human.detail;
+  return { ...human, message: said ?? HOST_WORDS[human.kind] ?? human.message, ...(detail === undefined ? {} : { detail }) };
 }
 
 /** The AI SDK gives up on a retried request with a `RetryError` around every attempt's error; the last one is what the gateway said. */

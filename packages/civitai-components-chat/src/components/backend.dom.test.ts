@@ -153,9 +153,29 @@ describe('<civitai-chat> on a host backend', () => {
     store.save = async () => {
       throw new Error('503');
     };
-    const chat = await mount((c) => (c.backend = backendOf(store)));
+    const chat = await mount((c) => (c.backend = backendOf(store, { models: [{ id: 'host/big', label: 'Big' }] })));
+    const toasts = () => [...root(chat).querySelectorAll('civitai-toast-region civitai-toast')].map((toast) => toast.textContent?.trim());
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+    // One failure, one note: a send, a model change and a rename of the open chat each say it once.
     await chat.send('hello');
-    await vi.waitFor(() => expect(root(chat).querySelector('civitai-toast-region')?.textContent).toContain('Could not save this chat.'));
+    await vi.waitFor(() => expect(toasts()).toEqual(['Could not save this chat. It is saved again with your next message.']));
+    await settle();
+    expect(toasts()).toHaveLength(1);
+
+    const picker = root(chat).querySelector('civitai-chat-model-picker')!;
+    picker.dispatchEvent(new CustomEvent('cvt-model-pick', { detail: { model: 'host/big' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(toasts()).toHaveLength(2));
+    await settle();
+    expect(toasts().slice(1)).toEqual(["Could not save this chat's model; it applies until you reload."]);
+
+    const sidebar = root(chat).querySelector('civitai-chat-sidebar')!;
+    const id = sidebar.currentId;
+    expect(id).toEqual(expect.any(String));
+    sidebar.dispatchEvent(new CustomEvent('cvt-rename', { detail: { id, title: 'Renamed' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(toasts()).toHaveLength(3));
+    await settle();
+    expect(toasts().slice(2)).toEqual(['Could not rename that chat.']);
   });
 
   it('opens no shared panel: panels run on Civitai', async () => {

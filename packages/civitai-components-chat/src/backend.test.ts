@@ -231,12 +231,12 @@ describe('ChatSession on a host backend', () => {
 
 describe("a gateway's refusal on a host backend", () => {
   async function failWith(response: () => Response) {
-    const { session } = setup({ replies: [response, response, response] });
+    const { session, store } = setup({ replies: [response, response, response] });
     const errors: unknown[] = [];
     session.agent.addEventListener('error', (event) => errors.push((event as CustomEvent).detail));
     session.newConversation();
     await session.send('hi');
-    return { turn: session.store.current!.turns[0]!, errors };
+    return { turn: session.store.current!.turns[0]!, errors, store, id: session.store.current!.id };
   }
 
   it("shows the gateway's own message from a JSON body", async () => {
@@ -259,6 +259,18 @@ describe("a gateway's refusal on a host backend", () => {
     const { turn } = await failWith(() => new Response('TypeError: cannot read x\n    at handler (/srv/app/llm.js:42)', { status: 500, headers: { 'retry-after-ms': '0' } }));
     expect(turn.assistant).toMatchObject({ status: 'error', error: 'Something went wrong.' });
     expect(turn.assistant.errorTrace?.responseBody ?? '').toContain('TypeError: cannot read x');
+  });
+
+  it("keeps a JSON 5xx body out of the turn's detail, the saved chat and reply-error", async () => {
+    const secret = 'upstream provider 500: key sk-live-XYZ at /srv/app/llm.js:42';
+    const { turn, errors, store, id } = await failWith(() => Response.json({ error: { message: secret } }, { status: 500, headers: { 'retry-after-ms': '0' } }));
+    expect(turn.assistant).toMatchObject({ status: 'error', error: 'Something went wrong.', errorDetail: 'The server answered 500.' });
+    expect(JSON.stringify(store.records.get(id))).not.toContain('sk-live');
+    expect(store.records.get(id)!.turns[0]!.assistant).toMatchObject({ status: 'error', error: 'Something went wrong.' });
+    expect(errors).toMatchObject([{ message: 'Something went wrong.', detail: 'The server answered 500.' }]);
+    expect(JSON.stringify((errors[0] as { detail?: unknown }).detail)).not.toContain('sk-live');
+    // Kept for the page's own diagnostics, in the trace only.
+    expect((errors[0] as { trace: { responseBody?: string } }).trace.responseBody).toContain('sk-live-XYZ');
   });
 
   it('says what went wrong without naming Civitai or Buzz when the gateway gave no words', async () => {

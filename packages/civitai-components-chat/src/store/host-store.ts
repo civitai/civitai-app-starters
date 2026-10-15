@@ -96,16 +96,32 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     };
     conversation.turns.push(turn);
     conversation.updatedAt = now;
-    this.#save(conversation).catch(() => undefined);
+    // Announced, if at all, by the save when the reply ends, which carries this message too: one note per send.
+    this.#save(conversation).catch((error: unknown) => console.warn('[chat-cvt] could not save the message yet', error));
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
     return turn;
   }
 
+  /** Saves the reply; a failure is also told as `save-error`, since the agent that calls this only logs it. */
   async completeTurn(_turn: Turn): Promise<void> {
+    await this.#finish(true);
+  }
+
+  /**
+   * Saves the open chat as it is now. Only the end of a reply announces a failure (`announce`): every
+   * other caller (a rename, a title) rejects to its own caller, which says what failed, so one failure
+   * is one note.
+   */
+  async #finish(announce: boolean): Promise<void> {
     const conversation = this.current;
     if (!conversation) return;
-    await this.#save(conversation);
+    try {
+      await this.#save(conversation);
+    } catch (error) {
+      if (announce) this.dispatchEvent(new CustomEvent('save-error', { detail: { id: conversation.id, error } }));
+      throw error;
+    }
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
   }
@@ -140,7 +156,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
     const newest = conversation.turns.at(-1);
-    if (newest && newest.assistant.status !== 'streaming') await this.completeTurn(newest);
+    if (newest && newest.assistant.status !== 'streaming') await this.#finish(false);
   }
 
   async rename(id: string, title: string): Promise<void> {
@@ -169,14 +185,9 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#emit('conversation-change');
   }
 
-  /** Saves the conversation as it is when its turn in the queue comes; a failure is also told as `save-error`. */
+  /** Saves the conversation as it is when its turn in the queue comes. */
   #save(conversation: Conversation): Promise<void> {
-    const save = this.#queue(conversation.id, () => this.#deps.store.save(this.#record(conversation)));
-    save.catch((error: unknown) => {
-      console.warn('[chat-cvt] could not save the chat', error);
-      this.dispatchEvent(new CustomEvent('save-error', { detail: { id: conversation.id, error } }));
-    });
-    return save;
+    return this.#queue(conversation.id, () => this.#deps.store.save(this.#record(conversation)));
   }
 
   // Each save replaces the whole conversation, so everything that writes one goes one at a time, in order.

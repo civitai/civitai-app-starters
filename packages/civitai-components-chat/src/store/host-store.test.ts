@@ -144,10 +144,12 @@ describe('HostThreadStore', () => {
     const turn = threads.appendUserTurn('hello', []);
     turn.assistant.status = 'done';
     await expect(threads.completeTurn(turn)).rejects.toThrow('disk full');
-    expect(failed).toEqual([
-      { id: 'C1', error: expect.objectContaining({ message: 'disk full' }) },
-      { id: 'C1', error: expect.objectContaining({ message: 'disk full' }) },
-    ]);
+    // Once per send: the message's own save, which failed too, is not announced again.
+    expect(failed).toEqual([{ id: 'C1', error: expect.objectContaining({ message: 'disk full' }) }]);
+    // A rename or a model change says so to its own caller, which tells the viewer: no event.
+    await expect(threads.setTitle('Renamed', 'user')).rejects.toThrow('disk full');
+    await expect(threads.setModel('host/big')).rejects.toThrow('disk full');
+    expect(failed).toHaveLength(1);
   });
 
   it('deletes only after a save still on its way, so the save cannot bring the chat back', async () => {
