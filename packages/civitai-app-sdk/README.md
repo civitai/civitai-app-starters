@@ -191,7 +191,9 @@ own key:
   `$type` cap, a 256 KB `input` cap, and the spend reservation. **Unlike the inline arm, `maxBuzz`
   is not always the timeout here**: on both `estimate` and `submit` the host asks the orchestrator
   for a `whatif` quote of the step. **Quoted** → it reserves `max(maxBuzz, quote)`, gated against
-  the token's per-call budget (`token.buzzBudget`, capped at 1000 on a production token — so the
+  the token's per-call budget (`token.buzzBudget`: a platform default when the manifest declares
+  none, clamped to a platform cap — current values in the
+  [limits table](https://developer.civitai.com/apps/guide/text-to-image.md#limits-table) — so the
   reservation can exceed the 1–250 `maxBuzz` range), and stamps **no** step timeout.
   **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds; the timeout
   bounds wall-clock time, and spend only for a step billed by compute time — a step priced per

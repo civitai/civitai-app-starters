@@ -163,6 +163,14 @@ export const KNOWN_GAPS = {
     "civitai/civitai's `manifest-settings.meta.schema.ts` is not published at a URL and not " +
     'vendored here, so `settings` is the one surface still checked by a hand-written mirror. ' +
     'See SCHEMA_DIVERGENCES.settings.',
+  'storage-server-only-rules':
+    'The canonical `storage` description states rules it does not encode: declaring any ' +
+    'collection requires the `apps:storage` scope, a shared collection viewers write (`write` ' +
+    '"own" or "anyone") also requires `apps:storage:publish`, requesting either scope with no ' +
+    'collection for it to reach is rejected, a counter may not share a name with a mark, and the ' +
+    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `write` "anyone" / ' +
+    '"owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
+    'exactly; these are server-side.',
   'format-uri-not-enforced':
     '`assetBundleUrl` carries `format: "uri"` in addition to `pattern: "^https://"`. Ajv ignores ' +
     'unknown formats unless `ajv-formats` is installed, which would be a second optional peer for ' +
