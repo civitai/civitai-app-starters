@@ -47,7 +47,7 @@ export const DEFAULT_OUTPUT_TOKENS = 16_384;
 
 export const chatConfig: ChatConfig = {
   name: 'Civitai Chat',
-  model: 'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar',
+  model: 'urn:air:qwen3:repository:huggingface:heswithme/Huihui-Qwen3.8-27B-Abliterated-Gittensor-Style-NVFP4-RTX5090@main.tar',
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
   autoRunLimit: 100,
