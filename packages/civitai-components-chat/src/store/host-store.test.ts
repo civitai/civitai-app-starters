@@ -375,6 +375,101 @@ describe('HostThreadStore', () => {
     expect([...store.records.keys()]).toEqual([]);
   });
 
+  const two = () => [record(1), { ...record(1), id: 'B', title: 'B', updatedAt: '2026-10-16T00:00:00Z' }];
+
+  it("drops an open that finishes after the viewer opened another chat: theirs stays open", async () => {
+    const { store, release } = heldDelete(two());
+    const threads = new HostThreadStore({ store });
+    const removed = threads.remove('A');
+    const late = threads.open('A');
+    await tick();
+    await threads.open('B');
+    release(true);
+    await expect(removed).rejects.toThrow('delete failed');
+    await expect(late).rejects.toMatchObject({ code: 'superseded' });
+    expect(threads.current!.id).toBe('B');
+  });
+
+  it('drops an open that fails after the viewer opened another chat, without the failure', async () => {
+    const { store, release } = heldDelete(two());
+    const threads = new HostThreadStore({ store });
+    const removed = threads.remove('A');
+    const late = threads.open('A');
+    await tick();
+    await threads.open('B');
+    release();
+    await removed;
+    // Refused (its delete worked), but stale: superseded, so the caller says nothing and leaves B open.
+    await expect(late).rejects.toMatchObject({ code: 'superseded' });
+    expect(threads.current!.id).toBe('B');
+  });
+
+  it('drops an open that finishes after the viewer started a new chat', async () => {
+    const store = memoryStore([record(1)]);
+    const load = store.load.bind(store);
+    let answer!: () => void;
+    store.load = (id, options) => new Promise((resolve) => (answer = () => void load(id, options).then(resolve)));
+    const threads = new HostThreadStore({ store, newId: () => 'NEW' });
+    const late = threads.open('A');
+    await tick();
+    threads.startNew();
+    answer();
+    await expect(late).rejects.toMatchObject({ code: 'superseded' });
+    expect(threads.current!.id).toBe('NEW');
+  });
+
+  it('takes a chat off the list the moment its delete starts, and puts it back when the delete fails', async () => {
+    const { store, release } = heldDelete(two());
+    const threads = new HostThreadStore({ store });
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B', 'A']);
+    const removed = threads.remove('A');
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+    await tick();
+    release(true);
+    await expect(removed).rejects.toThrow('delete failed');
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B', 'A']);
+  });
+
+  it('lists a chat again once its only delete failed', async () => {
+    const { store, release } = heldDelete(two());
+    const threads = new HostThreadStore({ store });
+    const removed = threads.remove('A');
+    await tick();
+    release(true);
+    await expect(removed).rejects.toThrow('delete failed');
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B', 'A']);
+  });
+
+  it('keeps a chat off the list while its delete still waits behind a slow save', async () => {
+    const { store: slow, releaseAll } = slowStore(two());
+    const threads = new HostThreadStore({ store: slow });
+    await threads.open('A');
+    threads.appendUserTurn('m2', []);
+    threads.startNew();
+    await tick();
+    const removed = threads.remove('A');
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+    await releaseAll();
+    await removed;
+  });
+
+  it('holds nothing up when a delete never answers: the chat is off the list, and new chats save', async () => {
+    const store = memoryStore(two());
+    store.delete = () => new Promise<void>(() => undefined);
+    const threads = new HostThreadStore({ store, newId: () => 'NEW' });
+    await threads.refreshList();
+    void threads.remove('A');
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+    const turn = threads.appendUserTurn('still here', []);
+    turn.assistant.status = 'done';
+    await threads.completeTurn(turn);
+    expect(store.records.get('NEW')).toBeDefined();
+  });
+
   it('asks the host to delete a chat once, even when deleted twice', async () => {
     const { store, release } = heldDelete([record(1)]);
     const deletes = vi.spyOn(store, 'delete');

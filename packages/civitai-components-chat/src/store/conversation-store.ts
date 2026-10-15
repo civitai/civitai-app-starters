@@ -3,6 +3,20 @@ import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, SavedTurn, TitleSource, Turn } from '../types.js';
 import type { OpenedConversation } from './thread-store.js';
 
+/**
+ * Why `open` rejects when the viewer opened or started another chat before it finished: its result is
+ * stale, and the caller drops it without a word.
+ */
+export const SUPERSEDED = 'superseded';
+
+export function supersededError(): Error {
+  return Object.assign(new Error('Another chat was opened meanwhile.'), { code: SUPERSEDED });
+}
+
+export function isSuperseded(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === SUPERSEDED;
+}
+
 /** A row of the chat list. */
 export interface ListedConversation {
   id: string;

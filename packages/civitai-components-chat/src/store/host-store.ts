@@ -3,7 +3,7 @@ import { ulid } from 'ulid';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, TitleSource, Turn } from '../types.js';
-import type { ChatConversation, ChatConversationStore, ConversationStore, ListedConversation } from './conversation-store.js';
+import { supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation } from './conversation-store.js';
 import { clampTitle, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
 
 export interface HostThreadStoreDeps {
@@ -35,6 +35,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #owners = new WeakMap<Turn, Conversation>();
   /** Deletes asked for and not yet settled, by id: such a chat is not listed until they all fail. */
   #deleting = new Map<string, number>();
+  /** Bumped by every `open` and `startNew`: an `open` that finishes after a newer one is stale. */
+  #generation = 0;
   /** Deleted in this session. A write queued after the delete is dropped; the chat is never opened, listed or listed again. */
   #deleted = new Set<string>();
 
@@ -74,10 +76,18 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * it; one whose delete failed still exists and opens as usual.
    */
   async open(id: string): Promise<OpenedConversation> {
-    const record = await this.#queue(id, async () => {
-      this.#refuseDeleted(id);
-      return this.#deps.store.load(id, this.#scope());
-    });
+    const generation = ++this.#generation;
+    let record: ChatConversation | null;
+    try {
+      record = await this.#queue(id, async () => {
+        this.#refuseDeleted(id);
+        return this.#deps.store.load(id, this.#scope());
+      });
+    } catch (error) {
+      throw generation === this.#generation ? error : supersededError();
+    }
+    // The viewer opened or started another chat meanwhile: this one must not take its place.
+    if (generation !== this.#generation) throw supersededError();
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {
@@ -96,6 +106,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   startNew(): Conversation {
+    this.#generation++;
     const now = this.#now().toISOString();
     this.current = { id: this.#deps.newId?.() ?? ulid(), title: 'New chat', titleSource: 'first-message', createdAt: now, updatedAt: now, turns: [] };
     this.#emit('conversation-change');
@@ -206,8 +217,32 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * are dropped; if it failed, they run as usual, so the chat keeps everything said in it.
    */
   async remove(id: string): Promise<void> {
+    // Counted and off the list at once, before its turn in the queue comes: the viewer cannot open a
+    // chat whose delete is on its way, so no open waits on it.
     this.#deleting.set(id, (this.#deleting.get(id) ?? 0) + 1);
-    await this.#queue(id, async () => {
+    const listed = this.summaries.find((summary) => summary.id === id);
+    if (listed) {
+      this.summaries = this.summaries.filter((summary) => summary !== listed);
+      this.#emit('list-change');
+    }
+    try {
+      await this.#delete(id);
+    } catch (error) {
+      // Still there: back on the list, unless another delete of it is on its way.
+      if (listed && !this.#gone(id) && !this.summaries.some((summary) => summary.id === id)) {
+        this.summaries = [...this.summaries, listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        this.#emit('list-change');
+      }
+      throw error;
+    }
+    this.summaries = this.summaries.filter((summary) => summary.id !== id);
+    if (this.current?.id === id) this.current = null;
+    this.#emit('list-change');
+    this.#emit('conversation-change');
+  }
+
+  #delete(id: string): Promise<void> {
+    return this.#queue(id, async () => {
       // Settled inside the queue, so the next step for this chat sees the delete's outcome, never a pending one.
       try {
         // Already gone (a second delete asked before the first was done): a host need not be asked twice.
@@ -220,10 +255,6 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
         else this.#deleting.delete(id);
       }
     });
-    this.summaries = this.summaries.filter((summary) => summary.id !== id);
-    if (this.current?.id === id) this.current = null;
-    this.#emit('list-change');
-    this.#emit('conversation-change');
   }
 
   /**
@@ -272,7 +303,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   #touchSummary(conversation: Conversation): void {
-    if (this.#deleted.has(conversation.id)) return;
+    if (this.#gone(conversation.id)) return;
     const summary: ListedConversation = { id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt };
     this.summaries = [summary, ...this.summaries.filter((s) => s.id !== conversation.id)];
     this.#emit('list-change');

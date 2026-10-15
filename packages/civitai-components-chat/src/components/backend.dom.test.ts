@@ -190,6 +190,68 @@ describe('<civitai-chat> on a host backend', () => {
     expect(model()).toBe('host/default-model');
   });
 
+  it('moves off a chat whose delete never answers at once, and keeps it off the list', async () => {
+    spyOnRequests();
+    const store = memoryStore();
+    store.delete = () => new Promise<void>(() => undefined);
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    await chat.send('hello');
+    await vi.waitFor(() => expect(threadText(chat)).toContain('Hello there.'));
+    const sidebar = root(chat).querySelector('civitai-chat-sidebar')!;
+    const id = sidebar.currentId!;
+    root(chat).querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-dialog')!.ask = async () => true;
+    sidebar.dispatchEvent(new CustomEvent('cvt-delete', { detail: { id, title: 'hello' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(sidebar.currentId).not.toBe(id));
+    await chat.updateComplete;
+    expect(sidebar.summaries.map((summary) => summary.id)).not.toContain(id);
+    expect(root(chat).querySelector('.cvt-loading')).toBeNull();
+    // The new chat works as any other.
+    await chat.send('again');
+    await vi.waitFor(() => expect(store.records.get(sidebar.currentId!)).toBeDefined());
+  });
+
+  it("keeps the viewer's chat and its reply when a chat they left behind loads late", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore([{ id: 'A', title: 'A', titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] }]);
+    const load = store.load.bind(store);
+    let answer: (() => void) | undefined;
+    store.load = (id, options) => (id === 'A' ? new Promise((resolve) => (answer = () => void load(id, options).then(resolve))) : load(id, options));
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    spyOnRequests((_url) => {
+      // B's reply streams until the test lets it end.
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: 'r', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: { role: 'assistant', content: 'B reply' }, finish_reason: null }] })}\n\n`));
+            await finished;
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: 'r', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`));
+            controller.close();
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-chat-sidebar')!.summaries.length).toBe(1));
+    const sidebar = root(chat).querySelector('civitai-chat-sidebar')!;
+    sidebar.dispatchEvent(new CustomEvent('cvt-open', { detail: { id: 'A' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    chat.newChat();
+    const sending = chat.send('in B');
+    await vi.waitFor(() => expect(threadText(chat)).toContain('B reply'));
+    const b = sidebar.currentId;
+    answer!();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sidebar.currentId).toBe(b);
+    expect(root(chat).querySelector('civitai-toast-region')?.textContent ?? '').not.toContain('Could not open that chat.');
+    finish();
+    await sending;
+    await vi.waitFor(() => expect(threadText(chat)).toContain('B reply'));
+    expect(store.records.get(b!)!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+  });
+
   it('opens no shared panel: panels run on Civitai', async () => {
     spyOnRequests();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);

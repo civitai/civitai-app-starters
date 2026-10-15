@@ -18,6 +18,7 @@ import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
 import type { ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
 import { applyTheme } from '../settings.js';
+import { isSuperseded } from '../store/conversation-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolGate, ChatToolResult } from '../tools/gate.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
@@ -181,6 +182,8 @@ export class CivitaiChat extends LitElement {
   #activePanel?: Panel;
   #voice?: VoiceTranscript;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
+  /** Counts the chats opened, so only the latest one's end clears the loader. */
+  #opening = 0;
 
   constructor() {
     super();
@@ -417,14 +420,17 @@ export class CivitaiChat extends LitElement {
   async #open(id: string, announce = true): Promise<void> {
     const session = this.#session;
     if (!session) return;
+    const ticket = ++this.#opening;
     this.loading = true;
     try {
       await session.openConversation(id);
     } catch (error) {
+      // The viewer went to another chat meanwhile: nothing to undo or say, and theirs stays as it is.
+      if (isSuperseded(error)) return;
       session.newConversation();
       if (announce) this.#toast('Could not open that chat.', error);
     } finally {
-      this.loading = false;
+      if (ticket === this.#opening) this.loading = false;
       this.historyOpen = false;
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
@@ -478,6 +484,9 @@ export class CivitaiChat extends LitElement {
 
   /** Starts a new conversation and puts the cursor in the message box. */
   newChat(): void {
+    // A chat still loading is left behind: its loader goes, and its end (stale by then) changes nothing.
+    this.#opening++;
+    this.loading = false;
     this.#session?.newConversation();
     this.uploads = [];
     this.refs = [];
@@ -810,9 +819,11 @@ export class CivitaiChat extends LitElement {
     dialog.message = `"${title}" and everything made in it will be removed.`;
     if (!(await dialog.ask())) return;
     const wasCurrent = this.#session?.store.current?.id === id;
+    const removing = this.#session?.store.remove(id);
+    // Off the open chat at once: a delete that is slow (or never answers) holds nothing up.
+    if (wasCurrent) this.newChat();
     try {
-      await this.#session?.store.remove(id);
-      if (wasCurrent) this.newChat();
+      await removing;
     } catch (error) {
       this.#toast('Could not delete that chat.', error);
     }
