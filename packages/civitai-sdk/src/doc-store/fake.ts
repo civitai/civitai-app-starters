@@ -1222,6 +1222,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       }
       case 'mark':
       case 'unmark': {
+        // A report cannot be withdrawn (withdraw + re-file would re-open a document a
+        // moderator dismissed). The server refuses it FIRST — before sign-in, any budget
+        // or the trust lookup — so it is a 400 for everyone and costs nothing.
+        if (route.op === 'unmark' && route.name === REPORT) {
+          throw invalid('a report cannot be withdrawn', { mark: route.name });
+        }
         requireSignedIn();
         if (route.op === 'mark') parseBody(body, {});
         charge('tally', uid);

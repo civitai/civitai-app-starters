@@ -12,7 +12,9 @@ Add the App Blocks document store client: `app.storage.collection<T>(name)` with
 `@civitai/sdk/testing` gains `createFakeStorage({ manifest })`, an in-memory store
 at the client's `Http` seam that enforces the server's storage rules and passes
 the platform's storage contract. Its rate limits are opt-in
-(`enforceRateLimits: true`), so an app's own tests are not throttled.
+(`enforceRateLimits: true`), so an app's own tests are not throttled. As the
+server does, it refuses withdrawing a `report` mark (`unmark(key, 'report')`) with
+`invalid_request`, before sign-in or any rate budget.
 
 A `401` whose body's `code` is `sign_in_required` is no longer retried with a
 re-minted token: it is about the viewer, not the token, so the retry only cost a

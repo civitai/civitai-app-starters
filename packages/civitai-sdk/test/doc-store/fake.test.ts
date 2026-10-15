@@ -14,6 +14,8 @@ import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js
  *   - the shared write budget: burst 10 refilling every 6 min, the rejection bucket
  *     (30 min), refunds on a refused write and none charged for an outage, per viewer;
  *   - fixed-window resets and `retryAfter` values; anonymous reads sharing one window;
+ *   - a report withdrawal refused BEFORE sign-in and any budget (the contract pins
+ *     only the signed-in refusal itself);
  *   - typed `where` filters (number, boolean, time) and the one-filter limit;
  *   - sorts by an index, a tally (absent = 0, key tiebreak in the sort direction),
  *     `createdAt`; `keyPrefix`; `markedBy` + `mark`;
@@ -168,6 +170,24 @@ describe('fixed windows', () => {
     expect(e.details).toEqual({ bucket: 'tally', retryAfter: 40 });
     clock.advance(40_000);
     await expect(fake.storage.collection('posts').mark('p', 'vote')).resolves.toEqual({ marked: true, count: 1 });
+  });
+
+  it('withdrawing a report is refused before sign-in and before any budget, and the report stays', async () => {
+    const { fake } = make();
+    const posts = fake.storage.collection('posts');
+    await posts.put('p', {});
+    await posts.mark('p', 'report'); // 1 of 30 tally tokens
+    // Ordering: a 400 for everyone — an anonymous caller is NOT told sign_in_required.
+    const anon = await refusal(fake.as({ viewer: null }).storage.collection('posts').unmark('p', 'report'));
+    expect([anon.status, anon.code, anon.details]).toEqual([400, 'invalid_request', { mark: 'report' }]);
+    const refused = await refusal(posts.unmark('p', 'report'));
+    expect([refused.status, refused.code, refused.details]).toEqual([400, 'invalid_request', { mark: 'report' }]);
+    // The viewer's report is still there.
+    expect((await posts.get('p'))!.viewer).toEqual({ marks: ['report'] });
+    // Neither refusal spent a tally token: 29 more tallies fit the window of 30.
+    for (let i = 0; i < 28; i++) await fake.storage.collection('plays').increment('m', 'plays');
+    await expect(posts.mark('p', 'vote')).resolves.toEqual({ marked: true, count: 1 });
+    expect((await refusal(posts.unmark('p', 'vote'))).details).toMatchObject({ bucket: 'tally' });
   });
 
   it('reads: 300 a minute; anonymous readers share one (client IP) window', async () => {

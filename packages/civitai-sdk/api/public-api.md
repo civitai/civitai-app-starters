@@ -578,7 +578,10 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
         marked: true;
         count?: number;
     }>;
-    /** Remove the viewer's mark. Idempotent. */
+    /**
+     * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
+     * server refuses it `invalid_request` (400) for every caller.
+     */
     unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
         marked: false;
         count?: number;
