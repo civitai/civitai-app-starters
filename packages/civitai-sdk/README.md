@@ -185,15 +185,106 @@ Routes are addressed by path, so a route `/api/v1` gains needs no release here:
 const images = await app.site.get('images', { query: { limit: 20, username: 'civitai' } });
 ```
 
-A `401` is retried once with a fresh token. Any failure the server answered is an
+A `401` is retried once with a fresh token — except one whose body's `code` is
+`sign_in_required`, which is about the viewer, not the token. Any failure the server answered is an
 `ApiError` carrying `status`, the parsed `body`, and the server's own message —
 while a request the browser never delivered (CORS, DNS, offline) surfaces as a
 fetch `TypeError` with no `status`, so test `error instanceof ApiError` before
 reading one.
 
+## Document storage
+
+An app declares its **collections** in its manifest, and `app.storage.collection(name)`
+reads and writes their JSON documents. `private` collections hold one key space per
+viewer; `shared` ones one key space every viewer reads, written under the policy the
+collection declares (`own`: viewers create, only the author edits or deletes;
+`none`: nobody writes documents, viewers only increment counters and set marks).
+
+```json
+"scopes": ["apps:storage", "apps:storage:publish"],
+"storage": { "collections": {
+  "prefs":    { "visibility": "private" },
+  "requests": { "visibility": "shared", "write": "own", "marks": ["vote"],
+                "indexes": { "status": "string" }, "showAuthor": true },
+  "plays":    { "visibility": "shared", "write": "none", "counters": ["plays"] }
+}}
+```
+
+```ts
+interface Request {
+  title: string;
+  status: 'open' | 'done';
+}
+
+const requests = app.storage.collection<Request>('requests');
+
+const created = await requests.create({ title: 'More lighting presets', status: 'open' });
+const doc = await requests.get(created.key); // null when there is none
+await requests.put(created.key, { title: 'More lighting presets', status: 'done' }, { ifVersion: doc?.version });
+await requests.mark(created.key, 'vote'); // { marked: true, count }
+
+const page = await requests.list({ where: { status: 'open' }, sort: '-mark:vote', limit: 20 });
+for (const item of page.items) {
+  console.log(item.data.title, item.marks.vote, item.author, item.viewer?.marks);
+}
+const mine = await requests.list({ author: 'me' });
+const voted = await requests.list({ markedBy: 'me', mark: 'vote' });
+
+await app.storage.collection('plays').increment('model-123', 'plays'); // creates the doc in a `none` collection
+const { limits, usage } = await app.storage.info();
+```
+
+- **Documents** are `{ key, data, version, createdAt, updatedAt, author, counters,
+  marks, viewer }`. `createdAt`/`updatedAt` are `Date`s. `author` is
+  `{ kind: 'user', isViewer, username? }` (the username only in a `showAuthor`
+  collection), `{ kind: 'counter' }` for a document a counter created, or
+  `{ kind: 'app' }` — never a numeric user id. `viewer` is `null` for an anonymous
+  viewer.
+- **Conditional writes:** `put(key, data, { ifVersion })` and
+  `delete(key, { ifVersion })` write only at that version (`0` = only if absent);
+  a mismatch rejects `version_conflict` with `details.currentVersion`.
+- **Lists** take ONE equality on a declared index (`where`), one `sort`
+  (`[-]key|createdAt|updatedAt|<index>|counter:<n>|mark:<n>`), `author: 'me'`,
+  `markedBy: 'me'` with `mark`, `keyPrefix`, `limit` and `cursor`. `nextCursor` is
+  `null` exactly on the last page; pass it back with the same query.
+- **A refusal in the storage envelope is a `StorageError`** (an `ApiError`) with
+  the server's `code`, `status` and `details`; `retryAfter` is set when the server
+  named a wait. So is a name or key the client refuses before sending (an invalid
+  collection name is `collection_not_declared`; a key of `''`, `.` or `..` is
+  `invalid_request`). Anything else arrives as it would from any route: a response
+  without the envelope (a proxy error page, a site without these routes) is a plain
+  `ApiError` with its `status`, a request that never got an answer (offline, CORS,
+  DNS) is the `fetch` `TypeError`, and a 2xx the client cannot read is a
+  `CivitaiError`. `get` reads only `not_found` as "no document". Branch on `code`:
+
+```ts
+import { StorageError } from '@civitai/sdk';
+
+try {
+  await requests.put('r1', { title: 'Renamed', status: 'open' }, { ifVersion: 3 });
+} catch (error) {
+  if (error instanceof StorageError && error.code === 'version_conflict') reloadAndRetry();
+  else if (error instanceof StorageError && error.code === 'consent_required') askForPublishConsent();
+  else throw error;
+}
+```
+
+Anonymous viewers may read `shared` collections and nothing else
+(`sign_in_required`). Creating or editing a document in a viewer-written shared
+collection needs the consent-gated `apps:storage:publish`; deleting your own, marks
+and counters need only `apps:storage`. Shared writes pass a minimum-trust gate and
+moderation. Only phase-one operations exist: no batch writes, change feed, TTL or
+owner-written documents yet.
+
+The legacy stores below keep working, unchanged, while apps move; their methods are
+`@deprecated`. Nothing is copied from them into collections.
+
 ## App storage
 
-`app.storage` is the viewer's own key/value store, scoped to this app and this
+> **Deprecated** in favour of [document storage](#document-storage): declare a
+> `private` collection and use `app.storage.collection(name)`.
+
+`app.storage`'s `get`/`set`/`delete`/`list`/`getQuota` are the viewer's own key/value store, scoped to this app and this
 block instance. It needs the block token the host mints — an app holding an
 OAuth access token has no per-viewer app storage — and an anonymous viewer is
 refused, so gate on `app.viewer` rather than reading an empty page as "nothing
@@ -236,6 +327,9 @@ try {
 ```
 
 ## Shared storage
+
+> **Deprecated** in favour of [document storage](#document-storage): declare a
+> `shared` collection, which has authorship, counters and marks built in.
 
 `app.sharedStorage` is this app's **cross-user** key/value store — one namespace
 every viewer reads and writes, unlike `app.storage`, which is private per viewer.
@@ -787,6 +881,49 @@ entry.
 
 `@civitai/sdk/testing` has `createFakeTransport()`: pass it as
 `initialize({ transport })` and script the host's answers.
+
+### A fake document store
+
+`createFakeStorage({ manifest })` is an in-memory document store behind the same
+`Http` seam the client uses, enforcing the server's rules: scopes and consent, write
+policies, the minimum-trust gate, anonymous readers, keys, limits and quotas,
+moderation, error codes and statuses. This package runs the platform's own storage
+contract against it, so where the contract speaks the fake and the server agree.
+
+```ts
+import { createFakeStorage } from '@civitai/sdk/testing';
+
+const fake = createFakeStorage({ manifest, viewer: { username: 'alice' } });
+const prefs = fake.storage.collection('prefs'); // the real client, against the fake
+await prefs.put('theme', { mode: 'dark' });
+
+const bob = fake.as({ viewer: { username: 'bob', trusted: false } }).storage;
+const anon = fake.as({ viewer: null }).storage;
+```
+
+**Rate limits are OFF by default**, so your own tests are never throttled. Pass
+`enforceRateLimits: true` to apply the server's — the per-minute and per-day windows
+for reads, private writes and deletes, marks and counters, and reports, plus the
+shared write budget — when you want to test how the app handles `rate_limited`
+(drive the clock with `now`).
+
+Where it differs from the server on purpose:
+
+- A declaration using a feature the platform has not shipped — `write: "owner"` or
+  `"anyone"`, `kind: "log"`/`maxEntries`, `ttlSeconds`, `dailyWritesPerAuthor` —
+  makes `createFakeStorage` throw, naming it, instead of failing per request. It is
+  not a manifest validator otherwise; `civitai app validate` is.
+- A list `nextCursor` is an opaque token, refused for any other collection, sort or
+  filter than the query that issued it. Treat it as opaque against the server too.
+
+`fake.calls` records every request and answer. Options also cover smaller `limits`,
+`consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom
+`moderate`; by default the scanner refuses the words in `FAKE_STORAGE_MODERATION`. It
+does not model moderator hides or the review-preview namespace, and at the `Http`
+seam there is no URL resolution — the client refuses the segments a URL would
+rewrite (`''`, `.`, `..`) before sending.
+
+### The legacy key/value stores
 
 There is no published fake for app storage, on purpose. The seam is `fetch`, so
 pass your own `fetch` to `initialize({ token, fetch })` and the client's URLs,

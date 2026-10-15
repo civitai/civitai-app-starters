@@ -52,9 +52,9 @@ const GUARD_CLAUSE = "steps.guard.outputs.open == ''";
 const UNGATED_BY_DESIGN = ['actions/checkout', GUARD_STEP];
 
 /** Each `- name:`/`- uses:` step in the job, with its own body lines. */
-function steps(text) {
+function steps(text, from = 0) {
   const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^\s{4}steps:\s*$/.test(l));
+  const start = lines.findIndex((l, i) => i >= from && /^\s{4}steps:\s*$/.test(l));
   if (start === -1) return [];
   const out = [];
   for (let i = start + 1; i < lines.length; i++) {
@@ -104,9 +104,53 @@ function field(body, key) {
 const isUngatedByDesign = (s) => UNGATED_BY_DESIGN.some((u) => s.label.startsWith(u));
 const gated = (s) => (field(s.body, 'if') ?? '').includes(GUARD_CLAUSE);
 
-describe('revendor-canonical-schema.yml — the open-PR guard actually gates the job', () => {
-  const text = readFileSync(WF, 'utf8');
-  const all = steps(text);
+/**
+ * Every job in the workflow, by id, with the line its `steps:` starts on. The
+ * schema and the storage contract re-vendor in SEPARATE jobs, each with its own
+ * guard and branch, so each job gets every assertion below.
+ */
+function jobs(text) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let id = null;
+  lines.forEach((l, i) => {
+    const j = l.match(/^ {2}([a-z][a-z0-9-]*):\s*$/);
+    if (j) id = j[1];
+    if (/^\s{4}steps:\s*$/.test(l) && id) out.push({ id, from: i });
+  });
+  return out;
+}
+
+const WF_TEXT = readFileSync(WF, 'utf8');
+const JOBS = jobs(WF_TEXT);
+
+describe('revendor-canonical-schema.yml — the jobs are independent', () => {
+  test('POSITIVE CONTROL: both re-vendor jobs are found', () => {
+    assert.deepEqual(JOBS.map((j) => j.id), ['revendor', 'revendor-storage-contract']);
+  });
+
+  test('each job writes, and guards, its OWN branch — one open PR cannot pause the other', () => {
+    const branchVars = JOBS.map(({ from }) => {
+      const cpr = steps(WF_TEXT, from).find((s) => (field(s.body, 'uses') ?? '').startsWith('peter-evans/create-pull-request'));
+      return (field(cpr?.body ?? [], 'branch') ?? '').match(/env\.([A-Z_]+)/)?.[1];
+    });
+    assert.equal(new Set(branchVars).size, JOBS.length, `jobs share a branch variable: ${branchVars.join(', ')}`);
+    const values = branchVars.map((v) => WF_TEXT.match(new RegExp(`^\\s+${v}:\\s*(\\S+)`, 'm'))?.[1]);
+    assert.equal(new Set(values).size, JOBS.length, `jobs share a branch: ${values.join(', ')}`);
+  });
+
+  test('the schema job does not touch the contract, nor the contract job the schema', () => {
+    const run = (from) => steps(WF_TEXT, from).map((s) => s.body.join('\n')).join('\n');
+    assert.doesNotMatch(run(JOBS[0].from), /revendor-storage-contract\.sh/);
+    assert.doesNotMatch(run(JOBS[1].from), /revendor-canonical-schema\.sh/);
+    assert.match(run(JOBS[1].from), /pnpm --filter @civitai\/sdk test/, 'the contract job must run the fake before a PR opens');
+  });
+});
+
+for (const { id, from } of JOBS)
+describe(`revendor-canonical-schema.yml — job \`${id}\`: the open-PR guard actually gates the job`, () => {
+  const text = WF_TEXT;
+  const all = steps(text, from);
 
   test('POSITIVE CONTROL: the parse finds the job steps at all', () => {
     // Without this, every assertion below passes vacuously over an empty list —
