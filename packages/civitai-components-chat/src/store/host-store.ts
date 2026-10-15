@@ -15,7 +15,8 @@ export interface HostThreadStoreDeps {
 
 /**
  * The chat's conversations kept by the host's own `ChatConversationStore`: every change saves the
- * whole conversation, one save at a time per conversation, each built from the latest state. Behaves
+ * whole conversation, and every write for one conversation (save, rename, delete) goes through its
+ * queue, one at a time in the order asked, each save built from the latest state. Behaves
  * as `ThreadStore` does for the element: the user's message is saved at once (without the reply that
  * is still coming), and the reply when it ends.
  */
@@ -25,11 +26,17 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
 
   #deps: HostThreadStoreDeps;
   #cursor: string | null = null;
+  /**
+   * Each chat's queue: every write for one id (a save, a rename, the delete) runs one after another, in
+   * the order it was asked for. Only the latest link is kept; it never rejects.
+   */
   #saves = new Map<string, Promise<void>>();
   /** The conversation each turn belongs to: a reply ends in its own chat even after the viewer opened another. */
   #owners = new WeakMap<Turn, Conversation>();
-  /** Deleted in this session: nothing saves one again or puts it back in the list, whatever still runs for it. */
-  #removed = new Set<string>();
+  /** Being deleted right now: not opened or listed until the delete fails. */
+  #deleting = new Set<string>();
+  /** Deleted in this session. A write queued after the delete is dropped; the chat is never opened, listed or listed again. */
+  #deleted = new Set<string>();
 
   constructor(deps: HostThreadStoreDeps) {
     super();
@@ -53,7 +60,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     const known = new Set(this.summaries.map((summary) => summary.id));
     const added: ListedConversation[] = [];
     for (const item of Array.isArray(page?.items) ? page.items : []) {
-      if (typeof item?.id !== 'string' || known.has(item.id)) continue;
+      if (typeof item?.id !== 'string' || known.has(item.id) || this.#gone(item.id)) continue;
       known.add(item.id);
       added.push({ id: item.id, title: typeof item.title === 'string' && item.title ? item.title : 'New chat', updatedAt: String(item.updatedAt ?? '') });
     }
@@ -62,9 +69,13 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   async open(id: string): Promise<OpenedConversation> {
+    this.#refuseGone(id);
     // A save of this chat still on its way (it was left mid-save) would otherwise be missing from what loads.
     await this.#saves.get(id);
+    this.#refuseGone(id);
     const record = await this.#deps.store.load(id, this.#scope());
+    // Deleted while it loaded: a deleted chat never becomes the open one, where nothing could save it.
+    this.#refuseGone(id);
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {
@@ -171,8 +182,10 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
 
   async rename(id: string, title: string): Promise<void> {
     if (this.current?.id === id) return this.setTitle(title, 'user');
-    // Loaded in the save queue, so a save of this chat still on its way lands first and is not overwritten.
+    // Loaded in the chat's queue, so a save still on its way lands first and is not overwritten, and a
+    // rename after a delete finds the chat gone.
     const step = this.#queue(id, async () => {
+      if (this.#deleted.has(id)) return null;
       const record = await this.#deps.store.load(id, this.#scope());
       if (!record) return null;
       const renamed: ChatConversation = { ...record, title: clampTitle(title), titleSource: 'user', ...this.#scope() };
@@ -185,18 +198,22 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#emit('list-change');
   }
 
+  /**
+   * Deletes the chat in its own queue: what was asked before it is written first, and what is asked
+   * after it (a reply still running, its title, a rename) runs after it. If the delete worked, those
+   * are dropped; if it failed, they run as usual, so the chat keeps everything said in it.
+   */
   async remove(id: string): Promise<void> {
-    // Marked first: a reply still running for it, or a title on its way, must not save it back.
-    this.#removed.add(id);
-    // A save still on its way would otherwise bring the conversation back after the delete.
-    await this.#saves.get(id);
-    try {
-      await this.#deps.store.delete(id, this.#scope());
-    } catch (error) {
-      // Still there: it saves again like any other chat.
-      this.#removed.delete(id);
-      throw error;
-    }
+    this.#deleting.add(id);
+    await this.#queue(id, async () => {
+      // Settled inside the queue, so the next write for this chat sees the delete's outcome, never a pending one.
+      try {
+        await this.#deps.store.delete(id, this.#scope());
+        this.#deleted.add(id);
+      } finally {
+        this.#deleting.delete(id);
+      }
+    });
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
     if (this.current?.id === id) this.current = null;
     this.#emit('list-change');
@@ -204,14 +221,23 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   /**
-   * Saves the conversation as it is when its turn in the queue comes. Every save of a chat this session
-   * holds passes here, so this is the one place a deleted one is kept from being saved back
-   * (`#touchSummary` keeps it off the list); a rename of a chat not open loads it first, and a deleted
-   * one is not found.
+   * Saves the conversation as it is when its turn in the chat's queue comes. Dropped only when the chat
+   * was deleted before that turn came (the delete ran earlier in the same queue and worked); then the
+   * chat no longer exists for anything to be lost from it.
    */
   #save(conversation: Conversation): Promise<void> {
-    if (this.#removed.has(conversation.id)) return Promise.resolve();
-    return this.#queue(conversation.id, () => this.#deps.store.save(this.#record(conversation)));
+    return this.#queue(conversation.id, async () => {
+      if (!this.#deleted.has(conversation.id)) await this.#deps.store.save(this.#record(conversation));
+    });
+  }
+
+  /** Deleted, or being deleted. */
+  #gone(id: string): boolean {
+    return this.#deleted.has(id) || this.#deleting.has(id);
+  }
+
+  #refuseGone(id: string): void {
+    if (this.#gone(id)) throw new Error('That chat was deleted.');
   }
 
   // Each save replaces the whole conversation, so everything that writes one goes one at a time, in order.
@@ -240,7 +266,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   #touchSummary(conversation: Conversation): void {
-    if (this.#removed.has(conversation.id)) return;
+    if (this.#deleted.has(conversation.id)) return;
     const summary: ListedConversation = { id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt };
     this.summaries = [summary, ...this.summaries.filter((s) => s.id !== conversation.id)];
     this.#emit('list-change');

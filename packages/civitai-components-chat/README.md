@@ -225,7 +225,11 @@ interface ChatConversation {
   at a time, in order; each carries every turn so far. Renaming a chat that is not open is a `load`
   then a `save` of the same record with the new title (and the chat's `scope`), queued behind any
   save of it still on its way.
-- `delete` removes a conversation; the chat waits for any save of it still on its way first.
+- `delete` removes a conversation. It takes its turn among that conversation's writes: saves asked
+  before it are made first, and anything asked after it (a reply still running, its title, a rename)
+  is dropped once the delete worked, or made as usual if it failed, so a failed delete keeps
+  everything said in the chat. A conversation being deleted, or deleted, is not opened or listed again
+  in this session.
 - Any method may reject, and the viewer sees one short note per failure: "Could not load your
   chats." for `list` ("Could not load older chats." for a later page), "Could not open that chat."
   for `load` when they open one (at start-up the chat opens a new one instead), "Could not delete

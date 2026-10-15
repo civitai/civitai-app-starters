@@ -235,6 +235,112 @@ describe('HostThreadStore', () => {
     expect(store.records.get('C1')!.turns[0]!.assistant).toMatchObject({ status: 'done' });
   });
 
+  /** A store whose delete waits until released, then works or throws. */
+  function heldDelete(initial: Parameters<typeof memoryStore>[0] = []) {
+    const store = memoryStore(initial);
+    const remove = store.delete.bind(store);
+    let release!: (fail?: boolean) => void;
+    store.delete = (id, options) =>
+      new Promise<void>((resolve, reject) => {
+        release = (fail = false) => (fail ? reject(new Error('delete failed')) : void remove(id, options).then(resolve));
+      });
+    return { store, release: (fail?: boolean) => release(fail) };
+  }
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('F1: renames nothing back into a chat whose delete was on its way', async () => {
+    const { store, release } = heldDelete([record(1)]);
+    // The rename's load answers only after the delete is done: the order that wrote the chat back.
+    const load = store.load.bind(store);
+    let answer: (() => void) | undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    store.load = async (id, options) => {
+      const found = await load(id, options);
+      await answered;
+      return found;
+    };
+    const threads = new HostThreadStore({ store });
+    await threads.refreshList();
+    const removed = threads.remove('A');
+    await tick();
+    const renamed = threads.rename('A', 'Renamed');
+    await tick();
+    release();
+    await removed;
+    answer!();
+    await renamed;
+    expect([...store.records.keys()]).toEqual([]);
+    expect(threads.summaries).toEqual([]);
+  });
+
+  it('F1: renames nothing back after a delete, even from a store whose load still returns the chat', async () => {
+    const store = memoryStore([record(1)]);
+    // A host whose reads lag its deletes (a replica, a cache): load still finds the deleted chat.
+    const stale = structuredClone(record(1));
+    store.load = async () => structuredClone(stale);
+    const threads = new HostThreadStore({ store });
+    await threads.refreshList();
+    await threads.remove('A');
+    await threads.rename('A', 'Renamed');
+    expect([...store.records.keys()]).toEqual([]);
+  });
+
+  it('F2: never opens a chat whose delete is on its way, so later messages go to a chat that is saved', async () => {
+    const { store, release } = heldDelete([record(1)]);
+    const threads = new HostThreadStore({ store, newId: () => 'NEW' });
+    const removed = threads.remove('A');
+    await expect(threads.open('A')).rejects.toThrow('That chat was deleted.');
+    release();
+    await removed;
+    await expect(threads.open('A')).rejects.toThrow('That chat was deleted.');
+    expect(threads.current).toBeNull();
+    const turn = threads.appendUserTurn('after', []);
+    turn.assistant.status = 'done';
+    await threads.completeTurn(turn);
+    expect([...store.records.keys()]).toEqual(['NEW']);
+  });
+
+  it('F2: drops a chat whose load answered after its delete, rather than making it the open one', async () => {
+    const store = memoryStore([record(1)]);
+    const load = store.load.bind(store);
+    let answer!: () => void;
+    store.load = (id, options) => new Promise((resolve) => (answer = () => void load(id, options).then(resolve)));
+    const threads = new HostThreadStore({ store });
+    const opening = threads.open('A');
+    await tick();
+    await threads.remove('A');
+    answer();
+    await expect(opening).rejects.toThrow('That chat was deleted.');
+    expect(threads.current).toBeNull();
+  });
+
+  it('F2: lists no chat whose delete is on its way or done', async () => {
+    const { store, release } = heldDelete([record(1), { ...record(1), id: 'B', title: 'B' }]);
+    const threads = new HostThreadStore({ store });
+    const removed = threads.remove('A');
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+    release();
+    await removed;
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+  });
+
+  it('F3: keeps the reply that ended while a delete was on its way, when the delete fails', async () => {
+    const { store, release } = heldDelete();
+    const threads = new HostThreadStore({ store, newId: () => 'C1' });
+    const turn = threads.appendUserTurn('keep me', []);
+    await tick();
+    const removed = threads.remove('C1');
+    await tick();
+    turn.assistant = { messages: [{ role: 'assistant', content: 'the reply' }], status: 'done' };
+    const completed = threads.completeTurn(turn);
+    release(true);
+    await expect(removed).rejects.toThrow('delete failed');
+    await completed;
+    expect(store.records.get('C1')!.turns[0]!.assistant).toMatchObject({ status: 'done', messages: [{ content: 'the reply' }] });
+  });
+
   it('deletes only after a save still on its way, so the save cannot bring the chat back', async () => {
     const store = memoryStore();
     let release!: () => void;
