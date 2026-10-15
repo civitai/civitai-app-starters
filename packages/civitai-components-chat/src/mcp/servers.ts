@@ -7,10 +7,16 @@ export interface ChatMcpServer {
   /** Its Streamable HTTP endpoint. */
   url: string;
   /**
-   * Its bearer token, asked for on every request. Required: the chat never sends a server the viewer's
-   * own Civitai token, and an entry without one is skipped.
+   * Its bearer token, asked for on every request and sent as `Authorization: Bearer …`. The chat never
+   * sends a server the viewer's own Civitai token: an entry with neither `token` nor `fetch` is skipped.
    */
-  token: () => string | Promise<string>;
+  token?: () => string | Promise<string>;
+  /**
+   * Makes every request to this server, so the page signs it in its own way (a session cookie, a CSRF
+   * header), as `backend.fetch` does for the model. The page's `fetch` when unset. With `fetch`,
+   * `token` is optional; with both, the token's header is set before `fetch` is called.
+   */
+  fetch?: typeof fetch;
   /** What the chat calls it while one of its tools runs, e.g. "Sandbox"; the id when omitted. */
   label?: string;
 }
@@ -99,8 +105,8 @@ export class McpServerPool {
     for (const server of servers) {
       if (typeof server?.id !== 'string' || !MCP_SERVER_ID.test(server.id)) {
         console.warn(`[chat-cvt] MCP server "${String(server?.id)}" is skipped: ids are lowercase letters, digits and - only`);
-      } else if (typeof server.token !== 'function') {
-        console.warn(`[chat-cvt] MCP server "${server.id}" is skipped: it has no token, and the chat does not send it the viewer's`);
+      } else if (typeof server.token !== 'function' && typeof server.fetch !== 'function') {
+        console.warn(`[chat-cvt] MCP server "${server.id}" is skipped: it has no token or fetch, and the chat does not send it the viewer's`);
       } else if (next.has(server.id)) {
         console.warn(`[chat-cvt] MCP server "${server.id}" is listed twice; the first one is used`);
       } else next.set(server.id, server);
@@ -130,7 +136,12 @@ export class McpServerPool {
   }
 
   #connect(entry: Entry): McpConnection {
-    return createMcpConnection({ url: entry.server.url, token: () => entry.server.token() });
+    // Both read from the entry at each request, so a new `token` or `fetch` applies without reconnecting.
+    return createMcpConnection({
+      url: entry.server.url,
+      token: async () => (await entry.server.token?.()) ?? '',
+      fetch: (input, init) => (entry.server.fetch ? entry.server.fetch(input, init) : globalThis.fetch(input, init)),
+    });
   }
 
   /** Every reachable server's tools; a failing one adds none and is reported through `onError`. */

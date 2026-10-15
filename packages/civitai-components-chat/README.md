@@ -112,7 +112,7 @@ chat.backend = {
   models: [{ id: 'assistant-large', label: 'Large', note: 'Slower, more thorough.' }], // optional
   store,
 } satisfies ChatBackend;
-chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', token: () => csrf }];
+chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }]; // signed in like the gateway
 chat.systemPrompt = 'You are the assistant in Acme Notes. …'; // the built-in rules talk about Civitai
 ```
 
@@ -359,10 +359,26 @@ chat.mcpServers = [
   {
     id: 'workspace', // [a-z0-9-]+
     url: workspace.mcpUrl, // a Streamable HTTP endpoint
-    token: () => workspace.token, // required; sent as a bearer token
+    token: () => workspace.token, // sent as a bearer token
     label: 'Workspace', // shown while one of its tools runs, and to the assistant
   },
 ] satisfies ChatMcpServer[];
+```
+
+A server on the page's own site can be signed in the way the page signs in everything else, with
+its own `fetch` instead of a token (the same one a [backend](#your-own-backend) uses for its gateway):
+
+```ts
+import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+
+const csrf = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')!.content;
+const send: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  headers.set('X-CSRF-Token', csrf);
+  return fetch(input, { ...init, headers, credentials: 'include' }); // the session cookie
+};
+
+chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }] satisfies ChatMcpServer[];
 ```
 
 - **Names.** Every tool of an added server is offered as `${id}__${tool}`, e.g.
@@ -371,9 +387,12 @@ chat.mcpServers = [
   whose full name is not 1-64 letters, digits, `_` or `-`, or that a built-in tool already has, is
   left out with a console warning. Use the full name in `toolViews` and in `instructions`.
 - **Connections.** Each server uses the same client as the built-in ones, including a new session
-  when the server forgets the old one (a 404 or 400). `token` is required, is asked for on every
-  request, and may return a string or a promise. The chat never sends an added server the viewer's
-  Civitai token: an entry without `token` is skipped with a console warning.
+  when the server forgets the old one (a 404 or 400). `token` is asked for on every
+  request, and may return a string or a promise. `fetch`, when set, makes every request to the
+  server (initialize, listing, every call): the chat hands it the request with its MCP headers, and
+  the `Authorization` header only when there is a `token`. Either is enough; with neither, the entry
+  is skipped with a console warning, since the chat never sends an added server the viewer's Civitai
+  token. A changed `token` or `fetch` applies from the next request, without reconnecting.
 - **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
   whose `url` changed. A call still running on a closed connection fails, and so does any later
   call through it (a tool built before the change): a closed connection never reconnects. Listing

@@ -159,7 +159,9 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
   const authedFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
     if (closed) throw new McpConnectionClosedError(endpoint.toString());
     const headers = new Headers(init?.headers);
-    if (token) headers.set('Authorization', `Bearer ${await token()}`);
+    // No token (an added server signed in by the page's own fetch) means no Authorization header at all.
+    const value = token ? await token() : '';
+    if (value) headers.set('Authorization', `Bearer ${value}`);
     const response = await doFetch(input, { ...init, headers });
     const id = toolCallId(init);
     return id === undefined ? response : guardReplyStream(response, id, init?.signal ?? undefined, () => closed);
