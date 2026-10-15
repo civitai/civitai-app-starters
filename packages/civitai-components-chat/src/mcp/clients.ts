@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export interface McpTool {
   name: string;
@@ -45,6 +45,108 @@ export class McpConnectionClosedError extends Error {
   }
 }
 
+/**
+ * The server closed the stream a tool call's reply comes on without sending the reply, so it never
+ * will. The tool may still have run: only the answer was lost.
+ */
+export class McpStreamLostError extends Error {
+  readonly tool: string;
+  constructor(url: string, tool: string) {
+    super(`The MCP server at ${url} closed the connection before it answered ${tool}.`);
+    this.name = 'McpStreamLostError';
+    this.tool = tool;
+  }
+}
+
+/** Ours, inside JSON-RPC's server-error range; `data` carries a marker so a server's own -32098 is not read as one. */
+const STREAM_LOST_CODE = -32098;
+const STREAM_LOST_MARK = 'cvt-stream-lost';
+
+function isStreamLost(error: unknown): boolean {
+  return error instanceof McpError && error.code === STREAM_LOST_CODE && (error.data as { mark?: unknown } | undefined)?.mark === STREAM_LOST_MARK;
+}
+
+/** The JSON-RPC id of a `tools/call` request body, the only kind whose lost reply is turned into an error. */
+function toolCallId(init: RequestInit | undefined): string | number | undefined {
+  if (init?.method !== 'POST' || typeof init.body !== 'string') return undefined;
+  try {
+    const message = JSON.parse(init.body) as { method?: unknown; id?: unknown };
+    if (message?.method !== 'tools/call') return undefined;
+    return typeof message.id === 'string' || typeof message.id === 'number' ? message.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A tool call's reply may come on an event stream. Should that stream end, or break, before the reply
+ * for `id` is on it, the SDK waits out the whole timeout (610 s for an added server's tools) for a reply
+ * that cannot come any more. This passes the stream through unchanged and, at its end, adds an error
+ * reply for `id` in its place, so the call fails at once. Not when the connection closed or its
+ * transport was stopped (the request's signal is the transport's own, not the tool call's; either is
+ * already an error), and not when the server sent a non-empty event id: such a stream can be resumed,
+ * and the SDK reconnects for the reply itself. An empty `id:` resets the last event id, which leaves
+ * nothing to resume from, so it does not count.
+ */
+function guardReplyStream(response: Response, id: string | number, signal: AbortSignal | undefined, isClosed: () => boolean): Response {
+  const type = response.headers.get('content-type') ?? '';
+  if (!response.ok || !response.body || !/^text\/event-stream\b/i.test(type.trim())) return response;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let answered = false;
+  let resumable = false;
+
+  const scan = (chunk: string) => {
+    buffered += chunk;
+    const events = buffered.split(/\r?\n\r?\n/);
+    buffered = events.pop() ?? '';
+    for (const event of events) {
+      const data: string[] = [];
+      for (const line of event.split(/\r?\n/)) {
+        if (/^id:[ \t]*\S/.test(line)) resumable = true;
+        else if (/^data:/.test(line)) data.push(line.slice(5).replace(/^ /, ''));
+      }
+      if (data.length === 0) continue;
+      try {
+        const message = JSON.parse(data.join('\n')) as { id?: unknown; result?: unknown; error?: unknown };
+        if (message?.id === id && ('result' in message || 'error' in message)) answered = true;
+      } catch {
+        // Not ours to judge; the SDK reports it.
+      }
+    }
+  };
+
+  const end = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    scan(decoder.decode());
+    if (buffered.trim() !== '') scan('\n\n');
+    if (!answered && !resumable && !signal?.aborted && !isClosed()) {
+      const error = { code: STREAM_LOST_CODE, message: 'The server closed the stream before it replied.', data: { mark: STREAM_LOST_MARK } };
+      controller.enqueue(new TextEncoder().encode(`\n\nevent: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id, error })}\n\n`));
+    }
+    controller.close();
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        // A dropped connection: answer for it, unless the call was stopped, which the SDK already handles.
+        if (signal?.aborted || isClosed()) controller.error(error);
+        else end(controller);
+        return;
+      }
+      if (chunk.done) return end(controller);
+      scan(decoder.decode(chunk.value, { stream: true }));
+      controller.enqueue(chunk.value);
+    },
+    cancel: (reason) => reader.cancel(reason),
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
 export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(globalThis) }: McpConnectionOptions): McpConnection {
   const endpoint = new URL(url, typeof location === 'undefined' ? 'http://localhost/' : location.href);
   let pending: Promise<Client> | null = null;
@@ -58,7 +160,9 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
     if (closed) throw new McpConnectionClosedError(endpoint.toString());
     const headers = new Headers(init?.headers);
     if (token) headers.set('Authorization', `Bearer ${await token()}`);
-    return doFetch(input, { ...init, headers });
+    const response = await doFetch(input, { ...init, headers });
+    const id = toolCallId(init);
+    return id === undefined ? response : guardReplyStream(response, id, init?.signal ?? undefined, () => closed);
   };
 
   const connect = (): Promise<Client> => {
@@ -105,15 +209,19 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
         return tools;
       }),
     callTool: (name, args, opts = {}) =>
-      withClient(
-        async (client) =>
-          (await client.callTool({ name, arguments: args }, undefined, {
+      withClient(async (client) => {
+        try {
+          return (await client.callTool({ name, arguments: args }, undefined, {
             signal: opts.signal,
             timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
             resetTimeoutOnProgress: opts.onProgress !== undefined,
             onprogress: opts.onProgress,
-          })) as CallToolResult,
-      ),
+          })) as CallToolResult;
+        } catch (error) {
+          if (isStreamLost(error)) throw new McpStreamLostError(endpoint.toString(), name);
+          throw error;
+        }
+      }),
     close: async () => {
       closed = true;
       pending = null;

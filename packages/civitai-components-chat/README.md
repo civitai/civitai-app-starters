@@ -166,6 +166,11 @@ chat.mcpServers = [
   `token` and `label` changes apply without reconnecting.
 - **Long calls.** Calls ask for MCP progress notifications, and each one restarts a 610 s timeout,
   so a tool that keeps reporting progress (a build, a test run) is not cut off however long it runs.
+  A reply that never comes (the timeout passes with no progress, or the server ends or drops the
+  call's event stream before answering) reaches the assistant as `{ error, retryable: true, note }`
+  rather than a failure: the call may have done its work, so the note tells it to check the effect
+  before running it again. A stream the server made resumable (its events carry non-empty ids) is left to
+  the MCP client, which reconnects for the reply.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply, on a new connection,
@@ -175,7 +180,10 @@ chat.mcpServers = [
   URL, so a third-party server never gets a link to the viewer's files.
 - **Results.** A reply goes back to the assistant as text. A long one keeps its first 2,000 and last
   6,000 characters with a note of how many were left out between, since a build or a test run prints
-  its errors last. (Civitai's own tools keep the first 4,000.)
+  its errors last. (Civitai's own tools keep the first 4,000 characters, and `fetch_page` the first
+  17,000, which leaves the page server's own 16,000-character cut and its marker whole, each with a note of how many more were not shown. A page `fetch_page` already read in this
+  chat is not fetched, or paid for, again: the assistant gets the same text, marked as already
+  fetched, until the page reloads.)
 
 ## Configuration
 
