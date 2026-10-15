@@ -21,9 +21,10 @@ wallet can't cover a generation, then retry it.
 | the **per-generation budget** | `useBlockContext().token.buzzBudget` | **no** |
 
 The budget is a safety ceiling the host signs into the block token from the
-install's `buzz_budget_per_gen` publisher setting (capped at 1000; with no such
-setting the platform default is far below a typical generation — which is why
-this manifest now declares one). A purchase does not touch it: the host's reply
+install's `buzz_budget_per_gen` publisher setting (clamped to a platform cap;
+with no such setting the platform default applies — current values in the
+[limits table](https://developer.civitai.com/apps/guide/text-to-image#limits-table)).
+A purchase does not touch it: the host's reply
 to `OPEN_BUZZ_PURCHASE` is `{ purchased }` and nothing else — no new token, no
 new budget — and the budget is re-derived from the install settings on every
 mint. So a generation priced above the budget is refused whatever the wallet

@@ -5,7 +5,8 @@ import { isSfwCeiling } from '@civitai/app-sdk/blocks';
  * TWO LIMITS, AND BUYING BUZZ MOVES ONLY ONE (the `buzz-purchase` rule).
  *
  * - the per-generation BUDGET — `token.buzzBudget`, minted from this manifest's
- *   `page.buzzBudgetPerGen` (default 10 when absent, clamped to 1000). A purchase
+ *   `page.buzzBudgetPerGen` (a platform default when absent, clamped to a
+ *   platform cap — see `Harness.tsx` and the limits table). A purchase
  *   never raises it; only a new manifest version does. Never offer a top-up for it.
  * - the WALLET — `useBuzzBalance()` (needs `buzz:read:self`). A purchase raises it.
  *

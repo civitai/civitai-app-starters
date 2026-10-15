@@ -27,6 +27,18 @@ export const BLOCK_SCOPES = {
   // 4-segment (as is `apps:store:items:write`) — see BLOCK_SCOPE_PATTERN below.
   APPS_STORAGE_SHARED_READ: 'apps:storage:shared:read',
   APPS_STORAGE_SHARED_WRITE: 'apps:storage:shared:write',
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE, declared per
+  // collection in the manifest's `storage` block, that succeeds the four
+  // scopes above (which stay live until apps migrate). Same no-OAuth-bit
+  // posture. `apps:storage` covers reads, the viewer's private collections,
+  // marks and counters, and is CONSENT-EXEMPT; any manifest declaring a
+  // collection must request it. `apps:storage:publish` writes documents in a
+  // SHARED collection under the viewer's identity — SENSITIVE (needs a
+  // `scopeJustifications` entry) and CONSENT-GATED. `apps:storage` is the one
+  // 2-segment scope — see BLOCK_SCOPE_PATTERN below. Server source:
+  // civitai/civitai `src/shared/constants/block-scope.constants.ts`.
+  APPS_STORAGE: 'apps:storage',
+  APPS_STORAGE_PUBLISH: 'apps:storage:publish',
   // collections:* — the App Blocks Collections surface. These have no OAuth bit
   // (they never touch the user's civitai resources via the OAuth surface); the
   // server gates them per-op server-side (collection visibility/ownership +
@@ -84,8 +96,9 @@ export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
 export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
 
 /**
- * Format helper for the block-scope shape — 3 OR 4 colon-separated lowercase
- * segments (`domain:verb:target` or `domain:area:verb:target`).
+ * Format helper for the block-scope shape — 2, 3 OR 4 colon-separated
+ * lowercase segments (`domain:area`, `domain:verb:target` or
+ * `domain:area:verb:target`).
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
@@ -101,8 +114,10 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  * cross-user datastore); `apps:store:items:write` is the same shape. The SDK
  * now tracks the server's 4-segment scopes directly, so this is no longer a coordinated-major-bump situation — the
  * pattern just widened to accept the shapes the canonical enum already lists.
+ * It widened again, at the other end, for the 2-segment `apps:storage`
+ * (the document store's base scope).
  */
-export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+(?::[a-z]+)?$/;
+export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+(?::[a-z]+){0,2}$/;
 
 /**
  * Marketplace category taxonomy for the optional manifest `category` field —

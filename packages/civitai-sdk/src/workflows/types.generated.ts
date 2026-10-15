@@ -643,9 +643,12 @@ export type WorkflowBodyPassThroughStep = {
    *  - **Quoted** — the host reserves `max(maxBuzz, quote)` and stamps NO step
    *    timeout. That reservation can exceed 250: it is gated against the token's
    *    per-call budget (`token.buzzBudget` — the app's per-generation budget,
-   *    capped at 1000 when the host mints a production token), and a submit
-   *    whose reservation exceeds that budget comes back `failed` with an
-   *    `insufficient buzz budget` error before any Buzz is reserved.
+   *    i.e. `page.buzzBudgetPerGen` for a page app: a platform default when
+   *    nothing declares one, and clamped to a platform cap on every mint), and
+   *    a submit whose reservation exceeds that budget comes back `failed` with
+   *    an `insufficient buzz budget` error before any Buzz is reserved. The
+   *    current default and cap are in the pinned limits table,
+   *    https://developer.civitai.com/apps/guide/text-to-image.md#limits-table.
    *  - **Unquoted** (the orchestrator returned no price, or the quote could not
    *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
    *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10

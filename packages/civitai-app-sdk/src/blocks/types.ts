@@ -1388,9 +1388,12 @@ export type WorkflowBodyPassThroughStep = {
    *  - **Quoted** — the host reserves `max(maxBuzz, quote)` and stamps NO step
    *    timeout. That reservation can exceed 250: it is gated against the token's
    *    per-call budget (`token.buzzBudget` — the app's per-generation budget,
-   *    capped at 1000 when the host mints a production token), and a submit
-   *    whose reservation exceeds that budget comes back `failed` with an
-   *    `insufficient buzz budget` error before any Buzz is reserved.
+   *    i.e. `page.buzzBudgetPerGen` for a page app: a platform default when
+   *    nothing declares one, and clamped to a platform cap on every mint), and
+   *    a submit whose reservation exceeds that budget comes back `failed` with
+   *    an `insufficient buzz budget` error before any Buzz is reserved. The
+   *    current default and cap are in the pinned limits table,
+   *    https://developer.civitai.com/apps/guide/text-to-image.md#limits-table.
    *  - **Unquoted** (the orchestrator returned no price, or the quote could not
    *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
    *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10
@@ -2732,6 +2735,149 @@ export interface BlockAnalyticsDeclaration {
 }
 
 /**
+ * The type of one storage index — see {@link BlockStorageIndexes}. A `string`
+ * index holds values of at most 128 bytes. Mirrors the canonical schema's
+ * `storage.collections.*.indexes.*` enum.
+ */
+export type BlockStorageIndexType = 'string' | 'number' | 'boolean' | 'time';
+
+/**
+ * A collection's `indexes`: fields of a document's `data` the app can filter and
+ * sort by, as a map of field PATH → {@link BlockStorageIndexType}. At most 4.
+ * A path is 1 to 3 segments joined by `.` (`status`, `datasetId`,
+ * `meta.round`), each a letter followed by up to 31 letters, digits or `_`; a
+ * field whose own name contains `.` cannot be indexed. Changing an index's
+ * type is not supported: remove it and add one under a new name.
+ *
+ * `key`, `createdAt` and `updatedAt` are built-in sort keys and cannot be index
+ * names — the canonical declares each as `false`, and they are typed `never`
+ * here so declaring one is a compile error. (That is also why the index
+ * signature admits `undefined`: TypeScript requires an optional property to be
+ * assignable to the signature.) Mirrors the canonical schema's
+ * `storage.collections.*.indexes`.
+ */
+export interface BlockStorageIndexes {
+  [path: string]: BlockStorageIndexType | undefined;
+  key?: never;
+  createdAt?: never;
+  updatedAt?: never;
+}
+
+/**
+ * A PRIVATE collection — a separate key space per viewer, read and written
+ * only by that viewer. Carries none of the shared-only fields (`write`,
+ * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`); the canonical
+ * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
+ * the fields both kinds share.
+ */
+export interface BlockStoragePrivateCollectionDeclaration {
+  /** See {@link BlockStorageSharedCollectionDeclaration.kind}. */
+  kind?: 'docs' | 'log';
+  /** Cannot be changed later: declare a new collection instead. */
+  visibility: 'private';
+  /** See {@link BlockStorageIndexes}. */
+  indexes?: BlockStorageIndexes;
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.ttlSeconds}. */
+  ttlSeconds?: number;
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.maxEntries}. */
+  maxEntries?: number;
+}
+
+/**
+ * A SHARED collection — one key space for the whole app, read by every viewer
+ * of the app, signed-out viewers included. `write` is REQUIRED on it.
+ */
+export interface BlockStorageSharedCollectionDeclaration {
+  /**
+   * `'docs'` (the default): documents with app-chosen or server-assigned keys
+   * that can be updated in place. `'log'`: append-only entries, trimmed to
+   * `maxEntries` per key space. RESERVED: civitai.com refuses `'log'` until log
+   * collections are enabled, so declare `'docs'` or omit it.
+   */
+  kind?: 'docs' | 'log';
+  /** Cannot be changed later: declare a new collection instead. */
+  visibility: 'shared';
+  /**
+   * Who may create, update and delete documents.
+   *
+   * - `'own'` — eligible signed-in viewers create documents; only a document's
+   *   author updates or deletes it.
+   * - `'none'` — nobody writes documents; viewers only increment the declared
+   *   `counters` and set the declared `marks`. Must declare at least one
+   *   counter or mark.
+   * - `'anyone'` — RESERVED (refused at submit until enabled): eligible
+   *   signed-in viewers update or delete any document.
+   * - `'owner'` — RESERVED (refused at submit until enabled): only the app
+   *   owner writes documents; viewers can still mark and count.
+   *
+   * `'own'` and `'anyone'` require the `apps:storage:publish` scope.
+   */
+  write: 'own' | 'anyone' | 'owner' | 'none';
+  /**
+   * Names of the atomic counters each document carries (for example `plays`).
+   * At most 8 distinct lowercase snake_case names (`^[a-z][a-z0-9_]{0,31}$`),
+   * never `report`, and never a name also used by a mark.
+   */
+  counters?: string[];
+  /**
+   * Names of the per-viewer marks a viewer can set on a document (for example
+   * `vote`), at most one of each per viewer per document. A reader sees each
+   * mark's count and whether THEY set it, never who else did. At most 8
+   * distinct lowercase snake_case names. `report` is built in on every shared
+   * collection and must NOT be declared.
+   */
+  marks?: string[];
+  /** See {@link BlockStorageIndexes}. */
+  indexes?: BlockStorageIndexes;
+  /**
+   * When true, readers see each viewer-authored document's author USERNAME.
+   * Default false. The numeric user id is never exposed either way.
+   */
+  showAuthor?: boolean;
+  /**
+   * RESERVED — refused at submit until expiring documents are enabled. The
+   * default document lifetime in seconds, 60 to 31536000 (provisional bounds).
+   */
+  ttlSeconds?: number;
+  /**
+   * RESERVED — log collections are refused at submit. For `kind: 'log'` only:
+   * the most entries kept per key space, 1 to 10000 (omitted means 10000).
+   */
+  maxEntries?: number;
+  /**
+   * RESERVED — refused at submit until per-collection write budgets are
+   * enabled. The per-viewer daily create/update budget, 1 to 1000, for a
+   * collection viewers write (`write` `'own'` or `'anyone'` only).
+   */
+  dailyWritesPerAuthor?: number;
+}
+
+/**
+ * One collection declaration — see {@link BlockManifestV1.storage}.
+ * Discriminated on `visibility`, mirroring the canonical's `if visibility is
+ * "shared" then write is required, else no shared-only field` rule. Mirrors the
+ * canonical schema's `storage.collections.*`.
+ */
+export type BlockStorageCollectionDeclaration =
+  | BlockStoragePrivateCollectionDeclaration
+  | BlockStorageSharedCollectionDeclaration;
+
+/**
+ * The manifest's `storage` object — see {@link BlockManifestV1.storage}.
+ * Mirrors the canonical schema's `storage`; no other key is allowed.
+ */
+export interface BlockStorageDeclaration {
+  /**
+   * Collection name → declaration. At least 1 and at most 16 collections. A
+   * collection name is lowercase snake_case: a letter, then up to 31 of `a-z`,
+   * `0-9` or `_` (`^[a-z][a-z0-9_]{0,31}$`). Renaming a collection, or changing
+   * its visibility, is a NEW collection: the old one's documents are not
+   * carried over.
+   */
+  collections: Record<string, BlockStorageCollectionDeclaration>;
+}
+
+/**
  * One entry of a manifest's `goods[]`. Mirrors the canonical schema exactly;
  * `id`, `title` and `priceBuzz` are required there and so are they here.
  *
@@ -2871,6 +3017,26 @@ export interface BlockManifestV1 {
    * canonical schema's `analytics`.
    */
   analytics?: BlockAnalyticsDeclaration;
+  /**
+   * Optional APP STORAGE declaration — every collection of JSON documents the
+   * app keeps, and who may read and write each one. Manifest-governed and
+   * REVIEW-GATED: a collection not declared here does not exist at runtime.
+   *
+   * Declaring any collection requires the `apps:storage` scope; a shared
+   * collection viewers write (`write` `'own'` or `'anyone'`) also requires the
+   * sensitive, consent-gated `apps:storage:publish` scope with a
+   * `scopeJustifications` entry; and requesting either scope with nothing here
+   * for it to reach is rejected. Those couplings, and the RESERVED features
+   * (`kind: 'log'`, `ttlSeconds`, `dailyWritesPerAuthor`, `write` `'anyone'` /
+   * `'owner'`), are enforced by the platform's manifest validator at submit,
+   * not by `defineBlock` — see `KNOWN_GAPS['storage-server-only-rules']`.
+   *
+   * This TYPES the declaration only. Storage is not yet enabled on civitai.com
+   * (its routes answer `503 storage_disabled`); the published schema and the Go
+   * CLI already accept the field. Kept in lockstep with the canonical schema's
+   * `storage`.
+   */
+  storage?: BlockStorageDeclaration;
   /** Optional; the canonical declares no required sub-field. */
   iframe?: ManifestIframe;
   /** Full-page surface descriptor (W10). */

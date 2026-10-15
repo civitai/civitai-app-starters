@@ -125,6 +125,36 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
     ],
     ['analytics as an empty object (`events` is optional)', valid({ analytics: {} })],
     ['analytics with an empty events map', valid({ analytics: { events: {} } })],
+    // -- storage: valid declarations are accepted (controls for the rejections below)
+    [
+      'storage: a private collection with path indexes',
+      valid({
+        storage: {
+          collections: { notes: { visibility: 'private', indexes: { status: 'string', 'meta.round': 'number' } } },
+        },
+      }),
+    ],
+    [
+      'storage: a shared write:"own" collection with counters, marks and showAuthor',
+      valid({
+        storage: {
+          collections: {
+            posts: { visibility: 'shared', write: 'own', counters: ['plays'], marks: ['vote'], showAuthor: true },
+          },
+        },
+      }),
+    ],
+    [
+      'storage: a shared write:"none" collection with one counter',
+      valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none', counters: ['plays'] } } } }),
+    ],
+    // RESERVED features validate offline and are refused only at submit (the
+    // canonical says so; KNOWN_GAPS['storage-server-only-rules']). Pinned so a
+    // future local rejection of them is a decision, not an accident.
+    [
+      'storage: a RESERVED log collection with maxEntries (refused at submit, not here)',
+      valid({ storage: { collections: { events: { kind: 'log', visibility: 'private', maxEntries: 50 } } } }),
+    ],
   ];
 
   it.each(cases)('%s', (_label, manifest) => {
@@ -223,6 +253,74 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       'analytics: values on a number property',
       valid({ analytics: { events: { timed: { properties: { seconds: { type: 'number', values: ['1'] } } } } } }),
       'analytics.events.timed.properties.seconds.values',
+    ],
+    // -- storage (document-store collections): every rule below is the canonical's
+    ['storage: collections required', valid({ storage: {} }), 'storage.collections'],
+    ['storage: at least one collection', valid({ storage: { collections: {} } }), 'storage.collections'],
+    [
+      'storage: a collection name must be lowercase snake_case',
+      valid({ storage: { collections: { Notes: { visibility: 'private' } } } }),
+      'storage.collections.Notes',
+    ],
+    [
+      'storage: unknown key on storage',
+      valid({ storage: { collections: { n: { visibility: 'private' } }, quota: 1 } }),
+      'storage.quota',
+    ],
+    [
+      'storage: unknown key on a collection',
+      valid({ storage: { collections: { notes: { visibility: 'private', bogus: 1 } } } }),
+      'storage.collections.notes.bogus',
+    ],
+    [
+      'storage: a shared collection must declare write',
+      valid({ storage: { collections: { posts: { visibility: 'shared' } } } }),
+      'storage.collections.posts.write',
+    ],
+    // The next four are `false` subschemas, which Ajv words as "boolean schema
+    // is false". The FIELD is right and is what these pin; the wording is
+    // Ajv's, and `defineBlock` keeps Ajv's wording everywhere.
+    [
+      'storage: a private collection carries no shared-only field',
+      valid({ storage: { collections: { notes: { visibility: 'private', write: 'own' } } } }),
+      'storage.collections.notes.write',
+    ],
+    [
+      'storage: maxEntries belongs to log collections only',
+      valid({ storage: { collections: { notes: { visibility: 'private', maxEntries: 5 } } } }),
+      'storage.collections.notes.maxEntries',
+    ],
+    [
+      'storage: no dailyWritesPerAuthor on a write:"none" collection',
+      valid({
+        storage: {
+          collections: { tally: { visibility: 'shared', write: 'none', counters: ['p'], dailyWritesPerAuthor: 5 } },
+        },
+      }),
+      'storage.collections.tally.dailyWritesPerAuthor',
+    ],
+    [
+      'storage: `key` is a built-in sort key, not an index name',
+      valid({ storage: { collections: { notes: { visibility: 'private', indexes: { key: 'string' } } } } }),
+      'storage.collections.notes.indexes.key',
+    ],
+    [
+      'storage: index type enum',
+      valid({ storage: { collections: { notes: { visibility: 'private', indexes: { status: 'text' } } } } }),
+      'storage.collections.notes.indexes.status',
+    ],
+    [
+      'storage: `report` is built in and must not be declared as a mark',
+      valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', marks: ['report'] } } } }),
+      'storage.collections.posts.marks[0]',
+    ],
+    // The canonical's SECOND `oneOf`/`anyOf` site (see the LEDGER below). Its
+    // members pin no `const`, so no member is preferred and Ajv's first error
+    // — the first member's missing `counters` — is what is reported.
+    [
+      'storage: a write:"none" collection must declare a counter or a mark',
+      valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none' } } } }),
+      'storage.collections.tally.counters',
     ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
@@ -351,11 +449,15 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there is exactly ONE — the property declaration. This
+   * ever gains. Today there are TWO sites, and only the first — the analytics
+   * property declaration — is discriminated. The second, a `write: "none"`
+   * storage collection's "at least one counter or mark", has no `const`
+   * discriminator, so the selection leaves its report alone; what
+   * `defineBlock` says for it is pinned in the DERIVED rejections above. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly one oneOf/anyOf site', () => {
+  it('LEDGER: the canonical has exactly two oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -367,9 +469,11 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
     };
     scan(loadCanonicalSchema(), '#');
     const NAME = '^[a-z][a-z0-9_]{0,63}$';
+    const COLLECTION = '^[a-z][a-z0-9_]{0,31}$';
     expect(sites).toEqual([
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/3/then/anyOf`,
     ]);
   });
 });
@@ -439,6 +543,13 @@ const SHAPE_LEDGER = [
   'goods[]',
   'iframe',
   'page',
+  // `storage`: its collection map, and each collection's `indexes`. The
+  // `indexes` shape exists only because the canonical declares its three
+  // reserved names (`key`, `createdAt`, `updatedAt`) as `false` properties;
+  // the type carries them as `?: never`, which is how TypeScript forbids a key.
+  'storage',
+  'storage.collections.*',
+  'storage.collections.*.indexes',
   'targets[]',
 ];
 
@@ -844,7 +955,7 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     //
     // A `TYPED_AHEAD` shape is expected only once the vendored schema carries
     // it; see that list for why it exists.
-    const LEDGER = ['analytics', 'goods', 'iframe', 'page', 'targets'];
+    const LEDGER = ['analytics', 'goods', 'iframe', 'page', 'storage', 'targets'];
     const present = new Set(Object.keys(schema.properties ?? {}));
     const expected = [...LEDGER, ...TYPED_AHEAD.filter((k) => present.has(k))].sort();
     expect(

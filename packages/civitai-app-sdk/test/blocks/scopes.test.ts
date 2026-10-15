@@ -23,6 +23,10 @@ const CANONICAL_BLOCK_SCOPES = [
   // 4-segment SHARED (cross-user) datastore scopes.
   'apps:storage:shared:read',
   'apps:storage:shared:write',
+  // Document store (manifest `storage`). `apps:storage` is the one 2-segment
+  // scope; `apps:storage:publish` is SENSITIVE + consent-gated.
+  'apps:storage',
+  'apps:storage:publish',
   // App Blocks Collections surface scopes.
   'collections:read:self',
   'collections:write:self',
@@ -67,7 +71,20 @@ describe('BLOCK_SCOPES', () => {
     expect(BLOCK_SCOPES.APPS_STORE_ITEMS_WRITE).toBe('apps:store:items:write');
   });
 
-  it('every value matches BLOCK_SCOPE_PATTERN (3 or 4 colon segments)', () => {
+  it('includes the document-store scopes apps:storage and apps:storage:publish', () => {
+    expect(BLOCK_SCOPES.APPS_STORAGE).toBe('apps:storage');
+    expect(BLOCK_SCOPES.APPS_STORAGE_PUBLISH).toBe('apps:storage:publish');
+  });
+
+  it('BLOCK_SCOPE_PATTERN accepts 2 to 4 segments and nothing outside that', () => {
+    expect('apps:storage').toMatch(BLOCK_SCOPE_PATTERN);
+    expect('apps:storage:shared:write').toMatch(BLOCK_SCOPE_PATTERN);
+    expect('apps').not.toMatch(BLOCK_SCOPE_PATTERN);
+    expect('a:b:c:d:e').not.toMatch(BLOCK_SCOPE_PATTERN);
+    expect('ModelsReadSelf').not.toMatch(BLOCK_SCOPE_PATTERN);
+  });
+
+  it('every value matches BLOCK_SCOPE_PATTERN (2, 3 or 4 colon segments)', () => {
     for (const scope of Object.values(BLOCK_SCOPES)) {
       expect(scope, scope).toMatch(BLOCK_SCOPE_PATTERN);
     }

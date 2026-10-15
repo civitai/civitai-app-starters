@@ -22,4 +22,10 @@ export type {
   BlockManifest,
   BlockManifestGood,
   BlockManifestV1,
+  BlockStorageCollectionDeclaration,
+  BlockStorageDeclaration,
+  BlockStorageIndexes,
+  BlockStorageIndexType,
+  BlockStoragePrivateCollectionDeclaration,
+  BlockStorageSharedCollectionDeclaration,
 } from '../blocks/types.js';
