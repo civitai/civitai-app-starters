@@ -31,6 +31,88 @@ export function humanize(error: unknown): HumanError {
   return { kind, message: WORDS[kind], detail };
 }
 
+/** The words for a host's own gateway, where "Civitai" and "Buzz" would be wrong. */
+const HOST_WORDS: Partial<Record<ErrorKind, string>> = {
+  insufficient_buzz: 'This request was refused.',
+  auth: "Your sign-in wasn't accepted. Please sign in again.",
+  rate_limit: 'The assistant is busy right now. Wait a moment and try again.',
+  network: 'Lost the connection. Check your network and try again.',
+  unavailable: "The assistant isn't available right now. Try again in a minute.",
+  timeout: 'This took too long and was stopped.',
+  unknown: 'Something went wrong.',
+};
+
+/** The most of a gateway's own message the viewer is shown. */
+export const HOST_MESSAGE_MAX = 500;
+
+/**
+ * A reply that failed on a host's own gateway: the gateway's own message when it gave one (a refusal
+ * such as a spend cap must reach the viewer as written), else plain words with no Civitai in them.
+ * The kind still follows the status code (402 is `insufficient_buzz`, 429 `rate_limit`, …).
+ */
+export function humanizeHost(error: unknown): HumanError {
+  const inner = lastAttempt(error);
+  const found = humanize(inner);
+  // A host's gateway has no free tier: those kinds would offer Civitai's "Continue with Buzz".
+  const human = found.kind === 'free_tier_exhausted' || found.kind === 'free_tier_not_free' ? { ...found, kind: 'unknown' as const } : found;
+  const said = hostMessage(inner);
+  const status = (inner as { statusCode?: unknown } | null)?.statusCode;
+  // A 5xx body never reaches the viewer, also not as `detail`: the AI SDK makes a JSON body's message
+  // the error's own message, which would be shown under Details, saved with the turn and sent in
+  // `reply-error`. The body stays in the reply's trace, which is neither saved nor shown whole.
+  const detail = typeof status === 'number' && status >= 500 ? `The server answered ${status}.` : human.detail;
+  return { ...human, message: said ?? HOST_WORDS[human.kind] ?? human.message, ...(detail === undefined ? {} : { detail }) };
+}
+
+/** The AI SDK gives up on a retried request with a `RetryError` around every attempt's error; the last one is what the gateway said. */
+function lastAttempt(error: unknown): unknown {
+  const last = (error as { lastError?: unknown } | null)?.lastError;
+  return last !== undefined && last !== null && (error as { reason?: unknown }).reason !== undefined ? last : error;
+}
+
+/**
+ * What a gateway said: from an HTTP error's body (`{ error: { message } }`, `{ error: "…" }`,
+ * `{ message }` or plain text), or from an error frame inside the stream (`{ message }`).
+ */
+export function hostMessage(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  const record = error as { statusCode?: unknown; responseBody?: unknown; message?: unknown; error?: unknown };
+  if (typeof record.statusCode === 'number') {
+    // A 5xx body is the server's own trouble (a stack trace, an upstream provider's error), not words for
+    // the viewer: it stays in the reply's trace, and the viewer gets a plain line.
+    if (record.statusCode >= 500) return undefined;
+    return typeof record.responseBody === 'string' ? fromBody(record.responseBody) : undefined;
+  }
+  if (error instanceof Error) return undefined;
+  return fromJson(record);
+}
+
+function fromBody(body: string): string | undefined {
+  const text = body.trim();
+  if (text === '') return undefined;
+  try {
+    return fromJson(JSON.parse(text));
+  } catch {
+    // An HTML error page says nothing a viewer should read.
+    return /^</.test(text) ? undefined : clip(text);
+  }
+}
+
+function fromJson(value: unknown): string | undefined {
+  const record = value as { error?: unknown; message?: unknown } | null;
+  if (typeof record?.error === 'string') return clip(record.error);
+  const nested = (record?.error as { message?: unknown } | null | undefined)?.message;
+  if (typeof nested === 'string') return clip(nested);
+  if (typeof record?.message === 'string') return clip(record.message);
+  return undefined;
+}
+
+function clip(text: string): string | undefined {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat === '') return undefined;
+  return flat.length > HOST_MESSAGE_MAX ? `${flat.slice(0, HOST_MESSAGE_MAX - 1)}…` : flat;
+}
+
 export function humanizeText(text: string): HumanError {
   return humanize(new Error(text));
 }

@@ -22,7 +22,8 @@ signed-in client, so a page where nobody opens the chat never downloads them.
 
 ## Signing in
 
-The chat needs an `AppClient` from [`@civitai/sdk`](../civitai-sdk) with `ai:write:budgeted`. A page
+A host with its own sign-in, model gateway and storage skips this: see [Your own backend](#your-own-backend).
+Otherwise the chat needs an `AppClient` from [`@civitai/sdk`](../civitai-sdk) with `ai:write:budgeted`. A page
 that already has one hands it over, and the chat shares its session, token refresh and grant
 requests. The chat sends that client's token straight to the orchestrator (its chat model, its MCP
 and its workflow routes), so the token must be an OAuth access token:
@@ -65,6 +66,191 @@ is held, and a refusal sends nothing and keeps the message. A client built from 
 refuses every grant request, so a server-side session that holds the scope passes
 `requestGrants: () => true`. The chat never keeps a token in storage.
 
+## Your own backend
+
+A host that runs its own model gateway and storage can use the same element without Civitai: its
+own sign-in, its own OpenAI-compatible gateway (which may run as the signed-in viewer and enforce
+its own limits), its own conversation storage and its own MCP servers. Set `backend` instead of
+`app`:
+
+```ts
+import type { ChatBackend, ChatConversationStore } from '@civitai/components-chat/civitai-chat';
+
+const csrf = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')!.content;
+// Every request the chat makes to the gateway goes through this: the host's session cookie and CSRF header.
+const send: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  headers.set('X-CSRF-Token', csrf);
+  return fetch(input, { ...init, headers, credentials: 'include' });
+};
+const ok = async (response: Response) => {
+  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+  return response;
+};
+const chats = (path = '') => `/api/chats${path}`;
+
+const store: ChatConversationStore = {
+  list: async ({ scope, cursor }) =>
+    (await ok(await send(chats(`?${new URLSearchParams({ ...(scope ? { scope } : {}), ...(cursor ? { cursor } : {}) })}`)))).json(),
+  load: async (id) => {
+    const response = await send(chats(`/${encodeURIComponent(id)}`));
+    return response.status === 404 ? null : (await ok(response)).json();
+  },
+  save: async (conversation) => {
+    await ok(await send(chats(`/${encodeURIComponent(conversation.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(conversation) }));
+  },
+  delete: async (id) => {
+    await ok(await send(chats(`/${encodeURIComponent(id)}`), { method: 'DELETE' }));
+  },
+};
+
+const chat = document.querySelector('civitai-chat')!;
+chat.backend = {
+  url: '/api/llm', // replies are POST /api/llm/v1/chat/completions
+  fetch: send,
+  model: 'assistant-default',
+  models: [{ id: 'assistant-large', label: 'Large', note: 'Slower, more thorough.' }], // optional
+  store,
+} satisfies ChatBackend;
+chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }]; // signed in like the gateway
+chat.systemPrompt = 'You are the assistant in Acme Notes. …'; // the built-in rules talk about Civitai
+```
+
+Set `backend` once, with an object you keep: the chat compares it by identity, so assigning a new
+object, even an equal one, starts a new session (the open chat is reloaded from the store).
+
+With `backend` set the chat starts at once, with no `app` and no sign-in (`app` and `signIn` are
+then ignored), and it never sends a request to Civitai or to OpenRouter. Everything that runs on
+Civitai's services is off and not shown: the built-in orchestration and Civitai search tools (so
+`mcp` has no effect), generations, panels and their studio, file uploads, the microphone, posting,
+Buzz prices, spend and the free-reply choice, sign-in and sign-out, and the welcome's examples. What
+keeps working: `mcpServers`, `tools`, `toolViews`, `beforeToolCall`, `instructions`, `systemPrompt`,
+`commands`, `scope`, `layout` and `full-page`, the chat list, rename, delete and export, and in
+Settings the theme (full-page), **Longest reply step** and custom instructions. Set
+`configureChat({ name })` for what the chat calls itself.
+
+| `backend` field | |
+|---|---|
+| `url` | The base of an OpenAI-compatible API; replies are `POST ${url}/v1/chat/completions`. May be relative to the page. |
+| `fetch` | Makes every request to `url`, so the host signs it in its own way (a cookie, a CSRF header). The chat adds no `Authorization` header. The page's `fetch` when unset. |
+| `model` | The model id a chat uses unless the viewer picks one of `models`. Chats are named with it too. |
+| `models` | Optional `{ id, label, note? }[]` the viewer may pick for a chat, by the button beside the message box or `/model <label>`. Without any, the button and `/model` are gone. Only these ids are ever sent: a chat saved with another model uses `model`. |
+| `store` | Where conversations are kept: see below. |
+
+### The model endpoint
+
+A reply is one or more `POST ${url}/v1/chat/completions` requests, one per step, in the OpenAI Chat
+Completions format: `model`, `messages` (`system`, `user`, `assistant` with `tool_calls`, and `tool`
+with `tool_call_id`), `tools` (`{ type: 'function', function: { name, description, parameters } }`,
+parameters as JSON Schema), `max_tokens`, `temperature`, `stream: true`, and `tool_choice` (`'auto'`, or
+`'none'` on a reply's last allowed step, which must answer in words). Answer with `text/event-stream`:
+
+```text
+data: {"id":"r1","object":"chat.completion.chunk","created":0,"model":"assistant-default","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"r1","object":"chat.completion.chunk","created":0,"model":"assistant-default","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+A tool call streams as `delta.tool_calls: [{ index, id, type: 'function', function: { name,
+arguments } }]` (the arguments as a JSON string, in pieces if you like) and ends with
+`finish_reason: "tool_calls"`. The chat runs the tool itself (a page tool or an added MCP server's)
+and sends the next request with the `assistant` message carrying the call and a `tool` message
+carrying the result. Naming a new chat is one request without `stream`, answered with a plain JSON
+`chat.completion` (`choices[0].message.content`).
+
+### Errors
+
+When the gateway refuses, its own words reach the viewer: the reply ends in the error card with
+them, and `reply-error`'s `detail.message` is the same text. Answer with a non-2xx status and a body of
+
+```json
+{ "error": { "message": "You have used this month's budget. It resets on the 1st." } }
+```
+
+on a 4xx status (`{ "error": "…" }`, `{ "message": "…" }` and a plain-text body work too; the first
+500 characters are shown, and an HTML page is never shown). A 5xx body is never shown, since it is
+more often a stack trace or an upstream provider's error than words for the viewer: the viewer gets a
+plain sentence, `detail.detail` (shown under Details and saved with the turn) only names the status,
+and the body stays in `reply-error`'s trace, which is neither saved nor shown whole: in
+`detail.trace.responseBody`, and for a JSON body with a message also in `detail.trace.message` (scrub
+both if the page sends the trace anywhere). An error after the
+stream started is a frame of the same shape, `data: {"error":{"message":"…"}}`, and is shown. Without
+a message the viewer sees a plain sentence that names neither Civitai nor Buzz.
+
+408, 409, 429 and 5xx are retried twice first, honouring `Retry-After` (or `retry-after-ms`) under
+60 s, so the message shows after the last try; answer a refusal that retrying cannot change with 402
+or 403. A retry is the same request again, with no idempotency key: if the gateway already did (and
+charged for) the work before it answered with a 5xx, the retry does it again. Only the model request
+is retried; a tool call is never run again by a retry. `detail.kind` is a best guess from the status
+(402 `insufficient_buzz`, 401/403 `auth`, 429 `rate_limit`, 502/503 `unavailable`) and the words.
+
+### The conversation store
+
+```ts
+interface ChatConversationStore {
+  list(options: { scope?: string; cursor?: string }): Promise<{ items: ChatConversationSummary[]; next?: string | null }>;
+  load(id: string, options: { scope?: string }): Promise<ChatConversation | null>;
+  save(conversation: ChatConversation): Promise<void>;
+  delete(id: string, options: { scope?: string }): Promise<void>;
+}
+
+interface ChatConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: string; // ISO 8601
+}
+
+interface ChatConversation {
+  id: string; // made by the chat (a ULID)
+  title: string;
+  titleSource: 'first-message' | 'llm' | 'user';
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601, the latest message
+  turns: ChatSavedTurn[]; // the chat's own JSON: keep it as it is
+  model?: string;
+  scope?: string; // the chat's `scope`
+}
+```
+
+- `list` returns the viewer's conversations in `scope`, newest first; `next` is a cursor for the
+  following page (the chat asks for it with **Show older chats**), absent or `null` on the last.
+- `load` returns a conversation exactly as last saved, or `null` for an id the store does not have
+  (the chat then opens it empty). The chat loads a conversation only after any save of it still on
+  its way, so what loads is never older than what it saved.
+- `save` creates or replaces the whole conversation. It is called when the viewer sends a message
+  (with the reply still missing, so a reload mid-reply shows it as cut off), when the reply ends,
+  when the chat is named or renamed and when its model changes. Saves of one conversation come one
+  at a time, in order; each carries every turn so far. Renaming a chat that is not open is a `load`
+  then a `save` of the same record with the new title (and the chat's `scope`), queued behind any
+  save of it still on its way.
+- `delete` removes a conversation. It takes its turn among that conversation's writes: saves asked
+  before it are made first, and anything asked after it (a reply still running, its title, a rename)
+  is dropped once the delete worked, or made as usual if it failed, so a failed delete keeps
+  everything said in the chat. A conversation leaves the list, and the viewer leaves it for a new
+  chat, the moment its delete starts, so a slow (or hung) delete holds nothing up; it comes back to
+  the list if the delete fails. The chat never loads a conversation while its delete runs, and never
+  opens one whose delete worked. A conversation deleted twice in a row is deleted once: the chat does
+  not ask `delete` again for one it already deleted.
+- A chat that finishes loading after the viewer opened or started another one is dropped: theirs
+  stays open, with nothing said.
+- Any method may reject, and the viewer sees one short note per failure: "Could not load your
+  chats." for `list` ("Could not load older chats." for a later page), "Could not open that chat."
+  for `load` when they open one (at start-up the chat opens a new one instead), "Could not delete
+  that chat." for `delete`, and for `save` "Could not save this chat. It is saved again with your next
+  message." once per message sent (even when the viewer has moved on to another chat by the time its
+  reply ends), "Could not rename that chat." for a rename, or "Could not save this chat's model; it
+  applies until you reload." for a model change, by the model button or `/model`. A chat's automatic
+  title is the one save not announced: every later save carries it again. Every save carries the
+  whole conversation, so the next one that succeeds makes up for one that failed.
+- Every method must settle (resolve or reject), with a timeout of the host's own if its server can
+  hang: saves of a conversation wait for each other, and opening, renaming or deleting it waits for
+  its saves, so a save that never settles holds that conversation back for the rest of the session.
+
+Conversations are the host's to keep, for as long as it likes; the chat stores nothing on the page
+but preferences (in `localStorage`, by `scope`).
+
 ## The page's own tools
 
 ```ts
@@ -92,6 +278,7 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | Property | What it does |
 |---|---|
 | `app` | The signed-in `AppClient`; the chat starts when it is set. |
+| `backend` | A host's own model gateway and conversation store, instead of `app`: see [Your own backend](#your-own-backend). |
 | `signIn` | `({ signal }) => Promise<AppClient>`, called from the viewer's click or key press when they first send something without `app`. Reject with an error whose `code` is `'canceled'` when they give up; their message stays in the box. |
 | `tools` | The page's own tools, by name: `description`, `inputSchema` (JSON Schema), `execute(input, { files })`, optional `activity` and `render`. A built-in tool of the same name wins. |
 | `toolViews` | How calls of any tool show, by tool name, including built-in and Civitai ones: `activity` (the line shown while it runs) and `render(call)`, which replaces the card with a lit template, DOM node or string; return `undefined` to keep the default. `call` is `{ name, input, state, output, error }`. |
@@ -172,10 +359,26 @@ chat.mcpServers = [
   {
     id: 'workspace', // [a-z0-9-]+
     url: workspace.mcpUrl, // a Streamable HTTP endpoint
-    token: () => workspace.token, // required; sent as a bearer token
+    token: () => workspace.token, // sent as a bearer token
     label: 'Workspace', // shown while one of its tools runs, and to the assistant
   },
 ] satisfies ChatMcpServer[];
+```
+
+A server on the page's own site can be signed in the way the page signs in everything else, with
+its own `fetch` instead of a token (the same one a [backend](#your-own-backend) uses for its gateway):
+
+```ts
+import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+
+const csrf = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')!.content;
+const send: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  headers.set('X-CSRF-Token', csrf);
+  return fetch(input, { ...init, headers, credentials: 'include' }); // the session cookie
+};
+
+chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }] satisfies ChatMcpServer[];
 ```
 
 - **Names.** Every tool of an added server is offered as `${id}__${tool}`, e.g.
@@ -184,9 +387,12 @@ chat.mcpServers = [
   whose full name is not 1-64 letters, digits, `_` or `-`, or that a built-in tool already has, is
   left out with a console warning. Use the full name in `toolViews` and in `instructions`.
 - **Connections.** Each server uses the same client as the built-in ones, including a new session
-  when the server forgets the old one (a 404 or 400). `token` is required, is asked for on every
-  request, and may return a string or a promise. The chat never sends an added server the viewer's
-  Civitai token: an entry without `token` is skipped with a console warning.
+  when the server forgets the old one (a 404 or 400). `token` is asked for on every
+  request, and may return a string or a promise. `fetch`, when set, makes every request to the
+  server (initialize, listing, every call): the chat hands it the request with its MCP headers, and
+  the `Authorization` header only when there is a `token`. Either is enough; with neither, the entry
+  is skipped with a console warning, since the chat never sends an added server the viewer's Civitai
+  token. A changed `token` or `fetch` applies from the next request, without reconnecting.
 - **Changes.** Assigning a new array opens the servers it adds and closes the ones it drops or
   whose `url` changed. A call still running on a closed connection fails, and so does any later
   call through it (a tool built before the change): a closed connection never reconnects. Listing
@@ -374,7 +580,7 @@ studio.addEventListener('media-action', (e) => chat.mediaAction(e.detail.id, e.d
 
 ## Where chats live
 
-Every turn is a free, tagged `echo` workflow on the orchestrator, and every generation a tagged
+With a [backend](#your-own-backend), in its store. Otherwise every turn is a free, tagged `echo` workflow on the orchestrator, and every generation a tagged
 workflow, so a viewer's chats follow them to any device and expire with the orchestrator's 30-day
 retention. Panels are saved on the conversation, and their runs are tagged workflows like any other.
 Nothing is kept on the page beyond preferences.

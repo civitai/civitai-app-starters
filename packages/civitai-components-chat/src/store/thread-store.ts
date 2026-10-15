@@ -6,6 +6,7 @@ import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
+import type { ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
   orchestration: Pick<OrchestrationClient, 'submitWorkflow' | 'queryWorkflows'>;
@@ -37,7 +38,7 @@ export const CUT_OFF = 'cut-off';
  * Each turn saves the whole conversation as a new free `echo` workflow tagged as its head.
  * Workflows expire 30 days after creation, so a conversation lasts 30 days from its latest turn.
  */
-export class ThreadStore extends EventTarget {
+export class ThreadStore extends EventTarget implements ConversationStore {
   #writes = new Map<string, Promise<void>>();
   summaries: ConversationSummary[] = [];
   current: Conversation | null = null;
@@ -336,7 +337,7 @@ function lastSeq(metadata: ConversationMetadata): number {
   return Math.max(0, ...metadata.turns.map((turn) => turn.seq));
 }
 
-function saved(turn: Turn): SavedTurn {
+export function saved(turn: Turn): SavedTurn {
   const { assistant, ...rest } = turn;
   if (assistant.status === 'streaming') return rest;
   // The trace is for this session's diagnostics only: a response body may carry the reply's text.
@@ -344,7 +345,7 @@ function saved(turn: Turn): SavedTurn {
   return { ...rest, assistant: kept };
 }
 
-function persistable(attachment: Attachment): Attachment {
+export function persistable(attachment: Attachment): Attachment {
   const { blocked: _blocked, ...rest } = attachment;
   return rest;
 }
@@ -358,7 +359,7 @@ export function firstMessageTitle(content: string): string {
   return `${space > 20 ? cut.slice(0, space) : cut}…`;
 }
 
-function clampTitle(title: string): string {
+export function clampTitle(title: string): string {
   const flat = title.replace(/\s+/g, ' ').trim().replace(/^["'“”]+|["'“”.]+$/g, '').trim();
   return (flat || 'New chat').slice(0, TITLE_MAX);
 }
@@ -377,7 +378,7 @@ export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
   return { ...(metadata as JobMetadata), seq: Number(metadata.seq) };
 }
 
-function turnFrom(turn: SavedTurn): Turn {
+export function turnFrom(turn: SavedTurn): Turn {
   return {
     seq: turn.seq,
     createdAt: turn.createdAt,

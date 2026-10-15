@@ -2,9 +2,10 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
+import { absoluteUrl, backendModels, unavailableApp, type ChatBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
-import { ModelCatalog } from './agent/model-list.js';
+import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
 import { authedFetch, createAssistantModel } from './agent/provider.js';
 import { chatConfig, outputTokenCap } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
@@ -21,12 +22,15 @@ import { OPEN_PANEL } from './panels/tools.js';
 import { sitePoster } from './posting/site.js';
 import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
 import { resolveAttachmentArgs, uploadId } from './store/attachments.js';
+import type { ConversationStore } from './store/conversation-store.js';
+import { HostThreadStore } from './store/host-store.js';
 import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
 import type { McpTool } from './mcp/clients.js';
 import { isJobTool, loadOrchestrationTools, loadSiteTools, type ToolCatalog } from './tools/catalog.js';
 import type { Attachment, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
+import { humanizeHost } from './ux/humanize.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { extraToolSet } from './tools/extra.js';
@@ -65,11 +69,19 @@ export interface SessionOptions {
   /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
   ask?(message: string, refs: string[]): void;
   compose?(message: string, refs: string[]): void;
+  /**
+   * The host's own model gateway and storage. The session then needs no `app`, keeps conversations
+   * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice,
+   * posting or free tier.
+   */
+  backend?: ChatBackend;
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
 export class ChatSession extends EventTarget {
+  /** The viewer's Civitai client; with a `backend`, a stand-in that refuses every call. */
   readonly app: AppClient;
+  readonly backend: ChatBackend | undefined;
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
@@ -80,10 +92,10 @@ export class ChatSession extends EventTarget {
   readonly jobs: JobManager;
   readonly posts: PostManager;
   readonly panels: PanelManager;
-  readonly store: ThreadStore;
+  readonly store: ConversationStore;
   readonly agent: Agent;
   /** The models the picker offers, loaded once when it is first opened. */
-  readonly modelCatalog: ModelCatalog;
+  readonly modelCatalog: Pick<ModelCatalog, 'load'>;
   settings: Settings;
 
   #orchestrationTools: Promise<McpTool[]> | null = null;
@@ -94,13 +106,18 @@ export class ChatSession extends EventTarget {
   /** What the run tools can do, from the latest catalog; panels run through them. */
   #runTools = new Map<string, JobToolInfo>();
 
-  constructor(app: AppClient, options: SessionOptions = {}) {
+  /** `app` may be `null` only with `options.backend`. */
+  constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
+    const backend = options.backend;
+    if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
+    const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
+    this.backend = backend;
     this.#options = options;
     this.settings = loadSettings(settingsKey(options.scope));
     this.api = createOrchestrationApi(app);
-    this.freeTier = new FreeTier(() => this.api.getFreeTier());
+    this.freeTier = new FreeTier(() => (backend ? Promise.resolve({ enabled: false, models: [] }) : this.api.getFreeTier()));
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
     this.mcpServers = new McpServerPool({
@@ -110,8 +127,8 @@ export class ChatSession extends EventTarget {
     // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
     const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
     this.posts = new PostManager({
-      host: postHostOf(app),
-      site: () => (this.#options.mcp?.().site === false ? null : poster),
+      host: backend ? null : postHostOf(app),
+      site: () => (backend || this.#options.mcp?.().site === false ? null : poster),
       authorize: () => app.requestGrants(['posts:write:self']),
       saved: (post) => {
         const saved = post.toSaved();
@@ -135,16 +152,19 @@ export class ChatSession extends EventTarget {
       ...(options.ask ? { ask: options.ask } : {}),
       ...(options.compose ? { compose: options.compose } : {}),
     });
-    this.store = new ThreadStore({
-      orchestration: app.orchestration,
-      api: this.api,
-      hideMatureContent: () => !this.settings.allowMature,
-      scope: options.scope,
-    });
-    this.modelCatalog = new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    this.store = backend
+      ? new HostThreadStore({ store: backend.store, scope: options.scope })
+      : new ThreadStore({
+          orchestration: app.orchestration,
+          api: this.api,
+          hideMatureContent: () => !this.settings.allowMature,
+          scope: options.scope,
+        });
+    // A backend's models are the ones it names: nothing is asked of Civitai or OpenRouter.
+    this.modelCatalog = backend ? { load: async () => this.modelChoices() } : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
     this.agent = new Agent({
       model: () => this.#model(this.assistantModel()),
-      titleModel: () => this.#model(chatConfig.model),
+      titleModel: () => this.#model(this.defaultModel()),
       maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
       store: this.store,
       jobs: this.jobs,
@@ -156,7 +176,21 @@ export class ChatSession extends EventTarget {
       isHostTool: (name) => this.#hostToolNames.has(name),
       panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
+      ...(backend ? { describeError: humanizeHost } : {}),
     });
+  }
+
+  /** The page's default model: the backend's, else `configureChat`'s. */
+  defaultModel(): string {
+    return this.backend?.model ?? chatConfig.model;
+  }
+
+  /** What the model picker offers before any list loads; with a backend, all it ever offers. */
+  modelChoices(): ChatModelEntry[] {
+    const backend = this.backend;
+    return backend
+      ? buildModelList({ openRouter: null, orchestration: null, defaultModel: backend.model, listed: backendModels(backend) })
+      : buildModelList({ openRouter: null, orchestration: null });
   }
 
   /**
@@ -178,6 +212,11 @@ export class ChatSession extends EventTarget {
 
   /** Read at every turn, so switching a server on or off applies from the next reply. */
   async catalog(): Promise<ToolCatalog> {
+    // A host's backend has no Civitai sign-in: neither built-in server is asked anything.
+    if (this.backend) {
+      this.#runTools = new Map();
+      return { orchestration: [], site: [] };
+    }
     const { orchestration = true, site = true } = this.#options.mcp?.() ?? {};
     const excluded = new Set(typeof orchestration === 'object' && orchestration !== null ? (orchestration.exclude ?? []) : []);
     const [allOrchestration, siteTools] = await Promise.all([
@@ -200,6 +239,9 @@ export class ChatSession extends EventTarget {
 
   #model(id: string): LanguageModel {
     let model = this.#models.get(id);
+    if (!model && this.backend) {
+      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(this.backend.url), model: id, ...(this.backend.fetch ? { fetch: this.backend.fetch } : {}) })));
+    }
     if (!model) {
       const wrap = (inner: typeof fetch) =>
         freeTierFetch(inner, id, this.freeTier, () => {
@@ -213,6 +255,12 @@ export class ChatSession extends EventTarget {
 
   /** The model the open chat's next reply uses: its own, else the viewer's default, else the page's. */
   assistantModel(): string {
+    const backend = this.backend;
+    if (backend) {
+      // Only a model the backend names: a chat saved with another one, or a typed id, gets the default.
+      const own = this.store.current?.model?.trim();
+      return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
+    }
     return this.store.current?.model?.trim() || this.settings.assistantModel?.trim() || chatConfig.model;
   }
 
@@ -369,7 +417,7 @@ export class ChatSession extends EventTarget {
    * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
    */
   async adjust(job: GenerationJob): Promise<boolean> {
-    if (this.agent.running || !this.store.current) return false;
+    if (this.backend || this.agent.running || !this.store.current) return false;
     const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
     if (!built) return false;
     const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);

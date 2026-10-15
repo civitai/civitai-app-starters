@@ -26,6 +26,7 @@ export class CivitaiChatModelPicker extends LightElement {
     models: { attribute: false },
     loading: { type: Boolean },
     disabled: { type: Boolean },
+    noCustom: { type: Boolean, attribute: 'no-custom' },
     open: { state: true },
     query: { state: true },
   };
@@ -39,6 +40,8 @@ export class CivitaiChatModelPicker extends LightElement {
   declare models: ChatModelEntry[];
   declare loading: boolean;
   declare disabled: boolean;
+  /** Only the listed models: a typed id that is not one of them picks nothing. */
+  declare noCustom: boolean;
   declare open: boolean;
   declare query: string;
 
@@ -49,6 +52,7 @@ export class CivitaiChatModelPicker extends LightElement {
     this.models = [];
     this.loading = false;
     this.disabled = false;
+    this.noCustom = false;
     this.open = false;
     this.query = '';
   }
@@ -111,6 +115,10 @@ export class CivitaiChatModelPicker extends LightElement {
       const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
       const [first] = this.#matches();
+      if (this.noCustom) {
+        if (first) this.#pick(first.id);
+        return;
+      }
       this.#pick(first && !/^\S*[/:]\S*$/.test(typed) ? first.id : typed);
     }
   };
@@ -132,14 +140,14 @@ export class CivitaiChatModelPicker extends LightElement {
     const typed = this.query.trim();
     // Typing "default" shows the Default row, never "default" as a model id nothing serves.
     const wantsDefault = typed.toLowerCase() === 'default';
-    const custom = typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
+    const custom = !this.noCustom && typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
     const fallback = this.defaultModel ? `Your default: ${modelLabel(this.defaultModel, this.models)}` : "The app's default model";
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input
         class="cvt-model-search"
         type="search"
-        placeholder="Search models, or type a model id"
-        aria-label="Search models, or type a model id"
+        placeholder=${this.noCustom ? 'Search models' : 'Search models, or type a model id'}
+        aria-label=${this.noCustom ? 'Search models' : 'Search models, or type a model id'}
         .value=${this.query}
         @input=${(event: Event) => (this.query = (event.target as HTMLInputElement).value)}
       />

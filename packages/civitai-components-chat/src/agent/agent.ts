@@ -3,7 +3,7 @@ import { generateText, stepCountIs, streamText, type AssistantModelMessage, type
 import { outputTokenCap, stepLimit } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
-import type { ThreadStore } from '../store/thread-store.js';
+import type { ConversationStore } from '../store/conversation-store.js';
 import type { Attachment, Turn } from '../types.js';
 import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
@@ -41,7 +41,7 @@ export interface AgentDeps {
   titleModel?(): LanguageModel;
   /** The most one step of the reply may write, read at the start of every reply; the page's default when absent. */
   maxOutputTokens?(): number;
-  store: ThreadStore;
+  store: ConversationStore;
   jobs: JobManager;
   posts?: PostManager;
   toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet>;
@@ -53,6 +53,8 @@ export interface AgentDeps {
   /** What the assistant is told about the panels on screen, read at the start of every reply. */
   panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** The words the viewer sees for a reply that failed; `humanize` unless set. */
+  describeError?(error: unknown): HumanError;
   now?(): Date;
 }
 
@@ -208,7 +210,7 @@ export class Agent extends EventTarget {
 
   #failed(turn: Turn, error: unknown, where: TraceContext): void {
     turn.assistant.status = 'error';
-    const human = humanize(error);
+    const human = (this.#deps.describeError ?? humanize)(error);
     const trace = errorTrace(error, where);
     turn.assistant.error = human.message;
     turn.assistant.errorDetail = human.detail;
@@ -252,7 +254,7 @@ export class Agent extends EventTarget {
         const tool = live.parts.find((p) => p.kind === 'tool' && p.toolCallId === part.toolCallId);
         if (tool?.kind !== 'tool') break;
         if (part.type === 'tool-result') Object.assign(tool, { state: 'done', output: part.output });
-        else Object.assign(tool, { state: 'error', error: humanize(part.error).message });
+        else Object.assign(tool, { state: 'error', error: (this.#deps.describeError ?? humanize)(part.error).message });
         break;
       }
       default:
@@ -276,7 +278,8 @@ export class Agent extends EventTarget {
       }
     } catch (error) {
       // Free only and the title model has no free replies: the chat keeps its first-message title
-      // quietly; a refusal of the reply itself already says so once.
+      // quietly; a refusal of the reply itself already says so once. A title that could not be saved
+      // is not announced either: every later save of the chat carries it again.
       if (humanize(error).kind !== 'free_tier_not_free') console.warn('[chat-cvt] could not name the conversation', error);
     }
   }

@@ -218,10 +218,65 @@ describe('ChatSession with added MCP servers', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('MCP server "c" is skipped: it has no token'));
   });
 
-  it('requires a token in the type', () => {
-    // @ts-expect-error `token` is required: the chat never sends a server the viewer's own token.
-    const server: ChatMcpServer = { id: 'c', url: 'https://third.example/mcp' };
-    expect(server.id).toBe('c');
+  it("signs in a server through the page's own fetch, with no token and no Authorization header from the chat", async () => {
+    const fake = fakeMcpServers({ [ORCH]: tools('run_step'), [SANDBOX]: tools('run_command') });
+    // The page's fetch is the only way to the server: the default one would reach nothing.
+    const pageDefault = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input instanceof Request ? input.url : input).startsWith(SANDBOX)) throw new TypeError('default fetch used');
+      return fake.fetch(input, init);
+    });
+    vi.stubGlobal('fetch', pageDefault);
+    // What the chat hands the page's fetch: the page then adds its own sign-in.
+    const handed: (string | null)[] = [];
+    const hostFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      handed.push(headers.get('authorization'));
+      headers.set('X-CSRF-Token', 'csrf-1');
+      return fake.fetch(input, { ...init, headers, credentials: 'include' });
+    });
+    const app = { getToken: async () => 'app-token', site: {}, orchestration: {}, requestGrants: async () => true } as never;
+    let servers: ChatMcpServer[] = [{ id: 'own', url: SANDBOX, fetch: hostFetch }];
+    const session = new ChatSession(app, { mcp: () => ({ site: false, mcpServers: servers }) });
+
+    const set = await session.toolSet(turn);
+    expect(await run(set, 'own__run_command')).toBe('run_command ran');
+    // initialize, initialized, tools/list, tools/call: every one through the page's fetch.
+    expect(fake.servers[SANDBOX]!.authorizations).toHaveLength(4);
+    expect(hostFetch.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(handed.length).toBe(hostFetch.mock.calls.length);
+    expect(new Set(handed)).toEqual(new Set([null]));
+    expect(new Set(fake.servers[SANDBOX]!.authorizations)).toEqual(new Set([null]));
+    expect(pageDefault.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith(SANDBOX))).toEqual([]);
+
+    // A new fetch for the same server applies from the next request, on the same connection.
+    const newer = vi.fn((input: RequestInfo | URL, init?: RequestInit) => fake.fetch(input, init));
+    servers = [{ id: 'own', url: SANDBOX, fetch: newer }];
+    session.syncMcpServers();
+    const before = hostFetch.mock.calls.length;
+    await run(await session.toolSet(turn), 'own__run_command');
+    expect(newer).toHaveBeenCalled();
+    expect(hostFetch.mock.calls.length).toBe(before);
+    expect(fake.servers[SANDBOX]!.initializes).toBe(1);
+  });
+
+  it('sends a token through the page fetch when an entry has both', async () => {
+    const fake = fakeMcpServers({ [ORCH]: tools('run_step'), [SANDBOX]: tools('run_command') });
+    vi.stubGlobal('fetch', fake.fetch);
+    const hostFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => fake.fetch(input, init));
+    const app = { getToken: async () => 'app-token', site: {}, orchestration: {}, requestGrants: async () => true } as never;
+    const session = new ChatSession(app, { mcp: () => ({ site: false, mcpServers: [{ id: 'own', url: SANDBOX, token: () => 'tok', fetch: hostFetch }] }) });
+    await run(await session.toolSet(turn), 'own__run_command');
+    expect(new Set(fake.servers[SANDBOX]!.authorizations)).toEqual(new Set(['Bearer tok']));
+    expect(hostFetch).toHaveBeenCalled();
+  });
+
+  it('skips an entry with neither a token nor a fetch, and says why', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { session, servers } = setup({ [SANDBOX]: tools('run_command') }, () => [{ id: 'bare', url: SANDBOX } as ChatMcpServer]);
+    const set = await session.toolSet(turn);
+    expect(Object.keys(set).filter((name) => name.startsWith('bare__'))).toEqual([]);
+    expect(servers[SANDBOX]!.initializes).toBe(0);
+    expect(warn).toHaveBeenCalledWith('[chat-cvt] MCP server "bare" is skipped: it has no token or fetch, and the chat does not send it the viewer\'s');
   });
 
   it('opens a new server and closes the old one when the list changes, keeping the conversation; an equal list changes nothing', async () => {
