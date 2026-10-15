@@ -23,6 +23,7 @@ export class CivitaiChatComposer extends LightElement {
     placeholder: {},
     commands: { attribute: false },
     voice: { type: Boolean },
+    noFiles: { type: Boolean, attribute: 'no-files' },
     transcribing: { type: Boolean },
     heard: {},
     voiceLanguage: { attribute: 'voice-language' },
@@ -43,6 +44,8 @@ export class CivitaiChatComposer extends LightElement {
   declare commands: ChatCommands;
   /** Offers the microphone; the chat transcribes each `cvt-voice-phrase` and shows the text in `heard`. */
   declare voice: boolean;
+  /** Takes no files: no add-file button, and nothing can be dropped or pasted in. */
+  declare noFiles: boolean;
   declare transcribing: boolean;
   declare heard: string;
   declare voiceLanguage: string;
@@ -64,6 +67,7 @@ export class CivitaiChatComposer extends LightElement {
     this.placeholder = 'Ask for a picture, a video, a song… or anything about Civitai';
     this.text = '';
     this.voice = false;
+    this.noFiles = false;
     this.transcribing = false;
     this.heard = '';
     this.voiceLanguage = 'en';
@@ -292,9 +296,11 @@ export class CivitaiChatComposer extends LightElement {
           @keydown=${this.#onKeyDown}
         ></textarea>
         <div class="cvt-composer-actions">
-          <button class="cvt-icon-button" type="button" aria-label="Add a photo, video or audio file" ?disabled=${this.disabled} @click=${() => this.browse()}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
+          ${this.noFiles
+            ? nothing
+            : html`<button class="cvt-icon-button" type="button" aria-label="Add a photo, video or audio file" ?disabled=${this.disabled} @click=${() => this.browse()}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+              </button>`}
           ${this.modelPicker ?? nothing}
           <span id="cvt-composer-hint" class="cvt-hint">Enter to send, Shift+Enter for a new line</span>
           ${this.voice && (canStreamPcm() || canRecord()) && !this.running ? this.#languagePicker() : nothing}
@@ -320,7 +326,7 @@ export class CivitaiChatComposer extends LightElement {
       accept=${ACCEPT_ATTRIBUTE}
       max-size=${MAX_UPLOAD_BYTES}
       multiple
-      ?disabled=${this.disabled}
+      ?disabled=${this.disabled || this.noFiles}
       @files=${(event: CustomEvent<{ files: File[] }>) => emit(this, 'cvt-files', { files: event.detail.files })}
       @rejected=${(event: CustomEvent<{ reason: string }>) => emit(this, 'cvt-files-rejected', event.detail)}
     >

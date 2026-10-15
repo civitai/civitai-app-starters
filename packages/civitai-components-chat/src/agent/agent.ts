@@ -3,7 +3,7 @@ import { generateText, stepCountIs, streamText, type AssistantModelMessage, type
 import { outputTokenCap, stepLimit } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
-import type { ThreadStore } from '../store/thread-store.js';
+import type { ConversationStore } from '../store/conversation-store.js';
 import type { Attachment, Turn } from '../types.js';
 import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
@@ -41,7 +41,7 @@ export interface AgentDeps {
   titleModel?(): LanguageModel;
   /** The most one step of the reply may write, read at the start of every reply; the page's default when absent. */
   maxOutputTokens?(): number;
-  store: ThreadStore;
+  store: ConversationStore;
   jobs: JobManager;
   posts?: PostManager;
   toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet>;
@@ -53,6 +53,8 @@ export interface AgentDeps {
   /** What the assistant is told about the panels on screen, read at the start of every reply. */
   panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** The words the viewer sees for a reply that failed; `humanize` unless set. */
+  describeError?(error: unknown): HumanError;
   now?(): Date;
 }
 
@@ -208,7 +210,7 @@ export class Agent extends EventTarget {
 
   #failed(turn: Turn, error: unknown, where: TraceContext): void {
     turn.assistant.status = 'error';
-    const human = humanize(error);
+    const human = (this.#deps.describeError ?? humanize)(error);
     const trace = errorTrace(error, where);
     turn.assistant.error = human.message;
     turn.assistant.errorDetail = human.detail;

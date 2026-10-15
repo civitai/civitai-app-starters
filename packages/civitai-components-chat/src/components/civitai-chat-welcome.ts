@@ -21,17 +21,27 @@ export const EXAMPLES: Example[] = [
 export class CivitaiChatWelcome extends LightElement {
   static override properties: PropertyDeclarations = {
     userName: {},
+    plain: { type: Boolean },
   };
 
   declare userName: string;
+  /** Only a greeting: no examples of making things, no word of Buzz. For a chat on a host's own backend. */
+  declare plain: boolean;
 
   constructor() {
     super();
     this.userName = '';
+    this.plain = false;
   }
 
   override render(): TemplateResult {
     // Inside <civitai-chat>'s shadow root, so the page embedding the chat can fill this slot.
+    if (this.plain) {
+      return html`<slot name="welcome"><div class="cvt-welcome-inner">
+        <h1>${this.userName ? `Hi ${this.userName}, how can I help?` : 'How can I help?'}</h1>
+        <p>Ask in your own words.</p>
+      </div></slot>`;
+    }
     return html`<slot name="welcome"><div class="cvt-welcome-inner">
       <h1>${this.userName ? `Hi ${this.userName}, what shall we make?` : 'What shall we make?'}</h1>
       <p>Describe what you want in your own words. Add your own photos, videos or audio with the + button, or drop them here.</p>

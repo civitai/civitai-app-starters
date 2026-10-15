@@ -23,8 +23,19 @@ export function authedFetch(app: Pick<AppClient, 'getToken'>, doFetch: typeof fe
   };
 }
 
+/**
+ * A host's own gateway is named apart, so the options above (which only Civitai's model server
+ * understands) never reach it: the provider forwards only the options under its own name.
+ */
+export const HOST_PROVIDER = 'chat-backend';
+
+/**
+ * The chat model behind an OpenAI-compatible `${baseUrl}/v1`. With `app`, every request carries the
+ * viewer's Civitai token; with `null` (a host's own gateway) requests go out through `fetch` as they
+ * are, and the host's `fetch` signs them in its own way.
+ */
 export function createAssistantModel(
-  app: Pick<AppClient, 'getToken'>,
+  app: Pick<AppClient, 'getToken'> | null,
   {
     baseUrl = ORCH_URL,
     model = chatConfig.model,
@@ -32,6 +43,7 @@ export function createAssistantModel(
     wrap = (inner) => inner,
   }: { baseUrl?: string; model?: string; fetch?: typeof fetch; wrap?: (inner: typeof fetch) => typeof fetch } = {},
 ): LanguageModel {
-  const provider = createOpenAICompatible({ name: PROVIDER, baseURL: `${baseUrl}/v1`, fetch: wrap(authedFetch(app, doFetch)) });
+  const send = app ? authedFetch(app, doFetch) : (doFetch ?? ((input, init) => globalThis.fetch(input, init)));
+  const provider = createOpenAICompatible({ name: app ? PROVIDER : HOST_PROVIDER, baseURL: `${baseUrl.replace(/\/+$/, '')}/v1`, fetch: wrap(send) });
   return provider.chatModel(model);
 }

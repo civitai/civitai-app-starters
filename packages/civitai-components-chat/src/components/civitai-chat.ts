@@ -5,12 +5,13 @@ import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValu
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { AgentErrorDetail } from '../agent/agent.js';
-import { buildModelList, usableModels, type ChatModelEntry } from '../agent/model-list.js';
+import { backendModels, type ChatBackend } from '../backend.js';
+import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
-import { SCOPE_PATTERN, chatConfig, outputTokenCap } from '../config.js';
+import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
-import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
+import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommand, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
 import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
@@ -52,6 +53,7 @@ export class CivitaiChat extends LitElement {
 
   static override properties: PropertyDeclarations = {
     app: { attribute: false },
+    backend: { attribute: false },
     signIn: { attribute: false },
     tools: { attribute: false },
     commands: { attribute: false },
@@ -85,6 +87,12 @@ export class CivitaiChat extends LitElement {
 
   /** Signed in with at least `ai:write:budgeted`; the chat starts once it is set. */
   declare app?: AppClient;
+  /**
+   * The host's own model gateway and conversation storage. Once set the chat starts without `app`
+   * (which it then ignores, with `signIn`), and everything that runs on Civitai's services is off and
+   * hidden. See "Your own backend" in the README.
+   */
+  declare backend?: ChatBackend;
   /**
    * Without `app`, the chat still opens and calls this when the viewer first sends a message or
    * adds a file, straight from that click or key press so a popup is allowed. Resolve with the
@@ -164,7 +172,7 @@ export class CivitaiChat extends LitElement {
 
   #session?: ChatSession;
   #models?: ModelDirectory;
-  #startedWith?: AppClient;
+  #startedWith?: AppClient | ChatBackend;
   #started: Promise<ChatSession>;
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
@@ -221,24 +229,35 @@ export class CivitaiChat extends LitElement {
   };
 
   protected override willUpdate(changed: PropertyValues): void {
-    if (changed.has('app') && this.app && this.app !== this.#startedWith) {
-      this.#startedWith = this.app;
-      void this.#start(this.app);
+    // A backend wins over an app: with one, the chat never signs in to Civitai.
+    const source = this.#source();
+    if ((changed.has('app') || changed.has('backend')) && source && source !== this.#startedWith) {
+      this.#startedWith = source;
+      void this.#start(source);
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
 
   /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
+  #source(): AppClient | ChatBackend | undefined {
+    return this.backend ?? this.app;
+  }
+
+  /** Whether the chat signs in to Civitai on its own, through `signIn`: never with a backend. */
+  get #signsIn(): boolean {
+    return Boolean(this.signIn) && !this.backend;
+  }
+
   async send(text: string): Promise<void> {
-    if (!this.#session && this.signIn) return this.#signInThen(() => this.#send(text), text);
+    if (!this.#session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     await this.#started;
     await this.#send(text);
   }
 
   /** Puts text in the message box for the user to finish or send. */
   async compose(text: string): Promise<void> {
-    if (!this.signIn) await this.#started;
+    if (!this.#signsIn) await this.#started;
     const composer = await this.#composer();
     if (!composer) return;
     composer.draft = text;
@@ -292,6 +311,7 @@ export class CivitaiChat extends LitElement {
 
   async openPanel(shared: SharedPanel): Promise<void> {
     const session = await this.#started;
+    if (session.backend) return console.warn('[chat-cvt] panels run on Civitai; this chat uses its own backend');
     await session.openShared(shared);
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
   }
@@ -300,17 +320,20 @@ export class CivitaiChat extends LitElement {
     (await this.#composer())?.focus();
   }
 
-  async #start(app: AppClient): Promise<void> {
+  async #start(source: AppClient | ChatBackend): Promise<void> {
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
-    if (this.app !== app) return;
+    if (this.#source() !== source) return;
+    const backend = source === this.backend ? this.backend : undefined;
+    const app = backend ? null : (source as AppClient);
     defineChatRuntime();
     const scope = this.scope && SCOPE_PATTERN.test(this.scope) ? this.scope : undefined;
     if (this.scope && !scope) console.warn(`[chat-cvt] scope "${this.scope}" is ignored: use letters, digits, ".", "_" and "-", up to 64`);
     const session = new ChatSession(app, {
       scope,
+      ...(backend ? { backend } : {}),
       hostTools: () => this.tools,
       hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
       systemPrompt: () => this.systemPrompt,
@@ -324,7 +347,7 @@ export class CivitaiChat extends LitElement {
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
     this.modelList = null;
-    this.#models = new ModelDirectory(app.site, () => session.settings.allowMature);
+    this.#models = new ModelDirectory(session.app.site, () => session.settings.allowMature);
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
@@ -352,7 +375,8 @@ export class CivitaiChat extends LitElement {
     // must not be asked there: it accepts an OAuth token but refuses the block-scoped one, so a
     // block on the default token would fail that call on every mount. `blocks/me` is not the
     // answer either: it needs `user:read:self`, a consent prompt, to show a name.
-    if (isBlockClient(app)) this.userName = app.viewer?.username ?? '';
+    if (!app) this.userName = '';
+    else if (isBlockClient(app)) this.userName = app.viewer?.username ?? '';
     else
       void app.site
         .get<{ username?: string }>('me')
@@ -362,11 +386,12 @@ export class CivitaiChat extends LitElement {
     void session.catalog().catch((error: unknown) => this.#toast('Could not reach Civitai tools; some things may not work.', error));
     session.syncMcpServers();
 
-    const resume = this.fullPage ? takeResume() : null;
+    // Picking up after a sign-in redirect, and opening a shared panel, are Civitai's.
+    const resume = this.fullPage && !backend ? takeResume() : null;
     const target = resume?.conversationId ?? settings.lastConversationId;
     if (target) await this.#open(target, false);
     else session.newConversation();
-    const shared = this.fullPage ? await takeSharedPanel() : null;
+    const shared = this.fullPage && !backend ? await takeSharedPanel() : null;
     if (shared) {
       try {
         await session.openShared(shared);
@@ -563,6 +588,7 @@ export class CivitaiChat extends LitElement {
   }
 
   #freeAllowance(session: ChatSession): FreeAllowance | null {
+    if (session.backend) return null;
     const free = session.freeTier.modelFor(chatConfig.model);
     return free ? { left: free.remaining, resetAt: session.freeTier.resetAt(chatConfig.model) } : null;
   }
@@ -579,27 +605,41 @@ export class CivitaiChat extends LitElement {
     return resolveCommands(this.#builtInCommands(), this.commands);
   }
 
+  /** The models a chat may switch to besides the default, and whether any other id may be typed. */
+  #modelOptions(session = this.#session): { models: ChatModelOption[]; typed: boolean } {
+    const backend = session?.backend ?? this.backend;
+    return backend ? { models: backendModels(backend), typed: false } : { models: chatConfig.models, typed: true };
+  }
+
   #builtInCommands(): ChatCommands {
+    const { models, typed } = this.#modelOptions();
     return {
       clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
-      model: {
-        usage: `/model [${['default', ...chatConfig.models.map((model) => model.label.toLowerCase()), 'model id'].join(' | ')}]`,
-        help: "Show or switch this chat's model",
-        run: async (arg, { notify }) => {
-          const session = this.#session;
-          if (!session) return notify('Sign in first to choose a model.');
-          if (!arg) {
-            const others = ['default', ...chatConfig.models.map((model) => model.label.toLowerCase())].join(', ');
-            return notify(`This chat uses ${this.#modelName(session)}. Switch it with /model ${others}, or a model id.`);
-          }
-          await session.setChatModel(resolveModel(arg, chatConfig.models));
-          notify(this.#switchedModel(session));
-        },
-      },
+      // A backend with one model has nothing to switch to.
+      ...(typed || models.length ? { model: this.#modelCommand(models, typed) } : {}),
       help: {
         usage: '/help',
         help: 'List these commands',
         run: (_arg, { notify }) => notify(Object.values(this.#commands()).map((command) => `${command.usage}: ${command.help}`).join('  ·  ')),
+      },
+    };
+  }
+
+  #modelCommand(models: ChatModelOption[], typed: boolean): ChatCommand {
+    return {
+      usage: `/model [${['default', ...models.map((model) => model.label.toLowerCase()), ...(typed ? ['model id'] : [])].join(' | ')}]`,
+      help: "Show or switch this chat's model",
+      run: async (arg, { notify }) => {
+        const session = this.#session;
+        if (!session) return notify('Sign in first to choose a model.');
+        if (!arg) {
+          const others = ['default', ...models.map((model) => model.label.toLowerCase())].join(', ');
+          return notify(`This chat uses ${this.#modelName(session)}. Switch it with /model ${others}${typed ? ', or a model id' : ''}.`);
+        }
+        const picked = resolveModel(arg, models);
+        if (!typed && picked !== undefined && !models.some((model) => model.id === picked)) return notify(`There is no model called ${arg.trim()} here.`);
+        await session.setChatModel(picked);
+        notify(this.#switchedModel(session));
       },
     };
   }
@@ -609,7 +649,7 @@ export class CivitaiChat extends LitElement {
    * which model new chats get, and where that default is changed.
    */
   #switchedModel(session: ChatSession): string {
-    const stored = session.settings.assistantModel?.trim() || undefined;
+    const stored = session.backend ? undefined : session.settings.assistantModel?.trim() || undefined;
     if (!stored) return `This chat now uses ${this.#modelName(session)}, from the next reply.`;
     const fallback = `your default, ${modelName(stored, chatConfig.models)} (Settings → Assistant)`;
     const own = session.store.current?.model;
@@ -620,8 +660,10 @@ export class CivitaiChat extends LitElement {
 
   /** The open chat's model in words: its own, or the default it follows. */
   #modelName(session: ChatSession): string {
+    const { models } = this.#modelOptions(session);
     const own = session.store.current?.model;
-    return own ? modelName(own, chatConfig.models) : `the default (${modelName(session.settings.assistantModel?.trim() || undefined, chatConfig.models)})`;
+    if (own) return modelName(own, models);
+    return session.backend ? `the default (${session.backend.model})` : `the default (${modelName(session.settings.assistantModel?.trim() || undefined, models)})`;
   }
 
   #loadModels(): void {
@@ -645,12 +687,16 @@ export class CivitaiChat extends LitElement {
     void session.setChatModel(model).catch((error: unknown) => this.#toast("Could not save this chat's model; it applies until you reload.", error));
   }
 
-  #modelPicker(session: ChatSession): TemplateResult {
+  /** The open chat's model button; hidden on a backend that offers nothing to pick. */
+  #modelPicker(session: ChatSession): TemplateResult | typeof nothing {
+    const backend = session.backend;
+    if (backend && backendModels(backend).length === 0) return nothing;
     return html`<civitai-chat-model-picker
       .value=${session.assistantModel()}
       ?own=${Boolean(session.store.current?.model)}
-      .defaultModel=${session.settings.assistantModel?.trim() || undefined}
-      .models=${usableModels(this.modelList ?? buildModelList({ openRouter: null, orchestration: null }), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
+      ?no-custom=${Boolean(backend)}
+      .defaultModel=${backend ? undefined : session.settings.assistantModel?.trim() || undefined}
+      .models=${usableModels(this.modelList ?? session.modelChoices(), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
       ?loading=${this.modelsLoading}
       @cvt-model-open=${() => this.#loadModels()}
       @cvt-model-pick=${(e: CustomEvent<{ model?: string }>) => this.#pickModel(e.detail.model)}
@@ -667,15 +713,17 @@ export class CivitaiChat extends LitElement {
 
   async #send(text: string): Promise<void> {
     const session = this.#session;
-    if (!session && this.signIn) return this.#signInThen(() => this.#send(text), text);
-    if (!session || session.agent.running || !this.app) return;
+    if (!session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
+    // With a backend there is no Civitai sign-in to ask for a grant: the host's gateway decides.
+    const app = session?.backend ? undefined : this.app;
+    if (!session || session.agent.running || (!session.backend && !app)) return;
     if (this.#held(session)) {
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
       const composer = await this.#composer();
       if (composer && !composer.draft) composer.draft = text;
       return;
     }
-    if (!(await this.#ensureAiGrant(this.app))) {
+    if (app && !(await this.#ensureAiGrant(app))) {
       const composer = await this.#composer();
       if (composer && !composer.draft) composer.draft = text;
       this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
@@ -695,6 +743,8 @@ export class CivitaiChat extends LitElement {
   /** Adds files to the next message, uploading them right away. */
   addFiles(files: File[]): void {
     const session = this.#session;
+    // Files are uploaded to Civitai's orchestrator, which a chat on a backend does not use.
+    if (this.backend || session?.backend) return;
     if (!session) {
       void this.#signInThen(() => this.addFiles(files));
       return;
@@ -858,7 +908,7 @@ export class CivitaiChat extends LitElement {
       @cvt-open-settings=${() => {
         this.historyOpen = false;
         this.settingsOpen = true;
-        void this.#session?.freeTier.refresh();
+        if (!this.#session?.backend) void this.#session?.freeTier.refresh();
       }}
     ></civitai-chat-sidebar>`;
   }
@@ -886,7 +936,9 @@ export class CivitaiChat extends LitElement {
 
   override render(): TemplateResult {
     const session = this.#session;
-    if (!session) return this.signIn && !this.app ? this.#signedOut() : html`<div class="cvt-starting"><civitai-loader></civitai-loader></div>`;
+    if (!session) return this.#signsIn && !this.app ? this.#signedOut() : html`<div class="cvt-starting"><civitai-loader></civitai-loader></div>`;
+    // On a host backend: no files, voice, Buzz, posting or sign-in, so none of it is shown.
+    const hosted = Boolean(session.backend);
     const conversation = session.store.current;
     const boxed = this.lightbox;
     const details = boxed?.attachment ? session.detailsFor(boxed.attachment) : boxed?.job ? session.jobDetails(boxed.job) : null;
@@ -930,6 +982,7 @@ export class CivitaiChat extends LitElement {
             accept=${ACCEPT_ATTRIBUTE}
             max-size=${MAX_UPLOAD_BYTES}
             multiple
+            ?disabled=${hosted}
             @files=${(e: CustomEvent<{ files: File[] }>) => {
               this.addFiles(e.detail.files);
               void this.#composer().then((composer) => composer?.focus());
@@ -952,7 +1005,7 @@ export class CivitaiChat extends LitElement {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
             </h1>
-            ${spendBadge(conversationSpend(conversation ?? null, session.jobs.all(), session.store.saveCost))}
+            ${hosted ? nothing : spendBadge(conversationSpend(conversation ?? null, session.jobs.all(), session.store.saveCost))}
             <button class="cvt-icon-button" aria-label="New chat" @click=${() => this.newChat()}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </button>
@@ -963,6 +1016,7 @@ export class CivitaiChat extends LitElement {
             : turns.length === 0
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
+                  ?plain=${hosted}
                   @cvt-example=${(e: CustomEvent<Example>) =>
                     void this.#composer().then((composer) => {
                       if (!composer) return;
@@ -978,7 +1032,9 @@ export class CivitaiChat extends LitElement {
             .holdReason=${this.#held(session)}
             .uploads=${this.uploads}
             .refs=${this.refs}
-            voice
+            ?voice=${!hosted}
+            placeholder=${hosted ? 'Ask anything' : nothing}
+            ?no-files=${hosted}
             ?transcribing=${this.transcribing}
             .heard=${this.heard}
             .voiceLanguage=${voiceLanguage(session.settings.voiceLanguage)}
@@ -1008,6 +1064,7 @@ export class CivitaiChat extends LitElement {
         .canExport=${turns.length > 0}
         .canSignOut=${this.canSignOut}
         .canTheme=${this.fullPage}
+        .hosted=${hosted}
         .models=${chatConfig.models}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}

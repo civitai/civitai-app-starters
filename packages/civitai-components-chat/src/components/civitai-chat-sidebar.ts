@@ -1,7 +1,7 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 
 import { chatConfig } from '../config.js';
-import type { ConversationSummary } from '../types.js';
+import type { ListedConversation as ConversationSummary } from '../store/conversation-store.js';
 import { LightElement, emit } from './light.js';
 
 const DAY_MS = 86_400_000;

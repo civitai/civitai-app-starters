@@ -37,6 +37,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     canExport: { type: Boolean },
     canSignOut: { type: Boolean },
     canTheme: { type: Boolean },
+    hosted: { type: Boolean },
     models: { attribute: false },
     customModel: { state: true },
   };
@@ -50,6 +51,11 @@ export class CivitaiChatSettingsDialog extends LightElement {
   declare canSignOut: boolean;
   /** Only when the chat is the whole page; embedded, the page around it sets the theme. */
   declare canTheme: boolean;
+  /**
+   * The chat runs on its host's own backend: no Buzz limit, model or free-reply choice, mature
+   * switch or Civitai account here, and chats are kept by the host.
+   */
+  declare hosted: boolean;
   declare models: ChatModelOption[];
   declare customModel: boolean;
 
@@ -60,6 +66,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     this.canExport = false;
     this.canSignOut = true;
     this.canTheme = true;
+    this.hosted = false;
     this.models = [];
     this.customModel = false;
   }
@@ -141,6 +148,32 @@ export class CivitaiChatSettingsDialog extends LightElement {
     ></civitai-number-input>`;
   }
 
+  #instructions(): TemplateResult {
+    return html`<civitai-textarea
+      label="Custom instructions"
+      description="Sent with every message. Tell the assistant about you, your style, or how you like answers."
+      placeholder="For example: I make fantasy book covers. Keep answers short and suggest a bold color palette."
+      rows="4"
+      maxlength=${CUSTOM_INSTRUCTIONS_MAX}
+      .value=${this.settings.customInstructions ?? ''}
+      @input=${(event: Event) => this.#change({ customInstructions: (event.currentTarget as HTMLTextAreaElement).value || undefined })}
+    ></civitai-textarea>`;
+  }
+
+  #hosted(): TemplateResult {
+    return html`<civitai-modal .open=${this.open} heading="Settings" with-close-button @close=${() => emit(this, 'cvt-close-settings')}>
+      <div class="cvt-settings">
+        ${this.canTheme ? this.#theme() : nothing}
+        ${this.#outputTokens()}
+        ${this.#instructions()}
+        <section>
+          <h3>Your chats</h3>
+          <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+        </section>
+      </div>
+    </civitai-modal>`;
+  }
+
   #note(value: string, free: FreeAllowance | null): string {
     const back = free?.resetAt ? ` until ${free.resetAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
     if (value === AUTO) {
@@ -158,6 +191,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
   }
 
   override render(): TemplateResult {
+    if (this.hosted) return this.#hosted();
     const limit = LIMITS.some((option) => Number(option.value) === this.settings.autoRunLimit) ? String(this.settings.autoRunLimit) : '100';
     return html`<civitai-modal .open=${this.open} heading="Settings" with-close-button @close=${() => emit(this, 'cvt-close-settings')}>
       <div class="cvt-settings">
@@ -171,15 +205,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ></civitai-select>
         ${this.#model()}
         ${this.#outputTokens()}
-        <civitai-textarea
-          label="Custom instructions"
-          description="Sent with every message. Tell the assistant about you, your style, or how you like answers."
-          placeholder="For example: I make fantasy book covers. Keep answers short and suggest a bold color palette."
-          rows="4"
-          maxlength=${CUSTOM_INSTRUCTIONS_MAX}
-          .value=${this.settings.customInstructions ?? ''}
-          @input=${(event: Event) => this.#change({ customInstructions: (event.currentTarget as HTMLTextAreaElement).value || undefined })}
-        ></civitai-textarea>
+        ${this.#instructions()}
         <civitai-switch
           label="Show mature content"
           .checked=${this.settings.allowMature}
