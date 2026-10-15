@@ -130,6 +130,22 @@ describe('<civitai-chat> on a host backend', () => {
     expect(settings.textContent).not.toContain('Signed in');
   });
 
+  it('never asks the page to sign in, even before the chat has loaded', async () => {
+    spyOnRequests();
+    const signIn = vi.fn(() => new Promise<never>(() => undefined));
+    const chat = document.createElement('civitai-chat');
+    chat.signIn = signIn;
+    chat.backend = backendOf();
+    document.body.append(chat);
+    await chat.updateComplete;
+    // The runtime is still loading: a loader, not the signed-out chat, and a message waits for it.
+    expect(root(chat).querySelector('.cvt-signed-out')).toBeNull();
+    const sent = chat.send('hello');
+    await sent;
+    await vi.waitFor(() => expect(threadText(chat)).toContain('Hello there.'));
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
   it("offers the backend's models only, with no typed model id", async () => {
     spyOnRequests();
     const chat = await mount((c) => (c.backend = backendOf(memoryStore(), { models: [{ id: 'host/big', label: 'Big' }] })));

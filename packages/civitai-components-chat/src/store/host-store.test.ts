@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { memoryStore } from '../test-support/fake-backend.js';
+import type { ChatConversation } from './conversation-store.js';
 import { HostThreadStore } from './host-store.js';
 
 const at = (iso: string) => () => new Date(iso);
@@ -12,7 +13,7 @@ describe('HostThreadStore', () => {
     let release!: () => void;
     const first = new Promise<void>((resolve) => (release = resolve));
     const save = store.save.bind(store);
-    store.save = vi.fn(async (conversation) => {
+    store.save = vi.fn(async (conversation: ChatConversation) => {
       order.push(`start ${conversation.turns.map((turn) => turn.assistant?.status ?? 'pending').join(',')}`);
       if (order.length === 1) await first;
       await save(conversation);
@@ -81,6 +82,8 @@ describe('HostThreadStore', () => {
     const removed = threads.remove('C1');
     release();
     await removed;
+    // Long enough for a save the delete did not wait for to land.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(store.records.has('C1')).toBe(false);
     expect(threads.current).toBeNull();
   });

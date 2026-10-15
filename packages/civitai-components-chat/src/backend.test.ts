@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { partsFromMessages } from './agent/parts.js';
 import type { ChatBackend } from './backend.js';
-import { chatConfig } from './config.js';
+import { chatConfig, configureChat } from './config.js';
 import { ChatSession } from './session.js';
 import { HostThreadStore } from './store/host-store.js';
 import { ThreadStore } from './store/thread-store.js';
@@ -78,6 +78,8 @@ describe('ChatSession on a host backend', () => {
     // Civitai's model server options are not the host's: a strict gateway would refuse them.
     expect(sent[0]!.body).not.toHaveProperty('chat_template_kwargs');
     expect(sent[0]!.body.messages!.at(-1)).toMatchObject({ role: 'user' });
+    expect(sent[0]!.body).toMatchObject({ stream: true, max_tokens: 16_384, temperature: 0.7 });
+    expect(sent[0]!.body.messages![0]).toMatchObject({ role: 'system' });
     // The title is asked of the same gateway and model.
     await vi.waitFor(() => expect(session.store.current!.title).toBe('Greeting'));
     expect(sent[1]!.body).toMatchObject({ model: 'host/default-model' });
@@ -113,6 +115,19 @@ describe('ChatSession on a host backend', () => {
     expect(partsFromMessages(session.store.current!.turns[0]!.assistant.messages)).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'tool', toolName: 'sandbox__run_command', state: 'done' })]),
     );
+  });
+
+  it("asks the reply's last allowed step for words, with tool_choice none", async () => {
+    configureChat({ maxSteps: 2 });
+    try {
+      const { session, sent } = setup({ sandbox: true, replies: [() => toolCallReply('sandbox__run_command', { command: 'ls' }), () => textReply('Done.')] });
+      session.newConversation();
+      await session.send('go');
+      const steps = sent.filter((request) => (request.body as { stream?: boolean }).stream === true);
+      expect(steps.map((request) => (request.body as { tool_choice?: unknown }).tool_choice)).toEqual(['auto', 'none']);
+    } finally {
+      delete chatConfig.maxSteps;
+    }
   });
 
   it("saves the conversation to the host's store and loads it back in a new session", async () => {
