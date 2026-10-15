@@ -119,6 +119,30 @@ describe('gateToolSet', () => {
       expect(endedReply(await call(fresh, 'a'))).toBe(ENDED_BY_PAGE_MESSAGE);
     });
 
+    it('tells the gate which reply a call is in: the same for every call in one reply, a new one for the next', async () => {
+      const replies: unknown[] = [];
+      const gate = (_name: string, _input: unknown, context: { reply?: number }): ChatToolDecision => (replies.push(context.reply), { allow: true });
+      const build = () => gateToolSet({ a: { execute: async () => 'ran' }, b: { execute: async () => 'ran' } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+      const first = build();
+      await call(first, 'a');
+      await call(first, 'b');
+      await call(build(), 'a');
+      expect(replies.every((reply) => typeof reply === 'number')).toBe(true);
+      expect(replies[0]).toBe(replies[1]);
+      expect(replies[2]).not.toBe(replies[0]);
+    });
+
+    it('tells the assistant, about a call the stop kept from running, to pick it up when asked to carry on', async () => {
+      const tools = gateToolSet({ a: { execute: async () => 'ran' }, b: { execute: async () => 'ran' } } as unknown as ToolSet, {
+        conversationId: 'c',
+        gate: (name) => (name === 'a' ? { refuse: 'Budget.', stop: true } : { allow: true }),
+        onResult: () => undefined,
+      });
+      const note = 'Nothing ran: the page ended the reply here. If the user asks you to carry on, pick up from here, making this call again if it is still needed.';
+      expect(await call(tools, 'a')).toEqual({ error: 'Budget.', note });
+      expect(await call(tools, 'b')).toEqual({ error: 'The page ended this reply before this call ran.', note });
+    });
+
     it('does not end the reply for a plain refusal, nor for a tool that returns the same shape', async () => {
       const tools = gateToolSet({ a: { execute: async () => ({ error: 'Budget.', note: 'x' }) }, b: { execute: async () => 'ran' } } as unknown as ToolSet, {
         conversationId: 'c',

@@ -392,8 +392,8 @@ describe('ChatSession host controls', () => {
     expect(await run(set, 'sandbox__run_command', { command: 'ls' })).toBe('ran');
     expect(calls).toEqual([{ command: 'ls' }]);
     expect(asked).toEqual([
-      ['sandbox__run_command', { command: 'app create' }, { conversationId: 'c1', signal: expect.any(AbortSignal) }],
-      ['sandbox__run_command', { command: 'ls' }, { conversationId: 'c1', signal: expect.any(AbortSignal) }],
+      ['sandbox__run_command', { command: 'app create' }, { conversationId: 'c1', reply: expect.any(Number), signal: expect.any(AbortSignal) }],
+      ['sandbox__run_command', { command: 'ls' }, { conversationId: 'c1', reply: expect.any(Number), signal: expect.any(AbortSignal) }],
     ]);
   });
 

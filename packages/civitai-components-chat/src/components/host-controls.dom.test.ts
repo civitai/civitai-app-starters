@@ -189,7 +189,11 @@ describe('civitai-chat beforeToolCall with stop', () => {
   const continueButton = (root: ShadowRoot) => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread .cvt-ran-out civitai-button')].find((b) => b.textContent?.trim() === 'Continue');
 
   it('ends the reply: the call does not run, the model is not asked again, the page’s words show with Continue', async () => {
-    const { fetch, pin, results, root } = await run(() => ({ refuse: 'Tool budget reached.', stop: true, message: 'This reply used its tool budget.' }));
+    const replies: unknown[] = [];
+    const { fetch, pin, results, root } = await run((_name, _input, context) => {
+      replies.push(context.reply);
+      return { refuse: 'Tool budget reached.', stop: true, message: 'This reply used its tool budget.' };
+    });
     // Give a further step the time it would need to be requested.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -202,6 +206,10 @@ describe('civitai-chat beforeToolCall with stop', () => {
     continueButton(root)!.click();
     await vi.waitFor(() => expect(streamed(fetch)).toHaveLength(2));
     expect(String((streamed(fetch)[1]![1] as RequestInit).body)).toContain('Continue where you left off.');
+    // The Continue reply puts its calls to the gate again, as a new reply.
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    expect(typeof replies[0]).toBe('number');
+    expect(replies[1]).not.toBe(replies[0]);
   });
 
   it('says the reply was stopped in its own words when the page gives none', async () => {

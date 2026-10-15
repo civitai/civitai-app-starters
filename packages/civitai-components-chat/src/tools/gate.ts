@@ -15,9 +15,15 @@ export type ChatToolDecision = { allow: true } | { refuse: string; stop?: false 
  * Continue. A call made alongside it whose gate had not answered yet, or that comes after it, does
  * not run either; one already running finishes. A hook that throws (or rejects) refuses, so a broken
  * gate never lets a call by. `signal` aborts when the viewer stops the reply; a call whose reply was
- * stopped while the gate decided does not run, whatever the gate answers.
+ * stopped while the gate decided does not run, whatever the gate answers. `reply` is the same number
+ * for every call in one reply and a new one for the next (Continue and Retry included), so a page can
+ * keep a per-reply count by it.
  */
-export type ChatToolGate = (name: string, input: unknown, context: { conversationId: string; signal?: AbortSignal }) => ChatToolDecision | Promise<ChatToolDecision>;
+export type ChatToolGate = (
+  name: string,
+  input: unknown,
+  context: { conversationId: string; reply: number; signal?: AbortSignal },
+) => ChatToolDecision | Promise<ChatToolDecision>;
 
 /** One finished tool call, as the `tool-result` event reports it. */
 export interface ChatToolResult {
@@ -47,7 +53,7 @@ export const REFUSED_BY_PAGE_NOTE =
 /** What the viewer reads under a reply the page ended, when the page gives no words of its own. */
 export const ENDED_BY_PAGE_MESSAGE = 'The page ended this reply before the assistant could do more.';
 const ENDED = 'The page ended this reply before this call ran.';
-const ENDED_NOTE = 'Nothing ran, and the page ended the reply here. If the user asks you to carry on, do not repeat this call unless they ask for it.';
+const ENDED_NOTE = 'Nothing ran: the page ended the reply here. If the user asks you to carry on, pick up from here, making this call again if it is still needed.';
 
 /**
  * The outputs of calls that ended their reply, with the words the viewer reads. Kept beside the output,
@@ -60,6 +66,9 @@ export function endedReply(output: unknown): string | undefined {
   return output !== null && typeof output === 'object' ? ENDING.get(output) : undefined;
 }
 
+/** The last reply number handed out; each `gateToolSet` (one per reply) takes the next. */
+let replies = 0;
+
 /**
  * Every tool with its `execute` wrapped: the gate first, then the tool, then one report of the result.
  * The tool itself (its type, schema, description) is kept as it is. Built once per reply, so a stop
@@ -67,6 +76,7 @@ export function endedReply(output: unknown): string | undefined {
  */
 export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
   const gated: ToolSet = {};
+  const reply = ++replies;
   // The words the reply ends on, once a call ended it.
   let ended: string | undefined;
   const ending = (output: { error: string; note: string }, message: string) => (ENDING.set(output, message), output);
@@ -81,7 +91,7 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
       execute: async (input: unknown, options: Parameters<typeof execute>[1]) => {
         const signal = (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
         // Ended already: the gate is not asked, and nothing runs.
-        const decision = ended === undefined ? await decide(deps.gate, name, input, deps.conversationId, signal) : undefined;
+        const decision = ended === undefined ? await decide(deps.gate, name, input, deps.conversationId, reply, signal) : undefined;
         if (signal?.aborted) {
           // Stopped while the gate decided: nothing runs, a confirmation that comes late included.
           deps.onResult({ name, input, output: { error: STOPPED }, isError: true });
@@ -120,11 +130,11 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
 }
 
 /** The refusal (with the words to end the reply on, when it ends it), or `undefined` to let the call run. */
-async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string, signal?: AbortSignal): Promise<{ refused: string; stop?: string } | undefined> {
+async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string, reply: number, signal?: AbortSignal): Promise<{ refused: string; stop?: string } | undefined> {
   if (!gate) return undefined;
   try {
     // Stop ends the wait even when the page never answers: a pending gate does not hold the reply open.
-    const decision = await untilAborted(gate(name, input, signal ? { conversationId, signal } : { conversationId }), signal);
+    const decision = await untilAborted(gate(name, input, signal ? { conversationId, reply, signal } : { conversationId, reply }), signal);
     if (!decision || typeof decision !== 'object' || !('refuse' in decision)) return undefined;
     const refused = String(decision.refuse || 'Refused.');
     if (decision.stop !== true) return { refused };

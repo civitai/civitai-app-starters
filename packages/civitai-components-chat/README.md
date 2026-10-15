@@ -100,7 +100,7 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `mcp` | `{ orchestration?: boolean \| { exclude: string[] }, site?: boolean }`, both on by default: making media, and Civitai model search. `orchestration: { exclude: ['run_step', 'run_workflow'] }` keeps the service lookups but never runs (or charges for) a generation; the panels, which run through `run_step`, go with it. Other tools that charge per call, such as `transcribe_audio`, stay unless they are listed too; the microphone button transcribes on its own, not through the assistant, so neither `exclude` nor `beforeToolCall` stops voice input from charging. |
 | `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
 | `holdReason` | While set (also `hold-reason`), nothing is sent to the assistant: the message box keeps what the viewer typed, Send is off and the box shows this text, e.g. "The sandbox is starting…". Stop still works. The chat also holds by itself, as "Connecting to *label*…", while an added server is listing its tools (at most 15 s). |
-| `beforeToolCall` | `(name, input, { conversationId, signal }) => { refuse: string, stop?: boolean, message?: string } \| { allow: true }` (or a promise of one), asked before every tool call: Civitai's, an added server's and the page's own. A refusal stops the call before anything runs and the assistant gets the reason as the tool's error; a hook that throws refuses too. With `stop: true` the refusal also ends the reply, with no further (paid) step: see [Ending a reply](#ending-a-reply). `signal` aborts when the viewer stops the reply: the reply stops at once even if the hook never answers, and the call never runs. See [Gating tool calls](#gating-tool-calls). |
+| `beforeToolCall` | `(name, input, { conversationId, reply, signal }) => { refuse: string, stop?: boolean, message?: string } \| { allow: true }` (or a promise of one), asked before every tool call: Civitai's, an added server's and the page's own. A refusal stops the call before anything runs and the assistant gets the reason as the tool's error; a hook that throws refuses too. With `stop: true` the refusal also ends the reply, with no further (paid) step: see [Ending a reply](#ending-a-reply). `reply` is the same number for every call in one reply and a new one for the next, Continue and Retry included. `signal` aborts when the viewer stops the reply: the reply stops at once even if the hook never answers, and the call never runs. See [Gating tool calls](#gating-tool-calls). |
 | `scope` | Set before `app`. Keeps the page's chats and preferences apart from every other page's. |
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
@@ -126,7 +126,9 @@ chat.addEventListener('tool-result', (event) => {
 ```
 
 `tool-result` fires once per finished call (it bubbles and is composed). `isError` is true for a
-refused call (with `refused` set to the reason), a tool that threw, and an output carrying `error`.
+refused call (with `refused` set to the reason), a tool that threw, an output carrying `error`, and a
+call that did not run because the reply was stopped or ended (with `stopped: true` when the page ended
+it; `refused` is then set only on the call the page refused).
 
 #### Ending a reply
 
@@ -134,16 +136,21 @@ A plain refusal goes back to the assistant, which may ignore it and call again: 
 paid step, up to the step limit. To cap a reply (a per-reply tool budget, say), refuse with `stop: true`:
 
 ```ts
-chat.beforeToolCall = () =>
-  budget.take() // the page's own count, e.g. tool calls per reply
+const LIMIT = 50;
+let counted = { reply: -1, calls: 0 };
+chat.beforeToolCall = (_name, _input, { reply }) => {
+  // A new reply (Continue and Retry included) starts its count afresh.
+  if (counted.reply !== reply) counted = { reply, calls: 0 };
+  return ++counted.calls <= LIMIT
     ? { allow: true }
     : { refuse: 'Tool budget for this reply is used up.', stop: true, message: 'This reply used its tool budget.' };
+};
 ```
 
 The refused call does not run and the assistant is not asked again in this reply. The reply ends as
 done, not as an error, showing `message` (or *"The page ended this reply before the assistant could do
-more."*) with the same Continue button a reply that ran out of steps gets; Continue sends a new reply,
-which asks the gate afresh. Other calls the assistant made in the same step do not run either if their
+more."*) with the same Continue button a reply that ran out of steps gets; Continue sends a new reply, whose
+calls come to the gate with a new `reply`, so a count kept by `reply` starts again there. Other calls the assistant made in the same step do not run either if their
 gate answer comes after the stop (whatever it is), and no later call in the reply is put to the gate;
 a call that was already running finishes. Each call that did not run is reported as a `tool-result`
 with `stopped: true`. Stop still works as before: a reply the viewer stopped is stopped, whatever the
