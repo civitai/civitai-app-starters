@@ -1,5 +1,11 @@
 # @civitai/components-chat
 
+## 0.8.0
+
+### Minor Changes
+
+- 2cdd0da: `<civitai-chat>` can run on a host's own backend: set `chat.backend = { url, fetch, model, models, store }` and the chat starts without an `app`, sends replies to the host's OpenAI-compatible `/v1/chat/completions` through the host's `fetch`, and keeps conversations in the host's `ChatConversationStore` (`list`, `load`, `save`, `delete`). Everything that runs on Civitai's services (built-in MCP, generations and panels, uploads, voice, posting, Buzz and free replies, sign-in) is then off and hidden, and a gateway refusal shows the gateway's own message (`{ "error": { "message" } }` or plain text). Without `backend` nothing changes. An added `mcpServers` entry may now bring its own `fetch` (signed in like the gateway, e.g. a same-origin session cookie), and `token` is optional when it does; an entry with neither is still skipped. See "Your own backend" and "More MCP servers" in the README.
+
 ## 0.7.0
 
 ### Minor Changes
