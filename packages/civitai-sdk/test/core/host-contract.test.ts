@@ -65,16 +65,23 @@ describe('every host request settles through the transport', () => {
     await expect(exchange(type, host.reply, fields)).resolves.toEqual(expected);
   });
 
-  // Where the host's reply literal could not be read, the payload decides: a
-  // reply nesting its value under `result` must come back unwrapped, not as
-  // `{ result }`. The flat case is the row above.
+  // Where the host's reply keys are unknown, the payload decides: a reply
+  // nesting its value under `result` must come back unwrapped, not as
+  // `{ result }`. The flat case is the row above. Since the host's inventory
+  // declares every reply's keys, no snapshot row is unknown today, so the
+  // branch is pinned on a synthetic entry for a type a later host leaves
+  // undeclared.
   const unread = requests.filter(([, host]) => host.replyKeys === null);
-  it('has types whose reply keys could not be read', () => {
-    expect(unread.length).toBeGreaterThan(0);
-  });
+  if (unread.length > 0) {
+    it.each(unread)('%s unwraps a reply nested under result', async (type, host) => {
+      await expect(exchange(type, host.reply, { result: { nested: type } })).resolves.toEqual({ nested: type });
+    });
+  }
 
-  it.each(unread)('%s unwraps a reply nested under result', async (type, host) => {
-    await expect(exchange(type, host.reply, { result: { nested: type } })).resolves.toEqual({ nested: type });
+  it('lets the payload decide where the reply keys are unknown', () => {
+    const unknown = { reply: 'PROBE_RESULT', framing: 'legacy', keys: null } as const;
+    expect(unwrap('PROBE', { requestId: 'r', result: { nested: 1 } }, unknown)).toEqual({ nested: 1 });
+    expect(unwrap('PROBE', { requestId: 'r', flat: 2 }, unknown)).toEqual({ flat: 2 });
   });
 
   // Only where the host is seen sending a failure: one it never sends proves nothing.
