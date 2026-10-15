@@ -68,6 +68,88 @@ describe('HostThreadStore', () => {
     expect(threads.summaries.map((summary) => summary.id)).toEqual(['B', 'A']);
   });
 
+  /** A store whose saves wait until released, so a test can act while one is on its way. */
+  function slowStore(initial: Parameters<typeof memoryStore>[0] = []) {
+    const store = memoryStore(initial);
+    const save = store.save.bind(store);
+    const held: (() => void)[] = [];
+    store.save = (conversation) => new Promise<void>((resolve) => held.push(() => void save(conversation).then(resolve)));
+    const releaseAll = async () => {
+      // A queued save starts a tick after the change that queued it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      while (held.length) {
+        held.shift()!();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+    return { store, releaseAll };
+  }
+
+  const record = (turns: number, title = 'A') => ({
+    id: 'A',
+    title,
+    titleSource: 'llm' as const,
+    createdAt: '2026-10-15T10:00:00Z',
+    updatedAt: '2026-10-15T10:00:00Z',
+    turns: Array.from({ length: turns }, (_, i) => ({ seq: i + 1, createdAt: '2026-10-15T10:00:00Z', user: { content: `m${i + 1}`, attachments: [] }, assistant: { messages: [], status: 'done' as const } })),
+  });
+
+  it('reopens a chat only after its save still on its way, so no message is lost', async () => {
+    const { store, releaseAll } = slowStore([record(1)]);
+    const threads = new HostThreadStore({ store });
+    await threads.open('A');
+    threads.appendUserTurn('m2', []);
+    threads.startNew();
+    const reopened = threads.open('A');
+    await releaseAll();
+    await reopened;
+    expect(threads.current!.turns.map((turn) => turn.user.content)).toEqual(['m1', 'm2']);
+    threads.current!.turns.at(-1)!.assistant = { messages: [], status: 'done' };
+    threads.appendUserTurn('m3', []);
+    await releaseAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.records.get('A')!.turns.map((turn) => `${turn.seq}:${turn.user.content}`)).toEqual(['1:m1', '2:m2', '3:m3']);
+  });
+
+  it('renames a chat that is not open after its save still on its way, keeping that save and its scope', async () => {
+    const { store, releaseAll } = slowStore([{ ...record(1), scope: 'notes' }]);
+    // A host whose load leaves the scope out: the rename must not drop the chat from its scoped list.
+    const load = store.load.bind(store);
+    store.load = async (id, options) => {
+      const found = await load(id, options);
+      if (found) delete found.scope;
+      return found;
+    };
+    const threads = new HostThreadStore({ store, scope: 'notes' });
+    await threads.open('A');
+    threads.appendUserTurn('m2', []);
+    threads.startNew();
+    await threads.refreshList();
+    const renamed = threads.rename('A', 'Renamed');
+    await releaseAll();
+    await renamed;
+    expect(store.records.get('A')).toMatchObject({ title: 'Renamed', titleSource: 'user', scope: 'notes' });
+    expect(store.records.get('A')!.turns.map((turn) => turn.user.content)).toEqual(['m1', 'm2']);
+  });
+
+  it('tells of a save that failed with a save-error event', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    store.save = async () => {
+      throw new Error('disk full');
+    };
+    const threads = new HostThreadStore({ store, newId: () => 'C1' });
+    const failed: unknown[] = [];
+    threads.addEventListener('save-error', (event) => failed.push((event as CustomEvent).detail));
+    const turn = threads.appendUserTurn('hello', []);
+    turn.assistant.status = 'done';
+    await expect(threads.completeTurn(turn)).rejects.toThrow('disk full');
+    expect(failed).toEqual([
+      { id: 'C1', error: expect.objectContaining({ message: 'disk full' }) },
+      { id: 'C1', error: expect.objectContaining({ message: 'disk full' }) },
+    ]);
+  });
+
   it('deletes only after a save still on its way, so the save cannot bring the chat back', async () => {
     const store = memoryStore();
     let release!: () => void;

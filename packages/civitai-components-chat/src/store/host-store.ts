@@ -58,6 +58,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   }
 
   async open(id: string): Promise<OpenedConversation> {
+    // A save of this chat still on its way (it was left mid-save) would otherwise be missing from what loads.
+    await this.#saves.get(id);
     const record = await this.#deps.store.load(id, this.#scope());
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
@@ -94,7 +96,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     };
     conversation.turns.push(turn);
     conversation.updatedAt = now;
-    this.#save(conversation).catch((error: unknown) => console.warn('[chat-cvt] could not save the turn yet', error));
+    this.#save(conversation).catch(() => undefined);
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
     return turn;
@@ -143,17 +145,23 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
 
   async rename(id: string, title: string): Promise<void> {
     if (this.current?.id === id) return this.setTitle(title, 'user');
-    const record = await this.#deps.store.load(id, this.#scope());
-    if (!record) return;
-    const renamed: ChatConversation = { ...record, title: clampTitle(title), titleSource: 'user' };
-    await this.#enqueue(id, () => renamed);
+    // Loaded in the save queue, so a save of this chat still on its way lands first and is not overwritten.
+    const step = this.#queue(id, async () => {
+      const record = await this.#deps.store.load(id, this.#scope());
+      if (!record) return null;
+      const renamed: ChatConversation = { ...record, title: clampTitle(title), titleSource: 'user', ...this.#scope() };
+      await this.#deps.store.save(renamed);
+      return renamed;
+    });
+    const renamed = await step;
+    if (!renamed) return;
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: renamed.title } : s));
     this.#emit('list-change');
   }
 
   async remove(id: string): Promise<void> {
     // A save still on its way would otherwise bring the conversation back after the delete.
-    await this.#saves.get(id)?.catch(() => undefined);
+    await this.#saves.get(id);
     await this.#deps.store.delete(id, this.#scope());
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
     if (this.current?.id === id) this.current = null;
@@ -161,17 +169,22 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#emit('conversation-change');
   }
 
+  /** Saves the conversation as it is when its turn in the queue comes; a failure is also told as `save-error`. */
   #save(conversation: Conversation): Promise<void> {
-    return this.#enqueue(conversation.id, () => this.#record(conversation));
+    const save = this.#queue(conversation.id, () => this.#deps.store.save(this.#record(conversation)));
+    save.catch((error: unknown) => {
+      console.warn('[chat-cvt] could not save the chat', error);
+      this.dispatchEvent(new CustomEvent('save-error', { detail: { id: conversation.id, error } }));
+    });
+    return save;
   }
 
-  // Each save replaces the whole conversation, so they go one at a time, each built from the latest state.
-  #enqueue(id: string, record: () => ChatConversation): Promise<void> {
-    const save = (this.#saves.get(id) ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => this.#deps.store.save(record()));
-    this.#saves.set(id, save);
-    return save;
+  // Each save replaces the whole conversation, so everything that writes one goes one at a time, in order.
+  #queue<T>(id: string, step: () => Promise<T>): Promise<T> {
+    const run = (this.#saves.get(id) ?? Promise.resolve()).then(step);
+    // The queue only orders: a failed step is the caller's to handle, never the next step's.
+    this.#saves.set(id, run.then(() => undefined, () => undefined));
+    return run;
   }
 
   #record(conversation: Conversation): ChatConversation {

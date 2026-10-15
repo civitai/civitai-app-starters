@@ -146,6 +146,29 @@ describe('<civitai-chat> on a host backend', () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
+  it('tells the viewer when the host could not save the chat', async () => {
+    spyOnRequests();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    store.save = async () => {
+      throw new Error('503');
+    };
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    await chat.send('hello');
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-toast-region')?.textContent).toContain('Could not save this chat.'));
+  });
+
+  it('opens no shared panel: panels run on Civitai', async () => {
+    spyOnRequests();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    await chat.openPanel({ v: 1, id: 'P1', version: 1, spec: { title: 'Beat maker', inputs: {}, run: { stepType: 'aceStepAudio', input: {} } }, values: {} } as never);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(chat.panels).toEqual([]);
+    expect(store.records.size).toBe(0);
+  });
+
   it("offers the backend's models only, with no typed model id", async () => {
     spyOnRequests();
     const chat = await mount((c) => (c.backend = backendOf(memoryStore(), { models: [{ id: 'host/big', label: 'Big' }] })));

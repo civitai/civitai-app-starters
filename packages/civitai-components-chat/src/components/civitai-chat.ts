@@ -239,7 +239,7 @@ export class CivitaiChat extends LitElement {
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
 
-  /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
+  /** What the chat runs on: the backend when set, else the signed-in app. */
   #source(): AppClient | ChatBackend | undefined {
     return this.backend ?? this.app;
   }
@@ -249,6 +249,7 @@ export class CivitaiChat extends LitElement {
     return Boolean(this.signIn) && !this.backend;
   }
 
+  /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
   async send(text: string): Promise<void> {
     if (!this.#session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     await this.#started;
@@ -368,6 +369,8 @@ export class CivitaiChat extends LitElement {
       this.#toast(`Could not reach ${server.label?.trim() || server.id}; its tools are off for now.`, error);
     });
     session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
+    // Only a host's store says so; the viewer learns a chat may not be kept, and that the next change tries again.
+    session.store.addEventListener('save-error', () => this.#toast('Could not save this chat. It is saved again with your next message.'));
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
 
@@ -908,7 +911,7 @@ export class CivitaiChat extends LitElement {
       @cvt-open-settings=${() => {
         this.historyOpen = false;
         this.settingsOpen = true;
-        if (!this.#session?.backend) void this.#session?.freeTier.refresh();
+        void this.#session?.freeTier.refresh();
       }}
     ></civitai-chat-sidebar>`;
   }

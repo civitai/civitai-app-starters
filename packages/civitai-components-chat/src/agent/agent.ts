@@ -254,7 +254,7 @@ export class Agent extends EventTarget {
         const tool = live.parts.find((p) => p.kind === 'tool' && p.toolCallId === part.toolCallId);
         if (tool?.kind !== 'tool') break;
         if (part.type === 'tool-result') Object.assign(tool, { state: 'done', output: part.output });
-        else Object.assign(tool, { state: 'error', error: humanize(part.error).message });
+        else Object.assign(tool, { state: 'error', error: (this.#deps.describeError ?? humanize)(part.error).message });
         break;
       }
       default:

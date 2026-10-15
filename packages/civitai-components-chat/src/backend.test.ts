@@ -130,6 +130,30 @@ describe('ChatSession on a host backend', () => {
     }
   });
 
+  it("words a failed tool call for the viewer without naming Civitai", async () => {
+    let goDown = () => undefined as void;
+    const { session, mcp } = setup({
+      sandbox: true,
+      replies: [
+        () => {
+          // Listed fine; unreachable by the time the assistant calls it.
+          goDown();
+          return toolCallReply('sandbox__run_command', { command: 'ls' });
+        },
+        () => textReply('It failed.'),
+      ],
+    });
+    goDown = () => void (mcp.servers[SANDBOX]!.down = true);
+    const shown: string[] = [];
+    session.agent.addEventListener('change', () => {
+      for (const part of session.agent.live?.parts ?? []) if (part.kind === 'tool' && part.state === 'error' && part.error) shown.push(part.error);
+    });
+    session.newConversation();
+    await session.send('list the box');
+    expect(shown.length).toBeGreaterThan(0);
+    for (const words of shown) expect(words).not.toMatch(/Civitai|Buzz/);
+  });
+
   it("saves the conversation to the host's store and loads it back in a new session", async () => {
     const store = memoryStore();
     const first = setup({ store, replies: [() => textReply('Sure.')], title: 'Plans' });
@@ -166,6 +190,27 @@ describe('ChatSession on a host backend', () => {
     await session.store.remove('B');
     expect([...store.records.keys()]).toEqual(['A']);
     expect(session.store.summaries.map((s) => s.id)).toEqual(['A']);
+  });
+
+  it('reads no free allowance: it is settled at once, with nothing asked of anyone', async () => {
+    const { session, global } = setup();
+    await session.freeTier.refresh();
+    expect(session.freeTier.loaded).toBe(true);
+    expect(session.freeTier.status).toEqual({ enabled: false, models: [] });
+    expect(global).not.toHaveBeenCalled();
+  });
+
+  it('fails uploads and voice called straight on the session before any request leaves the page', async () => {
+    const { session, global } = setup();
+    const pending = { key: 'k', file: new File(['x'], 'photo.png', { type: 'image/png' }), progress: 0 };
+    await session.upload(pending, () => undefined);
+    expect(pending).toMatchObject({ error: expect.any(String) });
+    expect(pending).not.toHaveProperty('attachment');
+    await expect(session.transcribe(new Blob(['x'], { type: 'audio/webm' }))).rejects.toThrow();
+    const live = session.liveTranscript(() => undefined);
+    await live.settled();
+    expect(live.error).toBeInstanceOf(Error);
+    expect(global).not.toHaveBeenCalled();
   });
 
   it("uses a chat's own model only when the backend names it", async () => {
@@ -208,6 +253,12 @@ describe("a gateway's refusal on a host backend", () => {
   it('shows an error the gateway sends inside the stream', async () => {
     const { turn } = await failWith(() => sse({ error: { message: 'The model is overloaded.', type: 'server_error' } }));
     expect(turn.assistant).toMatchObject({ status: 'error', error: 'The model is overloaded.' });
+  });
+
+  it("keeps a 5xx body (a stack trace, an upstream's error) from the viewer, after the retries", async () => {
+    const { turn } = await failWith(() => new Response('TypeError: cannot read x\n    at handler (/srv/app/llm.js:42)', { status: 500, headers: { 'retry-after-ms': '0' } }));
+    expect(turn.assistant).toMatchObject({ status: 'error', error: 'Something went wrong.' });
+    expect(turn.assistant.errorTrace?.responseBody ?? '').toContain('TypeError: cannot read x');
   });
 
   it('says what went wrong without naming Civitai or Buzz when the gateway gave no words', async () => {

@@ -116,6 +116,9 @@ chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', token: () => 
 chat.systemPrompt = 'You are the assistant in Acme Notes. …'; // the built-in rules talk about Civitai
 ```
 
+Set `backend` once, with an object you keep: the chat compares it by identity, so assigning a new
+object, even an equal one, starts a new session (the open chat is reloaded from the store).
+
 With `backend` set the chat starts at once, with no `app` and no sign-in (`app` and `signIn` are
 then ignored), and it never sends a request to Civitai or to OpenRouter. Everything that runs on
 Civitai's services is off and not shown: the built-in orchestration and Civitai search tools (so
@@ -166,12 +169,18 @@ them, and `reply-error`'s `detail.message` is the same text. Answer with a non-2
 { "error": { "message": "You have used this month's budget. It resets on the 1st." } }
 ```
 
-(`{ "error": "…" }`, `{ "message": "…" }` and a plain-text body work too; the first 500 characters
-are shown, and an HTML page is never shown). An error after the stream started is a frame of the
-same shape, `data: {"error":{"message":"…"}}`. Without a message the viewer sees a plain sentence
-that names neither Civitai nor Buzz. 408, 409, 429 and 5xx are retried twice first, honouring
-`Retry-After` (or `retry-after-ms`) under 60 s, so the message shows after the last try; answer a
-refusal that retrying cannot change with 402 or 403. `detail.kind` is a best guess from the status
+on a 4xx status (`{ "error": "…" }`, `{ "message": "…" }` and a plain-text body work too; the first
+500 characters are shown, and an HTML page is never shown). A 5xx body is never shown, since it is
+more often a stack trace or an upstream provider's error than words for the viewer: the viewer gets a
+plain sentence, and the body stays in `reply-error`'s `detail.trace.responseBody`. An error after the
+stream started is a frame of the same shape, `data: {"error":{"message":"…"}}`, and is shown. Without
+a message the viewer sees a plain sentence that names neither Civitai nor Buzz.
+
+408, 409, 429 and 5xx are retried twice first, honouring `Retry-After` (or `retry-after-ms`) under
+60 s, so the message shows after the last try; answer a refusal that retrying cannot change with 402
+or 403. A retry is the same request again, with no idempotency key: if the gateway already did (and
+charged for) the work before it answered with a 5xx, the retry does it again. Only the model request
+is retried; a tool call is never run again by a retry. `detail.kind` is a best guess from the status
 (402 `insufficient_buzz`, 401/403 `auth`, 429 `rate_limit`, 502/503 `unavailable`) and the words.
 
 ### The conversation store
@@ -205,15 +214,19 @@ interface ChatConversation {
 - `list` returns the viewer's conversations in `scope`, newest first; `next` is a cursor for the
   following page (the chat asks for it with **Show older chats**), absent or `null` on the last.
 - `load` returns a conversation exactly as last saved, or `null` for an id the store does not have
-  (the chat then opens it empty).
+  (the chat then opens it empty). The chat loads a conversation only after any save of it still on
+  its way, so what loads is never older than what it saved.
 - `save` creates or replaces the whole conversation. It is called when the viewer sends a message
   (with the reply still missing, so a reload mid-reply shows it as cut off), when the reply ends,
   when the chat is named or renamed and when its model changes. Saves of one conversation come one
   at a time, in order; each carries every turn so far. Renaming a chat that is not open is a `load`
-  then a `save`.
+  then a `save` of the same record with the new title (and the chat's `scope`), queued behind any
+  save of it still on its way.
 - `delete` removes a conversation; the chat waits for any save of it still on its way first.
-- Any method may reject: the viewer sees a short note ("Could not load your chats."), and a save that
-  fails is tried again with the next change.
+- Any method may reject, and the viewer sees a short note: "Could not load your chats." for `list`,
+  "Could not open that chat." for `load` when they open one (at start-up the chat opens a new one instead), "Could not delete that chat." for `delete`, and "Could not
+  save this chat. It is saved again with your next message." for `save`. Every save carries the whole
+  conversation, so the next one that succeeds makes up for one that failed.
 
 Conversations are the host's to keep, for as long as it likes; the chat stores nothing on the page
 but preferences (in `localStorage`, by `scope`).

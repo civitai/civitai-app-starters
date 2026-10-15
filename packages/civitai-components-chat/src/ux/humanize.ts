@@ -72,7 +72,12 @@ function lastAttempt(error: unknown): unknown {
 export function hostMessage(error: unknown): string | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const record = error as { statusCode?: unknown; responseBody?: unknown; message?: unknown; error?: unknown };
-  if (typeof record.statusCode === 'number') return typeof record.responseBody === 'string' ? fromBody(record.responseBody) : undefined;
+  if (typeof record.statusCode === 'number') {
+    // A 5xx body is the server's own trouble (a stack trace, an upstream provider's error), not words for
+    // the viewer: it stays in the reply's trace, and the viewer gets a plain line.
+    if (record.statusCode >= 500) return undefined;
+    return typeof record.responseBody === 'string' ? fromBody(record.responseBody) : undefined;
+  }
   if (error instanceof Error) return undefined;
   return fromJson(record);
 }

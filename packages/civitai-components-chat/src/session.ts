@@ -180,11 +180,6 @@ export class ChatSession extends EventTarget {
     });
   }
 
-  /** What runs on Civitai's services is never reached with a backend; the element hides it, and this backs that up. */
-  #needsCivitai(what: string): void {
-    if (this.backend) throw new Error(`${what} is not available in this chat.`);
-  }
-
   /** The page's default model: the backend's, else `configureChat`'s. */
   defaultModel(): string {
     return this.backend?.model ?? chatConfig.model;
@@ -353,7 +348,6 @@ export class ChatSession extends EventTarget {
 
   async upload(pending: PendingUpload, onChange: () => void): Promise<void> {
     try {
-      this.#needsCivitai('Adding files');
       const [blob, info] = await Promise.all([
         uploadFile({ api: this.api }, pending.file, {
           onProgress: (fraction) => {
@@ -372,7 +366,6 @@ export class ChatSession extends EventTarget {
 
   /** Billed per second of audio sent, unlike `transcribe`, which bills per call. */
   liveTranscript(onChange: () => void): StreamingTranscript {
-    this.#needsCivitai('Voice input');
     const language = voiceLanguage(this.settings.voiceLanguage);
     return new StreamingTranscript(
       {
@@ -391,7 +384,6 @@ export class ChatSession extends EventTarget {
 
   /** About 1 Buzz per call, whatever the length. */
   transcribe(recording: Blob, signal?: AbortSignal): Promise<string> {
-    this.#needsCivitai('Voice input');
     return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, voiceLanguage(this.settings.voiceLanguage));
   }
 
@@ -410,7 +402,6 @@ export class ChatSession extends EventTarget {
    * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
    */
   async openShared(shared: SharedPanel): Promise<void> {
-    this.#needsCivitai('Panels');
     this.newConversation();
     const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
     const conversation = this.store.current!;
