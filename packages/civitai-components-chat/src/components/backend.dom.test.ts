@@ -176,6 +176,12 @@ describe('<civitai-chat> on a host backend', () => {
     await vi.waitFor(() => expect(toasts()).toHaveLength(3));
     await settle();
     expect(toasts().slice(2)).toEqual(['Could not rename that chat.']);
+
+    // The command switches the model for this session too: it says so, as the picker does.
+    root(chat).querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { detail: { text: '/model default' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(toasts()).toHaveLength(4));
+    await settle();
+    expect(toasts().slice(3)).toEqual(["Could not save this chat's model; it applies until you reload."]);
   });
 
   it('opens no shared panel: panels run on Civitai', async () => {

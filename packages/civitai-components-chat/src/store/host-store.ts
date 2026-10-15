@@ -26,6 +26,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #deps: HostThreadStoreDeps;
   #cursor: string | null = null;
   #saves = new Map<string, Promise<void>>();
+  /** The conversation each turn belongs to: a reply ends in its own chat even after the viewer opened another. */
+  #owners = new WeakMap<Turn, Conversation>();
 
   constructor(deps: HostThreadStoreDeps) {
     super();
@@ -72,6 +74,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
       turns,
       ...(typeof record?.model === 'string' && record.model.trim() ? { model: record.model.trim() } : {}),
     };
+    const opened = this.current;
+    for (const turn of turns) this.#owners.set(turn, opened);
     this.#emit('conversation-change');
     return { conversation: this.current, jobs: [] };
   }
@@ -95,6 +99,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
       assistant: { messages: [], status: 'streaming' },
     };
     conversation.turns.push(turn);
+    this.#owners.set(turn, conversation);
     conversation.updatedAt = now;
     // Announced, if at all, by the save when the reply ends, which carries this message too: one note per send.
     this.#save(conversation).catch((error: unknown) => console.warn('[chat-cvt] could not save the message yet', error));
@@ -103,18 +108,21 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     return turn;
   }
 
-  /** Saves the reply; a failure is also told as `save-error`, since the agent that calls this only logs it. */
-  async completeTurn(_turn: Turn): Promise<void> {
-    await this.#finish(true);
+  /**
+   * Saves the reply with the chat it belongs to, which need not be the open one: the viewer may have
+   * started or opened another while it ran. A failure is also told as `save-error`, since the agent
+   * that calls this only logs it.
+   */
+  async completeTurn(turn: Turn): Promise<void> {
+    await this.#finish(this.#owners.get(turn) ?? this.current, true);
   }
 
   /**
-   * Saves the open chat as it is now. Only the end of a reply announces a failure (`announce`): every
-   * other caller (a rename, a title) rejects to its own caller, which says what failed, so one failure
-   * is one note.
+   * Saves a chat as it is now. Only the end of a reply announces a failure (`announce`). A rename
+   * rejects to its caller, which says so; an automatic title is not announced, since every later
+   * save carries it again.
    */
-  async #finish(announce: boolean): Promise<void> {
-    const conversation = this.current;
+  async #finish(conversation: Conversation | null, announce: boolean): Promise<void> {
     if (!conversation) return;
     try {
       await this.#save(conversation);
@@ -156,7 +164,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
     const newest = conversation.turns.at(-1);
-    if (newest && newest.assistant.status !== 'streaming') await this.#finish(false);
+    if (newest && newest.assistant.status !== 'streaming') await this.#finish(conversation, false);
   }
 
   async rename(id: string, title: string): Promise<void> {

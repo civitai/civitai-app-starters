@@ -152,6 +152,49 @@ describe('HostThreadStore', () => {
     expect(failed).toHaveLength(1);
   });
 
+  it('saves a reply with its own chat after the viewer started a new one, and the message with it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    const save = store.save.bind(store);
+    let saves = 0;
+    // The message's own save fails; the one when the reply ends works.
+    store.save = async (conversation) => {
+      if (++saves === 1) throw new Error('flaky');
+      await save(conversation);
+    };
+    const ids = ['C1', 'C2'];
+    const threads = new HostThreadStore({ store, newId: () => ids.shift()! });
+    const failed: unknown[] = [];
+    threads.addEventListener('save-error', (event) => failed.push((event as CustomEvent).detail));
+    const turn = threads.appendUserTurn('important message', []);
+    threads.startNew();
+    turn.assistant = { messages: [{ role: 'assistant', content: 'Noted.' }], status: 'aborted' };
+    await threads.completeTurn(turn);
+
+    expect([...store.records.keys()]).toEqual(['C1']);
+    expect(store.records.get('C1')!.turns.map((t) => t.user.content)).toEqual(['important message']);
+    expect(failed).toEqual([]);
+    expect(threads.current!.id).toBe('C2');
+    expect(threads.current!.turns).toEqual([]);
+  });
+
+  it("tells of a reply's failed save for its own chat after the viewer started a new one", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = memoryStore();
+    store.save = async () => {
+      throw new Error('down');
+    };
+    const ids = ['C1', 'C2'];
+    const threads = new HostThreadStore({ store, newId: () => ids.shift()! });
+    const failed: { id: string }[] = [];
+    threads.addEventListener('save-error', (event) => failed.push((event as CustomEvent<{ id: string }>).detail));
+    const turn = threads.appendUserTurn('important message', []);
+    threads.startNew();
+    turn.assistant.status = 'aborted';
+    await expect(threads.completeTurn(turn)).rejects.toThrow('down');
+    expect(failed.map((detail) => detail.id)).toEqual(['C1']);
+  });
+
   it('deletes only after a save still on its way, so the save cannot bring the chat back', async () => {
     const store = memoryStore();
     let release!: () => void;

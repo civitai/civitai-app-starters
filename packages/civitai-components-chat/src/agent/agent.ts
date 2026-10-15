@@ -278,7 +278,8 @@ export class Agent extends EventTarget {
       }
     } catch (error) {
       // Free only and the title model has no free replies: the chat keeps its first-message title
-      // quietly; a refusal of the reply itself already says so once.
+      // quietly; a refusal of the reply itself already says so once. A title that could not be saved
+      // is not announced either: every later save of the chat carries it again.
       if (humanize(error).kind !== 'free_tier_not_free') console.warn('[chat-cvt] could not name the conversation', error);
     }
   }

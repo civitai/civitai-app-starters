@@ -641,7 +641,12 @@ export class CivitaiChat extends LitElement {
         }
         const picked = resolveModel(arg, models);
         if (!typed && picked !== undefined && !models.some((model) => model.id === picked)) return notify(`There is no model called ${arg.trim()} here.`);
-        await session.setChatModel(picked);
+        try {
+          await session.setChatModel(picked);
+        } catch (error) {
+          // The switch holds for this session; only keeping it with the chat failed, as the picker says.
+          return this.#toast("Could not save this chat's model; it applies until you reload.", error);
+        }
         notify(this.#switchedModel(session));
       },
     };
