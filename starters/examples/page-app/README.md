@@ -142,6 +142,10 @@ the manifest makes the harness refuse consent, loading or saving, as
 production would.
 
 `npm run dev:live` runs the app against the real backend. The live host also
-reflects app navigation. This app spends no Buzz, but your storage writes are
-real. See [the examples README](../README.md#against-the-real-backend-devlive).
+reflects app navigation. This app spends no Buzz, and its board does not load or
+save there: the live host forwards `useAppStorage()` and the server refuses it
+with `401` (`Apps access is not enabled for this browser session`), because a
+local harness never has a civitai.com browser session. That says nothing about
+your account or your app. Exercise the board under `dev:harness`. See
+[the examples README](../README.md#against-the-real-backend-devlive).
 See the [root README](../../../README.md) for submit → review → deploy.

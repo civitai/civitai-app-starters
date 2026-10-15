@@ -155,12 +155,13 @@ only ones an enrolment fixes.
 is not about your account.** Row 1's gate is keyed on the **browser session on
 the host page**. Under
 `npm run dev:live` there isn't one: the live host forwards the protocol to
-`https://civitai.com/api/trpc/apps.storage.*` as a cross-origin `fetch` carrying
-`Authorization: Bearer <dev token>` and **no credentials**, so no civitai
-session cookie goes with it (`createLiveHost` in
+the backend's `apps.storage.*` procedures carrying
+`Authorization: Bearer <dev token>` and **no civitai session cookie** — either
+same-origin to your dev server's `/api` proxy (the examples and the `page-money`
+template), which has no civitai.com cookie to send, or cross-origin to
+`https://civitai.com`, where `createLiveHost` in
 [`@civitai/blocks-react`](../packages/civitai-blocks-react/src/internal/liveHost.ts)
-sets no `credentials` option, and the browser default omits cookies
-cross-origin).
+sets no `credentials` option and the browser default omits cookies.
 
 With no session the host evaluates the account gate **without an account**, and
 during the preview that path refuses. So App Storage under `dev:live` answers
