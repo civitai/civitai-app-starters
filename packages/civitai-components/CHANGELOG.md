@@ -1,5 +1,11 @@
 # @civitai/components
 
+## 0.10.0
+
+### Minor Changes
+
+- f3882f0: Add `@civitai/components/testing/happy-dom`, a vitest setup file that installs a minimal `ElementInternals` / `attachInternals` stand-in when the test DOM lacks one. happy-dom implements neither, so `<civitai-button>` and every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) threw `TypeError: this.attachInternals is not a function` on construction in a block's own test suite. Use it with `setupFiles: ['@civitai/components/testing/happy-dom']`. It does nothing where `attachInternals` exists, and no runtime entry imports it.
+
 ## 0.9.3
 
 ### Patch Changes
@@ -996,10 +1002,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                          after    @civitai/theme       0.3.1                   — 1 copy
-                                   @civitai/components  0.4.2                   — 1 copy
+                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                            after    @civitai/theme       0.3.1                   — 1 copy
+                                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

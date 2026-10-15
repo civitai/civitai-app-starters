@@ -1,5 +1,40 @@
 # @civitai/app-sdk
 
+## 0.70.1
+
+### Patch Changes
+
+- 04e067d: `getTransport().request(type)` now knows the reply name and shape of every request type
+  the host answered when this version was built, and refuses at once a type the host never
+  answered.
+
+  - The reply ledger is generated from the host's inventory (`snapshots/host-messages.json`,
+    now carrying each request's reply name, framing and success keys) and covers all 43
+    host request types instead of 6. `request('GET_VIEWER')` resolves `{ viewer }` rather
+    than hanging; the `APP_STORAGE_*` and `SHARED_*` replies resolve with their fields
+    rather than rejecting `malformed` on success; `CANCEL_APP_WORKFLOW`'s failure keeps
+    the host's message.
+  - A type the host does not answer rejects immediately with a `BridgeError` of code
+    `invalid` instead of waiting forever. A fire-and-forget message says to use `notify()`,
+    and where BREAKING.md names a replacement the message names it (e.g. `GET_VIEWER` →
+    `app.site.get('blocks/me')`). The list of types is fixed at publish time, so a type
+    the host adds later is refused too, and the message names the SDK version and host
+    snapshot and says to upgrade.
+  - Knowing the reply is not a promise that one comes: `request()` still has no deadline
+    of its own, and the host stays silent in some cases. `REQUEST_TOKEN`
+    (`getToken({ fresh: true })`) gets no reply while the host holds no token,
+    `GET_WILDCARD_PACK` gets none in a model-page slot (only full-page app hosts answer
+    it), and the host drops rate-limited or replayed requests without replying. Pass a
+    `signal` to bound any call that must settle.
+  - `SCOPES` (and `Scope`) gain the scopes the host now grants: `apps:storage`,
+    `apps:storage:publish`, `apps:store:items:write`, `goods:read:self` and
+    `goods:purchase:self`.
+  - `BlockSnapshot.viewer`'s doc pointed at `/me`, which refuses a block token; it now
+    says `app.site.get('blocks/me')`.
+
+  `@civitai/app-sdk`: `ViewerInfo.id`/`username`'s deprecation notes name
+  `app.site.get('blocks/me')` for blocks outside React, not only `useViewer()`.
+
 ## 0.70.0
 
 ### Minor Changes
@@ -659,15 +694,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                    single measurements on one machine.
+                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                        single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1575,10 +1610,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                          after    @civitai/theme       0.3.1                   — 1 copy
-                                                                   @civitai/components  0.4.2                   — 1 copy
+                                                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                            after    @civitai/theme       0.3.1                   — 1 copy
+                                                                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
