@@ -23,6 +23,7 @@ export interface HostThreadStoreDeps {
 export class HostThreadStore extends EventTarget implements ConversationStore {
   summaries: ListedConversation[] = [];
   current: Conversation | null = null;
+  readonly supersedesOpens = true;
 
   #deps: HostThreadStoreDeps;
   #cursor: string | null = null;

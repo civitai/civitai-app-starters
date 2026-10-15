@@ -311,6 +311,126 @@ describe('<civitai-chat> on a host backend', () => {
   });
 });
 
+describe('<civitai-chat> leaving a chat that is loading or being deleted', () => {
+  const open = (chat: CivitaiChat, id: string) =>
+    root(chat).querySelector('civitai-chat-sidebar')!.dispatchEvent(new CustomEvent('cvt-open', { detail: { id }, bubbles: true, composed: true }));
+  const loader = (chat: CivitaiChat) => root(chat).querySelector('.cvt-loading');
+  const currentId = (chat: CivitaiChat) => root(chat).querySelector('civitai-chat-sidebar')!.currentId;
+  const head = (conversationId: string) => ({
+    id: `head-${conversationId}`,
+    status: 'succeeded',
+    tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+    metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
+  });
+
+  it('default mode, as on main: New chat while a chat loads keeps the loader, then that chat opens', async () => {
+    spyOnRequests();
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => (answer = resolve));
+    const app = fakeApp();
+    app.orchestration.queryWorkflows = vi.fn(async (query: { tags: string[] }) => {
+      if (!query.tags.includes('cvt:conv:CONV1')) return { items: [], next: '' };
+      await held;
+      return { items: query.tags.includes('cvt:head') ? [head('CONV1')] : [], next: '' };
+    }) as never;
+    const chat = await mount((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = app as never;
+    });
+    open(chat, 'CONV1');
+    await vi.waitFor(() => expect(loader(chat)).not.toBeNull());
+    chat.newChat();
+    await chat.updateComplete;
+    expect(loader(chat)).not.toBeNull();
+    answer();
+    await vi.waitFor(() => expect(currentId(chat)).toBe('CONV1'));
+    expect(loader(chat)).toBeNull();
+  });
+
+  it('backend mode: New chat while a chat loads clears the loader, and the late load changes nothing', async () => {
+    spyOnRequests();
+    const store = memoryStore([{ id: 'A', title: 'A', titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] }]);
+    const load = store.load.bind(store);
+    let answer: (() => void) | undefined;
+    store.load = (id, options) => (id === 'A' ? new Promise((resolve) => (answer = () => void load(id, options).then(resolve))) : load(id, options));
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    open(chat, 'A');
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    chat.newChat();
+    await chat.updateComplete;
+    expect(loader(chat)).toBeNull();
+    const fresh = currentId(chat);
+    answer!();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(currentId(chat)).toBe(fresh);
+  });
+
+  it('backend mode: keeps the loader for the chat opened last when an earlier open is dropped', async () => {
+    spyOnRequests();
+    const record = (id: string) => ({ id, title: id, titleSource: 'llm' as const, createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] });
+    const store = memoryStore([record('A'), record('B')]);
+    const load = store.load.bind(store);
+    const answers: Record<string, () => void> = {};
+    store.load = (id, options) => new Promise((resolve) => (answers[id] = () => void load(id, options).then(resolve)));
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    open(chat, 'A');
+    await vi.waitFor(() => expect(answers.A).toBeDefined());
+    open(chat, 'B');
+    await vi.waitFor(() => expect(answers.B).toBeDefined());
+    answers.A!();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // A was dropped; B is still loading.
+    expect(loader(chat)).not.toBeNull();
+    answers.B!();
+    await vi.waitFor(() => expect(currentId(chat)).toBe('B'));
+    expect(loader(chat)).toBeNull();
+  });
+
+  async function deleteOpenChat(chat: CivitaiChat): Promise<string> {
+    await chat.send('hello');
+    await vi.waitFor(() => expect(threadText(chat)).toContain('Hello there.'));
+    const id = currentId(chat)!;
+    root(chat).querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-dialog')!.ask = async () => true;
+    root(chat).querySelector('civitai-chat-sidebar')!.dispatchEvent(new CustomEvent('cvt-delete', { detail: { id, title: 'hello' }, bubbles: true, composed: true }));
+    return id;
+  }
+
+  it('default mode, as on main: a failed delete of the open chat leaves the viewer on it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    spyOnRequests();
+    const app = fakeApp();
+    // The chat's workflows are found; deleting them is refused (the spy answers 404).
+    app.orchestration.queryWorkflows = vi.fn(async (query: { tags: string[] }) =>
+      query.tags.some((tag) => tag.startsWith('cvt:conv:')) && !query.tags.includes('cvt:head') ? { items: [{ id: 'w1', tags: query.tags }], next: '' } : { items: [], next: '' },
+    ) as never;
+    const chat = await mount((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = app as never;
+    });
+    const id = await deleteOpenChat(chat);
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-toast-region')?.textContent).toContain('Could not delete that chat.'));
+    expect(currentId(chat)).toBe(id);
+  });
+
+  it('backend mode: the viewer leaves the open chat as its delete starts, and a failed delete puts it back on the list', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    spyOnRequests();
+    const store = memoryStore();
+    let fail!: () => void;
+    store.delete = () => new Promise<void>((_, reject) => (fail = () => reject(new Error('locked'))));
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    const id = await deleteOpenChat(chat);
+    await vi.waitFor(() => expect(currentId(chat)).not.toBe(id));
+    const sidebar = root(chat).querySelector('civitai-chat-sidebar')!;
+    expect(sidebar.summaries.map((summary) => summary.id)).not.toContain(id);
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    fail();
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-toast-region')?.textContent).toContain('Could not delete that chat.'));
+    await chat.updateComplete;
+    expect(sidebar.summaries.map((summary) => summary.id)).toContain(id);
+  });
+});
+
 describe('<civitai-chat> without a backend (the default)', () => {
   it('does reach Civitai through the same spy: the control for the zero above', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);

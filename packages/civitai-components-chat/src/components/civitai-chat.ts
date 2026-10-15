@@ -430,7 +430,8 @@ export class CivitaiChat extends LitElement {
       session.newConversation();
       if (announce) this.#toast('Could not open that chat.', error);
     } finally {
-      if (ticket === this.#opening) this.loading = false;
+      // A store that drops stale opens lets only the latest one clear the loader; otherwise as always.
+      if (!session.store.supersedesOpens || ticket === this.#opening) this.loading = false;
       this.historyOpen = false;
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
@@ -485,8 +486,11 @@ export class CivitaiChat extends LitElement {
   /** Starts a new conversation and puts the cursor in the message box. */
   newChat(): void {
     // A chat still loading is left behind: its loader goes, and its end (stale by then) changes nothing.
-    this.#opening++;
-    this.loading = false;
+    // Only where the store drops that late end; otherwise the loader stays and the chat opens as always.
+    if (this.#session?.store.supersedesOpens) {
+      this.#opening++;
+      this.loading = false;
+    }
     this.#session?.newConversation();
     this.uploads = [];
     this.refs = [];
@@ -818,12 +822,16 @@ export class CivitaiChat extends LitElement {
     if (!dialog) return;
     dialog.message = `"${title}" and everything made in it will be removed.`;
     if (!(await dialog.ask())) return;
-    const wasCurrent = this.#session?.store.current?.id === id;
-    const removing = this.#session?.store.remove(id);
-    // Off the open chat at once: a delete that is slow (or never answers) holds nothing up.
-    if (wasCurrent) this.newChat();
+    const store = this.#session?.store;
+    const wasCurrent = store?.current?.id === id;
+    // A store that takes the chat off the list as its delete starts: off the open chat at once, so a
+    // delete that is slow (or never answers) holds nothing up. Otherwise only once the delete worked.
+    const leaveAtOnce = Boolean(store?.supersedesOpens);
     try {
+      const removing = store?.remove(id);
+      if (wasCurrent && leaveAtOnce) this.newChat();
       await removing;
+      if (wasCurrent && !leaveAtOnce) this.newChat();
     } catch (error) {
       this.#toast('Could not delete that chat.', error);
     }
