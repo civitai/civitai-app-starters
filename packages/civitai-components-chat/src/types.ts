@@ -37,9 +37,10 @@ export interface Turn {
   user: TurnUser;
   /**
    * `errorDetail` is what the service said, shown only under Details; `errorTrace` is where the reply
-   * failed, kept for this session only. `ranOut`: the reply used every step it may take.
+   * failed, kept for this session only. `ranOut`: the reply used every step it may take. `stopped`:
+   * the page ended the reply (`beforeToolCall` answered `stop: true`), and these are the words shown.
    */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string; errorTrace?: ErrorTrace; ranOut?: boolean };
+  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string; errorTrace?: ErrorTrace; ranOut?: boolean; stopped?: string };
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */

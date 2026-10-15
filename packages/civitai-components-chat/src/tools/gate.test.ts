@@ -1,7 +1,7 @@
 import type { ToolSet } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import { gateToolSet, type ChatToolDecision } from './gate.js';
+import { ENDED_BY_PAGE_MESSAGE, endedReply, gateToolSet, type ChatToolDecision } from './gate.js';
 
 describe('gateToolSet', () => {
   it('runs nothing when the reply was stopped while the gate decided, even if it then allows', async () => {
@@ -98,6 +98,88 @@ describe('gateToolSet', () => {
     const settled = await Promise.race([call.then(() => 'resolved', () => 'rejected'), new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500))]);
     expect(settled).toBe('rejected');
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  describe('stop: true', () => {
+    const call = (tools: ToolSet, name: string, signal = new AbortController().signal) => tools[name]!.execute!({}, { toolCallId: name, messages: [], abortSignal: signal }) as Promise<unknown>;
+
+    it('ends the reply with the page’s words, or the default, and asks the gate nothing more in it', async () => {
+      const execute = vi.fn(async () => 'ran');
+      const gate = vi.fn((name: string): ChatToolDecision => (name === 'a' ? { refuse: 'Budget.', stop: true, message: 'Out of budget.' } : { allow: true }));
+      const tools = gateToolSet({ a: { execute }, b: { execute } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+      const first = await call(tools, 'a');
+      expect(endedReply(first)).toBe('Out of budget.');
+      expect(first).toEqual({ error: 'Budget.', note: expect.any(String) });
+      // A later call in the same reply: not asked about, not run.
+      expect(endedReply(await call(tools, 'b'))).toBe('Out of budget.');
+      expect(gate).toHaveBeenCalledTimes(1);
+      expect(execute).not.toHaveBeenCalled();
+
+      const fresh = gateToolSet({ a: { execute } } as unknown as ToolSet, { conversationId: 'c', gate: () => ({ refuse: 'Budget.', stop: true }), onResult: () => undefined });
+      expect(endedReply(await call(fresh, 'a'))).toBe(ENDED_BY_PAGE_MESSAGE);
+    });
+
+    it('tells the gate which reply a call is in: the same for every call in one reply, a new one for the next', async () => {
+      const replies: unknown[] = [];
+      const gate = (_name: string, _input: unknown, context: { reply?: number }): ChatToolDecision => (replies.push(context.reply), { allow: true });
+      const build = () => gateToolSet({ a: { execute: async () => 'ran' }, b: { execute: async () => 'ran' } } as unknown as ToolSet, { conversationId: 'c', gate, onResult: () => undefined });
+      const first = build();
+      await call(first, 'a');
+      await call(first, 'b');
+      await call(build(), 'a');
+      expect(replies.every((reply) => typeof reply === 'number')).toBe(true);
+      expect(replies[0]).toBe(replies[1]);
+      expect(replies[2]).not.toBe(replies[0]);
+    });
+
+    it('tells the assistant, about a call the stop kept from running, to pick it up when asked to carry on', async () => {
+      const tools = gateToolSet({ a: { execute: async () => 'ran' }, b: { execute: async () => 'ran' } } as unknown as ToolSet, {
+        conversationId: 'c',
+        gate: (name) => (name === 'a' ? { refuse: 'Budget.', stop: true } : { allow: true }),
+        onResult: () => undefined,
+      });
+      const note = 'Nothing ran: the page ended the reply here. If the user asks you to carry on, pick up from here, making this call again if it is still needed.';
+      expect(await call(tools, 'a')).toEqual({ error: 'Budget.', note });
+      expect(await call(tools, 'b')).toEqual({ error: 'The page ended this reply before this call ran.', note });
+    });
+
+    it('does not end the reply for a plain refusal, nor for a tool that returns the same shape', async () => {
+      const tools = gateToolSet({ a: { execute: async () => ({ error: 'Budget.', note: 'x' }) }, b: { execute: async () => 'ran' } } as unknown as ToolSet, {
+        conversationId: 'c',
+        gate: (name) => (name === 'b' ? { refuse: 'No.' } : undefined),
+        onResult: () => undefined,
+      });
+      expect(endedReply(await call(tools, 'a'))).toBeUndefined();
+      expect(endedReply(await call(tools, 'b'))).toBeUndefined();
+    });
+
+    it('leaves Stop as it was: a reply stopped while the gate decided rejects, whatever the gate then says', async () => {
+      const execute = vi.fn(async () => 'ran');
+      let answer!: (decision: ChatToolDecision) => void;
+      const tools = gateToolSet({ a: { execute } } as unknown as ToolSet, { conversationId: 'c', gate: () => new Promise<ChatToolDecision>((resolve) => (answer = resolve)), onResult: () => undefined });
+      const stop = new AbortController();
+      const pending = call(tools, 'a', stop.signal);
+      await Promise.resolve();
+      stop.abort();
+      answer({ refuse: 'Budget.', stop: true });
+      await expect(pending).rejects.toBeDefined();
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('runs nothing whose gate answers after a stop in the same step, even an allow', async () => {
+      const execute = vi.fn(async () => 'ran');
+      let allowB!: (decision: ChatToolDecision) => void;
+      const tools = gateToolSet({ a: { execute }, b: { execute } } as unknown as ToolSet, {
+        conversationId: 'c',
+        gate: (name) => (name === 'a' ? { refuse: 'Budget.', stop: true } : new Promise<ChatToolDecision>((resolve) => (allowB = resolve))),
+        onResult: () => undefined,
+      });
+      const b = call(tools, 'b');
+      await call(tools, 'a');
+      allowB({ allow: true });
+      expect(endedReply(await b)).toBe(ENDED_BY_PAGE_MESSAGE);
+      expect(execute).not.toHaveBeenCalled();
+    });
   });
 
   it('still runs an allowed call that was not stopped', async () => {
