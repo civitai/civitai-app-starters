@@ -11,8 +11,10 @@ import { ApiError, type Http, type Query } from '../http/index.js';
  * The rules — who may read or write which collection, the limits, the error codes
  * — are the server's, and this client re-spells none of them. It sends a request,
  * reads the reply, and turns a refusal into a {@link StorageError} carrying the
- * server's own `code`. The one thing it refuses itself is a path segment a URL
- * cannot carry (`''`, `.`, `..`): `fetch` would rewrite it into a DIFFERENT route.
+ * server's own `code`. It refuses only what would reach a DIFFERENT route: a path
+ * segment a URL cannot carry (`''`, `.`, `..`), which `fetch` would rewrite, and a
+ * collection name outside the manifest's rule (`_get` is itself a route) — each with
+ * the code the server gives the same input.
  */
 
 /** Where the routes live under the site base URL (`…/api/v1`). */
