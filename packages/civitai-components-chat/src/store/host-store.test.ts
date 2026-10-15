@@ -285,14 +285,20 @@ describe('HostThreadStore', () => {
     expect([...store.records.keys()]).toEqual([]);
   });
 
-  it('F2: never opens a chat whose delete is on its way, so later messages go to a chat that is saved', async () => {
+  it('F2: opens a chat whose delete is on its way only once it settles: refused after it worked', async () => {
     const { store, release } = heldDelete([record(1)]);
+    const loads = vi.spyOn(store, 'load');
     const threads = new HostThreadStore({ store, newId: () => 'NEW' });
     const removed = threads.remove('A');
-    await expect(threads.open('A')).rejects.toThrow('That chat was deleted.');
+    const opening = threads.open('A');
+    await tick();
+    // Never a load while the delete runs.
+    expect(loads).not.toHaveBeenCalled();
     release();
     await removed;
+    await expect(opening).rejects.toThrow('That chat was deleted.');
     await expect(threads.open('A')).rejects.toThrow('That chat was deleted.');
+    expect(loads).not.toHaveBeenCalled();
     expect(threads.current).toBeNull();
     const turn = threads.appendUserTurn('after', []);
     turn.assistant.status = 'done';
@@ -300,18 +306,106 @@ describe('HostThreadStore', () => {
     expect([...store.records.keys()]).toEqual(['NEW']);
   });
 
-  it('F2: drops a chat whose load answered after its delete, rather than making it the open one', async () => {
+  /** A held save on chat A, then `first` and `second` asked in that order; the delete fails. Returns the events seen. */
+  async function openAndFailedDelete(order: 'open-first' | 'delete-first') {
+    const events: string[] = [];
+    const store = memoryStore([record(1)]);
+    const save = store.save.bind(store);
+    const load = store.load.bind(store);
+    let releaseSave!: () => void;
+    const saveHeld = new Promise<void>((resolve) => (releaseSave = resolve));
+    store.save = async (conversation) => {
+      await saveHeld;
+      await save(conversation);
+    };
+    let failDelete!: () => void;
+    store.delete = () =>
+      new Promise<void>((_, reject) => {
+        events.push('delete');
+        failDelete = () => {
+          events.push('delete failed');
+          reject(new Error('delete failed'));
+        };
+      });
+    store.load = async (id, options) => {
+      events.push('load start');
+      const found = await load(id, options);
+      await tick();
+      events.push('load end');
+      return found;
+    };
+    const threads = new HostThreadStore({ store });
+    await threads.open('A');
+    events.length = 0;
+    threads.appendUserTurn('m2', []);
+    threads.startNew();
+    const [opening, removed] =
+      order === 'open-first' ? [threads.open('A'), threads.remove('A')] : ((r) => [threads.open('A'), r])(threads.remove('A'));
+    releaseSave();
+    await vi.waitFor(() => expect(events).toContain('delete'));
+    failDelete();
+    await expect(removed).rejects.toThrow('delete failed');
+    const { conversation } = await opening;
+    return { events, turns: conversation.turns.map((turn) => turn.user.content) };
+  }
+
+  it('F2: opens a chat as usual once its delete failed, and never loads while the delete runs', async () => {
+    const deleteFirst = await openAndFailedDelete('delete-first');
+    expect(deleteFirst).toEqual({ events: ['delete', 'delete failed', 'load start', 'load end'], turns: ['m1', 'm2'] });
+    const openFirst = await openAndFailedDelete('open-first');
+    expect(openFirst).toEqual({ events: ['load start', 'load end', 'delete', 'delete failed'], turns: ['m1', 'm2'] });
+  });
+
+  it('F2: a delete asked while a chat loads runs after the load, and leaves no chat open', async () => {
     const store = memoryStore([record(1)]);
     const load = store.load.bind(store);
     let answer!: () => void;
     store.load = (id, options) => new Promise((resolve) => (answer = () => void load(id, options).then(resolve)));
+    const deletes = vi.spyOn(store, 'delete');
     const threads = new HostThreadStore({ store });
     const opening = threads.open('A');
     await tick();
-    await threads.remove('A');
+    const removed = threads.remove('A');
+    await tick();
+    expect(deletes).not.toHaveBeenCalled();
     answer();
-    await expect(opening).rejects.toThrow('That chat was deleted.');
+    await opening;
+    await removed;
     expect(threads.current).toBeNull();
+    expect([...store.records.keys()]).toEqual([]);
+  });
+
+  it('asks the host to delete a chat once, even when deleted twice', async () => {
+    const { store, release } = heldDelete([record(1)]);
+    const deletes = vi.spyOn(store, 'delete');
+    const threads = new HostThreadStore({ store });
+    const first = threads.remove('A');
+    const second = threads.remove('A');
+    await tick();
+    release();
+    await first;
+    await second;
+    expect(deletes).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a chat off the list while a second delete is on its way after the first failed', async () => {
+    const store = memoryStore([record(1), { ...record(1), id: 'B', title: 'B' }]);
+    const outcomes: (() => void)[] = [];
+    const remove = store.delete.bind(store);
+    store.delete = (id, options) =>
+      new Promise<void>((resolve, reject) => outcomes.push(outcomes.length === 0 ? () => reject(new Error('first failed')) : () => void remove(id, options).then(resolve)));
+    const threads = new HostThreadStore({ store });
+    const first = threads.remove('A');
+    const second = threads.remove('A');
+    await tick();
+    outcomes[0]!();
+    await expect(first).rejects.toThrow('first failed');
+    await tick();
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['B']);
+    outcomes[1]!();
+    await second;
+    expect([...store.records.keys()]).toEqual(['B']);
   });
 
   it('F2: lists no chat whose delete is on its way or done', async () => {

@@ -33,8 +33,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #saves = new Map<string, Promise<void>>();
   /** The conversation each turn belongs to: a reply ends in its own chat even after the viewer opened another. */
   #owners = new WeakMap<Turn, Conversation>();
-  /** Being deleted right now: not opened or listed until the delete fails. */
-  #deleting = new Set<string>();
+  /** Deletes asked for and not yet settled, by id: such a chat is not listed until they all fail. */
+  #deleting = new Map<string, number>();
   /** Deleted in this session. A write queued after the delete is dropped; the chat is never opened, listed or listed again. */
   #deleted = new Set<string>();
 
@@ -68,14 +68,16 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#emit('list-change');
   }
 
+  /**
+   * Loads in the chat's queue: after every save and delete asked before it, and never while one runs.
+   * A chat whose delete worked is refused, so it never becomes the open one, where nothing could save
+   * it; one whose delete failed still exists and opens as usual.
+   */
   async open(id: string): Promise<OpenedConversation> {
-    this.#refuseGone(id);
-    // A save of this chat still on its way (it was left mid-save) would otherwise be missing from what loads.
-    await this.#saves.get(id);
-    this.#refuseGone(id);
-    const record = await this.#deps.store.load(id, this.#scope());
-    // Deleted while it loaded: a deleted chat never becomes the open one, where nothing could save it.
-    this.#refuseGone(id);
+    const record = await this.#queue(id, async () => {
+      this.#refuseDeleted(id);
+      return this.#deps.store.load(id, this.#scope());
+    });
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {
@@ -204,14 +206,18 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * are dropped; if it failed, they run as usual, so the chat keeps everything said in it.
    */
   async remove(id: string): Promise<void> {
-    this.#deleting.add(id);
+    this.#deleting.set(id, (this.#deleting.get(id) ?? 0) + 1);
     await this.#queue(id, async () => {
-      // Settled inside the queue, so the next write for this chat sees the delete's outcome, never a pending one.
+      // Settled inside the queue, so the next step for this chat sees the delete's outcome, never a pending one.
       try {
+        // Already gone (a second delete asked before the first was done): a host need not be asked twice.
+        if (this.#deleted.has(id)) return;
         await this.#deps.store.delete(id, this.#scope());
         this.#deleted.add(id);
       } finally {
-        this.#deleting.delete(id);
+        const left = (this.#deleting.get(id) ?? 1) - 1;
+        if (left > 0) this.#deleting.set(id, left);
+        else this.#deleting.delete(id);
       }
     });
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
@@ -231,13 +237,13 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     });
   }
 
-  /** Deleted, or being deleted. */
+  /** Deleted, or being deleted: left out of the list. */
   #gone(id: string): boolean {
     return this.#deleted.has(id) || this.#deleting.has(id);
   }
 
-  #refuseGone(id: string): void {
-    if (this.#gone(id)) throw new Error('That chat was deleted.');
+  #refuseDeleted(id: string): void {
+    if (this.#deleted.has(id)) throw new Error('That chat was deleted.');
   }
 
   // Each save replaces the whole conversation, so everything that writes one goes one at a time, in order.
