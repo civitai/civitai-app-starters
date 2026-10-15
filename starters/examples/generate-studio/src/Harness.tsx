@@ -32,10 +32,29 @@ export function installDevTransport() {
 }
 
 /**
- * The per-generation budget the real token mint derives from THIS manifest:
- * `page.buzzBudgetPerGen`, 10 when absent, clamped to 1000.
+ * The platform's per-call budget rule, emulated for the mock host. Mirrors
+ * `BUZZ_BUDGET_DEFAULT`, `BUZZ_BUDGET_CAP` and `resolvePerCallBuzzBudget` in
+ * civitai `src/shared/constants/block-scope.constants.ts` (1000 and 5000 at
+ * civitai `55506e025f`). The live values are in the limits table,
+ * https://developer.civitai.com/apps/guide/text-to-image#limits-table — if they
+ * move, this mock drifts until these two are updated.
  */
-const BUDGET = Math.min(manifest.page.buzzBudgetPerGen ?? 10, 1000);
+const PLATFORM_BUZZ_BUDGET_DEFAULT = 1000;
+const PLATFORM_BUZZ_BUDGET_CAP = 5000;
+
+/**
+ * The per-generation budget the real token mint derives from THIS manifest's
+ * `page.buzzBudgetPerGen`: anything but an integer takes the default, a
+ * non-positive integer is 0 (the real mint refuses that), otherwise clamped to
+ * the cap.
+ */
+function resolveMockBuzzBudget(declared: unknown): number {
+  const candidate =
+    typeof declared === 'number' && Number.isInteger(declared) ? declared : PLATFORM_BUZZ_BUDGET_DEFAULT;
+  return candidate <= 0 ? 0 : Math.min(candidate, PLATFORM_BUZZ_BUDGET_CAP);
+}
+
+const BUDGET = resolveMockBuzzBudget(manifest.page.buzzBudgetPerGen);
 
 export function Harness({ children }: { children: ReactNode }) {
   if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;

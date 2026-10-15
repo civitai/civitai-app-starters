@@ -45,13 +45,15 @@ refreshed token to carry the scope before any panel prices anything.
 ## The budget: `page.buzzBudgetPerGen`
 
 A page app's per-run budget is its manifest's `page.buzzBudgetPerGen`. The host
-maps it to the token's `buzzBudget` (`src/pages/api/v1/block-tokens/index.ts:1284-1291`),
-clamps it to 1000, and **defaults to 10** when it is absent (`:183-184`). The
-starter recipe's ceiling is 90 (see below), so with the default every Comfy
-submit would be refused with `insufficient buzz budget: recipe ceiling 90
-exceeds budget 10` (`blocks.router.ts:9430-9438`). This manifest sets **300**,
-the same as the CLI's page-money template. It is a safety ceiling against a
-runaway app, never a forecast, and you are charged the real cost.
+maps it to the token's `buzzBudget` through `resolvePerCallBuzzBudget` (civitai
+`src/shared/constants/block-scope.constants.ts`): a platform default when the
+field is absent, clamped to a platform cap. The current values are in the
+[limits table](https://developer.civitai.com/apps/guide/text-to-image#limits-table).
+A submit priced above the budget is refused with `insufficient buzz budget`
+before it runs. The starter recipe's ceiling is 90 (see below). This manifest
+sets **300** explicitly, the same as the CLI's page-money template, so the
+example does not depend on the platform default. It is a safety ceiling against
+a runaway app, never a forecast, and you are charged the real cost.
 
 ## `customComfy`: a registered recipe
 
@@ -184,7 +186,9 @@ gate, and `?theme=light` switches to the light theme.
 
 `npm run dev:live` runs against the real backend and **spends your own Buzz**.
 See [the examples README](../README.md#against-the-real-backend-devlive). A dev
-token takes this manifest's `page.buzzBudgetPerGen`, capped at 1000, the same
+token takes this manifest's `page.buzzBudgetPerGen`, clamped to the same
 per-call cap as a production token (`DEV_BUZZ_BUDGET_CAP` in civitai's
-`src/server/services/blocks/dev-scoped-mint.service.ts`). That covers the
-recipe's ceiling of 90.
+`src/server/services/blocks/dev-scoped-mint.service.ts`, an alias of the
+production cap). The current default and cap are in the
+[limits table](https://developer.civitai.com/apps/guide/text-to-image#limits-table).
+That covers the recipe's ceiling of 90.

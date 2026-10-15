@@ -1393,9 +1393,7 @@ export type WorkflowBodyPassThroughStep = {
    *    a submit whose reservation exceeds that budget comes back `failed` with
    *    an `insufficient buzz budget` error before any Buzz is reserved. The
    *    current default and cap are in the pinned limits table,
-   *    https://developer.civitai.com/apps/guide/text-to-image.md#limits-table
-   *    (1,000 and 5,000 at civitai `55506e025f`, 2026-10-14 — read the table,
-   *    not this line).
+   *    https://developer.civitai.com/apps/guide/text-to-image.md#limits-table.
    *  - **Unquoted** (the orchestrator returned no price, or the quote could not
    *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
    *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10

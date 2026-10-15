@@ -43,13 +43,15 @@ Read the files in this order. Each one is small and owns one idea.
 ```
 
 `page.buzzBudgetPerGen` is the **per-generation safety ceiling** the token mint
-signs into `token.buzzBudget`. It is not a price forecast. If it is missing it
-defaults to **10**, which is below almost any real generation. Values above
-**1000** are clamped down to 1000. A value ≤ 0 is refused (civitai
-`src/pages/api/v1/block-tokens/index.ts:183-184, 344-360, 1284-1291, 1549-1557`).
-1000 is the cap, and a generous value costs nothing: you are charged the real
-price. A submit priced above the budget is refused before it runs, for every
-viewer, until you ship a new version.
+signs into `token.buzzBudget`. It is not a price forecast. If it is missing the
+platform default applies, and a value above the platform cap is clamped down to
+it; the current default and cap are in the
+[limits table](https://developer.civitai.com/apps/guide/text-to-image#limits-table).
+A value ≤ 0 is refused (civitai `resolvePerCallBuzzBudget` in
+`src/shared/constants/block-scope.constants.ts`, and `INVALID_BUZZ_BUDGET` in
+`src/pages/api/v1/block-tokens/index.ts`). A generous value costs nothing: you
+are charged the real price. A submit priced above the budget is refused before
+it runs, for every viewer, until you ship a new version.
 
 Both scopes are consent-gated. The token carries a scope only when it is
 declared, approved **and** granted. A signed-out viewer gets none
