@@ -363,8 +363,8 @@ other.** This is the opposite of `app.storage`, so do not carry that gate over:
   scope binding, not the `401` a missing token gives.
 - **A signed-in viewer is not automatically a permitted writer.** Writes clear a
   server-side minimum-trust gate (account age, completed onboarding, verified
-  email or a linked OAuth account, not banned or muted). Treat a write refusal as a normal outcome with a real
-  message in the UI, not an unexpected error.
+  email or a linked OAuth account, not banned or muted). Treat a write refusal
+  as a normal outcome with a real message in the UI, not an unexpected error.
 
 So gate the write affordances on `app.viewer`, and render the reads regardless.
 
