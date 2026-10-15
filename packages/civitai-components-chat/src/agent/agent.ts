@@ -5,6 +5,7 @@ import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ThreadStore } from '../store/thread-store.js';
 import type { Attachment, Turn } from '../types.js';
+import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
@@ -20,6 +21,15 @@ import { stripToolMarkup } from './tool-markup.js';
  */
 const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
   steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
+
+/** The words the page ended the reply on, when a call in its last step did (`beforeToolCall` with `stop: true`). */
+function endedByPage(steps: { toolResults: { output: unknown }[] }[]): string | undefined {
+  for (const result of steps.at(-1)?.toolResults ?? []) {
+    const message = endedReply(result.output);
+    if (message !== undefined) return message;
+  }
+  return undefined;
+}
 
 const LAST_STEP =
   'This is your last step this turn: you cannot call tools now. Tell the user plainly what got done and what did not, and that they can ask you to carry on. Do not say you are about to do something.';
@@ -109,6 +119,7 @@ export class Agent extends EventTarget {
     let since = Date.now();
     let toolsBuilt = false;
     let failedAt: TraceContext | undefined;
+    let stopped: string | undefined;
     const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
     try {
       const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
@@ -128,7 +139,8 @@ export class Agent extends EventTarget {
         system,
         messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context }),
         tools,
-        stopWhen: [stepCountIs(maxSteps), awaitsUser],
+        // A page that ended the reply ends it here: no further step is asked for (and paid).
+        stopWhen: [stepCountIs(maxSteps), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
         abortSignal: controller.signal,
         maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
         temperature: 0.7,
@@ -165,7 +177,8 @@ export class Agent extends EventTarget {
       else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where());
       else {
         turn.assistant.status = 'done';
-        if (steps >= maxSteps) turn.assistant.ranOut = true;
+        if (stopped !== undefined) turn.assistant.stopped = stopped;
+        else if (steps >= maxSteps) turn.assistant.ranOut = true;
       }
     } catch (error) {
       if (controller.signal.aborted) turn.assistant.status = 'aborted';

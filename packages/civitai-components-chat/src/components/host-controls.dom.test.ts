@@ -146,3 +146,92 @@ describe('civitai-chat beforeToolCall and tool-result', () => {
     expect(JSON.stringify(toolMessage)).toContain('Pinning is off on this page.');
   });
 });
+
+describe('civitai-chat beforeToolCall with stop', () => {
+  /** One step that calls each of `calls` in parallel. */
+  const toolCalls = (...calls: [name: string, args: unknown][]) =>
+    sse(
+      {
+        id: 'r1',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'm',
+        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: calls.map(([name, args], index) => ({ index, id: `call_${index + 1}`, type: 'function', function: { name, arguments: JSON.stringify(args) } })) }, finish_reason: null }],
+      },
+      { id: 'r1', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    );
+  const schema = { type: 'object', properties: { board: { type: 'string' } } };
+
+  /** A model that calls a tool on every step, as one that ignores a refusal does. */
+  async function run(gate: NonNullable<HTMLElementTagNameMap['civitai-chat']['beforeToolCall']>, firstStep: () => Response = () => toolCall('pin', { board: 'ideas' })) {
+    let steps = 0;
+    const fetch = vi.fn(async (url: unknown, init?: RequestInit): Promise<Response> => {
+      if (!String(url).includes('chat/completions')) return new Response('{}');
+      const body = JSON.parse(String(init?.body)) as { stream?: boolean };
+      // Naming the chat is a separate, non-streamed request.
+      if (!body.stream) return new Response(JSON.stringify({ id: 't', choices: [{ index: 0, message: { role: 'assistant', content: 'Pins' }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+      return ++steps === 1 ? firstStep() : toolCall('pin', { board: 'again' });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const pin = vi.fn(() => ({ pinned: true }));
+    const note = vi.fn(() => ({ noted: true }));
+    const { chat, root } = await mount((el) => {
+      el.tools = { pin: { description: 'Pin it to a board', inputSchema: schema, execute: pin }, note: { description: 'Write a note', inputSchema: schema, execute: note } };
+      el.beforeToolCall = gate;
+    });
+    const results: ChatToolResult[] = [];
+    document.body.addEventListener('tool-result', (event) => results.push((event as CustomEvent<ChatToolResult>).detail));
+    await chat.send('pin this');
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-thread .cvt-note')).not.toBeNull());
+    return { fetch, pin, note, results, root };
+  }
+  const streamed = (fetch: ReturnType<typeof vi.fn>) => completions(fetch).filter(([, init]) => JSON.parse(String((init as RequestInit).body)).stream);
+  const continueButton = (root: ShadowRoot) => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread .cvt-ran-out civitai-button')].find((b) => b.textContent?.trim() === 'Continue');
+
+  it('ends the reply: the call does not run, the model is not asked again, the page’s words show with Continue', async () => {
+    const { fetch, pin, results, root } = await run(() => ({ refuse: 'Tool budget reached.', stop: true, message: 'This reply used its tool budget.' }));
+    // Give a further step the time it would need to be requested.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(streamed(fetch)).toHaveLength(1);
+    expect(pin).not.toHaveBeenCalled();
+    expect(root.querySelector('civitai-chat-thread .cvt-ran-out')?.textContent).toContain('This reply used its tool budget.');
+    expect(root.querySelector('civitai-chat-thread civitai-alert')).toBeNull();
+    expect(results).toEqual([{ name: 'pin', input: { board: 'ideas' }, output: expect.objectContaining({ error: 'Tool budget reached.' }), isError: true, refused: 'Tool budget reached.', stopped: true }]);
+
+    continueButton(root)!.click();
+    await vi.waitFor(() => expect(streamed(fetch)).toHaveLength(2));
+    expect(String((streamed(fetch)[1]![1] as RequestInit).body)).toContain('Continue where you left off.');
+  });
+
+  it('says the reply was stopped in its own words when the page gives none', async () => {
+    const { fetch, root } = await run(() => ({ refuse: 'Tool budget reached.', stop: true }));
+    expect(streamed(fetch)).toHaveLength(1);
+    expect(root.querySelector('civitai-chat-thread .cvt-ran-out')?.textContent).toContain('The page ended this reply before the assistant could do more.');
+    expect(continueButton(root)).toBeDefined();
+  });
+
+  it('control: a refusal without stop goes back to the assistant and the reply goes on, as before', async () => {
+    let calls = 0;
+    const { fetch, pin, root } = await run(() => (++calls === 1 ? { refuse: 'Not that board.' } : { refuse: 'Tool budget reached.', stop: true }));
+    // The first refusal went back to the model, which asked again; only the second call ended the reply.
+    expect(streamed(fetch)).toHaveLength(2);
+    expect(pin).not.toHaveBeenCalled();
+    expect(calls).toBe(2);
+    expect(root.querySelector('civitai-chat-thread .cvt-ran-out')).not.toBeNull();
+  });
+
+  it('runs none of the calls made alongside a stopped one in the same step, whatever the gate says about them', async () => {
+    const { fetch, pin, note, results } = await run(
+      (name) => (name === 'pin' ? { refuse: 'Tool budget reached.', stop: true } : { allow: true }),
+      () => toolCalls(['pin', { board: 'ideas' }], ['note', { board: 'ideas' }]),
+    );
+    expect(streamed(fetch)).toHaveLength(1);
+    expect(pin).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+    expect(results.map((r) => [r.name, r.isError, r.stopped])).toEqual([
+      ['pin', true, true],
+      ['note', true, true],
+    ]);
+  });
+});
