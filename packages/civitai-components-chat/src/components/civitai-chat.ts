@@ -192,6 +192,8 @@ export class CivitaiChat extends LitElement {
   #activePanel?: Panel;
   #voice?: VoiceTranscript;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
+  /** What the signed-out message box held when sign-in finished, for the signed-in one to start with. */
+  #carriedDraft?: string;
   /** Counts the chats opened, so only the latest one's end clears the loader. */
   #opening = 0;
 
@@ -390,6 +392,10 @@ export class CivitaiChat extends LitElement {
     session.store.addEventListener('save-error', () => this.#toast('Could not save this chat. It is saved again with your next message.'));
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
+    // Into the new box as soon as it shows, before the last chat loads: nothing to flash empty or overwrite.
+    const carried = this.#carriedDraft;
+    this.#carriedDraft = undefined;
+    if (carried) void this.#composer().then((composer) => composer && (composer.draft = carried));
 
     // In a block the host already handed over the viewer, so the name needs no request. And `/me`
     // must not be asked there: it accepts an OAuth token but refuses the block-scoped one, so a
@@ -527,13 +533,9 @@ export class CivitaiChat extends LitElement {
       const app = await pending;
       // Signed in, the chat renders a new message box: what the viewer typed (or an example put there)
       // goes into it. Not a `draft` being sent, which would come back after it went.
-      const typed = draft === undefined ? ((await this.#composer())?.draft ?? '') : '';
+      this.#carriedDraft = draft === undefined ? ((await this.#composer())?.draft ?? '') : '';
       this.app = app;
       await this.#started;
-      if (typed) {
-        const composer = await this.#composer();
-        if (composer) composer.draft = typed;
-      }
       await then();
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code !== 'canceled') this.#toast(error instanceof Error && error.message ? error.message : 'Sign-in did not finish.', error);

@@ -157,6 +157,31 @@ describe('<civitai-chat> signing in keeps what the viewer was writing', () => {
     await vi.waitFor(() => expect(composer(chat).draft).toBe('a red bike'));
   });
 
+  it('a returning viewer sees the text in the new box while their last chat loads, and keeps what they type then', async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ lastConversationId: 'CONV1' }));
+    const { chat, app, finish } = await signedOut();
+    const held: (() => void)[] = [];
+    const load = () => held.splice(0).forEach((release) => release());
+    (app.orchestration as unknown as { queryWorkflows: unknown }).queryWorkflows = (query: { tags: string[] }) =>
+      query.tags.includes('cvt:conv:CONV1')
+        ? new Promise((resolve) => held.push(() => resolve({ items: [], next: '' })))
+        : Promise.resolve({ items: [], next: '' });
+    const before = composer(chat);
+    composer(chat).draft = 'a red bike';
+    chat.addFiles([photo()]);
+    finish();
+    await vi.waitFor(() => expect(composer(chat)).not.toBe(before));
+    // Signed in, the last chat still loading.
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('a red bike'));
+    composer(chat).draft = 'a blue bike';
+    for (let i = 0; i < 5; i++) await flush();
+    expect(held.length).toBeGreaterThan(0);
+    load();
+    await vi.waitFor(() => expect(chat.uploads).toHaveLength(1));
+    for (let i = 0; i < 5; i++) await flush();
+    expect(composer(chat).draft).toBe('a blue bike');
+  });
+
   it('a message sent while signed out is sent, not left in the box as well', async () => {
     const { chat, app, finish } = await signedOut();
     composer(chat).dispatchEvent(new CustomEvent('cvt-send', { detail: { text: 'a red bike' } }));
