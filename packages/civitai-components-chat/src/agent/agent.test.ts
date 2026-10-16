@@ -591,6 +591,25 @@ describe('a reply the network cut off', () => {
     expect(seen.at(-1)!.at(-1)).toEqual({ kind: 'text', text: 'Your bike is on its way!' });
   });
 
+  it('keeps the words of a step the stream closed after the error once, when the reply then fails', async () => {
+    const { agent, store } = cut(
+      [
+        [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't' },
+          { type: 'text-delta', id: 't', delta: 'Your bike is ' },
+          { type: 'error', error: new TypeError('network error') },
+          { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage },
+        ],
+      ],
+      [],
+    );
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant).toMatchObject({ status: 'error', errorKind: 'network' });
+    expect(assistant.messages).toEqual([{ role: 'assistant', content: 'Your bike is ' }]);
+  });
+
   it('asks again when the first request fails to fetch or the first answer is cut 0 bytes in', async () => {
     for (const first of [failedToFetch(), bodyCut(), cutAfter([], () => new TypeError('network error'))]) {
       const { agent, store, prompts } = cut([first, text('Hello!')]);
@@ -600,6 +619,9 @@ describe('a reply the network cut off', () => {
     }
   });
 
+  // The SDK runs tools only after an answer's finish chunk and the OpenAI-compatible provider emits
+  // tool calls only at the end of its stream, so a real cut does not produce this order today; the
+  // guard stands for a provider or SDK that runs a tool sooner.
   it('does not ask again when the cut step had already called a tool, which may have run', async () => {
     const { agent, store, prompts, generate, errors, retries } = cut([
       cutAfter([{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'call_1', toolName: 'generate_image', input: JSON.stringify({ prompt: 'a red bike' }) }], bodyCut),
@@ -610,7 +632,7 @@ describe('a reply the network cut off', () => {
     expect(generate.mock.calls.length).toBeLessThanOrEqual(1);
     expect(retries).toEqual([]);
     expect(errors).toHaveLength(1);
-    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'unknown', errorTrace: { name: 'AI_APICallError', cause: 'network error' } });
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'network', errorTrace: { name: 'AI_APICallError', cause: 'network error' } });
   });
 
   it('asks again when the cut came while a tool call was still being written, before it could run', async () => {

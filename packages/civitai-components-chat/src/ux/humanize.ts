@@ -1,3 +1,5 @@
+import { isNetworkDrop } from '../agent/network-retry.js';
+
 export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
 
 export interface HumanError {
@@ -137,6 +139,8 @@ function kindOf(error: unknown, detail: string): ErrorKind {
   if (status === 429) return 'rate_limit';
   if (status === 504 || status === 408 || /timed? ?out|timeout/.test(text)) return 'timeout';
   if (error instanceof TypeError && /fetch|network|load failed/.test(text)) return 'network';
+  // A 2xx answer whose body the browser cut when it dropped the connection.
+  if (isNetworkDrop(error)) return 'network';
   // The orchestrator reports a chat model it could not run as an error frame inside a 200 stream.
   if (/chat completion failed/.test(text)) return 'assistant_unavailable';
   if (status === 502 || status === 503) return 'unavailable';

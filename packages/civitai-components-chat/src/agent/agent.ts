@@ -150,6 +150,7 @@ export class Agent extends EventTarget {
       const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions });
       const history = buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context });
       const model = this.#deps.model();
+      const maxOutputTokens = outputTokenCap(this.#deps.maxOutputTokens?.());
       const retryDelays = this.#deps.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       // Counted from the steps that started, not from what they said: a last step that returns nothing
       // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
@@ -179,7 +180,7 @@ export class Agent extends EventTarget {
             // A page that ended the reply ends it here: no further step is asked for (and paid).
             stopWhen: [stepCountIs(maxSteps - before), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
             abortSignal: controller.signal,
-            maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
+            maxOutputTokens,
             temperature: 0.7,
             providerOptions: PROVIDER_OPTIONS,
             // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
@@ -224,9 +225,16 @@ export class Agent extends EventTarget {
           cutHere();
         }
         if (controller.signal.aborted || streamError === undefined || !atCut) break;
-        // Only a step that called no tool is asked for again: a tool call that came before the cut may
-        // already have run (and spent), and asking again would let the model call it a second time.
-        if (attempt >= retryDelays.length || atCut.calls > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
+        // Only a step that called no tool is asked for again, so a tool can never run twice. With this
+        // SDK (ai 6) a step's tools run only after its answer's `finish` chunk, which a cut answer never
+        // has, and the OpenAI-compatible provider emits tool calls only once its stream ends; so for them
+        // this does not fire today. It stands for a provider or SDK that runs a tool sooner.
+        if (attempt >= retryDelays.length || atCut.calls > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) {
+          // The reply fails: a step the stream closed after the error is not kept as finished, so its
+          // words are kept once (below), not twice.
+          completed = atCut.completed;
+          break;
+        }
         this.#retrying(turn, attempt + 1, errorTrace(streamError, failedAt ?? where()));
         // What the cut step showed goes; the step asked for again shows its own answer.
         this.live?.parts.splice(atCut.shown);
