@@ -389,7 +389,8 @@
                 "type": {
                   "text": "TemplateResult"
                 }
-              }
+              },
+              "description": "The `<img>`, `<video>` or `<audio>`, reporting back through `settleLoaded` and `settleFailed`."
             },
             {
               "kind": "field",
@@ -1186,8 +1187,8 @@
           "description": "",
           "name": "CivitaiButtonGroup",
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-button-group"
@@ -1718,6 +1719,7 @@
                 "text": "boolean"
               },
               "privacy": "protected",
+              "description": "Whether `required` is unsatisfied.",
               "readonly": true
             },
             {
@@ -2637,7 +2639,8 @@
                 "type": {
                   "text": "TemplateResult"
                 }
-              }
+              },
+              "description": "`<civitai-confirm-dialog>` is this with its two buttons filled in."
             },
             {
               "kind": "field",
@@ -3338,7 +3341,8 @@
                 "type": {
                   "text": "TemplateResult"
                 }
-              }
+              },
+              "description": "The `<img>`, `<video>` or `<audio>`, reporting back through `settleLoaded` and `settleFailed`."
             },
             {
               "kind": "field",
@@ -3721,8 +3725,8 @@
           "description": "",
           "name": "CivitaiInputGroup",
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-input-group"
@@ -6191,7 +6195,8 @@
               "name": "change",
               "type": {
                 "text": "Event"
-              }
+              },
+              "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."
             },
             {
               "name": "invalid",
@@ -6598,7 +6603,8 @@
                 "type": {
                   "text": "string | null"
                 }
-              }
+              },
+              "description": "What the form submits. A control that can submit nothing answers `null`."
             },
             {
               "kind": "field",
@@ -7606,7 +7612,8 @@
                 "type": {
                   "text": "string"
                 }
-              }
+              },
+              "description": "What the form submits. A control that can submit nothing answers `null`."
             },
             {
               "kind": "field",
@@ -7615,6 +7622,7 @@
                 "text": "boolean"
               },
               "privacy": "protected",
+              "description": "Whether `required` is unsatisfied.",
               "readonly": true
             },
             {
@@ -8084,7 +8092,8 @@
               "name": "change",
               "type": {
                 "text": "Event"
-              }
+              },
+              "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."
             },
             {
               "name": "invalid",
@@ -9761,6 +9770,7 @@
                 "text": "string"
               },
               "privacy": "protected",
+              "description": "`<civitai-switch>` is this control wearing `role=\"switch\"`.",
               "readonly": true
             },
             {
@@ -9813,6 +9823,7 @@
                 "text": "boolean"
               },
               "privacy": "protected",
+              "description": "Whether `required` is unsatisfied.",
               "readonly": true,
               "inheritedFrom": {
                 "name": "CivitaiCheckbox",
@@ -10489,8 +10500,8 @@
           "description": "",
           "name": "CivitaiTable",
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-table"
@@ -10551,8 +10562,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-tab-panel"
@@ -10673,8 +10684,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-tabs"
@@ -12707,8 +12718,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-toast-region"
@@ -13040,8 +13051,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElementBase",
-            "module": "/src/elements/html-element.js"
+            "name": "HTMLElement",
+            "package": "global:"
           },
           "customElement": true,
           "tagName": "civitai-tooltip"
@@ -13215,7 +13226,8 @@
                 "type": {
                   "text": "TemplateResult"
                 }
-              }
+              },
+              "description": "The `<img>`, `<video>` or `<audio>`, reporting back through `settleLoaded` and `settleFailed`."
             },
             {
               "kind": "field",
@@ -13809,7 +13821,7 @@
           ],
           "superclass": {
             "name": "CivitaiElement",
-            "module": "/src/elements/internals.js"
+            "module": "/src/elements/base.js"
           },
           "customElement": true,
           "tagName": "civitai-sign-in-button",
@@ -14509,7 +14521,7 @@
           ],
           "superclass": {
             "name": "CivitaiElement",
-            "module": "/src/elements/internals.js"
+            "module": "/src/elements/base.js"
           },
           "customElement": true,
           "tagName": "civitai-workflow-button",
@@ -14615,7 +14627,8 @@
           "superclass": {
             "name": "LitElement",
             "package": "lit"
-          }
+          },
+          "customElement": true
         }
       ],
       "exports": [

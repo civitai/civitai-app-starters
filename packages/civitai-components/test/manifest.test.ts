@@ -19,20 +19,44 @@ interface Entry {
 }
 
 interface Declaration {
+  kind?: string;
   customElement?: boolean;
   name?: string;
   tagName?: string;
-  superclass?: { name: string; module?: string };
+  superclass?: { name: string; module?: string; package?: string };
   attributes?: Entry[];
   members?: Entry[];
   cssParts?: Entry[];
   events?: Entry[];
 }
 
-const declarations = (manifest.modules as { declarations?: Declaration[] }[]).flatMap(
-  (module) => module.declarations ?? []
-);
-const documented = declarations.filter((d) => d.customElement);
+interface Module {
+  path: string;
+  declarations?: Declaration[];
+  exports?: { kind: string; declaration?: { name: string } }[];
+}
+
+const modules = manifest.modules as Module[];
+const declarations = modules.flatMap((module) => module.declarations ?? []);
+/**
+ * An element is a declaration with a TAG. `customElement` is not the test: the
+ * schema lets a tagless class carry it, and the analyzer sets it on the
+ * abstract `CivitaiElement` for extending LitElement.
+ */
+const documented = declarations.filter((d) => d.tagName !== undefined);
+
+/**
+ * The declaration a `superclass` names, found by its MODULE PATH only:
+ * `superclass.module` is `/src/x.js`, a module's `path` is `src/x.ts`. Never by
+ * name alone — a consumer cannot do that, so neither may the tests.
+ */
+const resolve = (ref: Declaration['superclass']): Declaration | undefined => {
+  if (!ref?.module) return undefined;
+  const path = ref.module.replace(/^\//, '').replace(/\.js$/, '.ts');
+  return modules
+    .find((module) => module.path === path)
+    ?.declarations?.find((d) => d.name === ref.name);
+};
 
 /** Tags the package actually registers, read from the element sources. */
 const elementSources = [elementsDir, join(pkgRoot, 'src/sdk')]
@@ -81,18 +105,9 @@ describe('custom-elements.json', () => {
     const sources = [sourceFor(tag)];
     let superclass = documented.find((d) => d.tagName === tag)?.superclass;
     while (superclass?.module?.startsWith('/src/')) {
-      // Read the module that DECLARES the class: the sdk elements import
-      // `CivitaiElement` through the `internals` barrel, which only re-exports it.
-      const name = superclass.name;
-      const declaring = (manifest.modules as { path: string; declarations?: Declaration[] }[]).find(
-        (module) => module.declarations?.some((d) => d.name === name)
-      )?.path;
-      const file = join(
-        pkgRoot,
-        declaring ?? superclass.module.replace(/^\//, '').replace(/\.js$/, '.ts')
-      );
+      const file = join(pkgRoot, superclass.module.replace(/^\//, '').replace(/\.js$/, '.ts'));
       sources.push(readFileSync(file, 'utf8'));
-      superclass = declarations.find((d) => d.name === superclass!.name)?.superclass;
+      superclass = resolve(superclass)?.superclass;
     }
     return sources.join('\n');
   };
@@ -134,20 +149,6 @@ describe('custom-elements.json', () => {
  * to carry its base's attributes or point at a base the manifest declares.
  */
 describe('custom-elements.json inheritance', () => {
-  const modules = manifest.modules as { path: string; declarations?: Declaration[] }[];
-  const exportsOf = manifest.modules as {
-    exports?: { kind: string; declaration?: { name: string } }[];
-  }[];
-
-  /** `superclass.module` is `/src/x.js`; a module's `path` is `src/x.ts`. */
-  const resolve = (ref: Declaration['superclass']): Declaration | undefined => {
-    if (!ref?.module) return undefined;
-    const path = ref.module.replace(/^\//, '').replace(/\.js$/, '.ts');
-    return modules
-      .find((module) => module.path === path)
-      ?.declarations?.find((d) => d.name === ref.name);
-  };
-
   /** Own attributes plus every in-package ancestor's; an unresolvable one throws. */
   const attributesOf = (declaration: Declaration): Set<string> => {
     const names = new Set((declaration.attributes ?? []).map((a) => a.name));
@@ -161,15 +162,16 @@ describe('custom-elements.json inheritance', () => {
     return names;
   };
 
-  const chainOf = (declaration: Declaration): string[] => {
-    const chain: string[] = [];
-    let ref = declaration.superclass;
-    while (ref) {
-      chain.push(ref.name);
-      ref = (resolve(ref) ?? declarations.find((d) => d.name === ref!.name))?.superclass;
+  /** The ancestors a consumer can reach: each `superclass` resolved by module path. */
+  const ancestorsOf = (declaration: Declaration): Declaration[] => {
+    const chain: Declaration[] = [];
+    for (let next = resolve(declaration.superclass); next; next = resolve(next.superclass)) {
+      chain.push(next);
     }
     return chain;
   };
+  const chainOf = (declaration: Declaration): string[] =>
+    ancestorsOf(declaration).map((d) => d.name!);
 
   /** Which element classes extend `CivitaiField`, at any depth, read from the sources. */
   const fieldClassesInSource = (): string[] => {
@@ -210,6 +212,22 @@ describe('custom-elements.json inheritance', () => {
   const modulePathOf = (name: string): string =>
     modules.find((module) => module.declarations?.some((d) => d.name === name))!.path;
 
+  /**
+   * Every `superclass` must lead somewhere a consumer can follow: a declaration
+   * in this manifest at the module it names, or a root qualified by `package`
+   * (`lit`, or `global:` for `HTMLElement`). An import alias or a re-export
+   * barrel named as the module is a dead end.
+   */
+  it.each(documented.map((d) => d.tagName!))('%s names a superclass a consumer can resolve', (tag) => {
+    const element = documented.find((d) => d.tagName === tag)!;
+    for (const declaration of [element, ...ancestorsOf(element)]) {
+      const ref = declaration.superclass;
+      if (ref === undefined) continue;
+      const reachable = ref.package !== undefined || resolve(ref) !== undefined;
+      expect(reachable, `${declaration.name} extends ${JSON.stringify(ref)}`).toBe(true);
+    }
+  });
+
   it('declares the CivitaiField base with the attributes its source declares', () => {
     expect(field, 'CivitaiField is analysed').toBeDefined();
     const declared = sourceAttributes('src/elements/field-base.ts', 'CivitaiField');
@@ -234,10 +252,8 @@ describe('custom-elements.json inheritance', () => {
   it('counts at least one redeclared attribute, so the case above is exercised', () => {
     const redeclared = documented.filter((element) =>
       sourceAttributes(modulePathOf(element.name!), element.name!).some((name) =>
-        chainOf(element).some((ancestor) =>
-          declarations
-            .find((d) => d.name === ancestor)
-            ?.attributes?.some((a) => a.name === name && a.inheritedFrom === undefined)
+        ancestorsOf(element).some((ancestor) =>
+          ancestor.attributes?.some((a) => a.name === name && a.inheritedFrom === undefined)
         )
       )
     );
@@ -250,16 +266,14 @@ describe('custom-elements.json inheritance', () => {
    */
   it.each(documented.map((d) => d.tagName!))('%s names the nearest declaring ancestor', (tag) => {
     const element = documented.find((d) => d.tagName === tag)!;
-    const chain = chainOf(element);
+    const chain = ancestorsOf(element);
     for (const kind of ['attributes', 'members', 'events'] as const) {
       for (const entry of element[kind] ?? []) {
         if (!entry.inheritedFrom) continue;
         const nearest = chain.find((ancestor) =>
-          declarations
-            .find((d) => d.name === ancestor)
-            ?.[kind]?.some((own) => own.name === entry.name && own.inheritedFrom === undefined)
+          ancestor[kind]?.some((own) => own.name === entry.name && own.inheritedFrom === undefined)
         );
-        expect(entry.inheritedFrom.name, `<${tag}> ${kind} ${entry.name}`).toBe(nearest);
+        expect(entry.inheritedFrom.name, `<${tag}> ${kind} ${entry.name}`).toBe(nearest?.name);
       }
     }
   });
@@ -292,10 +306,42 @@ describe('custom-elements.json inheritance', () => {
     }
   });
 
-  it('keeps the base classes out of the element set', () => {
+  /**
+   * `CivitaiElement` re-dispatches the events in its `RETARGETED` list out of
+   * every shadow root, so each is an event of the base and of every subclass.
+   * Read the list here independently of the analyzer config that injects them.
+   */
+  const retargeted = (): string[] => {
+    const lines = readFileSync(join(elementsDir, 'base.ts'), 'utf8').split('\n');
+    const start = lines.findIndex((line) => line.startsWith('const RETARGETED'));
+    const end = lines.findIndex((line, index) => index > start && line.startsWith('];'));
+    return lines
+      .slice(start + 1, end)
+      .flatMap((line) => [...line.matchAll(/type:\s*'([^']+)'/g)].map((m) => m[1]!))
+      .sort();
+  };
+
+  it('documents the events CivitaiElement re-dispatches, on the base and every subclass', () => {
+    const types = retargeted();
+    expect(types.length, 'the RETARGETED list parsed to some event types').toBeGreaterThan(0);
+
+    const base = declarations.find((d) => d.name === 'CivitaiElement');
+    expect((base?.events ?? []).map((e) => e.name).sort()).toEqual(types);
+
+    const subclasses = declarations.filter((d) => chainOf(d).includes('CivitaiElement'));
+    expect(subclasses.length, 'some declarations extend CivitaiElement').toBeGreaterThan(0);
+    for (const subclass of subclasses) {
+      const events = new Set((subclass.events ?? []).map((e) => e.name));
+      for (const type of types) {
+        expect(events.has(type), `${subclass.name} documents ${type}`).toBe(true);
+      }
+    }
+  });
+
+  it('keeps the base classes out of the tag set', () => {
     const bases = ['CivitaiElement', 'CivitaiField', 'CivitaiMediaElement'];
     const definitions = new Set(
-      exportsOf.flatMap((module) =>
+      modules.flatMap((module) =>
         (module.exports ?? [])
           .filter((e) => e.kind === 'custom-element-definition')
           .map((e) => e.declaration?.name)
@@ -304,12 +350,68 @@ describe('custom-elements.json inheritance', () => {
     for (const name of bases) {
       const declaration = declarations.find((d) => d.name === name);
       expect(declaration, `${name} is analysed`).toBeDefined();
-      expect(declaration?.customElement, `${name} is no element`).toBeUndefined();
       expect(declaration?.tagName, `${name} has no tag`).toBeUndefined();
       expect(definitions.has(name), `${name} is never defined`).toBe(false);
     }
     // Every tag anywhere in the manifest is one the package registers.
     const tagged = declarations.filter((d) => d.tagName).map((d) => d.tagName);
     expect(tagged.sort()).toEqual([...registered].sort());
+  });
+});
+
+/**
+ * `resolveInitializer` is the analyzer's INTERNAL marker for a field assigned
+ * a variable; its own pass resolves and deletes it. The schema has no such key,
+ * so finding one means a later step put back a stale copy of the entry.
+ */
+const resolveInitializerPaths = (value: unknown, path = '$'): string[] => {
+  if (Array.isArray(value)) return value.flatMap((item, i) => resolveInitializerPaths(item, `${path}[${i}]`));
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, child]) => [
+    ...(key === 'resolveInitializer' ? [`${path}.${key}`] : []),
+    ...resolveInitializerPaths(child, `${path}.${key}`),
+  ]);
+};
+
+describe('custom-elements.json initializers', () => {
+  it('carries no internal resolveInitializer key', () => {
+    expect(resolveInitializerPaths(manifest)).toEqual([]);
+  });
+
+  /**
+   * The package has no field initialised from an imported constant today, so
+   * a committed fixture stands in: `civitai-probe` redeclares its base's
+   * `probeField` as `= PROBE_DEFAULT`, imported from the base module. Run the
+   * analyzer with this package's own plugin over it.
+   */
+  it('resolves an imported default on a redeclared field', async () => {
+    const { create, ts } = await import('@custom-elements-manifest/analyzer');
+    const { litPlugin } = await import(
+      '@custom-elements-manifest/analyzer/src/features/framework-plugins/lit/lit.js'
+    );
+    const { createCivitaiElementsPlugin } = await import('../custom-elements-manifest.config.mjs');
+
+    const files = ['probe-base.ts', 'civitai-probe.ts'].map((file) =>
+      join('test/fixtures/cem-probe', file)
+    );
+    const probe = create({
+      modules: files.map((file) =>
+        ts.createSourceFile(file, readFileSync(join(pkgRoot, file), 'utf8'), ts.ScriptTarget.ES2015, true)
+      ),
+      plugins: [...litPlugin(), createCivitaiElementsPlugin()],
+      context: { dev: false },
+    }) as { modules: Module[] };
+
+    expect(resolveInitializerPaths(probe)).toEqual([]);
+    const element = probe.modules
+      .flatMap((module) => module.declarations ?? [])
+      .find((d) => d.tagName === 'civitai-probe');
+    expect(element, 'the probe element was analysed').toBeDefined();
+    const field = element?.members?.find((m) => m.name === 'probeField') as
+      | (Entry & { default?: string; type?: { text: string } })
+      | undefined;
+    expect(field?.inheritedFrom, 'probeField is its own').toBeUndefined();
+    expect(field?.default).toBe("'md'");
+    expect(field?.type?.text).toBe('ProbeSize');
   });
 });

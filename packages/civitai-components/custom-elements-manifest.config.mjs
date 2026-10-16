@@ -97,17 +97,86 @@ function linkModule(moduleDoc) {
   }
 }
 
+/** `/src/x.js`, as a superclass names it, → the `src/x.ts` a module's path is. */
+const sourcePath = (specifier) => specifier.replace(/^\//, '').replace(/\.js$/, '.ts');
+
+/** A relative import seen from `fromPath`, as a superclass `module` spells it. */
+function resolveSpecifier(fromPath, specifier) {
+  const parts = fromPath.split('/').slice(0, -1);
+  for (const segment of specifier.split('/')) {
+    if (segment === '..') parts.pop();
+    else if (segment !== '.') parts.push(segment);
+  }
+  return `/${parts.join('/')}`;
+}
+
+/**
+ * Make `superclass` point at a declaration the manifest holds. The analyzer
+ * records the module a class was IMPORTED from, which need not declare it:
+ *
+ * - a re-export barrel (`export { CivitaiElement } from './base.js'`, the sdk
+ *   elements' `internals`) is followed to the module that declares the class;
+ * - an alias whose value is a global constructor (`HTMLElementBase`, which is
+ *   `HTMLElement` cast for Node) becomes that global, as the schema spells a
+ *   root: `{ name, package: 'global:' }`.
+ *
+ * Both are read from the sources, so a new barrel or alias needs no edit here.
+ */
+function resolveSuperclass(ref, declaresClass) {
+  let current = ref;
+  for (let hops = 0; hops < 8 && current?.module?.startsWith('/'); hops += 1) {
+    const path = sourcePath(current.module);
+    if (declaresClass(path, current.name)) return current;
+
+    let source;
+    try {
+      source = readFileSync(path, 'utf8');
+    } catch {
+      return current;
+    }
+
+    const reexport = [...source.matchAll(/export\s*\{([^}]*)\}\s*from\s*'([^']+)'/g)].find(
+      ([, names]) => names.split(',').some((name) => name.trim() === current.name)
+    );
+    if (reexport) {
+      current = { name: current.name, module: resolveSpecifier(path, reexport[2]) };
+      continue;
+    }
+
+    const alias = new RegExp(`export const ${current.name}\\b[^=]*=\\s*([\\s\\S]*?);`).exec(source);
+    const initializer = alias?.[1].trim();
+    const root = initializer && (/^(\w+)$/.exec(initializer) ?? /as typeof (\w+)$/.exec(initializer));
+    // Neither imported nor declared in the module, so the name is a global.
+    const local =
+      root &&
+      new RegExp(
+        `import[^;]*\\b${root[1]}\\b[^;]*from|\\b(?:class|const|let|var|function)\\s+${root[1]}\\b`
+      ).test(source);
+    if (root && !local) return { name: root[1], package: 'global:' };
+    return current;
+  }
+  return current;
+}
+
 /**
  * The analyzer's inheritance pass gets two things wrong once a chain is longer
  * than one class: an entry a subclass DECLARES ITSELF is marked `inheritedFrom`
  * the base and takes the base's `type` (segmented-control's own `size` became
  * the field's `FieldSize`), and an inherited entry names the DEEPEST ancestor,
  * not the nearest one that declares it (a switch's `value` is the checkbox's,
- * not the field's). So record what each class declares before that pass, and
- * resolve every copied entry afterwards: its own, else its nearest declarer's.
+ * not the field's).
+ *
+ * Only those fields are corrected. Everything else in an entry is the
+ * analyzer's FINAL word — including what its own `resolveInitializers` pass
+ * resolved, which runs after this plugin's module phase — so nothing recorded
+ * here is ever copied in wholesale.
  */
-function createCivitaiElementsPlugin() {
-  /** Class name → { module, own: { kind → entries } }, as declared. */
+export function createCivitaiElementsPlugin() {
+  /**
+   * Class name → { module, superclass, own: kind → name → declared fields },
+   * recorded before inheritance: just `type`, `privacy` and the analyzer's
+   * pending `resolveInitializer`, the inputs to the correction below.
+   */
   const declared = new Map();
 
   const recordOwn = (moduleDoc) => {
@@ -115,7 +184,17 @@ function createCivitaiElementsPlugin() {
       if (declaration.kind !== 'class') continue;
       const own = {};
       for (const kind of INHERITED_KINDS) {
-        if (declaration[kind]) own[kind] = structuredClone(declaration[kind]);
+        own[kind] = new Map(
+          (declaration[kind] ?? []).map((entry) => [
+            entry.name,
+            structuredClone({
+              type: entry.type,
+              privacy: entry.privacy,
+              resolveInitializer: entry.resolveInitializer,
+              default: entry.default,
+            }),
+          ])
+        );
       }
       declared.set(declaration.name, {
         module: moduleDoc.path,
@@ -125,26 +204,78 @@ function createCivitaiElementsPlugin() {
     }
   };
 
-  const resolveInheritance = (declaration) => {
+  /**
+   * The variable a field's initializer names (`probeField = PROBE_DEFAULT`).
+   * The analyzer's `resolveInitializers` looks it up by the IMPORT specifier,
+   * `/x.js`, against module paths that are `x.ts`, so in a TypeScript package
+   * it never finds it: the default stays the identifier and the type empty.
+   */
+  const initializerOf = (manifest, own) => {
+    if (!own?.resolveInitializer?.module) return undefined;
+    const path = sourcePath(own.resolveInitializer.module);
+    return manifest.modules
+      ?.find((module) => module.path === path)
+      ?.declarations?.find((d) => d.name === own.default);
+  };
+  const initializerType = (manifest, own) => initializerOf(manifest, own)?.type;
+
+  /** After `restoreOwn`: an own field initialised from an imported constant takes its value and type. */
+  const resolveInitializers = (manifest, declaration) => {
+    const self = declared.get(declaration.name);
+    if (!self) return;
+    for (const entry of declaration.members ?? []) {
+      const own = self.own.members.get(entry.name);
+      const variable = initializerOf(manifest, own);
+      if (!variable || entry.inheritedFrom) continue;
+      if (variable.default !== undefined && entry.default === own.default) {
+        entry.default = variable.default;
+      }
+      if (!entry.type && variable.type) entry.type = variable.type;
+    }
+  };
+
+  /** First: an entry the class declares itself is its own, with its own type. */
+  const restoreOwn = (manifest, declaration) => {
     const self = declared.get(declaration.name);
     if (!self) return;
     for (const kind of INHERITED_KINDS) {
-      if (!declaration[kind]) continue;
-      declaration[kind] = declaration[kind].map((entry) => {
-        const own = self.own[kind]?.find((item) => item.name === entry.name);
-        if (own) return structuredClone(own);
-        for (
-          let ancestor = declared.get(self.superclass), name = self.superclass;
-          ancestor;
-          name = ancestor.superclass, ancestor = declared.get(ancestor.superclass)
-        ) {
-          const found = ancestor.own[kind]?.find((item) => item.name === entry.name);
-          if (found) {
-            return { ...structuredClone(found), inheritedFrom: { name, module: ancestor.module } };
-          }
+      for (const entry of declaration[kind] ?? []) {
+        const own = self.own[kind].get(entry.name);
+        if (!own || !entry.inheritedFrom) continue;
+        delete entry.inheritedFrom;
+        const type = own.type ?? initializerType(manifest, own);
+        if (type) entry.type = type;
+        if (own.privacy) entry.privacy = own.privacy;
+        else delete entry.privacy;
+      }
+    }
+  };
+
+  /** Last: an inherited entry names, and carries the value of, its nearest declarer. */
+  const nearestDeclarer = (manifest, declaration, byName) => {
+    const self = declared.get(declaration.name);
+    if (!self) return;
+    for (const kind of INHERITED_KINDS) {
+      for (const entry of declaration[kind] ?? []) {
+        if (!entry.inheritedFrom) continue;
+        let name = self.superclass;
+        while (name && declared.has(name) && !declared.get(name).own[kind].has(entry.name)) {
+          name = declared.get(name).superclass;
         }
-        return entry;
-      });
+        if (!name || !declared.has(name)) continue;
+        const source = byName.get(name)?.[kind]?.find((item) => item.name === entry.name);
+        if (entry.inheritedFrom.name !== name) {
+          entry.inheritedFrom = { name, module: declared.get(name).module };
+          if (source?.type) entry.type = source.type;
+          if (source?.privacy) entry.privacy = source.privacy;
+          else delete entry.privacy;
+        }
+        // A copy taken before the declarer's initializer was resolved.
+        if (source && declared.get(name).own[kind].get(entry.name)?.resolveInitializer) {
+          entry.default = source.default;
+          if (source.type) entry.type = source.type;
+        }
+      }
     }
   };
 
@@ -154,18 +285,26 @@ function createCivitaiElementsPlugin() {
       linkModule(moduleDoc);
       recordOwn(moduleDoc);
     },
-    packageLinkPhase({ customElementsManifest }) {
-      for (const module of customElementsManifest.modules ?? []) {
-        for (const declaration of module.declarations ?? []) {
-          resolveInheritance(declaration);
-          // `defineElement` is the only registration, so a class it never
-          // named is no element. The analyzer marks any class that directly
-          // extends LitElement as one — the abstract, tagless `CivitaiElement`.
-          if (declaration.customElement && declaration.tagName === undefined) {
-            delete declaration.customElement;
-          }
+    packageLinkPhase({ customElementsManifest: manifest }) {
+      const classes = (manifest.modules ?? []).flatMap((module) =>
+        (module.declarations ?? []).filter((d) => d.kind === 'class')
+      );
+      const byName = new Map(classes.map((d) => [d.name, d]));
+      const declaresClass = (path, name) =>
+        manifest.modules?.some(
+          (module) => module.path === path && module.declarations?.some((d) => d.name === name)
+        ) ?? false;
+
+      for (const declaration of classes) {
+        if (declaration.superclass) {
+          declaration.superclass = resolveSuperclass(declaration.superclass, declaresClass);
         }
+        restoreOwn(manifest, declaration);
+        resolveInitializers(manifest, declaration);
       }
+      // After every class's own entries are right, since a nearest declarer's
+      // entry is the source of its subclasses' copies.
+      for (const declaration of classes) nearestDeclarer(manifest, declaration, byName);
     },
   };
 }
@@ -175,7 +314,7 @@ export default {
    * The base classes are analysed too: an element's shared attributes (every
    * form control's `label`, `required`, `size`…) are declared there, and the
    * analyzer can only record what a subclass inherits from a class it has seen.
-   * They define no tag, so the plugin keeps them out of the element set.
+   * They define no tag, so none of them is in the tag set.
    */
   globs: [
     'src/elements/civitai-*.ts',
