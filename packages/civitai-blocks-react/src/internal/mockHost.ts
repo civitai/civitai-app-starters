@@ -1609,7 +1609,8 @@ export interface MockHostOptions {
    * image, as the host re-encodes it.
    *
    * The host's checks run in the host's order (`./mediaUploadBytes.ts`): kind,
-   * purpose, then for bytes an invalid buffer, the 64 MB cap, the bytes-mode
+   * purpose, then for bytes an invalid buffer, the cap (24 MB for an image,
+   * 64 MB for video and audio), the bytes-mode
    * window (8 uploads or 128 MB per 60 s, per install) → `busy`, the content
    * sniff per kind, and a declared `mimeType` that disagrees. A model-slot
    * `context` answers `unsupported on this host`. 🔴 The mock cannot decode
@@ -1620,8 +1621,13 @@ export interface MockHostOptions {
   cannedMediaUploads?: MockMediaUploads;
   /**
    * Force an `OPEN_MEDIA_UPLOAD` that passed the checks above to reply with
-   * this `error` (e.g. `this file has no video track`). A bytes upload it fails
-   * still counts against the window, as on the host. Absent → it succeeds.
+   * this `error`: a host-only refusal such as `this file has no video track`,
+   * `media upload failed — please try again`, or
+   * `this video was refused by the upload service`. A bytes upload it fails
+   * still counts against the window, as on the host. `no block token` is the
+   * exception: like the host, the mock refuses a bytes upload with it right
+   * after the buffer check, before the cap and the window, and does not count
+   * it. Absent → it succeeds.
    * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
    */
   mediaUploadError?: string;

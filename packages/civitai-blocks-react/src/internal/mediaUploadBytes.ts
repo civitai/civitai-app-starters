@@ -25,8 +25,13 @@ import type { BlockMediaKind, BlockMediaUploadInfo } from '@civitai/app-sdk/bloc
 
 import { sniffImageBytes } from './saveBytes.js';
 
-/** The cap on one upload: 64 MiB of raw bytes (the consumer-blob upload cap). */
+/** The cap on one VIDEO or AUDIO upload: 64 MiB of raw bytes (the consumer-blob upload cap). */
 export const MEDIA_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
+/**
+ * The cap on one IMAGE upload: 24 MiB. Lower than {@link MEDIA_UPLOAD_MAX_BYTES}
+ * because the host decodes an image in full before it resizes it.
+ */
+export const MEDIA_UPLOAD_IMAGE_MAX_BYTES = 24 * 1024 * 1024;
 /** The bytes-mode rolling window: per this many milliseconds, per mounted page host… */
 export const MEDIA_UPLOAD_WINDOW_MS = 60_000;
 /** …at most this many admitted bytes uploads… */
@@ -38,7 +43,12 @@ export const MEDIA_UPLOAD_MAX_BYTES_PER_WINDOW = 2 * MEDIA_UPLOAD_MAX_BYTES;
 export const MEDIA_UPLOAD_INVALID_ERROR = 'invalid media-upload request';
 export const MEDIA_UPLOAD_KIND_ERROR = "kind must be 'image', 'video' or 'audio'";
 export const MEDIA_UPLOAD_PURPOSE_ERROR = "purpose must be 'generationSource'";
+/** Over {@link MEDIA_UPLOAD_MAX_BYTES} (video, audio). */
 export const MEDIA_UPLOAD_TOO_LARGE_ERROR = 'file exceeds the 64 MB upload limit';
+/** Over {@link MEDIA_UPLOAD_IMAGE_MAX_BYTES} (image). */
+export const MEDIA_UPLOAD_IMAGE_TOO_LARGE_ERROR = 'file exceeds the 24 MB image upload limit';
+/** Bytes mode only: the host holds no block token. Checked before the cap and the window. */
+export const MEDIA_UPLOAD_NO_TOKEN_ERROR = 'no block token';
 /** The sniffed content is not one of the requested kind's types. */
 export const MEDIA_UPLOAD_TYPE_ERROR: Readonly<Record<BlockMediaKind, string>> = {
   image: 'images must be PNG, JPEG or WebP',
@@ -54,6 +64,13 @@ export const MEDIA_UPLOAD_KINDS: readonly BlockMediaKind[] = ['image', 'video', 
 
 export function isMediaKind(v: unknown): v is BlockMediaKind {
   return typeof v === 'string' && (MEDIA_UPLOAD_KINDS as readonly string[]).includes(v);
+}
+
+/** The per-file cap for a kind, and the refusal past it. */
+export function mediaUploadCap(kind: BlockMediaKind): { maxBytes: number; error: string } {
+  return kind === 'image'
+    ? { maxBytes: MEDIA_UPLOAD_IMAGE_MAX_BYTES, error: MEDIA_UPLOAD_IMAGE_TOO_LARGE_ERROR }
+    : { maxBytes: MEDIA_UPLOAD_MAX_BYTES, error: MEDIA_UPLOAD_TOO_LARGE_ERROR };
 }
 
 /** One admitted bytes upload in the window: when, and how many bytes. */
@@ -139,20 +156,24 @@ function windowHasRoom(live: readonly MediaUploadWindowEntry[], size: number): b
  *      picks);
  *   3. `bytes` not a non-empty `ArrayBuffer`, or a non-string `mimeType` →
  *      invalid;
- *   4. over the cap → too large, FIRST, so an over-cap file is never `busy`
- *      (a retry could never succeed);
- *   5. the window, NOT recording, so a full window refuses `busy` before any
+ *   4. no block token (`opts.noToken`) → `no block token`, before the cap
+ *      and the window;
+ *   5. over the kind's cap ({@link mediaUploadCap}: 24 MiB for an image,
+ *      64 MiB for video and audio) → too large, before the window, so an
+ *      over-cap file is never `busy` (a retry could never succeed);
+ *   6. the window, NOT recording, so a full window refuses `busy` before any
  *      sniffing;
- *   6. the sniffed content in the kind's set → else the kind's type error;
- *   7. a present `mimeType` (normalised) equal to the sniffed type → else
+ *   7. the sniffed content in the kind's set → else the kind's type error;
+ *   8. a present `mimeType` (normalised) equal to the sniffed type → else
  *      mismatch;
- *   8. record the upload in the window. Only an upload that will run counts.
+ *   9. record the upload in the window. Only an upload that will run counts.
  * Returns the pruned window to store back.
  */
 export function admitMediaUpload(
   raw: { kind?: unknown; purpose?: unknown; bytes?: unknown; mimeType?: unknown },
   recent: readonly MediaUploadWindowEntry[],
   now: number,
+  opts: { noToken?: boolean } = {},
 ): {
   result:
     | { ok: true; mode: 'picker'; kind: BlockMediaKind }
@@ -174,7 +195,9 @@ export function admitMediaUpload(
     return refuse(MEDIA_UPLOAD_INVALID_ERROR);
   }
   const size = bytes.byteLength;
-  if (size > MEDIA_UPLOAD_MAX_BYTES) return refuse(MEDIA_UPLOAD_TOO_LARGE_ERROR);
+  if (opts.noToken) return refuse(MEDIA_UPLOAD_NO_TOKEN_ERROR);
+  const cap = mediaUploadCap(kind);
+  if (size > cap.maxBytes) return refuse(cap.error);
   if (!windowHasRoom(live, size)) return refuse(MEDIA_UPLOAD_BUSY_ERROR);
   const sniffed = sniffMediaBytes(kind, new Uint8Array(bytes));
   if (!sniffed) return refuse(MEDIA_UPLOAD_TYPE_ERROR[kind]);
@@ -239,7 +262,9 @@ export const DEFAULT_MOCK_MEDIA_UPLOADS: Readonly<Record<BlockMediaKind, BlockMe
  *  - `forcedError`, when set, replaces a success: the stand-in for the
  *    decode and upload failures the mock cannot produce. A bytes upload it
  *    fails has still been admitted, so it still counts against the window, as
- *    on the host.
+ *    on the host. ONE value is placed where the host checks it instead:
+ *    `no block token` refuses a bytes upload right after the buffer check,
+ *    before the cap and the window, and is not counted.
  */
 export function mockMediaUploadReply(args: {
   payload: { kind?: unknown; purpose?: unknown; bytes?: unknown; mimeType?: unknown };
@@ -251,7 +276,9 @@ export function mockMediaUploadReply(args: {
   reply: { selected: BlockMediaUploadInfo } | { error: string } | Record<string, never>;
   recent: MediaUploadWindowEntry[];
 } {
-  const admitted = admitMediaUpload(args.payload, args.recent, args.now);
+  const admitted = admitMediaUpload(args.payload, args.recent, args.now, {
+    noToken: args.forcedError === MEDIA_UPLOAD_NO_TOKEN_ERROR,
+  });
   const { result, recent } = admitted;
   if (!result.ok) return { reply: { error: result.error }, recent };
   if (args.forcedError !== undefined) return { reply: { error: args.forcedError }, recent };

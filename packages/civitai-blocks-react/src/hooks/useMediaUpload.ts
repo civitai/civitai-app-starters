@@ -5,9 +5,8 @@ import type { BlockMediaKind, BlockMediaUploadInfo } from '@civitai/app-sdk/bloc
 import {
   MEDIA_UPLOAD_INVALID_ERROR,
   MEDIA_UPLOAD_KIND_ERROR,
-  MEDIA_UPLOAD_MAX_BYTES,
-  MEDIA_UPLOAD_TOO_LARGE_ERROR,
   isMediaKind,
+  mediaUploadCap,
 } from '../internal/mediaUploadBytes.js';
 import { throwOnReplyError } from '../internal/replyError.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
@@ -35,7 +34,8 @@ export interface MediaUploadBytesOptions {
   /** What the bytes are: `'image'`, `'video'` or `'audio'`. */
   kind: BlockMediaKind;
   /**
-   * The file, as an `ArrayBuffer` (`await blob.arrayBuffer()`). At most 64 MB.
+   * The file, as an `ArrayBuffer` (`await blob.arrayBuffer()`). At most 24 MB
+   * for an image and 64 MB for video or audio.
    * Copied across `postMessage`, never transferred. A `Blob`, a typed array or
    * an empty buffer is refused before sending.
    */
@@ -82,13 +82,14 @@ export interface UseMediaUpload {
  *
  * The type is decided by the file's content: images PNG, JPEG or WebP (the
  * host resizes them to 64–2048 px per side and re-encodes them as JPEG);
- * videos MP4 or WebM; audio MP3, WAV or WebM. At most 64 MB per file; bytes
+ * videos MP4 or WebM; audio MP3, WAV or WebM. At most 24 MB per image (the
+ * host decodes it in full before resizing) and 64 MB per video or audio; bytes
  * mode also allows at most 8 uploads and 128 MB per 60 s per page, and
  * rejects `busy` past that (retry later).
  *
  * Refused BEFORE sending, with the host's own strings: an unknown `kind`, an
  * `upload` whose `bytes` is not a non-empty `ArrayBuffer` (or whose `mimeType`
- * is not a string), and a buffer over 64 MB.
+ * is not a string), and a buffer over the kind's cap.
  *
  * Page apps only: a model-slot host rejects with `unsupported on this host`.
  * A host that predates this message does not answer it, so the call rejects
@@ -141,7 +142,8 @@ export function useMediaUpload(): UseMediaUpload {
       if (mimeType !== undefined && typeof mimeType !== 'string') {
         throw new Error(MEDIA_UPLOAD_INVALID_ERROR);
       }
-      if (bytes.byteLength > MEDIA_UPLOAD_MAX_BYTES) throw new Error(MEDIA_UPLOAD_TOO_LARGE_ERROR);
+      const cap = mediaUploadCap(kind);
+      if (bytes.byteLength > cap.maxBytes) throw new Error(cap.error);
 
       const reply = await sendTypedRequest(
         getTransport(),

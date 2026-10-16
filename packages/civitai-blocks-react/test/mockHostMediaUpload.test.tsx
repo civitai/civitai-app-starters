@@ -22,8 +22,9 @@ import type { MockHost, MockHostOptions } from '../src/testing.js';
 
 const ORIGIN = window.location.origin;
 
-// The contract's cap, spelled as a literal so a changed constant cannot move the test with it.
-const CAP = 67_108_864;
+// The contract's caps, spelled as literals so a changed constant cannot move the test with it.
+const CAP = 67_108_864; // video and audio
+const IMAGE_CAP = 25_165_824; // image
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
@@ -271,6 +272,56 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD', () => {
     const ok = await bytesReq('video', max.buffer);
     expect(ok.error).toBeUndefined();
     expect(ok.selected?.sizeBytes).toBe(CAP);
+  });
+
+  it('caps an image at 24 MB: over it is refused with the image message, exactly it is accepted', async () => {
+    await install();
+    const over = new Uint8Array(IMAGE_CAP + 1);
+    over.set(PNG);
+    expect(await bytesReq('image', over.buffer)).toEqual({
+      requestId: expect.any(String),
+      error: 'file exceeds the 24 MB image upload limit',
+    });
+    // Under the 64 MB media cap but over the image one: still refused.
+    const mid = new Uint8Array(32 * 1024 * 1024);
+    mid.set(PNG);
+    expect((await bytesReq('image', mid.buffer)).error).toBe('file exceeds the 24 MB image upload limit');
+    const max = new Uint8Array(IMAGE_CAP);
+    max.set(PNG);
+    expect((await bytesReq('image', max.buffer)).error).toBeUndefined();
+  });
+
+  it('an over-cap image in a full window is too large, never busy', async () => {
+    await install();
+    for (let i = 0; i < 8; i++) await bytesReq('audio', WAV);
+    expect((await bytesReq('image', new ArrayBuffer(IMAGE_CAP + 1))).error).toBe(
+      'file exceeds the 24 MB image upload limit',
+    );
+  });
+
+  // ── No block token (`mediaUploadError: 'no block token'`) ──────────────────
+  it('refuses a bytes upload with `no block token` before the cap and the window, and does not count it', async () => {
+    await install({ mediaUploadError: 'no block token' });
+    // Before the cap: an over-cap file still gets the token refusal.
+    expect((await bytesReq('video', new ArrayBuffer(CAP + 1))).error).toBe('no block token');
+    // Before the type check too: content is never looked at.
+    expect((await bytesReq('image', GIF)).error).toBe('no block token');
+    // After the buffer check: an empty buffer is still invalid, and a bad kind is still a kind error.
+    expect((await bytesReq('image', new ArrayBuffer(0))).error).toBe('invalid media-upload request');
+    expect((await bytesReq('gif', PNG)).error).toBe("kind must be 'image', 'video' or 'audio'");
+    for (let i = 0; i < 8; i++) expect((await bytesReq('audio', WAV)).error).toBe('no block token');
+    // Nine refusals so far, none counted: with a token, 8 uploads fit.
+    act(() => host!.setScenario({ mediaUploadError: undefined }));
+    for (let i = 0; i < 8; i++) expect((await bytesReq('audio', WAV)).error).toBeUndefined();
+    expect((await bytesReq('audio', WAV)).error).toBe('busy');
+  });
+
+  it('`no block token` comes before `busy` when the window is full', async () => {
+    await install();
+    for (let i = 0; i < 8; i++) await bytesReq('audio', WAV);
+    expect((await bytesReq('audio', WAV)).error).toBe('busy');
+    act(() => host!.setScenario({ mediaUploadError: 'no block token' }));
+    expect((await bytesReq('audio', WAV)).error).toBe('no block token');
   });
 
   // ── The bytes-mode window ──────────────────────────────────────────────────

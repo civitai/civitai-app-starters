@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
-import { MEDIA_UPLOAD_MAX_BYTES } from '../src/internal/mediaUploadBytes.js';
+import { MEDIA_UPLOAD_IMAGE_MAX_BYTES, MEDIA_UPLOAD_MAX_BYTES } from '../src/internal/mediaUploadBytes.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { RequestTimeoutError } from '../src/transport/transport.js';
@@ -211,6 +211,9 @@ describe('useMediaUpload', () => {
     'audio must be MP3, WAV or WebM',
     'could not read this audio file',
     'unsupported on this host',
+    'no block token',
+    'media upload failed — please try again',
+    'this audio was refused by the upload service',
   ])('upload rejects with the host error %j', async (error) => {
     const state = start((h) => h.upload({ kind: 'audio', bytes: new ArrayBuffer(4) }));
     dispatch({ requestId: sent()[0]!.payload.requestId, error });
@@ -223,7 +226,11 @@ describe('useMediaUpload', () => {
     ['a Blob', { kind: 'image', bytes: new Blob(['x']) }, 'invalid media-upload request'],
     ['an empty buffer', { kind: 'video', bytes: new ArrayBuffer(0) }, 'invalid media-upload request'],
     ['a non-string mimeType', { kind: 'video', bytes: new ArrayBuffer(4), mimeType: 5 }, 'invalid media-upload request'],
-    ['a buffer over the 64 MB cap', { kind: 'video', bytes: new ArrayBuffer(64 * 1024 * 1024 + 1) }, 'file exceeds the 64 MB upload limit'],
+    ['a video over the 64 MB cap', { kind: 'video', bytes: new ArrayBuffer(67_108_864 + 1) }, 'file exceeds the 64 MB upload limit'],
+    ['an audio file over the 64 MB cap', { kind: 'audio', bytes: new ArrayBuffer(67_108_864 + 1) }, 'file exceeds the 64 MB upload limit'],
+    ['an image over the 24 MB cap', { kind: 'image', bytes: new ArrayBuffer(25_165_824 + 1) }, 'file exceeds the 24 MB image upload limit'],
+    // Under the 64 MB media cap, over the image one: the kind picks the cap.
+    ['a 32 MB image', { kind: 'image', bytes: new ArrayBuffer(33_554_432) }, 'file exceeds the 24 MB image upload limit'],
   ])('upload refuses %s BEFORE sending, with the host string', async (_n, options, message) => {
     const state = start((h) => h.upload(options as never));
     await flush();
@@ -231,13 +238,17 @@ describe('useMediaUpload', () => {
     expect(state.caught?.message).toBe(message);
   });
 
-  it('upload sends a buffer of exactly the cap', () => {
-    start((h) => h.upload({ kind: 'video', bytes: new ArrayBuffer(MEDIA_UPLOAD_MAX_BYTES) }));
+  it.each([
+    ['a video of exactly 64 MB', 'video', 67_108_864],
+    ['an image of exactly 24 MB', 'image', 25_165_824],
+  ] as const)('upload sends %s', (_n, kind, size) => {
+    start((h) => h.upload({ kind, bytes: new ArrayBuffer(size) }));
     expect(sent()).toHaveLength(1);
   });
 
-  it('pins the cap to 64 MiB, the consumer-blob upload cap', () => {
+  it('pins the caps: 64 MiB for video and audio, 24 MiB for an image', () => {
     expect(MEDIA_UPLOAD_MAX_BYTES).toBe(67_108_864);
+    expect(MEDIA_UPLOAD_IMAGE_MAX_BYTES).toBe(25_165_824);
   });
 
   it.each([

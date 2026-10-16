@@ -2534,8 +2534,11 @@ never by its name or declared type:
 | `'video'` | MP4, WebM | Uploaded as sent. `width` and `height` are always set (a file with no video track is refused). `durationMs` when the browser reports a duration. |
 | `'audio'` | MP3, WAV, WebM | Uploaded as sent. No `width` or `height`. `durationMs` when the browser reports a duration: a `MediaRecorder` WebM often reports none, so do not rely on it. |
 
-- **At most 64 MB per file.** `upload` refuses a larger buffer before sending
-  it, with the host's own message `file exceeds the 64 MB upload limit`.
+- **At most 24 MB per image, and 64 MB per video or audio file.** The image
+  cap is lower because the host decodes an image in full before it resizes it.
+  `upload` refuses a larger buffer before sending it, with the host's own
+  message: `file exceeds the 24 MB image upload limit` or
+  `file exceeds the 64 MB upload limit`.
 - **`upload` is rate-limited:** at most 8 uploads and 128 MB per 60 seconds
   per page. Past that the host replies `busy`; wait and retry. A refused upload
   does not count. `open` is not limited this way, because a person picks each
@@ -2552,7 +2555,11 @@ never by its name or declared type:
   `audio must be MP3, WAV or WebM`. The host also refuses a file it cannot
   read (`could not read this video file`, `could not read this audio file`), a
   video with no video track (`this file has no video track`), and an image too
-  small to resize to 64 pixels.
+  small to resize to 64 pixels. A failed upload rejects with
+  `media upload failed — please try again`, and a file the upload service
+  refuses with `this video was refused by the upload service` or
+  `this audio was refused by the upload service`. A bytes upload made while
+  the host holds no block token rejects with `no block token`.
 
 What `open` and `upload` resolve and reject with:
 
@@ -2574,8 +2581,8 @@ For images only, `useImageUpload().open({ purpose: 'generationSource' })` still
 works and returns `{ url, width, height }`. Use `useMediaUpload` for video,
 audio, or bytes your app made in the tab.
 
-🔴 **Needs a host that answers `OPEN_MEDIA_UPLOAD`.** On a civitai.com that
-predates it, the request gets no answer and both calls reject with a
+🔴 **Needs a host that answers `OPEN_MEDIA_UPLOAD`** (civitai/civitai#6149).
+On a civitai.com that predates it, the request gets no answer and both calls reject with a
 `RequestTimeoutError` after 10 minutes.
 
 With the mock host (`createMockHost` or `Harness` from
@@ -2583,12 +2590,14 @@ With the mock host (`createMockHost` or `Harness` from
 with a built-in upload for the kind. Set `cannedMediaUploads: { video: {...} }`
 to choose what a kind returns, or `{ audio: null }` for a viewer who closes
 that picker. `upload` runs the host's checks in the host's order (kind,
-purpose, an invalid buffer, the 64 MB cap, the rate window, the content type,
+purpose, an invalid buffer, the per-kind cap, the rate window, the content type,
 a mismatching `mimeType`) and answers with that kind's upload, carrying the
 sniffed `mimeType` and the buffer's size for video and audio. The mock cannot
 decode media, so it never produces the host's decode-time refusals (an
-unreadable file, no video track, an image too small): set
-`mediaUploadError: 'this file has no video track'` to force one. A model-slot
+unreadable file, no video track, an image too small, an upload failure): set
+`mediaUploadError: 'this file has no video track'` to force one.
+`mediaUploadError: 'no block token'` is checked where the host checks it: a
+bytes upload is refused before the cap and the window, and is not counted. A model-slot
 `context` answers `unsupported on this host`. `dev:live` cannot upload
 generation inputs, so there both calls reject with a message saying to use the
 mock host.

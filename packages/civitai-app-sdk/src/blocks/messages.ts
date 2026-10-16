@@ -1789,8 +1789,12 @@ export type BlockToParentMessage =
       //   - BYTES (`bytes` present): media the block made in the tab (a canvas,
       //     a crop, a `MediaRecorder` recording). No picker. An `ArrayBuffer`
       //     (structured-cloned; a typed-array view or an empty buffer is
-      //     refused) of at most 64 MB. The host allows at most 8 bytes uploads
-      //     and 128 MB per 60 s per page, and replies `busy` past that.
+      //     refused). The host refuses it with `no block token` when it holds
+      //     no block token, then checks the cap, then allows at most 8 bytes
+      //     uploads and 128 MB per 60 s per page, replying `busy` past that.
+      //
+      // Per-file cap, both modes: 24 MB for an image (the host decodes it in
+      // full before resizing) and 64 MB for video or audio.
       //
       // The file's type is decided by its MAGIC BYTES (image: PNG/JPEG/WebP;
       // video: MP4/WebM; audio: MP3/WAV/WebM). `mimeType` is optional and only
