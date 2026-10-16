@@ -231,7 +231,11 @@ attribute is rendered, so the default stays HTML's own.
 every tag, attribute, property, `::part` and slot. It is generated from the
 element sources (tags from `defineElement(TAG, …)`, parts and slots from the
 templates), so nothing is restated in JSDoc and nothing can drift. A test fails
-if it stops matching what the package registers.
+if it stops matching what the package registers. What an element inherits —
+every form control's `label`, `required`, `size` and the rest — is listed on the
+element itself with `inheritedFrom`, and the base classes it names
+(`CivitaiElement`, `CivitaiField`, `CivitaiMediaElement`) are declared in the
+manifest too, without a tag.
 
 The attribute CSS above keeps shipping unchanged at the same path, so nothing
 has to migrate. The `.` entry still carries no renderer — importing
