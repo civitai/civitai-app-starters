@@ -529,6 +529,77 @@ Waiting for the host applies only to the host path: with no validated host
 origin a press sends nothing and the button renders disabled. Given a `signIn`
 it is usable at once, since no handshake is involved.
 
+### `<civitai-resource-picker>`
+
+Lets the viewer pick one **version** of a published resource from the Civitai
+catalog — their own, or anyone's. It opens as a modal with a search box, a
+"My … / All …" switch and, per result, a version select (newest first) with a
+badge on gated versions. It does not need `@civitai/sdk`: results come from a
+`source` you hand it.
+
+```ts
+import {
+  blockTokenSource,
+  type CivitaiResourcePicker,
+} from '@civitai/components/civitai-resource-picker';
+import '@civitai/components/civitai-resource-picker/define';
+
+const picker = document.querySelector<CivitaiResourcePicker>('civitai-resource-picker')!;
+// `origin` is the validated host origin; the token is the block's raw token.
+picker.source = blockTokenSource({ origin: hostOrigin, getToken: () => blockToken });
+const picked = await picker.show(); // null when the viewer closes it
+```
+
+```html
+<civitai-resource-picker types="Workflows ComfyWorkflows" noun="workflow" owner="mine"
+  heading="Choose a workflow"></civitai-resource-picker>
+```
+
+| Attribute / property | |
+|---|---|
+| `types` | Model types to list, space- or comma-separated. Required. |
+| `owner` | `any` (default) or `mine` — the list it opens on; the viewer can switch. |
+| `noun` | What one result is called in the picker's copy (`workflow` → "My workflows"). Default `resource`. |
+| `heading` | The modal's title. |
+| `debounce` | Milliseconds of quiet typing before a search runs. Default 300. |
+| `limit` | Page size, 1–100. Default 20. |
+| `open` | Shows it. Setting it `false` closes it without a pick or a `dismiss`. |
+| `source` (property) | A `ResourceSource`: `{ search(params, signal): Promise<ResourcePage> }`. |
+| `show()` / `close()` | `show()` opens it and resolves with the pick, or `null`. `close()` closes it as a dismissal. |
+
+It fires `pick` (`detail`: a `PickedResource`) and `dismiss`. A pick is
+`{ modelId, modelVersionId, name, versionName, creatorUsername, baseModel,
+earlyAccessDeadline?, access, owner }`, where `access` is `open`,
+`early-access` or `paid`.
+
+- 🔴 **`owner` is a UX hint, never proof of ownership.** It records which list
+  the viewer picked from; the app can rewrite it. A server that needs "this is
+  the viewer's own" must check it itself.
+- 🔴 **It refuses to show a `mine` list the server did not confirm.** A `mine`
+  search answered with anything but `owner: 'mine'` is shown as an error, not
+  as a list. `blockTokenSource` reads that from `metadata.owner`, which a
+  server older than the `owner` parameter does not send.
+- `blockTokenSource({ origin, getToken, fetch? })` calls
+  `GET /api/v1/blocks/models` with `Authorization: Bearer <token>` and plain
+  `fetch`, sending `types` as repeated parameters plus `owner`, `query`,
+  `limit` and `cursor`. It never calls any other route — in particular it never
+  falls back to the public `/api/v1/models`, which knows no `owner`.
+- Gated versions are listed, not hidden: the server's `paidAccess` gate
+  (`{ permanent, endsAt }`) becomes an "Early access until …" badge for a timed
+  gate and a "Paid" badge for a permanent one.
+- On a `401`, `blockTokenSource` calls `getToken({ fresh: true })` once and
+  retries if that returns a different token — a block token that expired while
+  the tab slept. Otherwise the search ends as `unauthorized`.
+- Changing `owner` while it is open drops the rows on screen and searches the
+  other list. A pick's `owner` is the list its row was shown in.
+- A failed "Load more" keeps the rows already shown and offers that page again.
+- A newer search aborts the one in flight, and a late answer to an older search
+  is dropped. `429` and `503` show a retry state and are retried after
+  `Retry-After`, twice; then "Try again" is offered. `ResourceSourceError`'s
+  `kind` (`busy`, `unauthorized`, `owner-unsupported`, `failed`) is how a
+  source of your own says which of these happened.
+- A change to `source` or `types` while it is open searches again.
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —
