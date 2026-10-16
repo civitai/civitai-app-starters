@@ -32,7 +32,7 @@ const THEIRS: ResourceItem = {
   versions: [{ id: 4701, name: 'v1', baseModel: 'SD 1.5', access: 'paid' }],
 };
 
-function buildInit(): BlockInitPayload {
+function buildInit(viewer: BlockInitPayload['viewer'] = { id: 7, username: 'me', status: 'active' }): BlockInitPayload {
   return {
     blockInstanceId: 'inst-1',
     blockId: 'b',
@@ -40,15 +40,15 @@ function buildInit(): BlockInitPayload {
     token: { raw: 'jwt-picker', scopes: [], expiresAt: new Date(Date.now() + 600_000).toISOString() },
     context: { slotId: 'app.page' },
     settings: { publisherSettings: {}, userSettings: {} },
-    viewer: { id: 7, username: 'me', status: 'active' },
+    viewer,
     theme: 'dark',
     renderMode: 'iframe',
   } as BlockInitPayload;
 }
 
-function sendInit() {
+function sendInit(viewer?: BlockInitPayload['viewer']) {
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type: 'BLOCK_INIT', payload: buildInit() }, origin: PARENT_ORIGIN })
+    new MessageEvent('message', { data: { type: 'BLOCK_INIT', payload: buildInit(viewer) }, origin: PARENT_ORIGIN })
   );
 }
 
@@ -246,6 +246,84 @@ describe('<WorkflowPicker>', () => {
     render(<Host picks={[]} />);
     await until(() => names().length === 1);
     expect(auth).toEqual(['Bearer jwt-picker', 'Bearer jwt-fresh']);
+  });
+
+  /** A host that answers REQUEST_TOKEN with `jwt-fresh`, counting each ask. */
+  function answeringHost() {
+    const asks = { count: 0 };
+    Object.defineProperty(window, 'parent', {
+      value: {
+        postMessage: (message: { type: string; payload?: { requestId?: string } }) => {
+          if (message?.type !== 'REQUEST_TOKEN') return;
+          asks.count += 1;
+          setTimeout(() =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                origin: PARENT_ORIGIN,
+                data: {
+                  type: 'TOKEN_REFRESH_RESPONSE',
+                  payload: {
+                    requestId: message.payload?.requestId,
+                    token: { raw: 'jwt-fresh', scopes: [], expiresAt: new Date(Date.now() + 600_000).toISOString() },
+                  },
+                },
+              })
+            )
+          );
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+    return asks;
+  }
+
+  it('an anonymous viewer on "mine" is told to sign in after ONE request, with no token refresh', async () => {
+    const asks = answeringHost();
+    sendInit(null);
+    const auth: (string | null)[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      auth.push(new Headers(init?.headers).get('Authorization'));
+      // What the catalog answers `owner=mine` on an anonymous token, fresh or not.
+      return new Response(JSON.stringify({ error: 'Sign-in required' }), { status: 401 });
+    }) as typeof fetch;
+
+    render(<Host picks={[]} owner="mine" />);
+    await until(() => picker()?.phase === 'error');
+    // Long enough for a refresh round trip and a second request to show up.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(auth).toEqual(['Bearer jwt-picker']);
+    expect(asks.count).toBe(0);
+    const alert = picker().shadowRoot!.querySelector<HTMLElement>('[part~="error"]')!;
+    expect(alert.dataset.kind).toBe('unauthorized');
+    expect(alert.textContent).toContain('Sign in to Civitai to see your own workflows.');
+  });
+
+  it.each([
+    ['a signed-in viewer on "mine"', { id: 7, username: 'me', status: 'active' } as const, 'mine'],
+    ['an anonymous viewer on "all"', null, 'any'],
+  ] as const)('%s still refreshes an expired token once and retries', async (_label, viewer, owner) => {
+    const asks = answeringHost();
+    sendInit(viewer);
+    const auth: (string | null)[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const bearer = new Headers(init?.headers).get('Authorization');
+      auth.push(bearer);
+      if (bearer !== 'Bearer jwt-fresh') return new Response(JSON.stringify({ error: 'invalid block token' }), { status: 401 });
+      return new Response(
+        JSON.stringify({
+          items: [{ id: 47, name: 'Old Comfy Graph', type: 'ComfyWorkflows', modelVersions: [{ id: 4701, name: 'v1' }] }],
+          metadata: { owner },
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    render(<Host picks={[]} owner={owner} />);
+    await until(() => names().length === 1);
+    expect(auth).toEqual(['Bearer jwt-picker', 'Bearer jwt-fresh']);
+    expect(asks.count).toBe(1);
   });
 
   it('re-rendered with owner any→mine, it drops the old list and searches mine', async () => {

@@ -469,6 +469,35 @@ describe('<civitai-resource-picker> busy server', () => {
     (await called(MAX_AUTO_RETRIES + 2)).resolve(page([OTHER]));
     await until(el, () => names(el).length === 1);
   });
+
+  // Regression guard for existing behaviour (#672 follow-up): the busy branch's
+  // `if (append) return;` is what keeps page 1 on screen while page 2 waits.
+  it('a busy "Load more" keeps the list while it retries the same cursor, then errors inline', async () => {
+    const { source, calls, called } = handSource();
+    const el = await mount(source);
+    void el.show();
+    (await called(1)).resolve(page([WORKFLOW], 'any', 'cur-2'));
+    await until(el, () => $(el, '[part~="more"]') !== null);
+    $(el, '[part~="more"]')!.click();
+
+    for (let n = 2; n <= MAX_AUTO_RETRIES + 1; n++) {
+      (await called(n)).reject(busy(503));
+      // Each wait in between: page 1 is still the list, not a full-page retry.
+      await settle(el);
+      expect(el.phase).toBe('ready');
+      expect(names(el)).toEqual(['Upscale Chain']);
+      expect($(el, '[part~="retrying"]')).toBeNull();
+    }
+    (await called(MAX_AUTO_RETRIES + 2)).reject(busy(503));
+    await until(el, () => $(el, '[part~="more-error"]') !== null);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(calls).toHaveLength(MAX_AUTO_RETRIES + 2);
+    expect(calls.slice(1).map((c) => c.params.cursor)).toEqual(Array(MAX_AUTO_RETRIES + 1).fill('cur-2'));
+    expect(names(el)).toEqual(['Upscale Chain']);
+    expect(el.phase).toBe('ready');
+    expect($(el, '[part~="more-error"]')!.textContent).toContain('Civitai is busy right now.');
+  });
 });
 
 describe('<civitai-resource-picker> badges', () => {
@@ -668,6 +697,55 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
       )
     ).rejects.toMatchObject({ kind: 'unauthorized', status: 401 });
     expect(auth).toEqual(['Bearer same']);
+  });
+
+  it('a `mine` 401 for a viewer known to be anonymous is final: one request, no fresh token', async () => {
+    const asked: boolean[] = [];
+    const { auth, fetchImpl } = stubFetch(() => json({ error: 'Sign-in required' }, 401));
+    const el = await mount(
+      blockTokenSource({
+        origin: ORIGIN,
+        getToken: (opts) => {
+          asked.push(opts?.fresh === true);
+          return opts?.fresh ? 'renewed' : 'anon-token';
+        },
+        signedIn: () => false,
+        fetch: fetchImpl,
+      }),
+      { owner: 'mine' }
+    );
+    void el.show();
+    await until(el, () => el.phase === 'error');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(auth).toEqual(['Bearer anon-token']);
+    expect(asked).toEqual([false]);
+    expect($(el, '[part~="error"]')!.dataset.kind).toBe('unauthorized');
+  });
+
+  it.each([
+    ['`mine`, signed in', 'mine', true],
+    ['`mine`, viewer not known yet', 'mine', undefined],
+    ['`any`, anonymous', 'any', false],
+  ] as const)('any other 401 (%s) still gets the one fresh-token retry', async (_label, owner, signedIn) => {
+    const asked: boolean[] = [];
+    const { auth, fetchImpl } = stubFetch(() => json({ items: [], metadata: { owner } }));
+    const gated = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetchImpl(input, init);
+      return new Headers(init?.headers).get('Authorization') === 'Bearer stale' ? json({ error: 'invalid block token' }, 401) : response;
+    }) as typeof fetch;
+    const result = await blockTokenSource({
+      origin: ORIGIN,
+      getToken: (opts) => {
+        asked.push(opts?.fresh === true);
+        return opts?.fresh ? 'renewed' : 'stale';
+      },
+      signedIn: () => signedIn,
+      fetch: gated,
+    }).search({ types: ['Workflows'], owner }, new AbortController().signal);
+    expect(result.owner).toBe(owner);
+    expect(asked).toEqual([false, true]);
+    expect(auth).toEqual(['Bearer stale', 'Bearer renewed']);
   });
 
   it('carries Retry-After from a 429 into the wait', async () => {

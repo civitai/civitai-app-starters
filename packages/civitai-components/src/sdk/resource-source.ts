@@ -245,6 +245,18 @@ export interface BlockTokenSourceOptions {
    * with it. Returning the same token ends it as `unauthorized`.
    */
   getToken: (options?: { fresh: boolean }) => string | Promise<string>;
+  /**
+   * Whether the viewer is signed in, read after a `401`; `undefined` when not
+   * known yet. The server answers an `owner: 'mine'` search from an anonymous
+   * viewer's token with a `401` that carries nothing a client should parse to
+   * tell it from an expired token. Returning `false` here makes such a `401`
+   * final: `unauthorized` after that one request, with no fresh token asked
+   * for — a new anonymous token would get the same answer. Any other `401`,
+   * and every `401` when this is absent or `undefined`, still gets the one
+   * fresh-token retry. In `@civitai/blocks-react`: `isSignedIn(viewer)` from
+   * `useBlockContext()`, once `ready`.
+   */
+  signedIn?: () => boolean | undefined;
   /** Defaults to the global `fetch`. */
   fetch?: typeof fetch;
 }
@@ -270,8 +282,12 @@ export function blockTokenSource(options: BlockTokenSourceOptions): ResourceSour
       let response = await send(token);
       // One retry, as @civitai/sdk's client does: a block token that expired
       // while the tab slept is routine. A second 401, or no newer token to
-      // send, is the viewer's — `unauthorized`.
-      if (response.status === 401) {
+      // send, is the viewer's — `unauthorized`. So is a `mine` 401 for a viewer
+      // known to be anonymous: that is "sign in", not "expired".
+      if (
+        response.status === 401 &&
+        !(params.owner === 'mine' && options.signedIn?.() === false)
+      ) {
         const fresh = await options.getToken({ fresh: true });
         if (signal.aborted) throw signal.reason;
         if (fresh !== token) response = await send(fresh);

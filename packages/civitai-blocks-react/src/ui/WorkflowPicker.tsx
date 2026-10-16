@@ -10,6 +10,9 @@ import {
   type ResourceSource,
 } from '@civitai/components/civitai-resource-picker';
 
+import { isSignedIn } from '@civitai/app-sdk/blocks';
+
+import { useBlockContext } from '../hooks/useBlockContext.js';
 import { useBlockToken } from '../hooks/useBlockToken.js';
 import { useHostOrigin } from '../hooks/useHostOrigin.js';
 
@@ -71,9 +74,17 @@ export function WorkflowPicker({
   defineCivitaiResourcePicker();
   const host = useHostOrigin();
   const { raw, refresh } = useBlockToken();
+  const { ready, viewer } = useBlockContext();
   // Read at each request, so a refreshed token is the one sent.
   const token = useRef({ raw, refresh });
   token.current = { raw, refresh };
+  // Defensive, and unreachable today: the live source exists only once
+  // `useHostOrigin()` is set, which happens at BLOCK_INIT — the same moment
+  // `ready` flips — so no search reads the `undefined` arm and no test covers
+  // it. It is here so that a pre-init `viewer: null` (also null) can never be
+  // read as anonymous if that ordering changes.
+  const signedIn = useRef<boolean | undefined>(undefined);
+  signedIn.current = ready ? isSignedIn(viewer) : undefined;
 
   const live = useMemo(
     () =>
@@ -90,6 +101,10 @@ export function WorkflowPicker({
                     () => token.current.raw
                   )
                 : token.current.raw,
+            // An anonymous viewer's `mine` 401 is "sign in", not "expired":
+            // shown at once, without a REQUEST_TOKEN round trip to the host
+            // (which would only hand back the same anonymous token).
+            signedIn: () => signedIn.current,
           })
         : NOT_CONNECTED,
     [host]
