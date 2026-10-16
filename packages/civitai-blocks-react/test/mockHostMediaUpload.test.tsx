@@ -5,7 +5,6 @@ import type { BlockMediaUploadInfo, ModelSlotContext } from '@civitai/app-sdk/bl
 
 import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import { useUploadImageBytes } from '../src/hooks/useUploadImageBytes.js';
-import { MEDIA_UPLOAD_MAX_BYTES } from '../src/internal/mediaUploadBytes.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHost, MockHostOptions } from '../src/testing.js';
@@ -22,6 +21,9 @@ import type { MockHost, MockHostOptions } from '../src/testing.js';
  */
 
 const ORIGIN = window.location.origin;
+
+// The contract's cap, spelled as a literal so a changed constant cannot move the test with it.
+const CAP = 67_108_864;
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
@@ -258,17 +260,17 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD', () => {
   // ── The cap ────────────────────────────────────────────────────────────────
   it('refuses an over-cap buffer with the 64 MB message, and accepts one of exactly the cap', async () => {
     await install();
-    const over = new Uint8Array(MEDIA_UPLOAD_MAX_BYTES + 1);
+    const over = new Uint8Array(CAP + 1);
     over.set(MP4);
     expect(await bytesReq('video', over.buffer)).toEqual({
       requestId: expect.any(String),
       error: 'file exceeds the 64 MB upload limit',
     });
-    const max = new Uint8Array(MEDIA_UPLOAD_MAX_BYTES);
+    const max = new Uint8Array(CAP);
     max.set(MP4);
     const ok = await bytesReq('video', max.buffer);
     expect(ok.error).toBeUndefined();
-    expect(ok.selected?.sizeBytes).toBe(MEDIA_UPLOAD_MAX_BYTES);
+    expect(ok.selected?.sizeBytes).toBe(CAP);
   });
 
   // ── The bytes-mode window ──────────────────────────────────────────────────
@@ -277,7 +279,7 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD', () => {
     for (let i = 0; i < 8; i++) expect((await bytesReq('audio', WAV)).error).toBeUndefined();
     expect((await bytesReq('audio', WAV)).error).toBe('busy');
     // A full window still reports an over-cap file as too large: a retry could never succeed.
-    expect((await bytesReq('audio', new ArrayBuffer(MEDIA_UPLOAD_MAX_BYTES + 1))).error).toBe(
+    expect((await bytesReq('audio', new ArrayBuffer(CAP + 1))).error).toBe(
       'file exceeds the 64 MB upload limit',
     );
     // And `busy` before the type: a GIF in a full window is `busy`, as on the host.
@@ -293,7 +295,7 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD', () => {
 
   it('refuses `busy` once the window holds 128 MB, before the count of 8', async () => {
     await install();
-    const max = new Uint8Array(MEDIA_UPLOAD_MAX_BYTES);
+    const max = new Uint8Array(CAP);
     max.set(MP4);
     expect((await bytesReq('video', max.slice().buffer)).error).toBeUndefined();
     expect((await bytesReq('video', max.slice().buffer)).error).toBeUndefined();
