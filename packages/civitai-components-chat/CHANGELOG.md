@@ -1,5 +1,12 @@
 # @civitai/components-chat
 
+## 0.9.2
+
+### Patch Changes
+
+- Updated dependencies [6727901]
+  - @civitai/components@0.12.0
+
 ## 0.9.1
 
 ### Patch Changes
