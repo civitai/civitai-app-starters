@@ -56,12 +56,16 @@ Civitai catalog as the viewer, with the block token — though it needs no
 `event.detail`, and `onDismiss` fires when the viewer closes it without one:
 
 ```tsx
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { CivitaiResourcePicker } from '@civitai/components-react/elements/civitai-resource-picker';
 import { blockTokenSource } from '@civitai/components/civitai-resource-picker';
 
 export function Picker({ origin, token }: { origin: string; token: string }) {
-  const source = useMemo(() => blockTokenSource({ origin, getToken: () => token }), [origin, token]);
+  // Read through a ref, so a refreshed token is sent without building a new
+  // source — which would make the open picker search again.
+  const current = useRef(token);
+  current.current = token;
+  const source = useMemo(() => blockTokenSource({ origin, getToken: () => current.current }), [origin]);
   return (
     <CivitaiResourcePicker
       open

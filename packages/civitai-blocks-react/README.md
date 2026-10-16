@@ -3149,7 +3149,8 @@ A pick is a `PickedResource` — `{ modelId, modelVersionId, name, versionName,
 creatorUsername, baseModel, earlyAccessDeadline?, access, owner }`; `/ui`
 re-exports it and the picker's other data types (`ResourceItem`,
 `ResourceSource`, …). Close the picker yourself in
-**both** callbacks: `open` is controlled.
+**both** callbacks: `open` is controlled. The picker closes itself on Escape or
+a backdrop click, and re-opens on the next render if `open` still says `true`.
 
 - 🔴 **`owner` is a UX hint, never proof of ownership.** It says which list the
   viewer was looking at, and your app's own code can set it to anything. A
@@ -3166,6 +3167,8 @@ re-exports it and the picker's other data types (`ResourceItem`,
   flight. A busy catalog (`429` / `503`, rate limit 150 requests per 10 s per
   block) is retried after its `Retry-After`, twice, then offered as "Try again".
 - **An anonymous viewer** gets a sign-in message on the "mine" list; "All" works.
+  An expired block token is not mistaken for that: on a `401` the picker mints a
+  fresh token through `useBlockToken().refresh()` and retries once.
 - **Before `BLOCK_INIT`** the picker says it is not connected yet, and lists as
   soon as the host origin lands.
 - **Under the mock host** there is no catalog to call. Pass canned results from

@@ -1,9 +1,9 @@
 /**
- * The data side of `<civitai-resource-picker>`: what a source is, the two
- * sources that ship with it, and the one parser both of them use.
+ * The data side of `<civitai-resource-picker>`: what a source is, the source
+ * that ships with it, and its parser.
  *
- * Both read `GET /api/v1/blocks/models`, the block-token-gated, maturity-clamped
- * catalog. 🔴 Neither ever falls back to the public `/api/v1/models`: that
+ * It reads `GET /api/v1/blocks/models`, the block-token-gated, maturity-clamped
+ * catalog. 🔴 It never falls back to the public `/api/v1/models`: that
  * endpoint knows no `owner` parameter, so a fallback would answer "my
  * workflows" with everybody's. A failure here is a failure, shown as one.
  */
@@ -161,25 +161,19 @@ const text = (value: unknown): string | null =>
 
 function parseVersion(raw: unknown): ResourceVersion | null {
   if (!isRecord(raw) || typeof raw.id !== 'number') return null;
-  // The gate is `paidAccess` ({ permanent, endsAt }, null when ungated); the
-  // server also copies a timed gate's `endsAt` into `earlyAccessDeadline`, which
-  // is read only when `paidAccess` is missing. `availability` says nothing here:
+  // The gate is `paidAccess` ({ permanent, endsAt }, null when ungated or the
+  // gate has lapsed). The server's `earlyAccessDeadline` is a copy of a timed
+  // gate's `endsAt`, so it is not read. `availability` says nothing here:
   // early access is a Public version behind a gate.
   const gate = isRecord(raw.paidAccess) ? raw.paidAccess : null;
-  const deadline = text(gate && gate.permanent !== true ? gate.endsAt : null) ?? text(raw.earlyAccessDeadline);
-  const access: ResourceAccess = gate
-    ? gate.permanent === true
-      ? 'paid'
-      : 'early-access'
-    : deadline
-      ? 'early-access'
-      : 'open';
+  const access: ResourceAccess = gate ? (gate.permanent === true ? 'paid' : 'early-access') : 'open';
+  const deadline = access === 'early-access' ? text(gate!.endsAt) : null;
   return {
     id: raw.id,
     name: text(raw.name) ?? `Version ${raw.id}`,
     baseModel: text(raw.baseModel),
     access,
-    ...(access === 'early-access' && deadline ? { earlyAccessDeadline: deadline } : {}),
+    ...(deadline ? { earlyAccessDeadline: deadline } : {}),
   };
 }
 
@@ -201,22 +195,17 @@ function parseItem(raw: unknown): ResourceItem | null {
 /**
  * Read a `/blocks/models` body. Rows without an id or a version are skipped.
  *
- * 🔴 Throws `owner-unsupported` when `requested` is `'mine'` and the body does
- * not echo `metadata.owner: 'mine'`. A server older than the parameter ignores
- * it and returns everybody's resources, and only the echo tells them apart.
+ * `owner` is the server's `metadata.owner` echo, and anything but `'mine'` —
+ * absent included — reads as `'any'`: a server older than the parameter
+ * ignores it and does not echo. Judging a `mine` search by that echo is the
+ * picker's job, done in one place, so this only reports it.
  */
-export function parseResourcePage(body: unknown, requested: ResourceOwner): ResourcePage {
+export function parseResourcePage(body: unknown): ResourcePage {
   if (!isRecord(body)) {
     throw new ResourceSourceError('failed', 'The catalog sent a response it could not read.');
   }
   const metadata = isRecord(body.metadata) ? body.metadata : {};
   const echoed: ResourceOwner = metadata.owner === 'mine' ? 'mine' : 'any';
-  if (requested === 'mine' && metadata.owner !== 'mine') {
-    throw new ResourceSourceError(
-      'owner-unsupported',
-      'Civitai could not list only your own resources, so none are shown.'
-    );
-  }
   const items = (Array.isArray(body.items) ? body.items : [])
     .map(parseItem)
     .filter((item): item is ResourceItem => item !== null);
@@ -249,8 +238,13 @@ export interface BlockTokenSourceOptions {
    * `@civitai/blocks-react`. The token goes only here.
    */
   origin: string;
-  /** The raw block token, read at each request so a refreshed one is used. */
-  getToken: () => string | Promise<string>;
+  /**
+   * The raw block token, read at each request so a refreshed one is used.
+   * Called with `{ fresh: true }` once after a `401`: return a newly minted
+   * token if you can (`useBlockToken().refresh()`), and the search is retried
+   * with it. Returning the same token ends it as `unauthorized`.
+   */
+  getToken: (options?: { fresh: boolean }) => string | Promise<string>;
   /** Defaults to the global `fetch`. */
   fetch?: typeof fetch;
 }
@@ -263,16 +257,24 @@ export function blockTokenSource(options: BlockTokenSourceOptions): ResourceSour
   return {
     async search(params, signal) {
       const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-      const token = await options.getToken();
-      let response: Response;
-      try {
-        response = await doFetch(buildResourceSearchUrl(options.origin, params), {
-          headers: { Authorization: `Bearer ${token}` },
-          signal,
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        throw new ResourceSourceError('failed', 'Could not reach Civitai.');
+      const url = buildResourceSearchUrl(options.origin, params);
+      const send = async (token: string): Promise<Response> => {
+        try {
+          return await doFetch(url, { headers: { Authorization: `Bearer ${token}` }, signal });
+        } catch (error) {
+          if (signal.aborted) throw error;
+          throw new ResourceSourceError('failed', 'Could not reach Civitai.');
+        }
+      };
+      const token = await options.getToken({ fresh: false });
+      let response = await send(token);
+      // One retry, as @civitai/sdk's client does: a block token that expired
+      // while the tab slept is routine. A second 401, or no newer token to
+      // send, is the viewer's — `unauthorized`.
+      if (response.status === 401) {
+        const fresh = await options.getToken({ fresh: true });
+        if (signal.aborted) throw signal.reason;
+        if (fresh !== token) response = await send(fresh);
       }
       if (!response.ok) throw errorForStatus(response.status, response.headers.get('Retry-After'));
       let body: unknown;
@@ -281,49 +283,7 @@ export function blockTokenSource(options: BlockTokenSourceOptions): ResourceSour
       } catch {
         throw new ResourceSourceError('failed', 'The catalog sent a response it could not read.');
       }
-      return parseResourcePage(body, params.owner);
-    },
-  };
-}
-
-/**
- * The part of `@civitai/sdk`'s `AppClient` that {@link appClientSource} uses,
- * named here so this module needs nothing from that package.
- */
-export interface SiteReader {
-  site: {
-    get(
-      path: string,
-      options: { query: Record<string, string | string[]>; signal: AbortSignal }
-    ): Promise<unknown>;
-  };
-}
-
-/**
- * A source over an `AppClient` from `@civitai/sdk`, through `app.site`.
- *
- * Needs the block token the host mints: `/blocks/models` refuses an OAuth
- * access token. The SDK's errors carry no headers, so a 429/503 waits
- * {@link DEFAULT_RETRY_AFTER_MS} rather than the server's `Retry-After`.
- */
-export function appClientSource(app: SiteReader): ResourceSource {
-  return {
-    async search(params, signal) {
-      const query: Record<string, string | string[]> = {};
-      for (const [key, value] of resourceSearchQuery(params)) {
-        const prior = query[key];
-        query[key] = prior === undefined ? value : [...(Array.isArray(prior) ? prior : [prior]), value];
-      }
-      let body: unknown;
-      try {
-        body = await app.site.get(BLOCK_MODELS_PATH.replace('/api/v1/', ''), { query, signal });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        const status = isRecord(error) && typeof error.status === 'number' ? error.status : null;
-        if (status !== null) throw errorForStatus(status);
-        throw new ResourceSourceError('failed', 'Could not reach Civitai.');
-      }
-      return parseResourcePage(body, params.owner);
+      return parseResourcePage(body);
     },
   };
 }

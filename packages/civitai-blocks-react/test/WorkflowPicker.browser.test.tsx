@@ -202,6 +202,80 @@ describe('<WorkflowPicker>', () => {
       `${PARENT_ORIGIN}/api/v1/blocks/models?types=Workflows&types=ComfyWorkflows&owner=any&limit=20`
     );
   });
+
+  it('after a 401 it mints a fresh block token through the host and retries with it', async () => {
+    // The host answers REQUEST_TOKEN the way civitai.com does.
+    Object.defineProperty(window, 'parent', {
+      value: {
+        postMessage: (message: { type: string; payload?: { requestId?: string } }) => {
+          if (message?.type !== 'REQUEST_TOKEN') return;
+          setTimeout(() =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                origin: PARENT_ORIGIN,
+                data: {
+                  type: 'TOKEN_REFRESH_RESPONSE',
+                  payload: {
+                    requestId: message.payload?.requestId,
+                    token: { raw: 'jwt-fresh', scopes: [], expiresAt: new Date(Date.now() + 600_000).toISOString() },
+                  },
+                },
+              })
+            )
+          );
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+    sendInit();
+    const auth: (string | null)[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const bearer = new Headers(init?.headers).get('Authorization');
+      auth.push(bearer);
+      if (bearer !== 'Bearer jwt-fresh') return new Response(JSON.stringify({ error: 'expired' }), { status: 401 });
+      return new Response(
+        JSON.stringify({
+          items: [{ id: 47, name: 'Old Comfy Graph', type: 'ComfyWorkflows', modelVersions: [{ id: 4701, name: 'v1' }] }],
+          metadata: { owner: 'any' },
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    render(<Host picks={[]} />);
+    await until(() => names().length === 1);
+    expect(auth).toEqual(['Bearer jwt-picker', 'Bearer jwt-fresh']);
+  });
+
+  it('re-rendered with owner any→mine, it drops the old list and searches mine', async () => {
+    sendInit();
+    const source = fakeResourceSource({ mine: [MINE], any: [THEIRS] });
+    const props = { open: true, onPick: () => {}, onDismiss: () => {}, source };
+    const { rerender } = render(<WorkflowPicker {...props} owner="any" />);
+    await until(() => names().join() === 'Old Comfy Graph');
+
+    rerender(<WorkflowPicker {...props} owner="mine" />);
+    await picker().updateComplete;
+    expect(names()).not.toContain('Old Comfy Graph');
+    await until(() => names().join() === 'My Upscaler');
+    expect(source.calls.map((c) => c.owner)).toEqual(['any', 'mine']);
+  });
+
+  it('without onDismiss, a dismissed picker re-opens on the next render that still says open', async () => {
+    sendInit();
+    const source = fakeResourceSource({ any: [THEIRS] });
+    const { rerender } = render(<WorkflowPicker open source={source} onPick={() => {}} heading="One" />);
+    await until(() => names().length === 1);
+    const modal = picker().shadowRoot!.querySelector('civitai-modal')!;
+    modal.shadowRoot!.querySelector<HTMLElement>('[part~="close"]')!.click();
+    await until(() => picker().open === false);
+
+    // The app never heard about the dismissal, so its prop still says open.
+    rerender(<WorkflowPicker open source={source} onPick={() => {}} heading="Two" />);
+    await until(() => picker().open === true);
+    await until(() => names().length === 1);
+  });
 });
 
 describe('fakeResourceSource', () => {

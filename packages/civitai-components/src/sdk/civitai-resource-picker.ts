@@ -19,7 +19,6 @@ import {
 } from './resource-source.js';
 
 export {
-  appClientSource,
   blockTokenSource,
   buildResourceSearchUrl,
   parseResourcePage,
@@ -39,7 +38,6 @@ export type {
   ResourceSource,
   ResourceSourceErrorKind,
   ResourceVersion,
-  SiteReader,
 } from './resource-source.js';
 
 const TAG = 'civitai-resource-picker';
@@ -50,7 +48,7 @@ export type ResourcePickerPhase = 'idle' | 'loading' | 'ready' | 'retrying' | 'e
 /** Automatic retries of a busy (429/503) search before the picker asks the viewer. */
 export const MAX_AUTO_RETRIES = 2;
 
-/** A server asking for longer than this is waited on by the viewer, not by a timer. */
+/** The longest automatic wait: a longer `Retry-After` is clamped to this. */
 const MAX_RETRY_WAIT_MS = 10_000;
 
 let sequence = 0;
@@ -235,6 +233,7 @@ export class CivitaiResourcePicker extends CivitaiElement {
     errorKind: { state: true },
     errorMessage: { state: true },
     loadingMore: { state: true },
+    moreError: { state: true },
     chosen: { state: true },
   };
 
@@ -260,6 +259,8 @@ export class CivitaiResourcePicker extends CivitaiElement {
   declare errorKind: ResourceSourceErrorKind | null;
   declare errorMessage: string;
   declare loadingMore: boolean;
+  /** Why the last "Load more" failed; the list above it stays. */
+  declare moreError: string;
   /** Version id the viewer has chosen per model id; absent means the newest. */
   declare chosen: Map<number, number>;
 
@@ -270,6 +271,8 @@ export class CivitaiResourcePicker extends CivitaiElement {
   #retryTimer?: ReturnType<typeof setTimeout>;
   #retries = 0;
   #lastAppend = false;
+  /** The owner of the rows on screen, as their page reported it. */
+  #shown: ResourceOwner | null = null;
   #pending?: (picked: PickedResource | null) => void;
 
   constructor() {
@@ -288,6 +291,7 @@ export class CivitaiResourcePicker extends CivitaiElement {
     this.errorKind = null;
     this.errorMessage = '';
     this.loadingMore = false;
+    this.moreError = '';
     this.chosen = new Map();
   }
 
@@ -312,13 +316,24 @@ export class CivitaiResourcePicker extends CivitaiElement {
     this.#settle(null);
   }
 
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    // A new owner while open: the rows on screen belong to the other list, so
+    // they go before this render shows them under the new switch.
+    if (this.open && !changed.has('open') && changed.has('owner')) {
+      this.#stop();
+      this.#clearList();
+      this.phase = 'loading';
+    }
+  }
+
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     if (!changed.has('open')) {
       // A new source or type list while open answers a different question, so
       // ask it — this is also how a picker opened before its source existed
       // recovers once the source arrives.
-      if (this.open && (changed.has('source') || changed.has('types'))) {
+      if (this.open && (changed.has('source') || changed.has('types') || changed.has('owner'))) {
         this.#retries = 0;
         void this.#search(false);
       }
@@ -362,13 +377,20 @@ export class CivitaiResourcePicker extends CivitaiElement {
     this.#settle(null);
   }
 
+  /** A failure of the list itself: nothing of it is shown. */
   #fail(kind: ResourceSourceErrorKind, message: string): void {
-    this.items = [];
-    this.nextCursor = null;
+    this.#clearList();
     this.loadingMore = false;
     this.errorKind = kind;
     this.errorMessage = message;
     this.phase = 'error';
+  }
+
+  #clearList(): void {
+    this.items = [];
+    this.nextCursor = null;
+    this.moreError = '';
+    this.#shown = null;
   }
 
   async #search(append: boolean): Promise<void> {
@@ -395,28 +417,38 @@ export class CivitaiResourcePicker extends CivitaiElement {
 
     if (append) {
       this.loadingMore = true;
+      this.moreError = '';
     } else {
       // A new search never shows the last one's rows: they may be another list's.
-      this.items = [];
-      this.nextCursor = null;
+      this.#clearList();
       if (this.phase !== 'retrying') this.phase = 'loading';
+      this.errorKind = null;
     }
-    this.errorKind = null;
 
     let page;
     try {
       page = await source.search(params, controller.signal);
     } catch (error) {
       if (seq !== this.#seq) return;
-      this.loadingMore = false;
       const known = error instanceof ResourceSourceError ? error : null;
       if (known?.kind === 'busy' && this.#retries < MAX_AUTO_RETRIES) {
         this.#retries += 1;
+        const wait = Math.min(known.retryAfterMs ?? 0, MAX_RETRY_WAIT_MS);
+        this.#retryTimer = setTimeout(() => void this.#search(append), wait);
+        // A busy next page keeps the list on screen, its button spinning.
+        if (append) return;
+        this.loadingMore = false;
         this.phase = 'retrying';
         this.errorKind = 'busy';
         this.errorMessage = known.message;
-        const wait = Math.min(known.retryAfterMs ?? 0, MAX_RETRY_WAIT_MS);
-        this.#retryTimer = setTimeout(() => void this.#search(append), wait);
+        return;
+      }
+      this.loadingMore = false;
+      if (append) {
+        // The rows already shown are still right; only the next page failed,
+        // so offer that page again rather than starting over.
+        this.#retries = 0;
+        this.moreError = known?.message ?? (error as Error)?.message ?? 'The next page failed to load.';
         return;
       }
       if (known?.kind === 'unauthorized' && params.owner === 'mine') {
@@ -442,6 +474,8 @@ export class CivitaiResourcePicker extends CivitaiElement {
     this.#retries = 0;
     this.items = append ? [...this.items, ...page.items] : page.items;
     this.nextCursor = page.nextCursor;
+    this.moreError = '';
+    this.#shown = page.owner;
     this.loadingMore = false;
     this.phase = 'ready';
   }
@@ -463,10 +497,8 @@ export class CivitaiResourcePicker extends CivitaiElement {
   #onOwner(event: Event): void {
     event.stopPropagation();
     const value = (event.target as HTMLInputElement).value as ResourceOwner;
-    if (value === this.owner) return;
+    // `updated` runs the search, whoever changed `owner`.
     this.owner = value;
-    this.#retries = 0;
-    void this.#search(false);
   }
 
   #onInput(event: Event): void {
@@ -506,7 +538,9 @@ export class CivitaiResourcePicker extends CivitaiElement {
       baseModel: version.baseModel,
       ...(version.earlyAccessDeadline ? { earlyAccessDeadline: version.earlyAccessDeadline } : {}),
       access: accessOf(version),
-      owner: this.owner,
+      // The list the row was SHOWN in, as the server confirmed it — not the
+      // switch, which can move before a new list has arrived.
+      owner: this.#shown ?? 'any',
     };
     this.#stop();
     this.open = false;
@@ -614,7 +648,21 @@ export class CivitaiResourcePicker extends CivitaiElement {
     return html`<ul class="list" part="list" aria-label=${this.heading}>
         ${this.items.map((item) => this.#renderItem(item))}
       </ul>
-      ${this.nextCursor
+      ${this.nextCursor && this.moreError
+        ? html`<div class="message" role="alert" part="more-error">
+            <span>${this.moreError}</span>
+            <civitai-button
+              part="retry-more"
+              size="sm"
+              variant="light"
+              @click=${() => {
+                this.#retries = 0;
+                void this.#search(true);
+              }}
+              >Try again</civitai-button
+            >
+          </div>`
+        : this.nextCursor
         ? html`<div class="more">
             <civitai-button
               part="more"

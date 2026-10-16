@@ -273,6 +273,44 @@ describe('<civitai-resource-picker> owner', () => {
     expect(names(el)).toEqual([]);
   });
 
+  it.each([
+    ['attribute', (el: CivitaiResourcePicker) => el.setAttribute('owner', 'mine')],
+    ['property', (el: CivitaiResourcePicker) => (el.owner = 'mine')],
+  ])('an owner %s change while open drops the old list and searches `mine`', async (_how, change) => {
+    const { source, calls, called } = handSource();
+    const el = await mount(source);
+    const result = el.show();
+    (await called(1)).resolve(page([WORKFLOW], 'any'));
+    await until(el, () => names(el).length === 1);
+
+    change(el);
+    await el.updateComplete;
+    // Not one frame of the `any` rows under a checked "My" switch.
+    expect(names(el)).toEqual([]);
+    expect($<HTMLInputElement>(el, 'input[value="mine"]')!.checked).toBe(true);
+    const second = await called(2);
+    expect(second.params.owner).toBe('mine');
+    expect(calls).toHaveLength(2);
+
+    second.resolve(page([OTHER], 'mine'));
+    await until(el, () => names(el).join() === 'Portrait Relight');
+    $(el, '[part~="select"]')!.click();
+    expect((await result)?.owner).toBe('mine');
+  });
+
+  it("a pick's `owner` is the list it was shown in, not the switch", async () => {
+    const { source, called } = handSource();
+    const el = await mount(source);
+    const result = el.show();
+    (await called(1)).resolve(page([WORKFLOW], 'any'));
+    await until(el, () => names(el).length === 1);
+    const select = $(el, '[part~="select"]')!;
+    // The switch moves and the click lands in the same task, before any render.
+    el.owner = 'mine';
+    select.click();
+    expect((await result)?.owner).toBe('any');
+  });
+
   it('an `any` search is not held to the echo', async () => {
     const el = await mount(fixedSource(() => page([WORKFLOW], 'any')));
     void el.show();
@@ -366,6 +404,27 @@ describe('<civitai-resource-picker> searching', () => {
     await until(el, () => names(el).length === 2);
     expect(names(el)).toEqual(['Upscale Chain', 'Portrait Relight']);
     expect($(el, '[part~="more"]')).toBeNull();
+  });
+
+  it('a failed "Load more" keeps the list and retries the same page', async () => {
+    const { source, called } = handSource();
+    const el = await mount(source);
+    void el.show();
+    (await called(1)).resolve(page([WORKFLOW], 'any', 'cur-2'));
+    await until(el, () => $(el, '[part~="more"]') !== null);
+    $(el, '[part~="more"]')!.click();
+    (await called(2)).reject(new ResourceSourceError('failed', 'The catalog request failed (500).'));
+    await until(el, () => $(el, '[part~="more-error"]') !== null);
+
+    expect(names(el)).toEqual(['Upscale Chain']);
+    expect($(el, '[part~="more-error"]')!.getAttribute('role')).toBe('alert');
+    $(el, '[part~="retry-more"]')!.click();
+    const retry = await called(3);
+    expect(retry.params.cursor).toBe('cur-2');
+    retry.resolve(page([OTHER]));
+    await until(el, () => names(el).length === 2);
+    expect(names(el)).toEqual(['Upscale Chain', 'Portrait Relight']);
+    expect($(el, '[part~="more-error"]')).toBeNull();
   });
 
   it.each([
@@ -474,14 +533,15 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
     creator: { username: 'maker' },
     // The live shape: a timed gate (early access), an ungated version, a
     // permanent gate (no `earlyAccessDeadline` — the server sets it only for a
-    // timed one), a timed gate whose end is not set yet, and an old payload
-    // carrying only the deadline.
+    // timed one), and a timed gate whose end is not set yet. The last row is a
+    // stray `earlyAccessDeadline` with no gate: the server never sends that
+    // (both come from one active PaidAccess row), so it reads as open.
     modelVersions: [
       { id: 9003, name: 'v3', baseModel: 'Flux.1 D', earlyAccessDeadline: FUTURE, paidAccess: { permanent: false, endsAt: FUTURE } },
       { id: 9002, name: 'v2', baseModel: 'SDXL 1.0', paidAccess: null },
       { id: 9001, name: 'v1', baseModel: 'SD 1.5', paidAccess: { permanent: true, endsAt: null } },
       { id: 9000, name: 'v0', baseModel: 'SD 1.5', paidAccess: { permanent: false, endsAt: null } },
-      { id: 8999, name: 'beta', baseModel: 'SD 1.5', earlyAccessDeadline: PAST },
+      { id: 8999, name: 'beta', baseModel: 'SD 1.5', earlyAccessDeadline: PAST, paidAccess: null },
     ],
   };
 
@@ -503,7 +563,7 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
     expect(names(el)).toEqual(['Upscale Chain']);
   });
 
-  it('reads the access gate off `paidAccess`, falling back to `earlyAccessDeadline`', async () => {
+  it('reads the access gate off `paidAccess` alone', async () => {
     const { fetchImpl } = stubFetch(() => json({ items: [raw], metadata: { owner: 'any' } }));
     const result = await blockTokenSource({ origin: ORIGIN, getToken: () => 't', fetch: fetchImpl }).search(
       { types: ['Workflows'], owner: 'any' },
@@ -521,7 +581,7 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
             { id: 9002, name: 'v2', baseModel: 'SDXL 1.0', access: 'open' },
             { id: 9001, name: 'v1', baseModel: 'SD 1.5', access: 'paid' },
             { id: 9000, name: 'v0', baseModel: 'SD 1.5', access: 'early-access' },
-            { id: 8999, name: 'beta', baseModel: 'SD 1.5', access: 'early-access', earlyAccessDeadline: PAST },
+            { id: 8999, name: 'beta', baseModel: 'SD 1.5', access: 'open' },
           ],
         },
       ],
@@ -531,15 +591,31 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
   });
 
   it.each([
-    ['absent', { nextCursor: null }],
-    ['`any`', { owner: 'any' }],
-  ])('rejects a `mine` page whose echo is %s', async (_label, metadata) => {
+    ['absent', { nextCursor: null }, 'any'],
+    ['`any`', { owner: 'any' }, 'any'],
+    ['`mine`', { owner: 'mine' }, 'mine'],
+  ])('reports a page whose echo is %s as that owner', async (_label, metadata, owner) => {
     const { fetchImpl } = stubFetch(() => json({ items: [raw], metadata }));
-    const search = blockTokenSource({ origin: ORIGIN, getToken: () => 't', fetch: fetchImpl }).search(
+    const result = await blockTokenSource({ origin: ORIGIN, getToken: () => 't', fetch: fetchImpl }).search(
       { types: ['Workflows'], owner: 'mine' },
       new AbortController().signal
     );
-    await expect(search).rejects.toMatchObject({ name: 'ResourceSourceError', kind: 'owner-unsupported' });
+    expect(result.owner).toBe(owner);
+  });
+
+  it.each([
+    ['absent', { nextCursor: null }],
+    ['`any`', { owner: 'any' }],
+  ])('through blockTokenSource, a `mine` page whose echo is %s shows an error, not a list', async (_label, metadata) => {
+    const { fetchImpl } = stubFetch(() => json({ items: [raw], metadata }));
+    const el = await mount(blockTokenSource({ origin: ORIGIN, getToken: () => 't', fetch: fetchImpl }), {
+      owner: 'mine',
+    });
+    void el.show();
+    await until(el, () => el.phase === 'error' || el.phase === 'ready');
+    expect(el.phase).toBe('error');
+    expect($(el, '[part~="error"]')!.dataset.kind).toBe('owner-unsupported');
+    expect(names(el)).toEqual([]);
   });
 
   it.each([401, 403, 404])(
@@ -561,6 +637,38 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
       expect(names(el)).toEqual([]);
     }
   );
+
+  it('on a 401, asks for a fresh token once and retries with it', async () => {
+    const asked: boolean[] = [];
+    const { auth, fetchImpl } = stubFetch(() => json({ items: [], metadata: { owner: 'any' } }));
+    const gated = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetchImpl(input, init);
+      return new Headers(init?.headers).get('Authorization') === 'Bearer stale' ? json({ error: 'expired' }, 401) : response;
+    }) as typeof fetch;
+    const page1 = await blockTokenSource({
+      origin: ORIGIN,
+      getToken: (opts) => {
+        const fresh = opts?.fresh === true;
+        asked.push(fresh);
+        return fresh ? 'renewed' : 'stale';
+      },
+      fetch: gated,
+    }).search({ types: ['Workflows'], owner: 'any' }, new AbortController().signal);
+    expect(page1.owner).toBe('any');
+    expect(asked).toEqual([false, true]);
+    expect(auth).toEqual(['Bearer stale', 'Bearer renewed']);
+  });
+
+  it('a 401 the fresh token cannot fix is `unauthorized`, after one request', async () => {
+    const { auth, fetchImpl } = stubFetch(() => json({ error: 'Sign-in required' }, 401));
+    await expect(
+      blockTokenSource({ origin: ORIGIN, getToken: () => 'same', fetch: fetchImpl }).search(
+        { types: ['Workflows'], owner: 'mine' },
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({ kind: 'unauthorized', status: 401 });
+    expect(auth).toEqual(['Bearer same']);
+  });
 
   it('carries Retry-After from a 429 into the wait', async () => {
     const { fetchImpl } = stubFetch(() => json({ error: 'slow down' }, 429, { 'Retry-After': '7' }));

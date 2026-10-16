@@ -13778,6 +13778,17 @@
             },
             {
               "kind": "field",
+              "name": "moreError",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Why the last \"Load more\" failed; the list above it stays.",
+              "default": "''",
+              "attribute": "moreError"
+            },
+            {
+              "kind": "field",
               "name": "chosen",
               "privacy": "public",
               "type": {
@@ -13844,6 +13855,16 @@
                 "text": "boolean"
               },
               "default": "false"
+            },
+            {
+              "kind": "field",
+              "name": "#shown",
+              "privacy": "private",
+              "type": {
+                "text": "ResourceOwner | null"
+              },
+              "default": "null",
+              "description": "The owner of the rows on screen, as their page reported it."
             },
             {
               "kind": "field",
@@ -13953,7 +13974,18 @@
                     "text": "string"
                   }
                 }
-              ]
+              ],
+              "description": "A failure of the list itself: nothing of it is shown."
+            },
+            {
+              "kind": "method",
+              "name": "#clearList",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
             },
             {
               "kind": "method",
@@ -14336,6 +14368,15 @@
               "fieldName": "loadingMore"
             },
             {
+              "name": "moreError",
+              "type": {
+                "text": "string"
+              },
+              "description": "Why the last \"Load more\" failed; the list above it stays.",
+              "default": "''",
+              "fieldName": "moreError"
+            },
+            {
               "name": "chosen",
               "type": {
                 "text": "Map<number, number>"
@@ -14392,6 +14433,12 @@
               "name": "list"
             },
             {
+              "name": "more-error"
+            },
+            {
+              "name": "retry-more"
+            },
+            {
               "name": "more"
             },
             {
@@ -14420,14 +14467,6 @@
         }
       ],
       "exports": [
-        {
-          "kind": "js",
-          "name": "appClientSource",
-          "declaration": {
-            "name": "appClientSource",
-            "module": "./resource-source.js"
-          }
-        },
         {
           "kind": "js",
           "name": "blockTokenSource",
@@ -14561,14 +14600,6 @@
           "name": "ResourceVersion",
           "declaration": {
             "name": "ResourceVersion",
-            "module": "./resource-source.js"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "SiteReader",
-          "declaration": {
-            "name": "SiteReader",
             "module": "./resource-source.js"
           }
         },

@@ -584,12 +584,15 @@ earlyAccessDeadline?, access, owner }`, where `access` is `open`,
   `fetch`, sending `types` as repeated parameters plus `owner`, `query`,
   `limit` and `cursor`. It never calls any other route — in particular it never
   falls back to the public `/api/v1/models`, which knows no `owner`.
-- `appClientSource(app)` does the same through an `@civitai/sdk` `AppClient`
-  (`app.site`). It needs the host-minted block token: `/blocks/models` refuses
-  an OAuth access token.
 - Gated versions are listed, not hidden: the server's `paidAccess` gate
   (`{ permanent, endsAt }`) becomes an "Early access until …" badge for a timed
   gate and a "Paid" badge for a permanent one.
+- On a `401`, `blockTokenSource` calls `getToken({ fresh: true })` once and
+  retries if that returns a different token — a block token that expired while
+  the tab slept. Otherwise the search ends as `unauthorized`.
+- Changing `owner` while it is open drops the rows on screen and searches the
+  other list. A pick's `owner` is the list its row was shown in.
+- A failed "Load more" keeps the rows already shown and offers that page again.
 - A newer search aborts the one in flight, and a late answer to an older search
   is dropped. `429` and `503` show a retry state and are retried after
   `Retry-After`, twice; then "Try again" is offered. `ResourceSourceError`'s
