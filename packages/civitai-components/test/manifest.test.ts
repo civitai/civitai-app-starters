@@ -307,6 +307,131 @@ describe('custom-elements.json inheritance', () => {
   });
 
   /**
+   * A class's own doc for one of its entries, read from its source: the JSDoc
+   * directly above the member's declaration, normalised; `null` when it has
+   * none; `undefined` when the class body declares no such member (so a lookup
+   * that finds nothing fails the test instead of passing as "no doc"). An event
+   * is the class's own when its body dispatches the literal name, and this
+   * package documents none with `@fires`, so its own doc is always `null`.
+   */
+  const ownDoc = (
+    path: string,
+    className: string,
+    kind: 'attributes' | 'members' | 'events',
+    name: string
+  ): string | null | undefined => {
+    const source = readFileSync(join(pkgRoot, path), 'utf8');
+    const start = source.indexOf(`class ${className} `);
+    if (start === -1) return undefined;
+    const next = source.slice(start + 1).search(/\n(?:export |class )/);
+    const body = next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
+
+    if (kind === 'events') {
+      return new RegExp(`new (?:Custom)?Event\\(\\s*'${name}'`).test(body) ? null : undefined;
+    }
+    const lines = body.split('\n');
+    // A class member, or a constructor assignment (where the analyzer also
+    // reads a field's doc) — never a `name: { … }` key of `static properties`.
+    const declares = new RegExp(
+      `^\\s*(?:(?:public|protected|private|static|override|readonly|declare|abstract|async|get|set|accessor)\\s+)*#?${name}\\s*[(:=;!?<](?!\\s*\\{)|^\\s*this\\.#?${name}\\s*=`
+    );
+    const sites = lines.flatMap((line, index) => (declares.test(line) ? [index] : []));
+    if (sites.length === 0) return undefined;
+    for (const at of sites) {
+      let end = at - 1;
+      while (end >= 0 && lines[end]!.trim() === '') end -= 1;
+      if (end < 0 || !lines[end]!.trim().endsWith('*/')) continue;
+      let begin = end;
+      while (begin > 0 && !lines[begin]!.includes('/*')) begin -= 1;
+      // `/* … */` is a plain comment; only `/** … */` is a doc.
+      if (!lines[begin]!.includes('/**')) continue;
+      return lines
+        .slice(begin, end + 1)
+        .join(' ')
+        .replace(/\/\*\*|\*\//g, ' ')
+        .replace(/^\s*\*|\s\*\s/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    return null;
+  };
+
+  const normalise = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+  /**
+   * The analyzer merges a base entry UNDER a subclass's own one, so an override
+   * with no doc of its own reads the base's. Every entry an element declares
+   * itself that an ancestor also declares must carry ITS OWN doc, or none.
+   */
+  const overrides = documented.flatMap((element) =>
+    (['attributes', 'members', 'events'] as const).flatMap((kind) =>
+      (element[kind] ?? [])
+        .filter((entry) => entry.inheritedFrom === undefined)
+        .filter((entry) =>
+          ancestorsOf(element).some((ancestor) =>
+            ancestor[kind]?.some((item) => item.name === entry.name)
+          )
+        )
+        .map((entry) => ({ element, kind, entry }))
+    )
+  );
+
+  it('finds overridden entries to check, pagination change among them', () => {
+    expect(
+      overrides.map(({ element, kind, entry }) => `${element.tagName} ${kind} ${entry.name}`)
+    ).toContain('civitai-pagination events change');
+  });
+
+  it.each(overrides.map((o) => [`${o.element.tagName} ${o.kind} ${o.entry.name}`, o] as const))(
+    '%s carries its own doc, not its base\'s',
+    (_, { element, kind, entry }) => {
+      const field = (entry as Entry & { fieldName?: string }).fieldName ?? entry.name;
+      const doc = ownDoc(modulePathOf(element.name!), element.name!, kind, field);
+      expect(doc, `${element.name}'s source declares ${kind} ${field}`).not.toBeUndefined();
+      const description = (entry as Entry & { description?: string }).description;
+      if (doc === null) {
+        expect(description, 'no own doc, so no description').toBeUndefined();
+      } else {
+        expect(description, 'its own doc').toBeDefined();
+        expect(doc).toContain(normalise(description!));
+      }
+    }
+  );
+
+  /**
+   * An inherited entry is its declarer's, doc included: a switch's `missing`
+   * comes from the checkbox, which has no doc for it, so it must not pick up
+   * the field's from further down the chain.
+   */
+  it.each(documented.map((d) => d.tagName!))('%s inherits each doc from the class it names', (tag) => {
+    const element = documented.find((d) => d.tagName === tag)!;
+    for (const kind of ['attributes', 'members', 'events'] as const) {
+      for (const entry of element[kind] ?? []) {
+        if (!entry.inheritedFrom) continue;
+        const declarer = ancestorsOf(element).find((d) => d.name === entry.inheritedFrom!.name);
+        const own = declarer?.[kind]?.find((item) => item.name === entry.name) as
+          | (Entry & { description?: string })
+          | undefined;
+        expect(own, `${entry.inheritedFrom.name} declares ${kind} ${entry.name}`).toBeDefined();
+        expect(
+          (entry as Entry & { description?: string }).description,
+          `<${tag}> ${kind} ${entry.name}`
+        ).toBe(own?.description);
+      }
+    }
+  });
+
+  it("documents pagination's own change without the base's re-dispatch text", () => {
+    const pagination = documented.find((d) => d.tagName === 'civitai-pagination')!;
+    const change = pagination.events?.find((e) => e.name === 'change') as
+      | (Entry & { description?: string })
+      | undefined;
+    expect(change, 'pagination documents change').toBeDefined();
+    expect(change?.inheritedFrom, 'it dispatches change itself').toBeUndefined();
+    expect(change?.description).toBeUndefined();
+  });
+
+  /**
    * `CivitaiElement` re-dispatches the events in its `RETARGETED` list out of
    * every shadow root, so each is an event of the base and of every subclass.
    * Read the list here independently of the analyzer config that injects them.
@@ -378,39 +503,57 @@ describe('custom-elements.json initializers', () => {
     expect(resolveInitializerPaths(manifest)).toEqual([]);
   });
 
+
   /**
    * The package has no field initialised from an imported constant today, so
    * a committed fixture stands in: `civitai-probe` redeclares its base's
-   * `probeField` as `= PROBE_DEFAULT`, imported from the base module. Run the
-   * analyzer with this package's own plugin over it.
+   * documented `probeField` as `= PROBE_DEFAULT`, imported from the base
+   * module, with no doc of its own; `civitai-probe-child` inherits it. Run the
+   * analyzer with this package's own plugin over them.
    */
-  it('resolves an imported default on a redeclared field', async () => {
+  type ProbeField = Entry & { default?: string; type?: { text: string }; description?: string };
+  const probeField = async (tag: string): Promise<{ field?: ProbeField; probe: unknown }> => {
     const { create, ts } = await import('@custom-elements-manifest/analyzer');
     const { litPlugin } = await import(
       '@custom-elements-manifest/analyzer/src/features/framework-plugins/lit/lit.js'
     );
     const { createCivitaiElementsPlugin } = await import('../custom-elements-manifest.config.mjs');
 
-    const files = ['probe-base.ts', 'civitai-probe.ts'].map((file) =>
+    const files = ['probe-base.ts', 'civitai-probe.ts', 'civitai-probe-child.ts'].map((file) =>
       join('test/fixtures/cem-probe', file)
     );
     const probe = create({
       modules: files.map((file) =>
-        ts.createSourceFile(file, readFileSync(join(pkgRoot, file), 'utf8'), ts.ScriptTarget.ES2015, true)
+        ts.createSourceFile(
+          file,
+          readFileSync(join(pkgRoot, file), 'utf8'),
+          ts.ScriptTarget.ES2015,
+          true
+        )
       ),
       plugins: [...litPlugin(), createCivitaiElementsPlugin()],
       context: { dev: false },
     }) as { modules: Module[] };
-
-    expect(resolveInitializerPaths(probe)).toEqual([]);
     const element = probe.modules
       .flatMap((module) => module.declarations ?? [])
-      .find((d) => d.tagName === 'civitai-probe');
-    expect(element, 'the probe element was analysed').toBeDefined();
-    const field = element?.members?.find((m) => m.name === 'probeField') as
-      | (Entry & { default?: string; type?: { text: string } })
-      | undefined;
+      .find((d) => d.tagName === tag);
+    expect(element, `${tag} was analysed`).toBeDefined();
+    const field = element?.members?.find((m) => m.name === 'probeField') as ProbeField | undefined;
+    return { field, probe };
+  };
+
+  it('resolves an imported default on a redeclared field, and keeps its own (absent) doc', async () => {
+    const { field, probe } = await probeField('civitai-probe');
+    expect(resolveInitializerPaths(probe)).toEqual([]);
     expect(field?.inheritedFrom, 'probeField is its own').toBeUndefined();
+    expect(field?.default).toBe("'md'");
+    expect(field?.type?.text).toBe('ProbeSize');
+    expect(field?.description, "the base's doc does not fill the override").toBeUndefined();
+  });
+
+  it('gives a grandchild the resolved default of the field it inherits', async () => {
+    const { field } = await probeField('civitai-probe-child');
+    expect(field?.inheritedFrom?.name).toBe('CivitaiProbe');
     expect(field?.default).toBe("'md'");
     expect(field?.type?.text).toBe('ProbeSize');
   });

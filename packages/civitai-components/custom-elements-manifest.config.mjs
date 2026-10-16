@@ -162,7 +162,9 @@ function resolveSuperclass(ref, declaresClass) {
  * The analyzer's inheritance pass gets two things wrong once a chain is longer
  * than one class: an entry a subclass DECLARES ITSELF is marked `inheritedFrom`
  * the base and takes the base's `type` (segmented-control's own `size` became
- * the field's `FieldSize`), and an inherited entry names the DEEPEST ancestor,
+ * the field's `FieldSize`) and, when it has no doc of its own, the base's
+ * `description` (pagination's own `change` read as the base's re-dispatched
+ * one); and an inherited entry names the DEEPEST ancestor,
  * not the nearest one that declares it (a switch's `value` is the checkbox's,
  * not the field's).
  *
@@ -174,8 +176,8 @@ function resolveSuperclass(ref, declaresClass) {
 export function createCivitaiElementsPlugin() {
   /**
    * Class name → { module, superclass, own: kind → name → declared fields },
-   * recorded before inheritance: just `type`, `privacy` and the analyzer's
-   * pending `resolveInitializer`, the inputs to the correction below.
+   * recorded before inheritance: just `type`, `privacy`, `description` and the
+   * analyzer's pending `resolveInitializer`, the inputs to the correction below.
    */
   const declared = new Map();
 
@@ -190,6 +192,7 @@ export function createCivitaiElementsPlugin() {
             structuredClone({
               type: entry.type,
               privacy: entry.privacy,
+              description: entry.description,
               resolveInitializer: entry.resolveInitializer,
               default: entry.default,
             }),
@@ -234,7 +237,7 @@ export function createCivitaiElementsPlugin() {
     }
   };
 
-  /** First: an entry the class declares itself is its own, with its own type. */
+  /** First: an entry the class declares itself is its own, with its own type and doc. */
   const restoreOwn = (manifest, declaration) => {
     const self = declared.get(declaration.name);
     if (!self) return;
@@ -247,6 +250,8 @@ export function createCivitaiElementsPlugin() {
         if (type) entry.type = type;
         if (own.privacy) entry.privacy = own.privacy;
         else delete entry.privacy;
+        if (own.description) entry.description = own.description;
+        else delete entry.description;
       }
     }
   };
@@ -269,6 +274,8 @@ export function createCivitaiElementsPlugin() {
           if (source?.type) entry.type = source.type;
           if (source?.privacy) entry.privacy = source.privacy;
           else delete entry.privacy;
+          if (source?.description) entry.description = source.description;
+          else delete entry.description;
         }
         // A copy taken before the declarer's initializer was resolved.
         if (source && declared.get(name).own[kind].get(entry.name)?.resolveInitializer) {
