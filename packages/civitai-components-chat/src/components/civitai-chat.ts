@@ -524,8 +524,16 @@ export class CivitaiChat extends LitElement {
     try {
       const pending = this.signIn({ signal: abort.signal });
       if (draft) void this.#composer().then((composer) => composer && (composer.draft = draft));
-      this.app = await pending;
+      const app = await pending;
+      // Signed in, the chat renders a new message box: what the viewer typed (or an example put there)
+      // goes into it. Not a `draft` being sent, which would come back after it went.
+      const typed = draft === undefined ? ((await this.#composer())?.draft ?? '') : '';
+      this.app = app;
       await this.#started;
+      if (typed) {
+        const composer = await this.#composer();
+        if (composer) composer.draft = typed;
+      }
       await then();
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code !== 'canceled') this.#toast(error instanceof Error && error.message ? error.message : 'Sign-in did not finish.', error);

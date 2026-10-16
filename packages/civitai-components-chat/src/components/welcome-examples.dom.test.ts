@@ -104,12 +104,65 @@ describe('<civitai-chat> examples that want a file', () => {
     expect(browse).toHaveBeenCalledTimes(1);
   });
 
-  it("NEGATIVE CONTROL: an example that wants no file opens no picker", async () => {
+  it.each([
+    ['signed in', true],
+    ['signed out', false],
+  ])('NEGATIVE CONTROL: an example that wants no file opens no picker, %s', async (_label, signedIn) => {
     const browse = vi.spyOn(CivitaiChatComposer.prototype, 'browse').mockImplementation(() => undefined);
-    const chat = await mount((el) => (el.examples = APP_EXAMPLES), false);
+    const chat = await mount((el) => (el.examples = APP_EXAMPLES), signedIn);
     chat.shadowRoot!.querySelector<HTMLButtonElement>('civitai-chat-welcome .cvt-example')!.click();
     await vi.waitFor(() => expect(composer(chat).draft).toBe('Build a tip calculator that splits the bill between friends'));
     expect(browse).not.toHaveBeenCalled();
+  });
+});
+
+describe('<civitai-chat> signing in keeps what the viewer was writing', () => {
+  /** A signed-out chat whose sign-in finishes when the test says so. */
+  async function signedOut(setup: (chat: CivitaiChat) => void = () => undefined) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = fakeApp() as { orchestration: { submitWorkflow: ReturnType<typeof vi.fn> } };
+    let finish = (): void => undefined;
+    const chat = document.createElement('civitai-chat');
+    chat.signIn = vi.fn(() => new Promise<never>((resolve) => (finish = () => resolve(app as never))));
+    setup(chat);
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-composer')).not.toBeNull(), { timeout: 10_000 });
+    return { chat, app, finish: () => finish() };
+  }
+  const photo = () => new File(['x'], 'photo.png', { type: 'image/png' });
+
+  it('a file-wanting example: the file and the example both survive sign-in', async () => {
+    vi.spyOn(CivitaiChatComposer.prototype, 'browse').mockImplementation(() => undefined);
+    const { chat, finish } = await signedOut(
+      (el) => (el.examples = [{ title: 'Restyle my photo', prompt: 'Turn my photo into a watercolor', wantsFile: true }])
+    );
+    chat.shadowRoot!.querySelector<HTMLButtonElement>('civitai-chat-welcome .cvt-example')!.click();
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('Turn my photo into a watercolor'));
+    const before = composer(chat);
+    // The picker hands its files over as the composer's file event does.
+    chat.addFiles([photo()]);
+    finish();
+    await vi.waitFor(() => expect(composer(chat)).not.toBe(before));
+    await vi.waitFor(() => expect(chat.uploads).toHaveLength(1));
+    expect(composer(chat).draft).toBe('Turn my photo into a watercolor');
+  });
+
+  it('what the viewer typed survives adding a file and signing in', async () => {
+    const { chat, finish } = await signedOut();
+    composer(chat).draft = 'a red bike';
+    chat.addFiles([photo()]);
+    finish();
+    await vi.waitFor(() => expect(chat.uploads).toHaveLength(1));
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('a red bike'));
+  });
+
+  it('a message sent while signed out is sent, not left in the box as well', async () => {
+    const { chat, app, finish } = await signedOut();
+    composer(chat).dispatchEvent(new CustomEvent('cvt-send', { detail: { text: 'a red bike' } }));
+    finish();
+    await vi.waitFor(() => expect(app.orchestration.submitWorkflow).toHaveBeenCalled());
+    expect(composer(chat).draft).toBe('');
   });
 });
 
