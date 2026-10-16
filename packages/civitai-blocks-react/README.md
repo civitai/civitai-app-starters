@@ -3166,9 +3166,11 @@ a backdrop click, and re-opens on the next render if `open` still says `true`.
 - **Search is debounced** (300 ms), and a newer search cancels the one in
   flight. A busy catalog (`429` / `503`, rate limit 150 requests per 10 s per
   block) is retried after its `Retry-After`, twice, then offered as "Try again".
-- **An anonymous viewer** gets a sign-in message on the "mine" list; "All" works.
-  An expired block token is not mistaken for that: on a `401` the picker mints a
-  fresh token through `useBlockToken().refresh()` and retries once.
+- **An anonymous viewer** gets a sign-in message on the "mine" list after one
+  request, with no token refresh — the picker knows the viewer is anonymous from
+  `useBlockContext()`. "All" works. An expired block token is not mistaken for
+  that: for a signed-in viewer, or on "All", a `401` makes the picker mint a
+  fresh token through `useBlockToken().refresh()` and retry once.
 - **Before `BLOCK_INIT`** the picker says it is not connected yet, and lists as
   soon as the host origin lands.
 - **Under the mock host** there is no catalog to call. Pass canned results from

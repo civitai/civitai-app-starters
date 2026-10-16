@@ -579,7 +579,7 @@ earlyAccessDeadline?, access, owner }`, where `access` is `open`,
   search answered with anything but `owner: 'mine'` is shown as an error, not
   as a list. `blockTokenSource` reads that from `metadata.owner`, which a
   server older than the `owner` parameter does not send.
-- `blockTokenSource({ origin, getToken, fetch? })` calls
+- `blockTokenSource({ origin, getToken, signedIn?, fetch? })` calls
   `GET /api/v1/blocks/models` with `Authorization: Bearer <token>` and plain
   `fetch`, sending `types` as repeated parameters plus `owner`, `query`,
   `limit` and `cursor`. It never calls any other route — in particular it never
@@ -589,10 +589,14 @@ earlyAccessDeadline?, access, owner }`, where `access` is `open`,
   gate and a "Paid" badge for a permanent one.
 - On a `401`, `blockTokenSource` calls `getToken({ fresh: true })` once and
   retries if that returns a different token — a block token that expired while
-  the tab slept. Otherwise the search ends as `unauthorized`.
+  the tab slept. Otherwise the search ends as `unauthorized`. The exception is
+  a `mine` search when `signedIn()` returns `false`: the server answers an
+  anonymous viewer's `mine` with a `401` as well, so that search ends as
+  `unauthorized` at once, with no fresh token and no second request.
 - Changing `owner` while it is open drops the rows on screen and searches the
   other list. A pick's `owner` is the list its row was shown in.
 - A failed "Load more" keeps the rows already shown and offers that page again.
+  A busy one keeps them too while it retries the same page.
 - A newer search aborts the one in flight, and a late answer to an older search
   is dropped. `429` and `503` show a retry state and are retried after
   `Retry-After`, twice; then "Try again" is offered. `ResourceSourceError`'s

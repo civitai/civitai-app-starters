@@ -699,6 +699,55 @@ describe('<civitai-resource-picker> with blockTokenSource', () => {
     expect(auth).toEqual(['Bearer same']);
   });
 
+  it('a `mine` 401 for a viewer known to be anonymous is final: one request, no fresh token', async () => {
+    const asked: boolean[] = [];
+    const { auth, fetchImpl } = stubFetch(() => json({ error: 'Sign-in required' }, 401));
+    const el = await mount(
+      blockTokenSource({
+        origin: ORIGIN,
+        getToken: (opts) => {
+          asked.push(opts?.fresh === true);
+          return opts?.fresh ? 'renewed' : 'anon-token';
+        },
+        signedIn: () => false,
+        fetch: fetchImpl,
+      }),
+      { owner: 'mine' }
+    );
+    void el.show();
+    await until(el, () => el.phase === 'error');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(auth).toEqual(['Bearer anon-token']);
+    expect(asked).toEqual([false]);
+    expect($(el, '[part~="error"]')!.dataset.kind).toBe('unauthorized');
+  });
+
+  it.each([
+    ['`mine`, signed in', 'mine', true],
+    ['`mine`, viewer not known yet', 'mine', undefined],
+    ['`any`, anonymous', 'any', false],
+  ] as const)('any other 401 (%s) still gets the one fresh-token retry', async (_label, owner, signedIn) => {
+    const asked: boolean[] = [];
+    const { auth, fetchImpl } = stubFetch(() => json({ items: [], metadata: { owner } }));
+    const gated = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetchImpl(input, init);
+      return new Headers(init?.headers).get('Authorization') === 'Bearer stale' ? json({ error: 'invalid block token' }, 401) : response;
+    }) as typeof fetch;
+    const result = await blockTokenSource({
+      origin: ORIGIN,
+      getToken: (opts) => {
+        asked.push(opts?.fresh === true);
+        return opts?.fresh ? 'renewed' : 'stale';
+      },
+      signedIn: () => signedIn,
+      fetch: gated,
+    }).search({ types: ['Workflows'], owner }, new AbortController().signal);
+    expect(result.owner).toBe(owner);
+    expect(asked).toEqual([false, true]);
+    expect(auth).toEqual(['Bearer stale', 'Bearer renewed']);
+  });
+
   it('carries Retry-After from a 429 into the wait', async () => {
     const { fetchImpl } = stubFetch(() => json({ error: 'slow down' }, 429, { 'Retry-After': '7' }));
     await expect(
