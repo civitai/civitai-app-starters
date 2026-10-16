@@ -41,6 +41,8 @@ Vite + React + TS) or at the React examples under
   ones included, with type and default, plus its events, slots and CSS parts,
   read from the `@civitai/components` installed here. With no tag it lists
   every element. Run it for each element you use; there is nothing to parse.
+  No `civitai` on PATH? Run `npx -y @civitai/cli@latest app elements <tag>`
+  instead — the same command, no install.
   The package README (`node_modules/@civitai/components/README.md`, § Elements)
   has worked examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements'
   reference: it is the `data-civitai-ui` contract for HAND-WRITTEN HTML

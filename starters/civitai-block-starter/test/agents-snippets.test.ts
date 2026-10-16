@@ -198,6 +198,22 @@ describe('AGENTS.md package pointers', () => {
     expect(md.includes('custom-elements.json'), 'AGENTS.md names custom-elements.json').toBe(false);
   });
 
+  /**
+   * A tiged starter does not install the CLI, so a fresh sandbox answers
+   * `civitai: command not found` — and with the JSON pointer gone it then has
+   * no element reference at all. The npx form must sit in the SAME paragraph
+   * as the command (the doc's generic npx note is hundreds of lines later, and
+   * names `app validate`), in AGENTS.md and README.md alike.
+   */
+  it.each(['AGENTS.md', 'README.md'])('%s gives the npx form of `civitai app elements` inline', (file) => {
+    const doc = readFileSync(join(STARTER, file), 'utf8').replace(/\r\n/g, '\n');
+    const bare = doc.indexOf('civitai app elements <tag>`');
+    const npx = doc.indexOf('`npx -y @civitai/cli@latest app elements <tag>`');
+    expect(bare, `${file} does not name civitai app elements <tag>`).toBeGreaterThanOrEqual(0);
+    expect(npx, `${file} lacks \`npx -y @civitai/cli@latest app elements <tag>\``).toBeGreaterThan(bare);
+    expect(doc.slice(bare, npx).includes('\n\n'), `${file}'s npx form is not in the same paragraph as the command`).toBe(false);
+  });
+
   it('names MARKUP.md only inside the warning that it is NOT the elements\' reference', () => {
     const norm = md.replace(/\s+/g, ' ');
     const warning =

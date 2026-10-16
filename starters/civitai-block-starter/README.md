@@ -79,7 +79,8 @@ The UI is the custom elements from [`@civitai/components`](https://github.com/ci
 — `<civitai-button>`, `<civitai-text-input>`, `<civitai-select>`,
 `<civitai-modal>`, `<civitai-image>`, … `civitai app elements <tag>` prints every
 attribute (inherited ones included), event and slot of one element from the
-`@civitai/components` installed here; with no tag it lists them all. Which
+`@civitai/components` installed here; with no tag it lists them all (no
+`civitai` on PATH? `npx -y @civitai/cli@latest app elements <tag>`). Which
 import defines which:
 
 | Import | Defines |
