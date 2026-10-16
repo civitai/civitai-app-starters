@@ -13,6 +13,9 @@ import { LightElement, emit } from './light.js';
 
 const LEVEL_BARS = 48;
 
+
+/** The message box's hint when the page sets none. */
+export const DEFAULT_PLACEHOLDER = 'Ask for a picture, a video, a song… or anything about Civitai';
 export class CivitaiChatComposer extends LightElement {
   static override properties: PropertyDeclarations = {
     running: { type: Boolean },
@@ -64,7 +67,7 @@ export class CivitaiChatComposer extends LightElement {
     this.uploads = [];
     this.refs = [];
     this.commands = {};
-    this.placeholder = 'Ask for a picture, a video, a song… or anything about Civitai';
+    this.placeholder = DEFAULT_PLACEHOLDER;
     this.text = '';
     this.voice = false;
     this.noFiles = false;

@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { memoryStore } from '../test-support/fake-backend.js';
 import { flush } from '../test-support/fakes.js';
 import type { CivitaiChat } from './civitai-chat.js';
-import type { CivitaiChatComposer } from './civitai-chat-composer.js';
+import { CivitaiChatComposer } from './civitai-chat-composer.js';
 import { defineElements } from './define.js';
 
 beforeAll(() => defineElements());
@@ -41,6 +42,8 @@ const titles = (chat: CivitaiChat) =>
   [...chat.shadowRoot!.querySelectorAll('civitai-chat-welcome .cvt-example strong')].map((el) => el.textContent);
 
 const composer = (chat: CivitaiChat) => chat.shadowRoot!.querySelector('civitai-chat-composer') as CivitaiChatComposer;
+
+const BUILT_IN_HINT = 'Ask for a picture, a video, a song… or anything about Civitai';
 
 const APP_EXAMPLES = [
   { title: 'Tip calculator', prompt: 'Build a tip calculator that splits the bill between friends' },
@@ -87,10 +90,67 @@ describe('<civitai-chat> welcome examples', () => {
   });
 });
 
+describe('<civitai-chat> examples that want a file', () => {
+  const PHOTO_EXAMPLE = [{ title: 'Restyle my photo', prompt: 'Turn my photo into a watercolor', wantsFile: true }];
+
+  it.each([
+    ['signed in', true],
+    ['signed out', false],
+  ])("open the file picker from a page's example, %s", async (_label, signedIn) => {
+    const browse = vi.spyOn(CivitaiChatComposer.prototype, 'browse').mockImplementation(() => undefined);
+    const chat = await mount((el) => (el.examples = PHOTO_EXAMPLE), signedIn);
+    chat.shadowRoot!.querySelector<HTMLButtonElement>('civitai-chat-welcome .cvt-example')!.click();
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('Turn my photo into a watercolor'));
+    expect(browse).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEGATIVE CONTROL: an example that wants no file opens no picker", async () => {
+    const browse = vi.spyOn(CivitaiChatComposer.prototype, 'browse').mockImplementation(() => undefined);
+    const chat = await mount((el) => (el.examples = APP_EXAMPLES), false);
+    chat.shadowRoot!.querySelector<HTMLButtonElement>('civitai-chat-welcome .cvt-example')!.click();
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('Build a tip calculator that splits the bill between friends'));
+    expect(browse).not.toHaveBeenCalled();
+  });
+});
+
 describe('<civitai-chat> placeholder', () => {
   it('keeps the built-in hint when the page sets none', async () => {
     const chat = await mount(() => undefined);
     expect(composer(chat).placeholder).toBe('Ask for a picture, a video, a song… or anything about Civitai');
+  });
+
+  it.each([
+    ['signed in', true],
+    ['signed out', false],
+  ])('restores the built-in hint when the page clears its own, %s', async (_label, signedIn) => {
+    const hint = 'Describe the app you want to build';
+    const chat = await mount((el) => (el.placeholder = hint), signedIn);
+    expect(composer(chat).placeholder).toBe(hint);
+
+    chat.placeholder = undefined;
+    await chat.updateComplete;
+    expect(composer(chat).placeholder).toBe(BUILT_IN_HINT);
+
+    chat.setAttribute('placeholder', hint);
+    await chat.updateComplete;
+    expect(composer(chat).placeholder).toBe(hint);
+    chat.removeAttribute('placeholder');
+    await chat.updateComplete;
+    expect(composer(chat).placeholder).toBe(BUILT_IN_HINT);
+  });
+
+  it("puts the page's hint ahead of a host backend's own, and falls back to it", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    const chat = document.createElement('civitai-chat');
+    chat.backend = { url: '/api/llm', model: 'host/default-model', store: memoryStore() };
+    chat.placeholder = 'Ask the docs';
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-composer')).not.toBeNull(), { timeout: 10_000 });
+    await chat.updateComplete;
+    expect(composer(chat).placeholder).toBe('Ask the docs');
+    chat.placeholder = undefined;
+    await chat.updateComplete;
+    expect(composer(chat).placeholder).toBe('Ask anything');
   });
 
   it("shows the page's hint in the message box, signed in or not", async () => {

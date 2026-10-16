@@ -27,7 +27,7 @@ import type { Attachment, Settings } from '../types.js';
 import { voiceLanguage } from '../voice/languages.js';
 import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
-import type { CivitaiChatComposer } from './civitai-chat-composer.js';
+import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
@@ -907,6 +907,7 @@ export class CivitaiChat extends LitElement {
                 void this.#composer().then((composer) => {
                   if (!composer) return;
                   composer.draft = e.detail.prompt;
+                  if (e.detail.wantsFile) composer.browse();
                   composer.focus();
                 })}
             ></civitai-chat-welcome>
@@ -919,7 +920,7 @@ export class CivitaiChat extends LitElement {
                 : html`<p class="cvt-sign-in-status">You are signed out. Sending a message signs you in with Civitai.</p>`}
               <civitai-chat-composer
                 .commands=${this.#commands()}
-                placeholder=${this.placeholder ?? nothing}
+                .placeholder=${this.placeholder ?? DEFAULT_PLACEHOLDER}
                 ?running=${this.signingIn}
                 @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
                 @cvt-stop=${() => this.#cancelSignIn()}
@@ -1077,7 +1078,7 @@ export class CivitaiChat extends LitElement {
             .uploads=${this.uploads}
             .refs=${this.refs}
             ?voice=${!hosted}
-            placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : nothing)}
+            .placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : DEFAULT_PLACEHOLDER)}
             ?no-files=${hosted}
             ?transcribing=${this.transcribing}
             .heard=${this.heard}
