@@ -1,5 +1,16 @@
 # @civitai/components-react
 
+## 0.10.0
+
+### Minor Changes
+
+- f4adc63: Add the generated `CivitaiResourcePicker` binding (`@civitai/components-react/elements/civitai-resource-picker`) for `<civitai-resource-picker>`, with `onPick` (`CustomEvent<PickedResource>`) and `onDismiss`. Like the SDK-backed bindings it is out of the root barrel; import it by path.
+
+### Patch Changes
+
+- Updated dependencies [f4adc63]
+  - @civitai/components@0.11.0
+
 ## 0.9.2
 
 ### Patch Changes
@@ -513,10 +524,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                    after    @civitai/theme       0.3.1                   — 1 copy
-                             @civitai/components  0.4.2                   — 1 copy
+                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                      after    @civitai/theme       0.3.1                   — 1 copy
+                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
