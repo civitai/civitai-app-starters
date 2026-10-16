@@ -592,7 +592,7 @@ earlyAccessDeadline?, access, owner }`, where `access` is `open`,
   the tab slept. Otherwise the search ends as `unauthorized`. The exception is
   a `mine` search when `signedIn()` returns `false`: the server answers an
   anonymous viewer's `mine` with a `401` as well, so that search ends as
-  `unauthorized` at once, with no fresh token and no second request.
+  `unauthorized` at once, without calling `getToken({ fresh: true })`.
 - Changing `owner` while it is open drops the rows on screen and searches the
   other list. A pick's `owner` is the list its row was shown in.
 - A failed "Load more" keeps the rows already shown and offers that page again.

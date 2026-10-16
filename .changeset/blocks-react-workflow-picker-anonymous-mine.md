@@ -2,4 +2,4 @@
 '@civitai/blocks-react': patch
 ---
 
-`WorkflowPicker`: an anonymous viewer on the "mine" list is told to sign in after one catalog request, with no `REQUEST_TOKEN` to the host. Before, every such search refreshed the block token and searched again, which counted twice against the catalog rate limit. A signed-in viewer's expired token, and any `401` on "All", still refresh once and retry.
+`WorkflowPicker`: an anonymous viewer on the "mine" list no longer sends a `REQUEST_TOKEN` to the host before being told to sign in, so the sign-in message shows straight after the catalog's `401` instead of after that round trip. The catalog request count is unchanged: a host answers `REQUEST_TOKEN` with the token it already holds, so no second request was sent before either. A signed-in viewer's `401`, and any `401` on "All", still ask for a fresh token once and retry if it differs.
