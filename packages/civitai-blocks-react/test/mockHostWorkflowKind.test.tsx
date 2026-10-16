@@ -253,7 +253,9 @@ describe('createMockHost — kind: workflow', () => {
       ['a 65-character $type', { kind: 'workflow', steps: [step('a', {}, { $type: 'x'.repeat(65) })] }],
       ['a non-boolean suppressOutput', { kind: 'workflow', steps: [{ ...step('a'), suppressOutput: 'yes' }] }],
       ['arguments that is not an object', { kind: 'workflow', steps: [step('a')], arguments: ['x'] }],
-      ['inputs over the byte limit', { kind: 'workflow', steps: [step('a', { blob: 'x'.repeat(262_144) })] }],
+      // `.` is outside the base64 alphabet: a long run of `x` is raw base64 to
+      // the inline-media rule, which would refuse it before the byte cap.
+      ['inputs over the byte limit', { kind: 'workflow', steps: [step('a', { blob: '.'.repeat(262_144) })] }],
     ])('refuses %s', async (_, body) => {
       const { estimate } = await setup();
       const snapshot = expectEstimateRefusal(await estimate(body as WorkflowBody), undefined);
@@ -262,7 +264,7 @@ describe('createMockHost — kind: workflow', () => {
 
     it('accepts a 64-character $type and inputs just under the byte limit', async () => {
       const { estimate } = await setup({ generation: { costPerGen: 4 } });
-      const body = workflow([step('a', { blob: 'x'.repeat(262_000) }, { $type: 'x'.repeat(64) })]);
+      const body = workflow([step('a', { blob: '.'.repeat(262_000) }, { $type: 'x'.repeat(64) })]);
       expect(((await estimate(body)) as BlockWorkflowSnapshot).cost?.total).toBe(4);
     });
   });

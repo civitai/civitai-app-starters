@@ -553,11 +553,14 @@ export interface BuildImageGenBodyOptions {
  *
  * @example  Nano Banana 2 with a reference image
  * ```ts
+ * // Pass a hosted image URL, not a data URI or raw base64. In an App Block, the
+ * // `url` from `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`;
+ * // the block host refuses inline media in a step input.
  * const body = buildImageGenBody({
  *   engine: 'google',
  *   model: 'nano-banana-2',
  *   prompt: 'turn this into a cartoon sticker',
- *   images: ['data:image/png;base64,...'],
+ *   images: [source.url],
  *   aspectRatio: '1:1',
  *   numImages: 1,
  *   resolution: '1K',

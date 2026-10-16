@@ -675,6 +675,12 @@ showImages(done.imageUrls ?? []);
   KB (262144 bytes) for every step's `input` plus `arguments` together. An
   unknown key on the body or on a step is rejected. The app's velocity limit
   counts one unit per step, and a `repeat` step one per iteration instead.
+- **No inline media** in a step `input` — here or on a pass-through
+  `kind: 'step'` body: no `data:image|video|audio` URI and no raw base64 string
+  of 4096+ characters, at any depth. Upload the file with
+  `useImageUpload({ purpose: 'generationSource' })` (or pick it with
+  `useImagePicker()`) and pass the returned `url`. `createMockHost` refuses it
+  as the host does, naming the path.
 - `suppressOutput: true` marks an intermediate step. Its images are left out of
   `snapshot.imageUrls` and out of its own `steps[i].imageUrls`. It still runs
   and is still charged.
