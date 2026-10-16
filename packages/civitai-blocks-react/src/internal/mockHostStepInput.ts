@@ -18,14 +18,19 @@
  * batch cell is parsed against the same schema inside the procedure and gets
  * the same snapshot, its issue path relative to the cell rather than `body`.
  *
- * MIRRORS the server's `refuseInlineMedia` superRefine:
- *  - one value budget SHARED by every field of the body (the step `input`; or
- *    each workflow step `input` and then `arguments`, which a step can `$ref`);
- *  - the issue path is the field prefix plus the offending path, and the
- *    message names the same path WITHOUT the procedure's `body` segment;
- *  - a spent budget refuses the whole body with the arm's own message;
- *  - the issue is added with `continue: false`, so the byte cap never also
- *    reports — the error is ONE issue, and it names the fix.
+ * MIRRORS the server's `refuseInlineMedia` superRefine and the byte-cap refine
+ * after it, over the same fields (the step `input`; or each workflow step
+ * `input` and then `arguments`, which a step can `$ref`):
+ *  - one value budget SHARED by every field of the body; a spent budget refuses
+ *    the whole body with the arm's own message;
+ *  - the inline-media issue path is the field prefix plus the offending path,
+ *    and the message names the same path WITHOUT the procedure's `body` segment;
+ *  - the search counts the JSON length of the strings it passes, and once that
+ *    is over the byte cap it reads no further string — so a photo AFTER a string
+ *    that already crossed the cap gets the BYTE-CAP refusal, while the string
+ *    that crosses it is still searched (an oversized photo gets the media one);
+ *  - an inline-media or budget issue is added with `continue: false`, so the
+ *    byte cap never also reports — the error is always ONE issue.
  * The issue shape (`code`, `path`, `message`, in that order, `continue`
  * stripped) and the byte-cap message were measured against zod 4 with the
  * server's schema shape.
@@ -34,6 +39,7 @@
 import { isWellFormedWorkflowShape } from './mockWorkflowGraph.js';
 import {
   INLINE_MEDIA_MAX_VISITS,
+  INLINE_MEDIA_OVER_BYTE_LIMIT,
   INLINE_MEDIA_TOO_MANY_VALUES,
   type InlineMediaPath,
   PASS_THROUGH_INPUT_BYTES_MAX,
@@ -41,8 +47,11 @@ import {
   inlineMediaMessage,
 } from './stepInputLimits.js';
 
-/** The server's byte-cap message for a pass-through step `input`. */
+/** The server's byte-cap message for a pass-through step `input` (issue path `input`). */
 export const MOCK_STEP_INPUT_BYTES_ERROR = `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`;
+
+/** The server's summed byte-cap message for a `kind: 'workflow'` body (issue path `steps`). */
+export const MOCK_WORKFLOW_INPUT_BYTES_ERROR = `workflow step inputs and arguments exceed the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`;
 
 /** The server's value-budget refusal on the `kind: 'step'` arm (issue path `input`). */
 export const MOCK_STEP_INPUT_TOO_MANY_VALUES_ERROR = `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`;
@@ -59,13 +68,14 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
 type Issue = { path: InlineMediaPath; message: string };
+type Fields = [InlineMediaPath, unknown][];
 
 /** The server's `refuseInlineMedia`: the first hit across `fields`, sharing one budget. */
-function inlineMediaIssue(fields: [InlineMediaPath, unknown][], overflow: Issue): Issue | null {
+function inlineMediaIssue(fields: Fields, overflow: Issue): Issue | null {
   const budget = { visits: 0 };
   for (const [prefix, value] of fields) {
-    const hit = findInlineMediaPath(value, budget);
-    if (!hit) continue;
+    const hit = findInlineMediaPath(value, budget, PASS_THROUGH_INPUT_BYTES_MAX);
+    if (!hit || hit === INLINE_MEDIA_OVER_BYTE_LIMIT) continue;
     if (hit === INLINE_MEDIA_TOO_MANY_VALUES) return overflow;
     const path = [...prefix, ...hit];
     return { path, message: inlineMediaMessage(path) };
@@ -74,17 +84,26 @@ function inlineMediaIssue(fields: [InlineMediaPath, unknown][], overflow: Issue)
 }
 
 /**
- * `JSON.stringify(input).length`, or `null` when JSON cannot serialize it (a
- * `BigInt`, a cycle). A structured-clone payload can carry either; such an
- * input is left to the checks that already model it (the confirmed-step
- * non-JSON refusal), not reported as a size.
+ * The summed `JSON.stringify(value).length` of `fields` (a value it writes
+ * nothing for, like an absent `arguments`, counts 0) — the verdict the server's
+ * `jsonLengthWithin` gives. `null` when JSON cannot serialize one (a `BigInt`,
+ * a cycle): a structured-clone payload can carry either, and such an input is
+ * left to the checks that already model it, not reported as a size.
  */
-function serializedLength(input: Record<string, unknown>): number | null {
+function serializedLength(fields: Fields): number | null {
   try {
-    return JSON.stringify(input).length;
+    return fields.reduce((sum, [, value]) => sum + (JSON.stringify(value)?.length ?? 0), 0);
   } catch {
     return null;
   }
+}
+
+/** Inline media / value budget first; the byte cap only when that found nothing. */
+function fieldsIssue(fields: Fields, overflow: Issue, overCap: Issue): Issue | null {
+  const media = inlineMediaIssue(fields, overflow);
+  if (media !== null) return media;
+  const size = serializedLength(fields);
+  return size !== null && size > PASS_THROUGH_INPUT_BYTES_MAX ? overCap : null;
 }
 
 /**
@@ -92,11 +111,9 @@ function serializedLength(input: Record<string, unknown>): number | null {
  * `issuePathPrefix` is `['body']` for an estimate or submit (the field of the
  * procedure input) and `[]` for a batch cell (parsed on its own).
  *
- *  - A pass-through `kind: 'step'` body (no `step` id): inline media in its
- *    `input`, then its byte cap.
- *  - A `kind: 'workflow'` body: inline media in each step's `input` and then in
- *    `arguments`. Its byte cap is a SUM, enforced with the rest of the workflow
- *    wire shape in `mockWorkflowGraph.ts`, which runs after this.
+ *  - A pass-through `kind: 'step'` body (no `step` id): its `input`.
+ *  - A `kind: 'workflow'` body: each step's `input`, then `arguments`; its byte
+ *    cap is their SUM.
  *
  * Any other body, a step whose `input` is not an object, or a workflow whose
  * wire shape is wrong, is left to the checks that already handle it — zod
@@ -110,23 +127,19 @@ export function stepInputRefusal(
   let issue: Issue | null = null;
   if (body.kind === 'step' && body.step === undefined) {
     if (!isPlainObject(body.input)) return null;
-    issue = inlineMediaIssue([[['input'], body.input]], {
-      path: ['input'],
-      message: MOCK_STEP_INPUT_TOO_MANY_VALUES_ERROR,
-    });
-    if (issue === null) {
-      const size = serializedLength(body.input);
-      if (size !== null && size > PASS_THROUGH_INPUT_BYTES_MAX) {
-        issue = { path: ['input'], message: MOCK_STEP_INPUT_BYTES_ERROR };
-      }
-    }
+    issue = fieldsIssue(
+      [[['input'], body.input]],
+      { path: ['input'], message: MOCK_STEP_INPUT_TOO_MANY_VALUES_ERROR },
+      { path: ['input'], message: MOCK_STEP_INPUT_BYTES_ERROR },
+    );
   } else if (body.kind === 'workflow' && isWellFormedWorkflowShape(body)) {
-    issue = inlineMediaIssue(
+    issue = fieldsIssue(
       [
         ...body.steps.map((step, i): [InlineMediaPath, unknown] => [['steps', i, 'input'], step.input]),
         [['arguments'], body.arguments],
       ],
       { path: ['steps'], message: MOCK_WORKFLOW_INPUT_TOO_MANY_VALUES_ERROR },
+      { path: ['steps'], message: MOCK_WORKFLOW_INPUT_BYTES_ERROR },
     );
   }
   return issue === null ? null : zodIssueMessage([...issuePathPrefix, ...issue.path], issue.message);

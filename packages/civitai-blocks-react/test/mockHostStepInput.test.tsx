@@ -35,10 +35,13 @@ const PRICE = 9;
 
 /** The server's `inlineMediaMessage`, for a path already formatted by `formatInlineMediaPath`. */
 const mediaError = (path: string) =>
-  `${path} carries inline media (data URI/base64); pass a hosted url instead — for an image, ` +
-  "upload it with useImageUpload({ purpose: 'generationSource' }) or pick it with useImagePicker " +
-  'and pass the returned url';
+  `${path} carries inline media (data URI/base64); pass a hosted url instead — upload the image, ` +
+  "video or audio with useMediaUpload (an image also works with useImageUpload({ purpose: 'generationSource' }) " +
+  'or useImagePicker) and pass the returned url';
 const BYTES_ERROR = 'step input exceeds the 262144-byte limit';
+const WORKFLOW_BYTES_ERROR = 'workflow step inputs and arguments exceed the 262144-byte limit';
+/** A prose string (spaces keep it out of the raw-base64 clause) whose JSON alone is over the cap. */
+const OVER_CAP_PROSE = 'a b '.repeat(65_536);
 const STEP_TOO_MANY = 'step input holds more than 262144 values';
 const WORKFLOW_TOO_MANY = 'step inputs and arguments hold more than 262144 values in total';
 
@@ -222,7 +225,67 @@ describe('createMockHost — the step-input gate', () => {
   describe('the byte cap', () => {
     it('refuses an over-cap kind:step input that holds no media with the byte-cap error', async () => {
       // Spaces keep it out of the raw-base64 clause; 262144 + the JSON wrapping is over the cap.
-      await expectRefusedBoth(stepBody({ prompt: 'a b '.repeat(65_536) }), ['body', 'input'], BYTES_ERROR);
+      await expectRefusedBoth(stepBody({ prompt: OVER_CAP_PROSE }), ['body', 'input'], BYTES_ERROR);
+    });
+
+    it('refuses an over-cap kind:workflow body with the summed byte-cap error', async () => {
+      await expectRefusedBoth(
+        workflowBody([{ prompt: 'a b '.repeat(40_000) }], { more: 'a b '.repeat(40_000) }),
+        ['body', 'steps'],
+        WORKFLOW_BYTES_ERROR,
+      );
+    });
+
+    // Once the strings already searched are over the cap, no later string is
+    // read, so the byte cap — not the inline-media rule — refuses the body.
+    it('gives a photo AFTER a string that crossed the cap the byte-cap error', async () => {
+      await expectRefusedBoth(
+        stepBody({ prompt: OVER_CAP_PROSE, image: 'data:image/png;base64,iVBORw0KGgo=' }),
+        ['body', 'input'],
+        BYTES_ERROR,
+      );
+    });
+
+    it('still searches the string that crosses the cap, and the next one while the count is AT the cap', async () => {
+      // 262142 characters + 2 quotes = exactly 262144 counted: not past the cap, so the photo is read.
+      const atCap = 'a '.repeat(131_071);
+      expect(atCap.length + 2).toBe(262_144);
+      await expectRefusedBoth(
+        stepBody({ prompt: atCap, image: 'data:image/png;base64,x' }),
+        ['body', 'input', 'image'],
+        mediaError('input.image'),
+      );
+    });
+
+    it('stops reading one character past the cap', async () => {
+      const pastCap = `${'a '.repeat(131_071)}a`;
+      await expectRefusedBoth(stepBody({ prompt: pastCap, image: 'data:image/png;base64,x' }), ['body', 'input'], BYTES_ERROR);
+    });
+
+    it('skips media in arguments once the step inputs crossed the cap (the count is shared)', async () => {
+      await expectRefusedBoth(
+        workflowBody([{ prompt: OVER_CAP_PROSE }], { image: 'data:image/png;base64,x' }),
+        ['body', 'steps'],
+        WORKFLOW_BYTES_ERROR,
+      );
+    });
+
+    it('still reports the value budget after the cap is crossed (the walk finishes)', async () => {
+      await expectRefusedBoth(
+        stepBody({ prompt: OVER_CAP_PROSE, after: 'x', more: pad(262_144) }),
+        ['body', 'input'],
+        STEP_TOO_MANY,
+      );
+    });
+
+    it('still walks LATER fields for the value budget after an earlier one crossed the cap', async () => {
+      await expectRefusedBoth(
+        // `after` is a string read once the count is past the cap, so this
+        // field's search ends as over-byte-limit — and `arguments` is still walked.
+        workflowBody([{ prompt: OVER_CAP_PROSE, after: 'x' }], pad(262_144)),
+        ['body', 'steps'],
+        WORKFLOW_TOO_MANY,
+      );
     });
   });
 

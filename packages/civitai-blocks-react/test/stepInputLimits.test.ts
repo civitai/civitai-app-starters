@@ -5,6 +5,7 @@ import {
   INLINE_MEDIA_MAX_VISITS,
   INLINE_MEDIA_RAW_BASE64_MIN_CHARS,
   INLINE_MEDIA_RAW_BASE64_REGEX,
+  INLINE_MEDIA_OVER_BYTE_LIMIT,
   INLINE_MEDIA_TOO_MANY_VALUES,
   PASS_THROUGH_INPUT_BYTES_MAX,
   findInlineMediaPath,
@@ -31,6 +32,7 @@ describe('the mirrored server constants', () => {
     expect(INLINE_MEDIA_RAW_BASE64_MIN_CHARS).toBe(4096);
     expect(INLINE_MEDIA_MAX_VISITS).toBe(262144);
     expect(INLINE_MEDIA_TOO_MANY_VALUES).toBe('too-many-values');
+    expect(INLINE_MEDIA_OVER_BYTE_LIMIT).toBe('over-byte-limit');
   });
 
   it('pins the two regexes', () => {
@@ -43,8 +45,8 @@ describe('the mirrored server constants', () => {
   it('pins the message template, whole', () => {
     expect(inlineMediaMessage(['steps', 1, 'input', 'images', 0])).toBe(
       'steps[1].input.images[0] carries inline media (data URI/base64); pass a hosted url instead — ' +
-        "for an image, upload it with useImageUpload({ purpose: 'generationSource' }) or pick it with " +
-        'useImagePicker and pass the returned url',
+        'upload the image, video or audio with useMediaUpload (an image also works with ' +
+        "useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url",
     );
   });
 
@@ -225,5 +227,60 @@ describe('findInlineMediaPath — the value budget', () => {
     const a: Record<string, unknown> = { s: 'ok' };
     a.self = a;
     expect(findInlineMediaPath(a)).toBe(INLINE_MEDIA_TOO_MANY_VALUES);
+  });
+});
+
+describe('findInlineMediaPath — the byte limit (stop reading past the cap)', () => {
+  const URI = 'data:image/png;base64,x';
+  const LIMIT = 100;
+  /** A non-media string whose counted length (characters + 2 quotes) is `n`. */
+  const counted = (n: number) => 'a '.repeat(n).slice(0, n - 2);
+
+  it('still finds media while the count is AT the limit', () => {
+    expect(findInlineMediaPath({ p: counted(LIMIT), img: URI }, { visits: 0 }, LIMIT)).toEqual(['img']);
+  });
+
+  it('reads no further string once the count is PAST the limit', () => {
+    expect(findInlineMediaPath({ p: counted(LIMIT + 1), img: URI }, { visits: 0 }, LIMIT)).toBe(
+      INLINE_MEDIA_OVER_BYTE_LIMIT,
+    );
+  });
+
+  it('searches the string that crosses the limit itself', () => {
+    const big = `${URI}${'A'.repeat(500)}`;
+    expect(findInlineMediaPath({ p: counted(LIMIT - 10), img: big }, { visits: 0 }, LIMIT)).toEqual(['img']);
+  });
+
+  it('returns null, not over-byte-limit, when no string follows the crossing', () => {
+    expect(findInlineMediaPath({ p: counted(LIMIT + 50), n: 1 }, { visits: 0 }, LIMIT)).toBeNull();
+  });
+
+  it('carries the count across fields through the shared budget', () => {
+    const budget = { visits: 0 };
+    expect(findInlineMediaPath({ p: counted(LIMIT + 1) }, budget, LIMIT)).toBeNull();
+    expect(findInlineMediaPath({ img: URI }, budget, LIMIT)).toBe(INLINE_MEDIA_OVER_BYTE_LIMIT);
+  });
+
+  it('still reports the value budget after the limit is passed (the walk finishes)', () => {
+    // The padding sits in a LATER container, and a string sits between: the
+    // walk must keep going past the skipped string to open it.
+    const padded: Record<string, unknown> = {};
+    for (let i = 0; i < INLINE_MEDIA_MAX_VISITS; i++) padded[`k${i}`] = undefined;
+    const body = { p: counted(LIMIT + 1), after: 'x', more: padded };
+    expect(findInlineMediaPath(body, { visits: 0 }, LIMIT)).toBe(INLINE_MEDIA_TOO_MANY_VALUES);
+  });
+
+  it('does not count strings JSON.stringify would not write as they are (toJSON, boxed)', () => {
+    const withToJSON = { toJSON: () => 'x', big: counted(LIMIT * 2) };
+    expect(findInlineMediaPath({ a: withToJSON, img: URI }, { visits: 0 }, LIMIT)).toEqual(['img']);
+    expect(findInlineMediaPath({ a: { inner: withToJSON }, img: URI }, { visits: 0 }, LIMIT)).toEqual(['img']);
+    // eslint-disable-next-line no-new-wrappers
+    expect(findInlineMediaPath({ a: [new String(counted(LIMIT * 2))], img: URI }, { visits: 0 }, LIMIT)).toEqual([
+      'img',
+    ]);
+  });
+
+  it('defaults to no limit', () => {
+    expect(findInlineMediaPath({ p: counted(1_000_000), img: URI })).toEqual(['img']);
   });
 });

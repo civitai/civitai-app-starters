@@ -253,13 +253,25 @@ describe('createMockHost — kind: workflow', () => {
       ['a 65-character $type', { kind: 'workflow', steps: [step('a', {}, { $type: 'x'.repeat(65) })] }],
       ['a non-boolean suppressOutput', { kind: 'workflow', steps: [{ ...step('a'), suppressOutput: 'yes' }] }],
       ['arguments that is not an object', { kind: 'workflow', steps: [step('a')], arguments: ['x'] }],
-      // `.` is outside the base64 alphabet: a long run of `x` is raw base64 to
-      // the inline-media rule, which would refuse it before the byte cap.
-      ['inputs over the byte limit', { kind: 'workflow', steps: [step('a', { blob: '.'.repeat(262_144) })] }],
     ])('refuses %s', async (_, body) => {
       const { estimate } = await setup();
       const snapshot = expectEstimateRefusal(await estimate(body as WorkflowBody), undefined);
       expect(snapshot.error).toBe('invalid workflow body');
+    });
+
+    it('refuses inputs over the byte limit with the host’s summed byte-cap refusal', async () => {
+      const { estimate } = await setup();
+      // `.` is outside the base64 alphabet: a long run of `x` is raw base64 to
+      // the inline-media rule, which would refuse it before the byte cap.
+      const body = workflow([step('a', { blob: '.'.repeat(262_144) })]);
+      const snapshot = expectEstimateRefusal(await estimate(body), undefined);
+      expect(JSON.parse(snapshot.error!)).toEqual([
+        {
+          code: 'custom',
+          path: ['body', 'steps'],
+          message: 'workflow step inputs and arguments exceed the 262144-byte limit',
+        },
+      ]);
     });
 
     it('accepts a 64-character $type and inputs just under the byte limit', async () => {
