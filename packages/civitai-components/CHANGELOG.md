@@ -1,5 +1,11 @@
 # @civitai/components
 
+## 0.10.1
+
+### Patch Changes
+
+- 03f355e: `custom-elements.json` now lists what each element inherits. The base classes were never analysed, so every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) was missing the attributes all of them share — `name`, `value`, `label`, `description`, `error`, `required`, `disabled`, `size` — and image, video and audio were missing `src`, `alt`, `fallback`, `pending`, `blocked` and `status`, along with their `load` and `error` events. `<civitai-text-input>` listed 5 attributes; it now lists 13. Each inherited entry carries `inheritedFrom`, and `CivitaiElement`, `CivitaiField` and `CivitaiMediaElement` are declared as modules of their own, with no tag: the set of elements and tags is unchanged. Every element also lists the `change` and `invalid` events `CivitaiElement` re-dispatches out of its shadow root. An entry an element declares itself stays its own (segmented-control's `size` keeps its own type), and an inherited one names the nearest class that declares it. Every element's `superclass` now resolves: to a declaration in the manifest at the module it names, or to the global `HTMLElement` (`package: "global:"`) for the light-DOM elements that extend it. No code changes; only the manifest's content.
+
 ## 0.10.0
 
 ### Minor Changes
@@ -1002,10 +1008,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                            after    @civitai/theme       0.3.1                   — 1 copy
-                                     @civitai/components  0.4.2                   — 1 copy
+                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                              after    @civitai/theme       0.3.1                   — 1 copy
+                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
