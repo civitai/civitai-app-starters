@@ -50,6 +50,33 @@ Import them by path:
 import { CivitaiSignInButton } from '@civitai/components-react/elements/civitai-sign-in-button';
 ```
 
+`CivitaiResourcePicker` is out of the barrel for the same reason — it calls the
+Civitai catalog as the viewer, with the block token — though it needs no
+`@civitai/sdk`. Pass its `source` as a prop; `onPick` receives the pick in
+`event.detail`, and `onDismiss` fires when the viewer closes it without one:
+
+```tsx
+import { useMemo } from 'react';
+import { CivitaiResourcePicker } from '@civitai/components-react/elements/civitai-resource-picker';
+import { blockTokenSource } from '@civitai/components/civitai-resource-picker';
+
+export function Picker({ origin, token }: { origin: string; token: string }) {
+  const source = useMemo(() => blockTokenSource({ origin, getToken: () => token }), [origin, token]);
+  return (
+    <CivitaiResourcePicker
+      open
+      types="Workflows ComfyWorkflows"
+      noun="workflow"
+      source={source}
+      onPick={(event) => console.log(event.detail.modelVersionId)}
+    />
+  );
+}
+```
+
+In a block on `@civitai/blocks-react`, `WorkflowPicker` from its `/ui` subpath
+does this wiring for you.
+
 The bindings are generated from the elements manifest. A parity test fails if a
 committed file stops matching a fresh generation, two more fail if the event map
 names an event no element fires or misses one an element does, and a further

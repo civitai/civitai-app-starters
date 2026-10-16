@@ -3013,11 +3013,13 @@ from `@civitai/app-sdk/blocks` is the same thing without the hook.
 ## The `/ui` subexport
 
 Opinionated components, imported separately so a transport-only block stays lean.
-Two surfaces live here:
+Three surfaces live here:
 
 1. The **W6 component pack** — a small, Civitai-looking, self-styled component
    set you drop straight into a block.
-2. The headless, manifest-driven **`SettingsForm`** (host-themed native controls).
+2. **`WorkflowPicker`** — lets the viewer pick a posted workflow, theirs or
+   anyone's, from the Civitai catalog.
+3. The headless, manifest-driven **`SettingsForm`** (host-themed native controls).
 
 ### W6 component pack
 
@@ -3108,6 +3110,87 @@ to inject the CSS yourself (SSR, or a non-React shell)? Call
 > content behind the overlay. That's fine for a simple confirm/settings dialog
 > inside the sandboxed block; a full focus-trap is a v1 follow-up (kept
 > dependency-free here on purpose).
+
+### `WorkflowPicker`
+
+`<civitai-resource-picker>` from `@civitai/components`, set up for workflows: it
+lists `Workflows` and the retired `ComfyWorkflows` type (so older posts can be
+picked), lets the viewer switch between **their own** published workflows and
+**anyone's**, and picks one **version** (the newest by default). It calls
+`GET /api/v1/blocks/models` at `useHostOrigin()` with `useBlockToken().raw` —
+no host bridge, no extra scope.
+
+```tsx
+import { useState } from 'react';
+import { WorkflowPicker, type PickedResource } from '@civitai/blocks-react/ui';
+
+export function ChooseWorkflow() {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<PickedResource | null>(null);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>Use a workflow</button>
+      <WorkflowPicker
+        open={open}
+        owner="mine"
+        onPick={(workflow) => {
+          setPicked(workflow);
+          setOpen(false);
+        }}
+        onDismiss={() => setOpen(false)}
+      />
+      {picked && <p>{picked.name} — {picked.versionName}</p>}
+    </>
+  );
+}
+```
+
+A pick is a `PickedResource` — `{ modelId, modelVersionId, name, versionName,
+creatorUsername, baseModel, earlyAccessDeadline?, access, owner }`; `/ui`
+re-exports it and the picker's other data types (`ResourceItem`,
+`ResourceSource`, …). Close the picker yourself in
+**both** callbacks: `open` is controlled.
+
+- 🔴 **`owner` is a UX hint, never proof of ownership.** It says which list the
+  viewer was looking at, and your app's own code can set it to anything. A
+  server that must know "this is the viewer's own workflow" checks that itself.
+- 🔴 **A "mine" list is only ever the server's.** The picker shows an error, not
+  a list, when a `mine` search comes back without `metadata.owner: 'mine'` — a
+  server older than the parameter ignores it and returns everybody's. It never
+  falls back to the public `/api/v1/models`.
+- **Early-access and paid versions are listed, with a badge.** `access` on a
+  pick is `'early-access'` (a timed paid-access gate, with its end date in
+  `earlyAccessDeadline` when the server knows it), `'paid'` (a permanent gate)
+  or `'open'`. The viewer may not be able to download a gated version later.
+- **Search is debounced** (300 ms), and a newer search cancels the one in
+  flight. A busy catalog (`429` / `503`, rate limit 150 requests per 10 s per
+  block) is retried after its `Retry-After`, twice, then offered as "Try again".
+- **An anonymous viewer** gets a sign-in message on the "mine" list; "All" works.
+- **Before `BLOCK_INIT`** the picker says it is not connected yet, and lists as
+  soon as the host origin lands.
+- **Under the mock host** there is no catalog to call. Pass canned results from
+  `/testing`:
+
+```tsx
+import { WorkflowPicker } from '@civitai/blocks-react/ui';
+import { fakeResourceSource } from '@civitai/blocks-react/testing';
+
+const source = fakeResourceSource({
+  mine: [
+    {
+      modelId: 1,
+      name: 'My upscale chain',
+      type: 'Workflows',
+      creatorUsername: 'me',
+      versions: [{ id: 11, name: 'v2', baseModel: 'SDXL 1.0' }],
+    },
+  ],
+});
+
+export const Picker = () => <WorkflowPicker open source={source} onPick={console.log} />;
+```
+
+Under `dev:live` it works for real: the dev token can read `/blocks/models`.
 
 ### `SettingsForm`
 
@@ -3202,6 +3285,7 @@ what went stale in [#334](https://github.com/civitai/civitai-app-starters/issues
 | `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
 | `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
 | `Harness` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
+| `fakeResourceSource` | Canned results for `<WorkflowPicker>` (from `/ui`) or `<civitai-resource-picker>`: `fakeResourceSource({ mine, any })` filters by owner, type and query, echoes the owner it applied, and records each search on `.calls`. The mock host has no catalog, so pass it as the picker's `source`. **No network.** |
 | `installPopoverShim` | Stands in for the HTML popover API, which neither `jsdom` nor `happy-dom` implements at any version. Needed only if your own code calls `showPopover`/`hidePopover`/`togglePopover` or queries `:popover-open` — `@civitai/components`' own elements do not. Returns a `PopoverShimHandle`; inert (`installed: false`) in a real browser. **Read [Testing overlay elements](#testing-overlay-elements) first: it does not make trigger clicks work.** |
 
 <!-- TESTING-SURFACE:VALUES:END -->
@@ -3216,6 +3300,8 @@ type.
 ```text
 CannedPick
 CostSpec
+FakeResourceCanned
+FakeResourceSource
 HarnessProps
 ImageSpec
 MockBuzzBalance

@@ -13598,6 +13598,1016 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/sdk/civitai-resource-picker.ts",
+      "declarations": [
+        {
+          "kind": "variable",
+          "name": "MAX_AUTO_RETRIES",
+          "type": {
+            "text": "number"
+          },
+          "default": "2",
+          "description": "Automatic retries of a busy (429/503) search before the picker asks the viewer."
+        },
+        {
+          "kind": "class",
+          "description": "Lets a viewer pick one version of a published resource — theirs, or anyone's\n— from the Civitai catalog, through a ResourceSource the app supplies.\n\n🔴 What it hands back is a CLAIM the app's code can alter, not proof. The\n`owner` of a pick in particular says which list the viewer was looking at; a\nserver that must know the resource is the viewer's own checks that itself.",
+          "name": "CivitaiResourcePicker",
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the picker. Setting it false closes it without a pick or a `dismiss`.",
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "types",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Model types to list, space- or comma-separated, e.g. `Workflows ComfyWorkflows`.",
+              "default": "''",
+              "attribute": "types",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "owner",
+              "privacy": "public",
+              "type": {
+                "text": "ResourceOwner"
+              },
+              "description": "Which list shows first, and which one the viewer is on.",
+              "default": "'any'",
+              "attribute": "owner",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Choose a resource'",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "noun",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What one item is called in the picker's own words; `s` is added for many.",
+              "default": "'resource'",
+              "attribute": "noun",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "debounce",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "Milliseconds of quiet typing before a search runs.",
+              "default": "300",
+              "attribute": "debounce",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "limit",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "Page size, 1–100.",
+              "default": "20",
+              "attribute": "limit",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "source",
+              "privacy": "public",
+              "type": {
+                "text": "ResourceSource | undefined"
+              },
+              "description": "Where results come from. Required."
+            },
+            {
+              "kind": "field",
+              "name": "phase",
+              "privacy": "public",
+              "type": {
+                "text": "ResourcePickerPhase"
+              },
+              "default": "'idle'",
+              "attribute": "phase"
+            },
+            {
+              "kind": "field",
+              "name": "items",
+              "privacy": "public",
+              "type": {
+                "text": "ResourceItem[]"
+              },
+              "default": "[]",
+              "attribute": "items"
+            },
+            {
+              "kind": "field",
+              "name": "nextCursor",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "nextCursor"
+            },
+            {
+              "kind": "field",
+              "name": "query",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "query"
+            },
+            {
+              "kind": "field",
+              "name": "errorKind",
+              "privacy": "public",
+              "type": {
+                "text": "ResourceSourceErrorKind | null"
+              },
+              "default": "null",
+              "attribute": "errorKind"
+            },
+            {
+              "kind": "field",
+              "name": "errorMessage",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "errorMessage"
+            },
+            {
+              "kind": "field",
+              "name": "loadingMore",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "loadingMore"
+            },
+            {
+              "kind": "field",
+              "name": "chosen",
+              "privacy": "public",
+              "type": {
+                "text": "Map<number, number>"
+              },
+              "description": "Version id the viewer has chosen per model id; absent means the newest.",
+              "default": "new Map()",
+              "attribute": "chosen"
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-picker-${(sequence += 1)}`"
+            },
+            {
+              "kind": "field",
+              "name": "#seq",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
+            },
+            {
+              "kind": "field",
+              "name": "#controller",
+              "privacy": "private",
+              "type": {
+                "text": "AbortController | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#debounceTimer",
+              "privacy": "private",
+              "type": {
+                "text": "ReturnType<typeof setTimeout> | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#retryTimer",
+              "privacy": "private",
+              "type": {
+                "text": "ReturnType<typeof setTimeout> | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#retries",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
+            },
+            {
+              "kind": "field",
+              "name": "#lastAppend",
+              "privacy": "private",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "kind": "field",
+              "name": "#pending",
+              "privacy": "private",
+              "type": {
+                "text": "(picked: PickedResource | null) => void | undefined"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "show",
+              "return": {
+                "type": {
+                  "text": "Promise<PickedResource | null>"
+                }
+              },
+              "description": "Opens the picker; resolves with the pick, or `null` when it closes without one."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Closes the picker as a dismissal: fires `dismiss` and resolves `show()` with `null`."
+            },
+            {
+              "kind": "method",
+              "name": "#typeList",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string[]"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#plural",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#stop",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#settle",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "picked",
+                  "type": {
+                    "text": "PickedResource | null"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#dismissed",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#fail",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "kind",
+                  "type": {
+                    "text": "ResourceSourceErrorKind"
+                  }
+                },
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#search",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "append",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#retry",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onModalClose",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onOwner",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onInput",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onKeydown",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "KeyboardEvent"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#version",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "ResourceVersion"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": {
+                    "text": "ResourceItem"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onVersion",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": {
+                    "text": "ResourceItem"
+                  }
+                },
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#pick",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": {
+                    "text": "ResourceItem"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#optionText",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "version",
+                  "type": {
+                    "text": "ResourceVersion"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#badges",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "TemplateResult | typeof nothing"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "version",
+                  "type": {
+                    "text": "ResourceVersion"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#renderItem",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "item",
+                  "type": {
+                    "text": "ResourceItem"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#renderBody",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "dismiss",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "pick",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "change",
+              "type": {
+                "text": "Event"
+              },
+              "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.",
+              "inheritedFrom": {
+                "name": "CivitaiElement",
+                "module": "src/elements/base.ts"
+              }
+            },
+            {
+              "name": "invalid",
+              "type": {
+                "text": "Event"
+              },
+              "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.",
+              "inheritedFrom": {
+                "name": "CivitaiElement",
+                "module": "src/elements/base.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the picker. Setting it false closes it without a pick or a `dismiss`.",
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "types",
+              "type": {
+                "text": "string"
+              },
+              "description": "Model types to list, space- or comma-separated, e.g. `Workflows ComfyWorkflows`.",
+              "default": "''",
+              "fieldName": "types"
+            },
+            {
+              "name": "owner",
+              "type": {
+                "text": "ResourceOwner"
+              },
+              "description": "Which list shows first, and which one the viewer is on.",
+              "default": "'any'",
+              "fieldName": "owner"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Choose a resource'",
+              "fieldName": "heading"
+            },
+            {
+              "name": "noun",
+              "type": {
+                "text": "string"
+              },
+              "description": "What one item is called in the picker's own words; `s` is added for many.",
+              "default": "'resource'",
+              "fieldName": "noun"
+            },
+            {
+              "name": "debounce",
+              "type": {
+                "text": "number"
+              },
+              "description": "Milliseconds of quiet typing before a search runs.",
+              "default": "300",
+              "fieldName": "debounce"
+            },
+            {
+              "name": "limit",
+              "type": {
+                "text": "number"
+              },
+              "description": "Page size, 1–100.",
+              "default": "20",
+              "fieldName": "limit"
+            },
+            {
+              "name": "phase",
+              "type": {
+                "text": "ResourcePickerPhase"
+              },
+              "default": "'idle'",
+              "fieldName": "phase"
+            },
+            {
+              "name": "items",
+              "type": {
+                "text": "ResourceItem[]"
+              },
+              "default": "[]",
+              "fieldName": "items"
+            },
+            {
+              "name": "nextCursor",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "nextCursor"
+            },
+            {
+              "name": "query",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "query"
+            },
+            {
+              "name": "errorKind",
+              "type": {
+                "text": "ResourceSourceErrorKind | null"
+              },
+              "default": "null",
+              "fieldName": "errorKind"
+            },
+            {
+              "name": "errorMessage",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "errorMessage"
+            },
+            {
+              "name": "loadingMore",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "loadingMore"
+            },
+            {
+              "name": "chosen",
+              "type": {
+                "text": "Map<number, number>"
+              },
+              "description": "Version id the viewer has chosen per model id; absent means the newest.",
+              "default": "new Map()",
+              "fieldName": "chosen"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-resource-picker",
+          "cssParts": [
+            {
+              "name": "badge early-access"
+            },
+            {
+              "name": "badge paid"
+            },
+            {
+              "name": "item"
+            },
+            {
+              "name": "name"
+            },
+            {
+              "name": "creator"
+            },
+            {
+              "name": "select"
+            },
+            {
+              "name": "version"
+            },
+            {
+              "name": "error"
+            },
+            {
+              "name": "retry"
+            },
+            {
+              "name": "retrying"
+            },
+            {
+              "name": "loading"
+            },
+            {
+              "name": "empty"
+            },
+            {
+              "name": "list"
+            },
+            {
+              "name": "more"
+            },
+            {
+              "name": "modal"
+            },
+            {
+              "name": "owner"
+            },
+            {
+              "name": "search"
+            }
+          ]
+        },
+        {
+          "kind": "variable",
+          "name": "types"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiResourcePicker",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "appClientSource",
+          "declaration": {
+            "name": "appClientSource",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "blockTokenSource",
+          "declaration": {
+            "name": "blockTokenSource",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "buildResourceSearchUrl",
+          "declaration": {
+            "name": "buildResourceSearchUrl",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "parseResourcePage",
+          "declaration": {
+            "name": "parseResourcePage",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "resourceSearchQuery",
+          "declaration": {
+            "name": "resourceSearchQuery",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "BLOCK_MODELS_PATH",
+          "declaration": {
+            "name": "BLOCK_MODELS_PATH",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "DEFAULT_RETRY_AFTER_MS",
+          "declaration": {
+            "name": "DEFAULT_RETRY_AFTER_MS",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceSourceError",
+          "declaration": {
+            "name": "ResourceSourceError",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "BlockTokenSourceOptions",
+          "declaration": {
+            "name": "BlockTokenSourceOptions",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "PickedResource",
+          "declaration": {
+            "name": "PickedResource",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceAccess",
+          "declaration": {
+            "name": "ResourceAccess",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceItem",
+          "declaration": {
+            "name": "ResourceItem",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceOwner",
+          "declaration": {
+            "name": "ResourceOwner",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourcePage",
+          "declaration": {
+            "name": "ResourcePage",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceSearchParams",
+          "declaration": {
+            "name": "ResourceSearchParams",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceSource",
+          "declaration": {
+            "name": "ResourceSource",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceSourceErrorKind",
+          "declaration": {
+            "name": "ResourceSourceErrorKind",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ResourceVersion",
+          "declaration": {
+            "name": "ResourceVersion",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SiteReader",
+          "declaration": {
+            "name": "SiteReader",
+            "module": "./resource-source.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MAX_AUTO_RETRIES",
+          "declaration": {
+            "name": "MAX_AUTO_RETRIES",
+            "module": "src/sdk/civitai-resource-picker.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "CivitaiResourcePicker",
+          "declaration": {
+            "name": "CivitaiResourcePicker",
+            "module": "src/sdk/civitai-resource-picker.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiResourcePicker",
+          "declaration": {
+            "name": "defineCivitaiResourcePicker",
+            "module": "src/sdk/civitai-resource-picker.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-resource-picker",
+          "declaration": {
+            "name": "CivitaiResourcePicker",
+            "module": "src/sdk/civitai-resource-picker.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/sdk/civitai-sign-in-button.ts",
       "declarations": [
         {

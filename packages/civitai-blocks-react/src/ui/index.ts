@@ -94,3 +94,18 @@ export type {
   SegmentedControlItem,
   SegmentedControlSize,
 } from './SegmentedControl.js';
+
+export { WorkflowPicker, WORKFLOW_PICKER_TYPES } from './WorkflowPicker.js';
+export type { WorkflowPickerProps } from './WorkflowPicker.js';
+// The picker's data types, so a block can name them without a direct
+// dependency on `@civitai/components`.
+export type {
+  PickedResource,
+  ResourceAccess,
+  ResourceItem,
+  ResourceOwner,
+  ResourcePage,
+  ResourceSearchParams,
+  ResourceSource,
+  ResourceVersion,
+} from '@civitai/components/civitai-resource-picker';

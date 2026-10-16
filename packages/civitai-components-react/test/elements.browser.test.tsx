@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
 import type { CivitaiTextInput } from '@civitai/components/civitai-text-input';
+import type { PickedResource, ResourceSource } from '@civitai/components/civitai-resource-picker';
 import type { TagVoteDetail } from '@civitai/components/civitai-tag';
 
 import { CivitaiButton } from '../src/elements/civitai-button.js';
+import { CivitaiResourcePicker } from '../src/elements/civitai-resource-picker.js';
 import { CivitaiSegmentedControl as Segmented } from '../src/elements/civitai-segmented-control.js';
 import { CivitaiTag } from '../src/elements/civitai-tag.js';
 import { CivitaiTextInput as TextInput } from '../src/elements/civitai-text-input.js';
@@ -139,6 +141,59 @@ describe('React element bindings', () => {
       mount.querySelector('button')!.click();
       await settle(mount);
       expect(el.value).toBe('b');
+    } finally {
+      cleanup();
+    }
+  });
+  it('wires a resource picker: the source as a property, and onPick / onDismiss', async () => {
+    const source: ResourceSource = {
+      search: async (params) => ({
+        owner: params.owner,
+        nextCursor: null,
+        items: [
+          {
+            modelId: 12,
+            name: 'Upscale Chain',
+            type: 'Workflows',
+            creatorUsername: 'maker',
+            versions: [{ id: 34, name: 'v2', baseModel: 'SDXL 1.0' }],
+          },
+        ],
+      }),
+    };
+    const picks: PickedResource[] = [];
+    let dismissed = 0;
+    const { mount, cleanup } = mountReact(
+      'light',
+      <CivitaiResourcePicker
+        open
+        types="Workflows"
+        source={source}
+        onPick={(event) => picks.push(event.detail)}
+        onDismiss={() => (dismissed += 1)}
+      />
+    );
+    try {
+      const el = mount.querySelector('civitai-resource-picker')!;
+      for (let i = 0; i < 20 && !el.shadowRoot?.querySelector('[part~="select"]'); i++) {
+        await settle(mount);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(el.source).toBe(source);
+      el.shadowRoot!.querySelector<HTMLElement>('[part~="select"]')!.click();
+      expect(picks).toEqual([
+        {
+          modelId: 12,
+          modelVersionId: 34,
+          name: 'Upscale Chain',
+          versionName: 'v2',
+          creatorUsername: 'maker',
+          baseModel: 'SDXL 1.0',
+          access: 'open',
+          owner: 'any',
+        },
+      ]);
+      expect(dismissed).toBe(0);
     } finally {
       cleanup();
     }

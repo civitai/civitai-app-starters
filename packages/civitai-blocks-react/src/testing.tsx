@@ -60,6 +60,12 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
+export {
+  fakeResourceSource,
+  type FakeResourceCanned,
+  type FakeResourceSource,
+} from './internal/fakeResourceSource.js';
+
 // 🔴 DO NOT RE-EXPORT `createLiveHost` HERE. It spends real Buzz and lives at
 // `@civitai/blocks-react/live` (`src/live.ts`) precisely so it cannot be reached
 // from a path called "testing". See #334. `test/subpathSurfaces.test.ts` fails if
