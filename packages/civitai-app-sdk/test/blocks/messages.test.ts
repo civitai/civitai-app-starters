@@ -231,24 +231,6 @@ describe('OPEN_IMAGE_PICKER / IMAGE_PICKER_RESULT message guards', () => {
     }
   });
 
-  // INVARIANT GUARD, not regression coverage: `isMessage` checks only the
-  // discriminator and vitest does not typecheck, so this passes on an SDK
-  // without the field. `image-picker-public-only.test-d.ts` is what goes red.
-  it('publicOnly is optional and carries true or false as sent', () => {
-    expect(request.payload).not.toHaveProperty('publicOnly');
-    for (const flag of [true, false]) {
-      const message: BlockToParentMessage = {
-        type: 'OPEN_IMAGE_PICKER',
-        payload: { requestId: `p-public-${flag}`, sources: ['posted'], publicOnly: flag },
-      };
-      if (isMessage<BlockToParentMessage, 'OPEN_IMAGE_PICKER'>(message, 'OPEN_IMAGE_PICKER')) {
-        expect(message.payload.publicOnly).toBe(flag);
-      } else {
-        expect.unreachable('message should narrow to OPEN_IMAGE_PICKER');
-      }
-    }
-  });
-
   it('a posted pick carries a numeric imageId and a generated pick carries none', () => {
     expect(typeof posted.imageId).toBe('number');
     expect(generated).not.toHaveProperty('imageId');

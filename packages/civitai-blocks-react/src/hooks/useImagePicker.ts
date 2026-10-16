@@ -25,23 +25,6 @@ export interface ImagePickerOpenOptions {
    * repeated member is harmless.
    */
   sources?: BlockImagePickerSource[];
-  /**
-   * `true` offers only images OTHER viewers may see: the `'posted'` library is
-   * narrowed to images whose post is published and not `Private`. The
-   * `'generated'` library is unaffected. OMIT it (or `false`) to also offer
-   * images in a `Private` post, as before.
-   *
-   * Set it when the pick becomes public-facing, e.g. an App Store sub-listing
-   * card image (`imageId` on `app.subListings.upsert` in `@civitai/sdk`), which
-   * the store refuses for a non-public image. Leave it off for a private input
-   * such as a generation source.
-   *
-   * 🔴 A host that predates the option IGNORES it and still offers
-   * `Private`-post images, so the app must still handle the store's
-   * `image_not_public` refusal. Anything that is not a boolean rejects before
-   * anything is sent.
-   */
-  publicOnly?: boolean;
 }
 
 /**
@@ -110,8 +93,6 @@ const IMAGE_PICKER_SOURCES: ReadonlySet<string> = new Set<BlockImagePickerSource
  * - `multiple: { max }` resolves with a LIST of up to `max` images (at most
  *   {@link IMAGE_PICKER_MULTIPLE_MAX}), or `[]`.
  * - `sources` narrows the picker to one library. Omit it for both.
- * - `publicOnly: true` offers only posted images in a public post (for a
- *   public-facing pick such as a sub-listing card image).
  *
  * `null` / `[]` MEAN "NOTHING WAS PICKED", which is usually the viewer closing
  * the picker (a signed-out viewer sees it with a sign-in button, and closing it
@@ -121,9 +102,8 @@ const IMAGE_PICKER_SOURCES: ReadonlySet<string> = new Set<BlockImagePickerSource
  * A REFUSAL REJECTS; it is never `null`. `open` rejects with the host's message
  * when the host refuses the request, and with `unsupported on this host` on a
  * surface that does not offer the picker (it is a page-app affordance). It also
- * rejects, before sending anything, for an empty or unknown `sources`, for a
- * `publicOnly` that is not a boolean, and for a `multiple.max` that is not a
- * whole number ≥ 1. A multi pick whose reply
+ * rejects, before sending anything, for an empty or unknown `sources` and for a
+ * `multiple.max` that is not a whole number ≥ 1. A multi pick whose reply
  * carries no list rejects with {@link IMAGE_PICKER_NO_LIST_ERROR}.
  *
  * A host that predates the picker does not answer the request at all, so the
@@ -189,21 +169,10 @@ export function useImagePicker(): UseImagePicker {
       const sources =
         requestedSources != null ? { sources: [...(requestedSources as BlockImagePickerSource[])] } : {};
 
-      // `publicOnly`: sent as given when it is a boolean, OMITTED when absent or null
-      // (an absent key is today's behaviour, and older hosts ignore it anyway).
-      const requestedPublicOnly: unknown = opts?.publicOnly;
-      if (requestedPublicOnly != null && typeof requestedPublicOnly !== 'boolean') {
-        throw new Error(
-          'useImagePicker: `publicOnly` must be true or false. Omit it to also offer images in a Private post.',
-        );
-      }
-      const publicOnly =
-        requestedPublicOnly != null ? { publicOnly: requestedPublicOnly } : {};
-
       if (opts?.multiple == null) {
         const result = await sendTypedRequest(
           getTransport(),
-          { type: 'OPEN_IMAGE_PICKER', payload: { ...sources, ...publicOnly } },
+          { type: 'OPEN_IMAGE_PICKER', payload: { ...sources } },
           'IMAGE_PICKER_RESULT',
           { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
         );
@@ -228,7 +197,7 @@ export function useImagePicker(): UseImagePicker {
 
       const result = await sendTypedRequest(
         getTransport(),
-        { type: 'OPEN_IMAGE_PICKER', payload: { ...sources, ...publicOnly, multiple: { max } } },
+        { type: 'OPEN_IMAGE_PICKER', payload: { ...sources, multiple: { max } } },
         'IMAGE_PICKER_RESULT',
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
