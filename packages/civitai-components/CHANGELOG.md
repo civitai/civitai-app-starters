@@ -1,5 +1,11 @@
 # @civitai/components
 
+## 0.12.0
+
+### Minor Changes
+
+- 6727901: `blockTokenSource` takes an optional `signedIn()`. When it returns `false`, a `401` on a `mine` search ends as `unauthorized` straight away, without calling `getToken({ fresh: true })`: the catalog answers an anonymous viewer's `mine` with a `401`, and a new token would get the same answer. Every other `401`, and every `401` when `signedIn` is absent or returns `undefined`, still gets the one fresh-token retry.
+
 ## 0.11.0
 
 ### Minor Changes
@@ -1021,10 +1027,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                after    @civitai/theme       0.3.1                   — 1 copy
-                                         @civitai/components  0.4.2                   — 1 copy
+                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
