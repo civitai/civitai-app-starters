@@ -519,7 +519,12 @@ describe('custom-elements.json initializers', () => {
     );
     const { createCivitaiElementsPlugin } = await import('../custom-elements-manifest.config.mjs');
 
-    const files = ['probe-base.ts', 'civitai-probe.ts', 'civitai-probe-child.ts'].map((file) =>
+    const files = [
+      'probe-base.ts',
+      'civitai-probe.ts',
+      'civitai-probe-child.ts',
+      'civitai-probe-leaf.ts',
+    ].map((file) =>
       join('test/fixtures/cem-probe', file)
     );
     const probe = create({
@@ -549,6 +554,19 @@ describe('custom-elements.json initializers', () => {
     expect(field?.default).toBe("'md'");
     expect(field?.type?.text).toBe('ProbeSize');
     expect(field?.description, "the base's doc does not fill the override").toBeUndefined();
+  });
+
+  /**
+   * One level, no re-point: `ProbeMid` declares `probeField = PROBE_DEFAULT`
+   * and the analyzer copies it to the leaf before the initializer is resolved,
+   * already naming the right declarer — so only the initializer pass can give
+   * the copy its value and type.
+   */
+  it('gives a direct subclass the resolved type and default of an inherited initializer', async () => {
+    const { field } = await probeField('civitai-probe-leaf');
+    expect(field?.inheritedFrom?.name).toBe('ProbeMid');
+    expect(field?.default).toBe("'md'");
+    expect(field?.type?.text).toBe('ProbeSize');
   });
 
   it('gives a grandchild the resolved default of the field it inherits', async () => {
