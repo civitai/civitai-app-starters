@@ -3,10 +3,9 @@
  *
  * This is a TYPE test: compiled by `tsc -p tsconfig.typecheck.json` (the
  * `test:types` script, run by `pnpm test`). `isMessage` is a DISCRIMINATOR-ONLY
- * guard and `tsconfig.json` EXCLUDES `test/`, so the `publicOnly` cases in
- * `messages.test.ts` pass whether or not the payload declares the field; they
- * are invariant guards. This file is the instrument that goes red when the
- * field is missing or loses its type.
+ * guard and `tsconfig.json` EXCLUDES `test/`, so no runtime test can see
+ * whether the payload declares the field. This file is the instrument that
+ * goes red when the field is missing or loses its type.
  *
  * What it pins:
  *  - `publicOnly` is an OPTIONAL key of the request payload (absent stays valid,
