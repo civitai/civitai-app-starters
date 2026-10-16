@@ -96,6 +96,7 @@ the refusal sits at the surface, not at startup:
 |---|---|
 | `app.storage.*` | Works. This is the token app storage requires |
 | `app.sharedStorage.*` | Reads work, anonymous included. Writes additionally need a signed-in viewer past the server's minimum-trust gate, so a `403` there is about the VIEWER, not the token |
+| `app.subListings.*` | Works for a signed-in viewer when the token carries `apps:store:items:write` — never in a dev-token, dev-tunnel or review session |
 | `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
 | `app.workflows.*` | Works. Generation for a block goes here, with the `ai:write:budgeted` scope |
@@ -427,6 +428,62 @@ author's key, an already-withdrawn row and a key that never existed — it is no
 an existence oracle, so do not report that as "someone else owns this". Put every
 string other viewers will read in `title`/`body`, which the server moderates;
 `data` is unmoderated app structure.
+
+## Store sub-listings
+
+`app.subListings` publishes an item a viewer made in your app — a row they
+authored in [shared storage](#shared-storage) — as its **own App Store card**,
+under the viewer's name, badged "in ‹your app›". Three methods over
+`/api/v1/blocks/sub-listings/*`: `upsert`, `withdraw`, `mine`.
+
+```ts
+import { SubListingError } from '@civitai/sdk';
+
+try {
+  const { id, status, pendingEdit } = await app.subListings.upsert({
+    itemKey: 'preset-7f3a',   // the key of the viewer's own shared-storage row
+    title: 'Moody film portraits',
+    subPath: 'p/preset-7f3a', // opens /apps/run/<your-app-slug>/p/preset-7f3a
+    tagline: null,            // a left-out optional is CLEARED: re-send what you want to keep
+  });
+} catch (error) {
+  if (error instanceof SubListingError && error.code === 'insufficient_scope') {
+    // dev-token, dev-tunnel and review sessions never carry the scope: hide the control
+  } else throw error;
+}
+
+const { withdrawn } = await app.subListings.withdraw('preset-7f3a');
+const { items } = await app.subListings.mine(); // oldest first, with review status
+```
+
+- **`upsert` replaces the whole item, it does not patch it.** An optional that is
+  `null` or `undefined` is left out of the request, and the server stores a
+  left-out optional as empty — so an edit that sends only `title` clears the
+  item's tagline and image and resets its rating to the app's. Re-send every
+  field you want to keep.
+- **The server body is strict** — an unknown key is `400 invalid_body` — so the
+  client sends only `itemKey`, `title`, `subPath`, `tagline`, `imageId` and
+  `contentRating`, whatever else the object you pass carries. Every other rule (lengths, the `subPath` shape, the rating floor, the image
+  checks) is the server's and comes back as a refusal.
+- **A refusal is a `SubListingError`** — an `ApiError` with a typed `code`
+  (`not_enabled`, `untrusted`, `item_not_found`, `not_your_item`, `text_rejected`,
+  `image_not_public`, `image_not_yours`, `rating_too_loose`, `rate_limited`,
+  `author_cap`, `conflict`, `unavailable`, …). Branch on `code`; the message is a
+  server sentence, not UI copy. A refusal with no `code` stays a plain `ApiError`.
+  A `429`'s `Retry-After` header is not exposed.
+- **Every item waits for a moderator.** `status` is `pending`, `approved`,
+  `hidden` or `withdrawn`; an `upsert` answered `hidden` changed nothing, and the
+  app cannot lift it. Editing an approved item stages the edit
+  (`pendingEdit: true`) while the card keeps serving the approved version.
+- `withdraw` answering `withdrawn: false` is a success: nothing of the viewer's was
+  active under that key, or a moderator has hidden it.
+
+🔴 It needs the scope `apps:store:items:write` in the manifest (with a
+`scopeJustifications` entry), and that scope is consent-exempt, refused to an
+anonymous viewer, and **never minted for dev-token, dev-tunnel or review
+sessions** — so these calls only succeed from an approved version of your app,
+and Civitai must also enable your app for sub-listings (`not_enabled` until then).
+Build the publish path to degrade quietly.
 
 ## Multi-step workflows
 
