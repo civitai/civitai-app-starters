@@ -27,7 +27,7 @@ import type { Attachment, Settings } from '../types.js';
 import { voiceLanguage } from '../voice/languages.js';
 import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
-import type { CivitaiChatComposer } from './civitai-chat-composer.js';
+import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
@@ -36,7 +36,7 @@ import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
 import type { MediaKind } from './lib/media.js';
 
 import { panelStyles } from './panel.styles.js';
-import type { Example } from './civitai-chat-welcome.js';
+import type { Example as ChatExample } from './civitai-chat-welcome.js';
 
 /** A finished file, or a job that has none yet (the viewer then shows its details alone). */
 type Lightboxed = { attachment: Attachment; job?: undefined } | { job: GenerationJob; attachment?: undefined };
@@ -72,6 +72,8 @@ export class CivitaiChat extends LitElement {
     // Reflected so the stylesheet can key on it, including the default.
     layout: { reflect: true },
     canSignOut: { type: Boolean, attribute: 'can-sign-out' },
+    examples: { attribute: false },
+    placeholder: {},
     userName: { state: true },
     uploads: { state: true },
     refs: { state: true },
@@ -157,6 +159,14 @@ export class CivitaiChat extends LitElement {
   /** Where the chat list goes: a column beside the chat (`wide`), a dropdown under the title (`compact`), or by the chat's own width (`auto`, compact at 900px or less). */
   declare layout: ChatLayout;
   declare canSignOut: boolean;
+  /**
+   * What an empty chat offers to start from, in place of the built-in ones (making a picture, a video, a
+   * song…). Clicking one puts its `prompt` in the message box; `wantsFile` also opens the file picker.
+   * An empty list shows none. A host backend's chat shows none either way.
+   */
+  declare examples?: readonly ChatExample[];
+  /** The message box's hint while it is empty, in place of the built-in one. */
+  declare placeholder?: string;
   declare userName: string;
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
@@ -182,6 +192,8 @@ export class CivitaiChat extends LitElement {
   #activePanel?: Panel;
   #voice?: VoiceTranscript;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
+  /** What the signed-out message box held when sign-in finished, for the signed-in one to start with. */
+  #carriedDraft?: string;
   /** Counts the chats opened, so only the latest one's end clears the loader. */
   #opening = 0;
 
@@ -380,6 +392,10 @@ export class CivitaiChat extends LitElement {
     session.store.addEventListener('save-error', () => this.#toast('Could not save this chat. It is saved again with your next message.'));
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
+    // Into the new box as soon as it shows, before the last chat loads: nothing to flash empty or overwrite.
+    const carried = this.#carriedDraft;
+    this.#carriedDraft = undefined;
+    if (carried) void this.#composer().then((composer) => composer && (composer.draft = carried));
 
     // In a block the host already handed over the viewer, so the name needs no request. And `/me`
     // must not be asked there: it accepts an OAuth token but refuses the block-scoped one, so a
@@ -514,7 +530,11 @@ export class CivitaiChat extends LitElement {
     try {
       const pending = this.signIn({ signal: abort.signal });
       if (draft) void this.#composer().then((composer) => composer && (composer.draft = draft));
-      this.app = await pending;
+      const app = await pending;
+      // Signed in, the chat renders a new message box: what the viewer typed (or an example put there)
+      // goes into it. Not a `draft` being sent, which would come back after it went.
+      this.#carriedDraft = draft === undefined ? ((await this.#composer())?.draft ?? '') : '';
+      this.app = app;
       await this.#started;
       await then();
     } catch (error) {
@@ -892,10 +912,12 @@ export class CivitaiChat extends LitElement {
               ${signInButton('Sign in')}
             </header>
             <civitai-chat-welcome
-              @cvt-example=${(e: CustomEvent<Example>) =>
+              .examples=${this.examples}
+              @cvt-example=${(e: CustomEvent<ChatExample>) =>
                 void this.#composer().then((composer) => {
                   if (!composer) return;
                   composer.draft = e.detail.prompt;
+                  if (e.detail.wantsFile) composer.browse();
                   composer.focus();
                 })}
             ></civitai-chat-welcome>
@@ -908,6 +930,7 @@ export class CivitaiChat extends LitElement {
                 : html`<p class="cvt-sign-in-status">You are signed out. Sending a message signs you in with Civitai.</p>`}
               <civitai-chat-composer
                 .commands=${this.#commands()}
+                .placeholder=${this.placeholder ?? DEFAULT_PLACEHOLDER}
                 ?running=${this.signingIn}
                 @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
                 @cvt-stop=${() => this.#cancelSignIn()}
@@ -1048,7 +1071,8 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
-                  @cvt-example=${(e: CustomEvent<Example>) =>
+                  .examples=${this.examples}
+                  @cvt-example=${(e: CustomEvent<ChatExample>) =>
                     void this.#composer().then((composer) => {
                       if (!composer) return;
                       composer.draft = e.detail.prompt;
@@ -1064,7 +1088,7 @@ export class CivitaiChat extends LitElement {
             .uploads=${this.uploads}
             .refs=${this.refs}
             ?voice=${!hosted}
-            placeholder=${hosted ? 'Ask anything' : nothing}
+            .placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : DEFAULT_PLACEHOLDER)}
             ?no-files=${hosted}
             ?transcribing=${this.transcribing}
             .heard=${this.heard}

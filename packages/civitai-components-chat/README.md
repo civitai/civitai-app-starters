@@ -292,9 +292,33 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
 | `can-sign-out` | Shows Sign out in settings (with `full-page`); the chat then emits `cvt-sign-out`. |
+| `examples` | What an empty chat offers to start from, in place of the built-in ones (property only); see [The empty chat](#the-empty-chat). |
+| `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `addFiles(files)`,
 `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+
+### The empty chat
+
+An empty chat greets the viewer and offers a few examples to start from: making a picture, changing a
+photo, a short video, a song, finding a model and reading text aloud. A page whose chat does something
+else sets its own with `examples`, and its own message-box hint with `placeholder`:
+
+```ts
+import type { ChatExample } from '@civitai/components-chat/civitai-chat';
+
+chat.examples = [
+  { title: 'Tip calculator', prompt: 'Build a tip calculator that splits the bill between friends' },
+  { title: 'Restyle my photo', prompt: 'Turn my photo into a watercolor painting', wantsFile: true },
+] satisfies ChatExample[];
+chat.placeholder = 'Describe the app you want to build';
+```
+
+Clicking an example puts its `prompt` in the message box for the viewer to edit or send; with
+`wantsFile: true` it also opens the file picker. The examples show signed in and signed out, and a
+change applies at once. Leave `examples` unset for the built-in ones; an empty list shows none. A chat
+on a host's own `backend` shows no examples either way. Slot `welcome` replaces the whole greeting
+instead, examples included, and then clicking does nothing the page does not wire itself.
 
 ### Gating tool calls
 
