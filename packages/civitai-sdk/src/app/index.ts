@@ -24,6 +24,7 @@ import {
 import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
+import { createSubListingsClient, type SubListingsClient } from '../sub-listings/index.js';
 import { createWorkflowsClient, type WorkflowsClient } from '../workflows/index.js';
 
 /** Long enough for a slow host page; short enough that a block opened on its own says so. */
@@ -73,6 +74,16 @@ export interface AppClient {
    * clear a server-side minimum-trust gate.
    */
   readonly sharedStorage: SharedStorageClient;
+  /**
+   * The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`
+   * over the `blocks/sub-listings/*` routes. A refusal the server explained is a
+   * `SubListingError` with a typed `code`.
+   *
+   * 🔴 Requires the block token and `apps:store:items:write`, which is never
+   * minted for dev-token, dev-tunnel or review sessions and is refused to an
+   * anonymous viewer — so build the publish path to degrade quietly.
+   */
+  readonly subListings: SubListingsClient;
   /**
    * Generation for a BLOCK: estimate, submit, watch and cancel through the
    * host's `blocks/workflows/*` routes, which price, budget and attribute the
@@ -221,16 +232,17 @@ function createAppClient(
   holdsOAuthTokenNow: () => boolean = () => false,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
-  // One instance for all four site-hosted surfaces: the storage and workflows
-  // clients' routes live under the same base URL, so a `siteUrl` override
-  // redirects them together.
+  // One instance for every site-hosted surface: the storage, sub-listings and
+  // workflows clients' routes live under the same base URL, so a `siteUrl`
+  // override redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. None of the four `blocks/*` clients needs an exemption
+  // diagnosis applies. None of the five `blocks/*` clients needs an exemption
   // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`,
-  // `blocks/storage/*` and `blocks/workflows/*`, which that namespace already excludes, and
-  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts`,
-  // `test/doc-store/client.test.ts` and `test/workflows/seam.test.ts` pin the four
-  // `BASE` values there textually.
+  // `blocks/storage/*`, `blocks/sub-listings/*` and `blocks/workflows/*`, which that
+  // namespace already excludes, and `test/storage/seam.test.ts`,
+  // `test/shared-storage/seam.test.ts`, `test/doc-store/client.test.ts`,
+  // `test/sub-listings/sub-listings.test.ts` and `test/workflows/seam.test.ts` pin the
+  // five `BASE` values there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   return {
     site: createSiteClient(siteHttp),
@@ -239,6 +251,7 @@ function createAppClient(
     // reference to the other.
     storage: { ...createStorageClient(siteHttp), ...createDocumentStorage(siteHttp) },
     sharedStorage: createSharedStorageClient(siteHttp),
+    subListings: createSubListingsClient(siteHttp),
     workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),
     orchestration: createOrchestrationClient(
       refuseBlockToken(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL), holdsBlockTokenNow),

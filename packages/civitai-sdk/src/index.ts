@@ -45,6 +45,18 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
+export { SubListingError } from './sub-listings/index.js';
+export type {
+  MySubListing,
+  SubListingCallOptions,
+  SubListingContentRating,
+  SubListingErrorCode,
+  SubListingStatus,
+  SubListingsClient,
+  SubListingUpsertInput,
+  SubListingUpsertResult,
+  SubListingWithdrawResult,
+} from './sub-listings/index.js';
 export { StorageError } from './doc-store/index.js';
 export type {
   DocumentAuthor,
