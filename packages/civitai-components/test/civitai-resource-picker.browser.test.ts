@@ -469,6 +469,35 @@ describe('<civitai-resource-picker> busy server', () => {
     (await called(MAX_AUTO_RETRIES + 2)).resolve(page([OTHER]));
     await until(el, () => names(el).length === 1);
   });
+
+  // Regression guard for existing behaviour (#672 follow-up): the busy branch's
+  // `if (append) return;` is what keeps page 1 on screen while page 2 waits.
+  it('a busy "Load more" keeps the list while it retries the same cursor, then errors inline', async () => {
+    const { source, calls, called } = handSource();
+    const el = await mount(source);
+    void el.show();
+    (await called(1)).resolve(page([WORKFLOW], 'any', 'cur-2'));
+    await until(el, () => $(el, '[part~="more"]') !== null);
+    $(el, '[part~="more"]')!.click();
+
+    for (let n = 2; n <= MAX_AUTO_RETRIES + 1; n++) {
+      (await called(n)).reject(busy(503));
+      // Each wait in between: page 1 is still the list, not a full-page retry.
+      await settle(el);
+      expect(el.phase).toBe('ready');
+      expect(names(el)).toEqual(['Upscale Chain']);
+      expect($(el, '[part~="retrying"]')).toBeNull();
+    }
+    (await called(MAX_AUTO_RETRIES + 2)).reject(busy(503));
+    await until(el, () => $(el, '[part~="more-error"]') !== null);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(calls).toHaveLength(MAX_AUTO_RETRIES + 2);
+    expect(calls.slice(1).map((c) => c.params.cursor)).toEqual(Array(MAX_AUTO_RETRIES + 1).fill('cur-2'));
+    expect(names(el)).toEqual(['Upscale Chain']);
+    expect(el.phase).toBe('ready');
+    expect($(el, '[part~="more-error"]')!.textContent).toContain('Civitai is busy right now.');
+  });
 });
 
 describe('<civitai-resource-picker> badges', () => {
