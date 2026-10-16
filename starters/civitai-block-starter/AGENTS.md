@@ -36,11 +36,13 @@ Vite + React + TS) or at the React examples under
   `<civitai-tag>` — use `@civitai/components/register-site`, which includes the
   kit) and the two SDK-backed elements (`<civitai-sign-in-button>`,
   `<civitai-workflow-button>` — each needs its own
-  `@civitai/components/<tag>/define`). The full contract
-  (every tag, attribute, event, `::part` and slot) is
-  `node_modules/@civitai/components/custom-elements.json`; the package README
-  (`node_modules/@civitai/components/README.md`, § Elements) has worked
-  examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements'
+  `@civitai/components/<tag>/define`). **`civitai app elements <tag>`** is THE
+  reference for one `<civitai-*>` element: every attribute it takes, inherited
+  ones included, with type and default, plus its events, slots and CSS parts,
+  read from the `@civitai/components` installed here. With no tag it lists
+  every element. Run it for each element you use; there is nothing to parse.
+  The package README (`node_modules/@civitai/components/README.md`, § Elements)
+  has worked examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements'
   reference: it is the `data-civitai-ui` contract for HAND-WRITTEN HTML
   (`<div data-civitai-ui="text-input"><label>…<input>`), which the
   `<civitai-*>` elements do not use. Here, write `<civitai-text-input>`.
