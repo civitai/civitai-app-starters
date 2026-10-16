@@ -330,6 +330,11 @@ export type BlockGenerationSourceImageInfo = BlockSourceImage;
  *
  * The request's `sources` narrows the picker to one of them; omitting it offers
  * both. Images only — neither library offers video through this picker.
+ *
+ * The request's `publicOnly: true` further narrows `'posted'` to images whose
+ * post is published and not `Private` (for a public-facing pick such as an App
+ * Store sub-listing card image); it does not change `'generated'`. A host that
+ * predates `publicOnly` ignores it.
  */
 export type BlockImagePickerSource = 'posted' | 'generated';
 
@@ -341,7 +346,8 @@ export type BlockImagePickerSource = 'posted' | 'generated';
  *
  * WHAT IS PICKABLE is decided by the host, never by the block:
  *  - `'posted'`: the viewer's own images that are in a published post, fully
- *    scanned, not flagged, and rated.
+ *    scanned, not flagged, and rated. A `Private` post counts as published
+ *    here unless the request set `publicOnly: true`, which leaves those out.
  *  - `'generated'`: the viewer's own succeeded generator outputs that carry a
  *    rating the host recognises.
  *  - Either way the image's rating has to be one the VIEWER'S OWN browsing

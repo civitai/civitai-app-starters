@@ -946,8 +946,8 @@ export type ParentToBlockMessage =
       //     `selected` is not set, and the list is always present.
       //
       // `error` is set only when the host REFUSES the request (an invalid
-      // `sources` or `multiple.max`, or a surface that does not offer the
-      // picker), and never beside a pick.
+      // `sources` or `multiple.max`, a `publicOnly` that is not a boolean, or
+      // a surface that does not offer the picker), and never beside a pick.
       type: 'IMAGE_PICKER_RESULT';
       payload: {
         requestId: string;
@@ -1665,8 +1665,9 @@ export type BlockToParentMessage =
       // The host decides what is pickable; {@link BlockPickedImageInfo} is the
       // one place that states the rule and what a pick's fields mean.
       // It refuses with `{ requestId, error }` for a `sources` that is not a
-      // non-empty array of known members and for a `multiple` whose `max` is
-      // not a whole number ≥ 1. A surface that does not offer the picker
+      // non-empty array of known members, for a `multiple` whose `max` is
+      // not a whole number ≥ 1, and for a `publicOnly` that is present but not
+      // a boolean (a host that predates the field ignores it). A surface that does not offer the picker
       // answers `unsupported on this host` the same way. In review mode, and
       // for a block that is not ready, it answers at once as if nothing was
       // picked, without showing a picker.
@@ -1691,6 +1692,25 @@ export type BlockToParentMessage =
          * pick.
          */
         multiple?: { max: number };
+        /**
+         * Offer only images in a published, non-`Private` post: `true`
+         * narrows the `'posted'` library to those. It does not filter by
+         * rating or by any other post setting. The `'generated'` library is
+         * unaffected. OMIT it (or `false`) for today's behaviour, which also
+         * offers images in a `Private` post. Send a boolean or nothing: the
+         * host refuses any other value with `{ requestId, error }`.
+         *
+         * Set it when the pick becomes PUBLIC-FACING, e.g. an App Store
+         * sub-listing card image (`imageId` on
+         * `POST /api/v1/blocks/sub-listings/upsert`, `app.subListings.upsert`
+         * in `@civitai/sdk`), which the store refuses for a non-public image.
+         * Leave it off when the pick is a private input (a generation source).
+         *
+         * 🔴 A HOST THAT PREDATES THIS FIELD IGNORES IT and still offers
+         * `Private`-post images, so an app setting it must still handle the
+         * store's `image_not_public` refusal.
+         */
+        publicOnly?: boolean;
       };
     }
   | {
