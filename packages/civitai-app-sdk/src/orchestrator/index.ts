@@ -312,6 +312,15 @@ export const IMAGE_GEN_ENGINES = {
   fal: 'fal.ai',
   /** Comfy graph as an imageGen step (vs. the top-level `comfy` step). */
   comfy: 'Comfy (engine-style)',
+  // ----- Auto-added 2026-10-16 from the orchestrator spec ----------------------
+  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
+  // these and this catalog did not list them. MOVE each entry into the right
+  // section above, and replace any TODO(catalog) line with a real one-line
+  // description — `pnpm check:catalogs` names every placeholder that is left.
+  // (That check is advisory, so it will not stop this merging. It is a
+  // reminder, not a gate.)
+  /** Description taken verbatim from the spec's engine schema — confirm it reads well here. */
+  krea3: "Krea 3 generation and editing at 1K or 2K.",
 } as const;
 
 export type ImageGenEngine = keyof typeof IMAGE_GEN_ENGINES;
