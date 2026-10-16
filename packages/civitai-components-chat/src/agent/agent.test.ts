@@ -8,7 +8,7 @@ import { JobManager } from '../orchestration/jobs.js';
 import { ThreadStore } from '../store/thread-store.js';
 import { workflow } from '../test-support/fakes.js';
 import { ASK_CHOICE } from '../tools/build.js';
-import { Agent } from './agent.js';
+import { Agent, type AgentDeps } from './agent.js';
 import type { TurnPart } from './parts.js';
 
 type StreamPart = Record<string, unknown>;
@@ -31,6 +31,7 @@ function setup(
   responses: (StreamPart[] | ((signal?: AbortSignal) => ReadableStream<StreamPart>) | Error)[],
   customInstructions?: string,
   host: { instructions?: () => string; tools?: string[] } = {},
+  extra: Partial<AgentDeps> = {},
 ) {
   const prompts: unknown[] = [];
   const toolChoices: unknown[] = [];
@@ -70,6 +71,7 @@ function setup(
     hostInstructions: host.instructions,
     isHostTool: (name) => host.tools?.includes(name) ?? false,
     now: () => new Date('2026-09-23T00:00:00Z'),
+    ...extra,
   });
   const seen: TurnPart[][] = [];
   agent.addEventListener('change', () => {
@@ -410,8 +412,9 @@ describe("tool-call markup in a reply's last step", () => {
 });
 
 describe("an errored reply's trace", () => {
+  // Retries off: these are about the trace of the failure the viewer sees.
   function failing(responses: Parameters<typeof setup>[0]) {
-    const made = setup(responses);
+    const made = setup(responses, undefined, {}, { networkRetryDelaysMs: [] });
     const errors: { trace: unknown }[] = [];
     made.agent.addEventListener('error', (event) => errors.push((event as CustomEvent).detail));
     return { ...made, errors };
@@ -476,5 +479,318 @@ describe("an errored reply's trace", () => {
     const agent = new Agent({ model: () => model, store, jobs: new JobManager({} as never), toolSet: async () => Promise.reject(new Error('MCP listTools timed out')), attachments: () => [] });
     await agent.send('hello');
     expect(store.current!.turns[0]!.assistant.errorTrace).toMatchObject({ stage: 'tools', step: 0, message: 'MCP listTools timed out' });
+  });
+});
+
+/** Chromium's two shapes when it drops in-flight connections because the client's network changed. */
+const failedToFetch = () => new TypeError('Failed to fetch');
+const bodyCut = () =>
+  new APICallError({
+    message: 'Failed to process successful response',
+    url: 'https://orchestration.example/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode: 200,
+    cause: new TypeError('network error'),
+    isRetryable: false,
+  });
+
+/**
+ * A 200 answer whose body starts (`parts`) and then dies with `error`. Each part is handed over only
+ * when read, since erroring a stream throws away what is still queued in it.
+ */
+const cutAfter =
+  (parts: StreamPart[], error: () => unknown) =>
+  (): ReadableStream<StreamPart> => {
+    const queue = [...parts];
+    return new ReadableStream<StreamPart>(
+      {
+        pull(controller) {
+          const next = queue.shift();
+          if (next) controller.enqueue(next);
+          else controller.error(error());
+        },
+      },
+      { highWaterMark: 0 },
+    );
+  };
+
+/** Every tool call the model was ever shown for `id`, across all the requests sent in one prompt. */
+const callsIn = (prompt: unknown, id: string) => (JSON.stringify(prompt).match(new RegExp(`"type":"tool-call","toolCallId":"${id}"`, 'g')) ?? []).length;
+
+describe('a reply the network cut off', () => {
+  function cut(responses: Parameters<typeof setup>[0], delays: readonly number[] = [0, 0]) {
+    const made = setup(responses, undefined, {}, { networkRetryDelaysMs: delays });
+    const errors: unknown[] = [];
+    const retries: { attempt: number; trace: { stage: string; step: number; name?: string } }[] = [];
+    made.agent.addEventListener('error', (event) => errors.push((event as CustomEvent).detail));
+    made.agent.addEventListener('network-retry', (event) => retries.push((event as CustomEvent).detail));
+    return { ...made, errors, retries };
+  }
+
+  it('asks again for the step whose request failed to fetch, without running the finished step’s tool again', async () => {
+    const { agent, store, prompts, generate, errors, retries } = cut([toolCall('generate_image', { prompt: 'a red bike' }), failedToFetch(), text('On its way!')]);
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('done');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveLength(3);
+    // The retried request carries the finished step once: its call and its result, not asked for again.
+    expect(callsIn(prompts[2], 'call_1')).toBe(1);
+    expect(JSON.stringify(prompts[2])).toContain('gen1-1');
+    expect(assistant.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+    expect(assistant.messages.at(-1)).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'On its way!' }] });
+    expect(errors).toEqual([]);
+    expect(retries).toMatchObject([{ attempt: 1, trace: { stage: 'request', step: 2, name: 'TypeError', message: 'Failed to fetch' } }]);
+    expect(assistant.networkRetries).toEqual([retries[0]!.trace]);
+    expect(assistant.errorTrace).toBeUndefined();
+  });
+
+  it('asks again for a step whose answer was cut mid-stream, and shows and keeps its words once', async () => {
+    const { agent, store, prompts, generate, seen, retries } = cut([
+      toolCall('generate_image', { prompt: 'a red bike' }),
+      cutAfter([{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 't' }, { type: 'text-delta', id: 't', delta: 'Your bike is ' }], bodyCut),
+      text('Your bike is ', 'on its way!'),
+    ]);
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('done');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveLength(3);
+    expect(callsIn(prompts[2], 'call_1')).toBe(1);
+    expect(retries).toMatchObject([{ attempt: 1, trace: { stage: 'stream', step: 2, name: 'AI_APICallError', statusCode: 200, cause: 'network error' } }]);
+    // Kept: the tool step and the answer, once.
+    expect(assistant.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+    expect(JSON.stringify(assistant.messages).match(/Your bike is/g)).toHaveLength(1);
+    // Shown: the cut words went when the step was asked for again, so the answer never reads twice.
+    for (const parts of seen) expect(JSON.stringify(parts).match(/Your bike is/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(seen.at(-1)!.filter((part) => part.kind === 'tool')).toHaveLength(1);
+    expect(seen.at(-1)!.at(-1)).toEqual({ kind: 'text', text: 'Your bike is on its way!' });
+  });
+
+  it('drops a cut step that the stream still closed after the error, rather than keeping it as finished', async () => {
+    const { agent, store, prompts, generate, seen } = cut([
+      toolCall('generate_image', { prompt: 'a red bike' }),
+      [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 't' },
+        { type: 'text-delta', id: 't', delta: 'Your bike is ' },
+        { type: 'error', error: new TypeError('network error') },
+        { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage },
+      ],
+      text('Your bike is ', 'on its way!'),
+    ]);
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('done');
+    expect(prompts).toHaveLength(3);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(prompts[2])).not.toContain('Your bike is');
+    expect(assistant.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+    expect(JSON.stringify(assistant.messages).match(/Your bike is/g)).toHaveLength(1);
+    for (const parts of seen) expect(JSON.stringify(parts).match(/Your bike is/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(seen.at(-1)!.at(-1)).toEqual({ kind: 'text', text: 'Your bike is on its way!' });
+  });
+
+  it('keeps the words of a step the stream closed after the error once, when the reply then fails', async () => {
+    const { agent, store } = cut(
+      [
+        [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't' },
+          { type: 'text-delta', id: 't', delta: 'Your bike is ' },
+          { type: 'error', error: new TypeError('network error') },
+          { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage },
+        ],
+      ],
+      [],
+    );
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant).toMatchObject({ status: 'error', errorKind: 'network' });
+    expect(assistant.messages.map((m) => m.role)).toEqual(['assistant']);
+    expect(JSON.stringify(assistant.messages).match(/Your bike is/g)).toHaveLength(1);
+  });
+
+  /** A step whose answer has an error part and then, as the provider allows, a tool call and a tool-calls finish. */
+  const errorThenToolCall = (error: unknown): StreamPart[] => [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't' },
+    { type: 'text-delta', id: 't', delta: 'Making it. ' },
+    { type: 'text-end', id: 't' },
+    { type: 'error', error },
+    { type: 'tool-call', toolCallId: 'call_1', toolName: 'generate_image', input: JSON.stringify({ prompt: 'a red bike' }) },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+  ];
+
+  it('keeps a tool call that ran after an error in the stream, with its result, when the reply then fails', async () => {
+    const parseError = Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError' });
+    const { agent, store, generate } = cut([errorThenToolCall(parseError), text('Here it is.')]);
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(assistant.status).toBe('error');
+    const saved = JSON.stringify(assistant.messages);
+    expect(saved.match(/"type":"tool-call","toolCallId":"call_1"/g)).toHaveLength(1);
+    expect(saved).toContain('gen1-1');
+    expect(saved.match(/Making it\./g)).toHaveLength(1);
+  });
+
+  it('does not ask again when a tool call came after a network-shaped error, so the tool runs once', async () => {
+    const { agent, store, prompts, generate, retries } = cut([errorThenToolCall(new TypeError('network error')), text('Here it is.'), toolCall('generate_image', { prompt: 'a red bike' }), text('again')]);
+    await agent.send('make a red bike');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(retries).toEqual([]);
+    // The SDK's own next step after the tools, and nothing asked again.
+    expect(prompts).toHaveLength(2);
+    expect(store.current!.turns[0]!.assistant.status).toBe('error');
+  });
+
+  it('keeps the words of a step the stream closed after an error once, when the viewer then stops', async () => {
+    const parseError = Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError' });
+    let release: (() => void) | undefined;
+    const { agent, store } = cut([
+      errorThenToolCall(parseError),
+      // The next step's request waits until the viewer stops.
+      (signal) =>
+        new ReadableStream<StreamPart>({
+          start(controller) {
+            release = () => controller.error(signal?.reason);
+            signal?.addEventListener('abort', () => release?.());
+          },
+        }),
+    ]);
+    const done = agent.send('make a red bike');
+    await vi.waitFor(() => expect(release).toBeDefined());
+    agent.abort();
+    await done;
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('aborted');
+    const saved = JSON.stringify(assistant.messages);
+    expect(saved.match(/Making it\./g)).toHaveLength(1);
+    expect(saved.match(/"type":"tool-call","toolCallId":"call_1"/g)).toHaveLength(1);
+  });
+
+  it('asks again when the first request fails to fetch or the first answer is cut 0 bytes in', async () => {
+    for (const first of [failedToFetch(), bodyCut(), cutAfter([], () => new TypeError('network error'))]) {
+      const { agent, store, prompts } = cut([first, text('Hello!')]);
+      await agent.send('hi');
+      expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'done', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Hello!' }] }] });
+      expect(prompts).toHaveLength(2);
+    }
+  });
+
+  // A tool call before the error. The SDK runs tools only after an answer's finish chunk, so this one
+  // never ran; the reply is still not asked again, since a provider or SDK could run one sooner.
+  it('does not ask again when the cut step had already called a tool, which may have run', async () => {
+    const { agent, store, prompts, generate, errors, retries } = cut([
+      cutAfter([{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'call_1', toolName: 'generate_image', input: JSON.stringify({ prompt: 'a red bike' }) }], bodyCut),
+      text('should not run'),
+    ]);
+    await agent.send('make a red bike');
+    expect(prompts).toHaveLength(1);
+    expect(generate.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(retries).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'network', errorTrace: { name: 'AI_APICallError', cause: 'network error' } });
+  });
+
+  it('asks again when the cut came while a tool call was still being written, before it could run', async () => {
+    const { agent, store, prompts, generate } = cut([
+      cutAfter(
+        [
+          { type: 'stream-start', warnings: [] },
+          { type: 'tool-input-start', id: 'call_1', toolName: 'generate_image' },
+          { type: 'tool-input-delta', id: 'call_1', delta: '{"prompt":"a re' },
+        ],
+        () => new TypeError('network error'),
+      ),
+      toolCall('generate_image', { prompt: 'a red bike' }),
+      text('On its way!'),
+    ]);
+    await agent.send('make a red bike');
+    expect(store.current!.turns[0]!.assistant.status).toBe('done');
+    expect(prompts).toHaveLength(3);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(store.current!.turns[0]!.assistant.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+  });
+
+  it('says the reply failed once its retries are used up, with every cut on record', async () => {
+    const { agent, store, prompts, errors, retries } = cut([failedToFetch(), bodyCut(), failedToFetch(), text('never')]);
+    await agent.send('hi');
+    const { assistant } = store.current!.turns[0]!;
+    expect(prompts).toHaveLength(3);
+    expect(assistant).toMatchObject({ status: 'error', errorKind: 'network', errorTrace: { name: 'TypeError', message: 'Failed to fetch' } });
+    expect(errors).toHaveLength(1);
+    expect(retries.map((retry) => retry.attempt)).toEqual([1, 2]);
+    expect(assistant.networkRetries).toHaveLength(2);
+  });
+
+  it('does not ask again for a failure that is not a dropped connection', async () => {
+    const malformed = new APICallError({ message: 'Failed to process successful response', url: 'https://x.example', requestBodyValues: {}, statusCode: 200, cause: new SyntaxError('Unexpected token <'), isRetryable: false });
+    const cases: Parameters<typeof setup>[0][number][] = [
+      Object.assign(new Error('Insufficient buzz'), { statusCode: 402 }),
+      Object.assign(new Error('Free allowance used up until 2026-10-07T14:55:36Z'), { statusCode: 400 }),
+      new APICallError({ message: 'Unauthorized', url: 'https://x.example', requestBodyValues: {}, statusCode: 401, isRetryable: false }),
+      new APICallError({ message: 'Bad gateway', url: 'https://x.example', requestBodyValues: {}, statusCode: 502, isRetryable: false }),
+      malformed,
+      new TypeError("Cannot read properties of undefined (reading 'x')"),
+      [{ type: 'stream-start', warnings: [] }, { type: 'error', error: { message: 'Chat completion failed', type: 'server_error' } }],
+    ];
+    for (const failure of cases) {
+      const { agent, store, prompts, retries } = cut([failure, text('should not run')]);
+      await agent.send('hello');
+      expect(prompts).toHaveLength(1);
+      expect(retries).toEqual([]);
+      expect(store.current!.turns[0]!.assistant.status).toBe('error');
+      expect(store.current!.turns[0]!.assistant.networkRetries).toBeUndefined();
+    }
+  });
+
+  it('does not ask again for a reply the viewer stopped', async () => {
+    const { agent, store, prompts } = cut([
+      (signal) =>
+        new ReadableStream<StreamPart>({
+          start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({ type: 'text-start', id: 't' });
+            controller.enqueue({ type: 'text-delta', id: 't', delta: 'Once upon' });
+            signal?.addEventListener('abort', () => controller.error(signal.reason));
+          },
+        }),
+      text('should not run'),
+    ]);
+    const done = agent.send('tell me a story');
+    await vi.waitFor(() => expect(agent.live?.parts[0]).toMatchObject({ text: 'Once upon' }));
+    agent.abort();
+    await done;
+    expect(prompts).toHaveLength(1);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'aborted', messages: [{ role: 'assistant', content: 'Once upon' }] });
+  });
+
+  it('stops waiting to ask again when the viewer stops the reply', async () => {
+    const { agent, store, prompts, retries } = cut([failedToFetch(), text('should not run')], [60_000]);
+    const done = agent.send('hi');
+    await vi.waitFor(() => expect(retries).toHaveLength(1));
+    agent.abort();
+    await done;
+    expect(prompts).toHaveLength(1);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    expect(agent.running).toBe(false);
+  });
+
+  it('keeps the reply to its step budget across a retry, and still makes the last step speak', async () => {
+    try {
+      configureChat({ maxSteps: 3 });
+      const { agent, store, toolChoices, generate } = cut([toolCall('generate_image', { prompt: 'a' }, 'call_a'), failedToFetch(), toolCall('generate_image', { prompt: 'b' }, 'call_b'), text('Made two.')]);
+      await agent.send('make two bikes');
+      // Step 1, step 2 (cut), step 2 again, step 3: the last, which cannot call tools.
+      expect(toolChoices).toEqual([{ type: 'auto' }, { type: 'auto' }, { type: 'auto' }, { type: 'none' }]);
+      expect(generate).toHaveBeenCalledTimes(2);
+      const { assistant } = store.current!.turns[0]!;
+      expect(assistant).toMatchObject({ status: 'done', ranOut: true });
+      expect(assistant.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool', 'assistant']);
+    } finally {
+      delete chatConfig.maxSteps;
+    }
   });
 });

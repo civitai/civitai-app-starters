@@ -4,7 +4,7 @@ import type { AppClient, BlockAppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
-import type { AgentErrorDetail } from '../agent/agent.js';
+import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
 import { backendModels, type ChatBackend } from '../backend.js';
 import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
@@ -358,6 +358,10 @@ export class CivitaiChat extends LitElement {
     // For the page's own telemetry: the words the viewer saw, and where the reply broke (`trace`).
     session.agent.addEventListener('error', (event) => {
       if (this.#session === session) this.dispatchEvent(new CustomEvent<AgentErrorDetail>('reply-error', { detail: (event as CustomEvent<AgentErrorDetail>).detail, bubbles: true, composed: true }));
+    });
+    // A reply the network cut off that is being asked for again by itself: not an error yet, but seen.
+    session.agent.addEventListener('network-retry', (event) => {
+      if (this.#session === session) this.dispatchEvent(new CustomEvent<AgentRetryDetail>('reply-retry', { detail: (event as CustomEvent<AgentRetryDetail>).detail, bubbles: true, composed: true }));
     });
     session.addEventListener('settings-change', this.#rerender);
     // A server's tools carry its label in the thread once they are listed.

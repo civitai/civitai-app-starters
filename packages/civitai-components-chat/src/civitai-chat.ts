@@ -5,6 +5,7 @@ export { configureChat, type ChatConfig, type ChatModelOption } from './config.j
 export type { ChatBackend } from './backend.js';
 export type { ChatConversation, ChatConversationStore, ChatConversationSummary, ChatSavedTurn } from './store/conversation-store.js';
 export type { AgentErrorDetail as ChatReplyError } from './agent/agent.js';
+export type { AgentRetryDetail as ChatReplyRetry } from './agent/agent.js';
 export type { ErrorTrace as ChatErrorTrace } from './agent/error-trace.js';
 export { holdSharedPanel, takeSharedPanel, type SharedPanel } from './panels/share.js';
 export { popupSignIn } from './auth/popup.js';
