@@ -534,15 +534,18 @@ the network changes, e.g. the address changes) is not a failure yet: the chat as
 to twice, after a short wait (and, when the browser says it is offline, until it is back online, at
 most 15 s). It resumes from the last step that finished, so tools that already ran are not called
 again and words already kept are not repeated; the cut step's words are replaced by its new answer.
-(A cut step's tools never ran: they run only once its answer is complete. Should a step ever report a
-tool call before it is cut, it is not asked again, so no tool can run twice.) Only two errors count as
+If any tool call comes from the cut step before its stream ends (even after the error), it is not
+asked again, so no tool can run twice; a reply that then fails keeps every step that finished, with
+the calls it ran and their results. Only two errors count as
 a dropped connection: fetch's own `TypeError` with Chromium's wording (`Failed to fetch` for a request,
 `network error` for a body), or Firefox's and Safari's wording for a failed request, and a 2xx answer
 whose body was cut by one (`Failed to process successful response` caused by it). Other browsers'
 wording for a cut body is not recognised yet. A stop, any status the service sent, and anything else
 fail at once. A reply that fails after its retries says the connection was lost. Each retry fires `reply-retry` with `{ attempt, trace }` (type
 `ChatReplyRetry`), and the turn keeps the traces in `assistant.networkRetries` for the session; only
-when the retries run out does the reply fail with `reply-error`.
+when the retries run out does the reply fail with `reply-error`. A recovered reply shows no error, so
+these are how a page, its telemetry or an eval harness can tell that a cut happened and was retried,
+rather than that none happened.
 
 ## Panels
 

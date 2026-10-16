@@ -607,7 +607,67 @@ describe('a reply the network cut off', () => {
     await agent.send('make a red bike');
     const { assistant } = store.current!.turns[0]!;
     expect(assistant).toMatchObject({ status: 'error', errorKind: 'network' });
-    expect(assistant.messages).toEqual([{ role: 'assistant', content: 'Your bike is ' }]);
+    expect(assistant.messages.map((m) => m.role)).toEqual(['assistant']);
+    expect(JSON.stringify(assistant.messages).match(/Your bike is/g)).toHaveLength(1);
+  });
+
+  /** A step whose answer has an error part and then, as the provider allows, a tool call and a tool-calls finish. */
+  const errorThenToolCall = (error: unknown): StreamPart[] => [
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 't' },
+    { type: 'text-delta', id: 't', delta: 'Making it. ' },
+    { type: 'text-end', id: 't' },
+    { type: 'error', error },
+    { type: 'tool-call', toolCallId: 'call_1', toolName: 'generate_image', input: JSON.stringify({ prompt: 'a red bike' }) },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+  ];
+
+  it('keeps a tool call that ran after an error in the stream, with its result, when the reply then fails', async () => {
+    const parseError = Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError' });
+    const { agent, store, generate } = cut([errorThenToolCall(parseError), text('Here it is.')]);
+    await agent.send('make a red bike');
+    const { assistant } = store.current!.turns[0]!;
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(assistant.status).toBe('error');
+    const saved = JSON.stringify(assistant.messages);
+    expect(saved.match(/"type":"tool-call","toolCallId":"call_1"/g)).toHaveLength(1);
+    expect(saved).toContain('gen1-1');
+    expect(saved.match(/Making it\./g)).toHaveLength(1);
+  });
+
+  it('does not ask again when a tool call came after a network-shaped error, so the tool runs once', async () => {
+    const { agent, store, prompts, generate, retries } = cut([errorThenToolCall(new TypeError('network error')), text('Here it is.'), toolCall('generate_image', { prompt: 'a red bike' }), text('again')]);
+    await agent.send('make a red bike');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(retries).toEqual([]);
+    // The SDK's own next step after the tools, and nothing asked again.
+    expect(prompts).toHaveLength(2);
+    expect(store.current!.turns[0]!.assistant.status).toBe('error');
+  });
+
+  it('keeps the words of a step the stream closed after an error once, when the viewer then stops', async () => {
+    const parseError = Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError' });
+    let release: (() => void) | undefined;
+    const { agent, store } = cut([
+      errorThenToolCall(parseError),
+      // The next step's request waits until the viewer stops.
+      (signal) =>
+        new ReadableStream<StreamPart>({
+          start(controller) {
+            release = () => controller.error(signal?.reason);
+            signal?.addEventListener('abort', () => release?.());
+          },
+        }),
+    ]);
+    const done = agent.send('make a red bike');
+    await vi.waitFor(() => expect(release).toBeDefined());
+    agent.abort();
+    await done;
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('aborted');
+    const saved = JSON.stringify(assistant.messages);
+    expect(saved.match(/Making it\./g)).toHaveLength(1);
+    expect(saved.match(/"type":"tool-call","toolCallId":"call_1"/g)).toHaveLength(1);
   });
 
   it('asks again when the first request fails to fetch or the first answer is cut 0 bytes in', async () => {
@@ -619,9 +679,8 @@ describe('a reply the network cut off', () => {
     }
   });
 
-  // The SDK runs tools only after an answer's finish chunk and the OpenAI-compatible provider emits
-  // tool calls only at the end of its stream, so a real cut does not produce this order today; the
-  // guard stands for a provider or SDK that runs a tool sooner.
+  // A tool call before the error. The SDK runs tools only after an answer's finish chunk, so this one
+  // never ran; the reply is still not asked again, since a provider or SDK could run one sooner.
   it('does not ask again when the cut step had already called a tool, which may have run', async () => {
     const { agent, store, prompts, generate, errors, retries } = cut([
       cutAfter([{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'call_1', toolName: 'generate_image', input: JSON.stringify({ prompt: 'a red bike' }) }], bodyCut),

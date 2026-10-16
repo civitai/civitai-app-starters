@@ -123,6 +123,8 @@ export class Agent extends EventTarget {
 
     let completed: ModelMessage[] = [];
     let stepText = '';
+    // Whether `stepText`'s step is still open: a step that finished is in `completed` already.
+    let stepOpen = false;
     let streamError: unknown;
     // Read once per reply, so a change applies from the next one.
     const maxSteps = stepLimit();
@@ -161,13 +163,15 @@ export class Agent extends EventTarget {
       for (let attempt = 0; ; attempt++) {
         const resumeFrom = completed;
         const before = finished;
-        // What the viewer was shown up to the step now being asked for, and the tool calls that step made.
+        // What the viewer was shown up to the step now being asked for.
         let shownBeforeStep = this.live?.parts.length ?? 0;
+        // Tool calls since that step began. Once an error came it is no longer reset at a step's end, so
+        // it counts every call to the end of the stream: a provider may still send a call after an error
+        // part, and the SDK may still run it.
         let callsInStep = 0;
-        // All of that as it was when the first error came: a step the stream still closes after an error
-        // is not one that finished.
-        let atCut: { shown: number; calls: number; finished: number; completed: ModelMessage[] } | undefined;
-        const cutHere = () => (atCut ??= { shown: shownBeforeStep, calls: callsInStep, finished, completed });
+        // The reply as it was when the first error came, for asking again from there.
+        let atCut: { shown: number; finished: number; completed: ModelMessage[] } | undefined;
+        const cutHere = () => (atCut ??= { shown: shownBeforeStep, finished, completed });
         streamError = undefined;
         failedAt = undefined;
         stepText = '';
@@ -192,20 +196,23 @@ export class Agent extends EventTarget {
           for await (const part of result.fullStream) {
             if (part.type === 'start-step') {
               stepText = '';
+              stepOpen = true;
               steps++;
               streaming = true;
               shownBeforeStep = this.live?.parts.length ?? 0;
-              callsInStep = 0;
+              if (streamError === undefined) callsInStep = 0;
               if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
             } else if (part.type === 'finish-step') {
               finished++;
               streaming = false;
+              stepOpen = false;
               since = Date.now();
-              // A finished step is kept as it is: what it showed and the tools it called are not cut.
+              // A step that finished before any error is kept as it is: what it showed and the tools it
+              // called are not cut.
               shownBeforeStep = this.live?.parts.length ?? 0;
-              callsInStep = 0;
+              if (streamError === undefined) callsInStep = 0;
             }
-            if (part.type === 'tool-call') callsInStep++;
+            if (part.type === 'tool-call' || part.type === 'tool-result' || part.type === 'tool-error') callsInStep++;
             if (part.type === 'text-delta') stepText += part.text;
             // Where it was when the first error came: the stream may still close its step after it.
             if (part.type === 'error' && streamError === undefined) {
@@ -225,24 +232,23 @@ export class Agent extends EventTarget {
           cutHere();
         }
         if (controller.signal.aborted || streamError === undefined || !atCut) break;
-        // Only a step that called no tool is asked for again, so a tool can never run twice. With this
-        // SDK (ai 6) a step's tools run only after its answer's `finish` chunk, which a cut answer never
-        // has, and the OpenAI-compatible provider emits tool calls only once its stream ends; so for them
-        // this does not fire today. It stands for a provider or SDK that runs a tool sooner.
-        if (attempt >= retryDelays.length || atCut.calls > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) {
-          // The reply fails: a step the stream closed after the error is not kept as finished, so its
-          // words are kept once (below), not twice.
-          completed = atCut.completed;
-          break;
-        }
+        // Asked again only when no tool call came from the cut step to the end of the stream, so a tool
+        // can never run twice. The stream is read to its end rather than dropped at the error: an abort
+        // cannot take back a tool the SDK already started, and only the whole stream shows every call it
+        // made. (A provider may follow an error part with a call and a tool-calls finish, which ai 6
+        // runs.) A failed reply keeps every step that finished, after the error too: one that ran a tool
+        // keeps its call and result.
+        if (attempt >= retryDelays.length || callsInStep > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
         this.#retrying(turn, attempt + 1, errorTrace(streamError, failedAt ?? where()));
-        // What the cut step showed goes; the step asked for again shows its own answer.
+        // What the cut step showed goes, with any step closed after the error (none called a tool); the
+        // step asked for again shows its own answer.
         this.live?.parts.splice(atCut.shown);
         if (forcedAt >= atCut.shown) forcedAt = -1;
         ({ finished, completed } = atCut);
         steps = finished;
         streaming = false;
         stepText = '';
+        stepOpen = false;
         this.#emit();
         await pauseBeforeRetry(retryDelays[attempt]!, controller.signal);
         if (controller.signal.aborted) break;
@@ -264,8 +270,9 @@ export class Agent extends EventTarget {
       completed = withoutToolMarkup(completed);
       stepText = stripToolMarkup(stepText);
     }
-    // A step cut short never reached onStepFinish; keep what the user already read.
-    if (turn.assistant.status !== 'done' && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
+    // A step cut short never reached onStepFinish; keep what the user already read. A step that did
+    // (closed after an error, or before a stop) is in `completed` already, and is not kept twice.
+    if (turn.assistant.status !== 'done' && stepOpen && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
     turn.assistant.messages = completed;
     this.live = null;
     this.#abort = undefined;
