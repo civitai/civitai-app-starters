@@ -507,13 +507,17 @@ export interface SubListingUpsertInput {
     /**
      * The key of a row in this app's SHARED storage (`app.sharedStorage`) that the
      * viewer authored and that is not hidden. One sub-listing per key: publishing
-     * the same key again edits it.
+     * the same key again edits it, and every call REPLACES the whole item — an
+     * optional you leave out is cleared, so re-send the ones you want to keep.
      */
     itemKey: string;
     title: string;
-    /** Optional. `null` or `undefined` is left out of the request. */
+    /** Optional. Left out (`null`/`undefined`), the item has no tagline. */
     tagline?: string | null;
-    /** An image the viewer uploaded and that is publicly visible. `null`/`undefined` is left out. */
+    /**
+     * An image the viewer uploaded and that is publicly visible. Left out
+     * (`null`/`undefined`), the card shows the app's cover.
+     */
     imageId?: number | null;
     /**
      * Where the card opens your app: `/apps/run/<your-app-slug>/<subPath>`. One to
@@ -593,8 +597,13 @@ export interface SubListingsClient {
      * Publishes, or edits, the item at `itemKey`. `POST blocks/sub-listings/upsert`.
      *
      * 🔴 The server's body is STRICT — an unknown key is `400 invalid_body` — so
-     * only the six fields of {@link SubListingUpsertInput} are sent, and an optional
-     * one that is `null` or `undefined` is left out rather than sent.
+     * only the six fields of {@link SubListingUpsertInput} are sent. An optional
+     * that is `null` or `undefined` is left out rather than sent; the server stores
+     * either as empty.
+     *
+     * 🔴 It REPLACES, it does not patch: an edit that leaves out `tagline`,
+     * `imageId` or `contentRating` clears it (on an approved item, the cleared
+     * version is what goes to the moderator). Re-send every field you want to keep.
      */
     upsert(input: SubListingUpsertInput, opts?: SubListingCallOptions): Promise<SubListingUpsertResult>;
     /** Takes the viewer's item at `itemKey` out of the store. `POST blocks/sub-listings/withdraw`. */

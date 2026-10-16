@@ -72,7 +72,7 @@ describe('app.subListings.upsert — the request', () => {
     );
   });
 
-  it('🔴 an optional given as `null` is left out, not sent as `null` (the server body is strict)', async () => {
+  it('🔴 an optional given as `null` is left out, not sent as `null` (one wire shape; the server stores both as empty)', async () => {
     const { subListings, calls } = await scripted([() => json(200, UPSERTED)]);
 
     await subListings.upsert({

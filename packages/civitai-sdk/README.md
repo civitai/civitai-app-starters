@@ -444,7 +444,7 @@ try {
     itemKey: 'preset-7f3a',   // the key of the viewer's own shared-storage row
     title: 'Moody film portraits',
     subPath: 'p/preset-7f3a', // opens /apps/run/<your-app-slug>/p/preset-7f3a
-    tagline: null,            // null / undefined optionals are left out of the request
+    tagline: null,            // a left-out optional is CLEARED: re-send what you want to keep
   });
 } catch (error) {
   if (error instanceof SubListingError && error.code === 'insufficient_scope') {
@@ -456,10 +456,14 @@ const { withdrawn } = await app.subListings.withdraw('preset-7f3a');
 const { items } = await app.subListings.mine(); // oldest first, with review status
 ```
 
+- **`upsert` replaces the whole item, it does not patch it.** An optional that is
+  `null` or `undefined` is left out of the request, and the server stores a
+  left-out optional as empty — so an edit that sends only `title` clears the
+  item's tagline and image and resets its rating to the app's. Re-send every
+  field you want to keep.
 - **The server body is strict** — an unknown key is `400 invalid_body` — so the
   client sends only `itemKey`, `title`, `subPath`, `tagline`, `imageId` and
-  `contentRating`, and leaves an optional out when it is `null` or `undefined`.
-  Every other rule (lengths, the `subPath` shape, the rating floor, the image
+  `contentRating`, whatever else the object you pass carries. Every other rule (lengths, the `subPath` shape, the rating floor, the image
   checks) is the server's and comes back as a refusal.
 - **A refusal is a `SubListingError`** — an `ApiError` with a typed `code`
   (`not_enabled`, `untrusted`, `item_not_found`, `not_your_item`, `text_rejected`,
