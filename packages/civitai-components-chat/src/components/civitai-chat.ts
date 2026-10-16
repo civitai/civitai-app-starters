@@ -36,7 +36,7 @@ import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
 import type { MediaKind } from './lib/media.js';
 
 import { panelStyles } from './panel.styles.js';
-import type { Example } from './civitai-chat-welcome.js';
+import type { Example as ChatExample } from './civitai-chat-welcome.js';
 
 /** A finished file, or a job that has none yet (the viewer then shows its details alone). */
 type Lightboxed = { attachment: Attachment; job?: undefined } | { job: GenerationJob; attachment?: undefined };
@@ -72,6 +72,8 @@ export class CivitaiChat extends LitElement {
     // Reflected so the stylesheet can key on it, including the default.
     layout: { reflect: true },
     canSignOut: { type: Boolean, attribute: 'can-sign-out' },
+    examples: { attribute: false },
+    placeholder: {},
     userName: { state: true },
     uploads: { state: true },
     refs: { state: true },
@@ -157,6 +159,14 @@ export class CivitaiChat extends LitElement {
   /** Where the chat list goes: a column beside the chat (`wide`), a dropdown under the title (`compact`), or by the chat's own width (`auto`, compact at 900px or less). */
   declare layout: ChatLayout;
   declare canSignOut: boolean;
+  /**
+   * What an empty chat offers to start from, in place of the built-in ones (making a picture, a video, a
+   * song…). Clicking one puts its `prompt` in the message box; `wantsFile` also opens the file picker.
+   * An empty list shows none. A host backend's chat shows none either way.
+   */
+  declare examples?: readonly ChatExample[];
+  /** The message box's hint while it is empty, in place of the built-in one. */
+  declare placeholder?: string;
   declare userName: string;
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
@@ -892,7 +902,8 @@ export class CivitaiChat extends LitElement {
               ${signInButton('Sign in')}
             </header>
             <civitai-chat-welcome
-              @cvt-example=${(e: CustomEvent<Example>) =>
+              .examples=${this.examples}
+              @cvt-example=${(e: CustomEvent<ChatExample>) =>
                 void this.#composer().then((composer) => {
                   if (!composer) return;
                   composer.draft = e.detail.prompt;
@@ -908,6 +919,7 @@ export class CivitaiChat extends LitElement {
                 : html`<p class="cvt-sign-in-status">You are signed out. Sending a message signs you in with Civitai.</p>`}
               <civitai-chat-composer
                 .commands=${this.#commands()}
+                placeholder=${this.placeholder ?? nothing}
                 ?running=${this.signingIn}
                 @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
                 @cvt-stop=${() => this.#cancelSignIn()}
@@ -1048,7 +1060,8 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
-                  @cvt-example=${(e: CustomEvent<Example>) =>
+                  .examples=${this.examples}
+                  @cvt-example=${(e: CustomEvent<ChatExample>) =>
                     void this.#composer().then((composer) => {
                       if (!composer) return;
                       composer.draft = e.detail.prompt;
@@ -1064,7 +1077,7 @@ export class CivitaiChat extends LitElement {
             .uploads=${this.uploads}
             .refs=${this.refs}
             ?voice=${!hosted}
-            placeholder=${hosted ? 'Ask anything' : nothing}
+            placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : nothing)}
             ?no-files=${hosted}
             ?transcribing=${this.transcribing}
             .heard=${this.heard}
