@@ -177,8 +177,55 @@ describe('AGENTS.md package pointers', () => {
   const md = readFileSync(AGENTS_MD, 'utf8');
   const pointers = [...new Set([...md.matchAll(/node_modules\/(@civitai\/[a-z-]+)\/([A-Za-z0-9_.-]+\.(?:md|json))/g)].map((m) => `${m[1]}/${m[2]}`))];
 
-  it('positive control: finds the element reference pointer', () => {
-    expect(pointers).toContain('@civitai/components/custom-elements.json');
+  it('positive control: finds the package pointers this guide teaches', () => {
+    // A floor, so the `it.each` below cannot go vacuously green on an extractor
+    // that matched nothing.
+    expect(pointers).toContain('@civitai/sdk/README.md');
+    expect(pointers).toContain('@civitai/components/README.md');
+  });
+
+  /**
+   * The element reference is a COMMAND, not a file — mirrors the civitai CLI's
+   * `agents_sdk_pointers_test.go` for the page-elements scaffold. Agents pointed
+   * at `custom-elements.json` write ad-hoc parsers for it, and it omits the form
+   * controls' inherited attributes besides, so the guide names
+   * `civitai app elements <tag>` and must not name the JSON file at all: any
+   * mention invites parsing it. Asserted on the command and the file NAME, not
+   * on the surrounding prose.
+   */
+  it('names `civitai app elements <tag>` as the element reference, and never custom-elements.json', () => {
+    expect(md.includes('`civitai app elements <tag>`'), 'AGENTS.md does not name `civitai app elements <tag>`').toBe(true);
+    expect(md.includes('custom-elements.json'), 'AGENTS.md names custom-elements.json').toBe(false);
+  });
+
+  /**
+   * A tiged starter does not install the CLI, so a fresh sandbox answers
+   * `civitai: command not found` — and with the JSON pointer gone it then has
+   * no element reference at all. The npx form must sit in the SAME paragraph
+   * as the command (the doc's generic npx note is hundreds of lines later, and
+   * names `app validate`), in AGENTS.md and README.md alike.
+   */
+  it.each(['AGENTS.md', 'README.md'])('%s gives the npx form of `civitai app elements` inline', (file) => {
+    const doc = readFileSync(join(STARTER, file), 'utf8').replace(/\r\n/g, '\n');
+    const bare = doc.indexOf('civitai app elements <tag>`');
+    const npx = doc.indexOf('`npx -y @civitai/cli@latest app elements <tag>`');
+    expect(bare, `${file} does not name civitai app elements <tag>`).toBeGreaterThanOrEqual(0);
+    expect(npx, `${file} lacks \`npx -y @civitai/cli@latest app elements <tag>\``).toBeGreaterThan(bare);
+    expect(doc.slice(bare, npx).includes('\n\n'), `${file}'s npx form is not in the same paragraph as the command`).toBe(false);
+  });
+
+  it('names MARKUP.md only inside the warning that it is NOT the elements\' reference', () => {
+    const norm = md.replace(/\s+/g, ' ');
+    const warning =
+      "🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements' reference: " +
+      'it is the `data-civitai-ui` contract for HAND-WRITTEN HTML ' +
+      '(`<div data-civitai-ui="text-input"><label>…<input>`), which the `<civitai-*>` elements do not use. ' +
+      'Here, write `<civitai-text-input>`.';
+    // Booleans with a message, so a failure does not print the whole guide.
+    expect(norm.includes(warning), 'AGENTS.md lost (or reworded) the MARKUP.md warning').toBe(true);
+    const rest = norm.replace(warning, '');
+    const stray = rest.indexOf('MARKUP');
+    expect(stray, `AGENTS.md names MARKUP outside the warning: …${rest.slice(stray - 80, stray + 40)}…`).toBe(-1);
   });
 
   it.each(pointers)('%s exists and is published', (pointer) => {
