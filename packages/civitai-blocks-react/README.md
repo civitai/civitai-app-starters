@@ -2290,6 +2290,22 @@ const output = await open({ sources: ['generated'] });
 // output?.imageId is always undefined here: a generator output has no image id
 ```
 
+**Only images others may see: `publicOnly`.** Pass `publicOnly: true` when the
+pick becomes public-facing, such as the card image of an App Store sub-listing
+(`imageId` on `app.subListings.upsert` in `@civitai/sdk`, which refuses a
+non-public image). Posted images are then limited to ones in a published post
+that is not `Private`. Generated images are unaffected. Leave it out when the
+pick is a private input, such as a generation source.
+
+```tsx
+const { open } = useImagePicker();
+
+const card = await open({ sources: ['posted'], publicOnly: true });
+```
+
+🔴 A host that predates `publicOnly` ignores it and still offers images in a
+`Private` post, so keep handling the store's `image_not_public` refusal.
+
 If your app decides at runtime whether to ask for one image or several, pass
 `multiple` as a value that may be `undefined`. The result is then either shape,
 so narrow it with `Array.isArray`:

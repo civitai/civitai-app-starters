@@ -1118,7 +1118,9 @@ export interface MockHostOptions {
    * As on the real host, an entry repeating an earlier one (same `source` and
    * `url`) is offered once, and an `imageId` on a `'generated'` entry is
    * dropped. Nothing else is checked: the mock does not model browsing levels
-   * or ratings, so it hands back whatever `nsfwLevel` an entry carries.
+   * or ratings, so it hands back whatever `nsfwLevel` an entry carries. Nor
+   * does it model post privacy, so a request's `publicOnly` changes nothing
+   * here: every canned `'posted'` entry stands for a public one.
    *
    * Defaults to one posted image (with an `imageId`) and one generated image
    * (without one), so both libraries answer out of the box.

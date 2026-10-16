@@ -378,6 +378,52 @@ describe('useImagePicker', () => {
     expect(lastSent().payload.sources).toEqual(['generated', 'posted']);
   });
 
+  // ── `publicOnly` ────────────────────────────────────────────────────────────
+  describe('publicOnly', () => {
+    it.each([true, false])('single pick: sends publicOnly: %s as given', (flag) => {
+      const { result } = renderHook(() => useImagePicker());
+      act(() => {
+        result.current.open({ sources: ['posted'], publicOnly: flag }).catch(() => {});
+      });
+      const { requestId: _requestId, ...rest } = lastSent().payload;
+      expect(rest).toStrictEqual({ sources: ['posted'], publicOnly: flag });
+    });
+
+    it('multi pick: sends publicOnly beside multiple', () => {
+      const { result } = renderHook(() => useImagePicker());
+      act(() => {
+        result.current.open({ publicOnly: true, multiple: { max: 4 } }).catch(() => {});
+      });
+      const { requestId: _requestId, ...rest } = lastSent().payload;
+      expect(rest).toStrictEqual({ publicOnly: true, multiple: { max: 4 } });
+    });
+
+    it('omits the key when it is undefined or null', () => {
+      const { result } = renderHook(() => useImagePicker());
+      for (const publicOnly of [undefined, null]) {
+        act(() => {
+          result.current.open({ publicOnly: publicOnly as never }).catch(() => {});
+        });
+        const { requestId: _requestId, ...rest } = lastSent().payload;
+        expect(rest).toStrictEqual({});
+      }
+    });
+
+    it.each([['true'], [1], [0], [{}]])(
+      'rejects publicOnly %j (not a boolean) without sending anything',
+      async (publicOnly) => {
+        const { result } = renderHook(() => useImagePicker());
+        await expect(result.current.open({ publicOnly: publicOnly as never })).rejects.toThrow(
+          'useImagePicker: `publicOnly` must be true or false. Omit it to also offer images in a Private post.',
+        );
+        await expect(
+          result.current.open({ publicOnly: publicOnly as never, multiple: { max: 2 } }),
+        ).rejects.toThrow('useImagePicker: `publicOnly` must be true or false.');
+        expect(postMessageMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   // ── Multi pick (`multiple: { max }`) ────────────────────────────────────────
   describe('multiple', () => {
     it('the cap is 20', () => {

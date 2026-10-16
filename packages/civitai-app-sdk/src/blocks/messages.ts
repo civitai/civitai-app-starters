@@ -1691,6 +1691,24 @@ export type BlockToParentMessage =
          * pick.
          */
         multiple?: { max: number };
+        /**
+         * Offer only images OTHER viewers may see: `true` narrows the
+         * `'posted'` library to images whose post is published and not
+         * `Private`. The `'generated'` library is unaffected. OMIT it (or
+         * `false`) for today's behaviour, which also offers images in a
+         * `Private` post.
+         *
+         * Set it when the pick becomes PUBLIC-FACING, e.g. an App Store
+         * sub-listing card image (`imageId` on
+         * `POST /api/v1/blocks/sub-listings/upsert`, `app.subListings.upsert`
+         * in `@civitai/sdk`), which the store refuses for a non-public image.
+         * Leave it off when the pick is a private input (a generation source).
+         *
+         * 🔴 A HOST THAT PREDATES THIS FIELD IGNORES IT and still offers
+         * `Private`-post images, so an app setting it must still handle the
+         * store's `image_not_public` refusal.
+         */
+        publicOnly?: boolean;
       };
     }
   | {
