@@ -529,6 +529,19 @@ last tool call, and for a service error its `statusCode`, host, `cause`, request
 characters of the response body. The viewer sees a one-line summary of it under Details; it is not
 saved with the conversation.
 
+A reply cut off because the browser dropped its connection (it aborts every request in flight when
+the network changes, e.g. the address changes) is not a failure yet: the chat asks again by itself, up
+to twice, after a short wait (and, when the browser says it is offline, until it is back online, at
+most 15 s). It resumes from the last step that finished, so tools that already ran are not called
+again and words already kept are not repeated; the cut step's words are replaced by its new answer.
+A step that had already called a tool when it was cut is not asked again, since the tool may have run:
+that reply fails as before. Only two errors count as a dropped connection: fetch's own `TypeError`
+(`Failed to fetch`, `network error`, or Firefox's and Safari's wording), and a 2xx answer whose body
+was cut by one (`Failed to process successful response` caused by it). A stop, any status the service
+sent, and anything else fail at once. Each retry fires `reply-retry` with `{ attempt, trace }` (type
+`ChatReplyRetry`), and the turn keeps the traces in `assistant.networkRetries` for the session; only
+when the retries run out does the reply fail with `reply-error`.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)

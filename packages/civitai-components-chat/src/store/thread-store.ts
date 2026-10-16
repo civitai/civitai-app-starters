@@ -341,7 +341,7 @@ export function saved(turn: Turn): SavedTurn {
   const { assistant, ...rest } = turn;
   if (assistant.status === 'streaming') return rest;
   // The trace is for this session's diagnostics only: a response body may carry the reply's text.
-  const { errorTrace: _trace, ...kept } = assistant;
+  const { errorTrace: _trace, networkRetries: _retries, ...kept } = assistant;
   return { ...rest, assistant: kept };
 }
 

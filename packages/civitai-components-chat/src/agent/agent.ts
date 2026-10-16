@@ -9,6 +9,7 @@ import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
+import { isNetworkDrop, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
 import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
@@ -56,10 +57,21 @@ export interface AgentDeps {
   /** The words the viewer sees for a reply that failed; `humanize` unless set. */
   describeError?(error: unknown): HumanError;
   now?(): Date;
+  /**
+   * The wait before each automatic retry of a reply the browser's network cut off (see
+   * `network-retry.ts`); its length is how many retries a reply gets, and `[]` turns them off.
+   */
+  networkRetryDelaysMs?: readonly number[];
 }
 
 /** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
 export interface AgentErrorDetail extends HumanError {
+  trace: ErrorTrace;
+}
+
+/** What the agent's `network-retry` event carries: which retry this is (from 1), and where the reply was cut. */
+export interface AgentRetryDetail {
+  attempt: number;
   trace: ErrorTrace;
 }
 
@@ -136,44 +148,97 @@ export class Agent extends EventTarget {
         rules: this.#deps.systemPrompt?.(),
       });
       const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions });
-      const result = streamText({
-        model: this.#deps.model(),
-        system,
-        messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context }),
-        tools,
-        // A page that ended the reply ends it here: no further step is asked for (and paid).
-        stopWhen: [stepCountIs(maxSteps), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
-        abortSignal: controller.signal,
-        maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
-        temperature: 0.7,
-        providerOptions: PROVIDER_OPTIONS,
-        // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-        prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
-        onStepFinish: (step) => {
-          completed = [...step.response.messages];
-        },
-      });
+      const history = buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context });
+      const model = this.#deps.model();
+      const retryDelays = this.#deps.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       // Counted from the steps that started, not from what they said: a last step that returns nothing
       // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
       let forcedAt = -1;
-      for await (const part of result.fullStream) {
-        if (part.type === 'start-step') {
-          stepText = '';
-          steps++;
-          streaming = true;
-          if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
-        } else if (part.type === 'finish-step') {
-          finished++;
-          streaming = false;
-          since = Date.now();
+      // One pass per attempt. A pass the browser's network cut off resumes from the last step that
+      // finished: those steps' messages (and every tool they ran) are sent as they are and not asked
+      // for again; only the step that was cut is asked for again.
+      for (let attempt = 0; ; attempt++) {
+        const resumeFrom = completed;
+        const before = finished;
+        // What the viewer was shown up to the step now being asked for, and the tool calls that step made.
+        let shownBeforeStep = this.live?.parts.length ?? 0;
+        let callsInStep = 0;
+        // All of that as it was when the first error came: a step the stream still closes after an error
+        // is not one that finished.
+        let atCut: { shown: number; calls: number; finished: number; completed: ModelMessage[] } | undefined;
+        const cutHere = () => (atCut ??= { shown: shownBeforeStep, calls: callsInStep, finished, completed });
+        streamError = undefined;
+        failedAt = undefined;
+        stepText = '';
+        try {
+          const result = streamText({
+            model,
+            system,
+            messages: [...history, ...resumeFrom],
+            tools,
+            // A page that ended the reply ends it here: no further step is asked for (and paid).
+            stopWhen: [stepCountIs(maxSteps - before), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
+            abortSignal: controller.signal,
+            maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
+            temperature: 0.7,
+            providerOptions: PROVIDER_OPTIONS,
+            // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
+            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
+            onStepFinish: (step) => {
+              completed = [...resumeFrom, ...step.response.messages];
+            },
+          });
+          for await (const part of result.fullStream) {
+            if (part.type === 'start-step') {
+              stepText = '';
+              steps++;
+              streaming = true;
+              shownBeforeStep = this.live?.parts.length ?? 0;
+              callsInStep = 0;
+              if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
+            } else if (part.type === 'finish-step') {
+              finished++;
+              streaming = false;
+              since = Date.now();
+              // A finished step is kept as it is: what it showed and the tools it called are not cut.
+              shownBeforeStep = this.live?.parts.length ?? 0;
+              callsInStep = 0;
+            }
+            if (part.type === 'tool-call') callsInStep++;
+            if (part.type === 'text-delta') stepText += part.text;
+            // Where it was when the first error came: the stream may still close its step after it.
+            if (part.type === 'error' && streamError === undefined) {
+              failedAt = where();
+              cutHere();
+            }
+            if (part.type === 'error') streamError = part.error;
+            // The last step cannot call tools; tool-call syntax it writes as text is not shown (see tool-markup.ts).
+            if (forcedAt >= 0 && part.type === 'text-delta') this.#showForced(forcedAt, stripToolMarkup(stepText));
+            else this.#onPart(part);
+          }
+        } catch (error) {
+          if (!controller.signal.aborted && streamError === undefined) {
+            failedAt = where();
+            streamError = error;
+          }
+          cutHere();
         }
-        if (part.type === 'text-delta') stepText += part.text;
-        // Where it was when the first error came: the stream may still close its step after it.
-        if (part.type === 'error' && streamError === undefined) failedAt = where();
-        if (part.type === 'error') streamError = part.error;
-        // The last step cannot call tools; tool-call syntax it writes as text is not shown (see tool-markup.ts).
-        if (forcedAt >= 0 && part.type === 'text-delta') this.#showForced(forcedAt, stripToolMarkup(stepText));
-        else this.#onPart(part);
+        if (controller.signal.aborted || streamError === undefined || !atCut) break;
+        // Only a step that called no tool is asked for again: a tool call that came before the cut may
+        // already have run (and spent), and asking again would let the model call it a second time.
+        if (attempt >= retryDelays.length || atCut.calls > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
+        this.#retrying(turn, attempt + 1, errorTrace(streamError, failedAt ?? where()));
+        // What the cut step showed goes; the step asked for again shows its own answer.
+        this.live?.parts.splice(atCut.shown);
+        if (forcedAt >= atCut.shown) forcedAt = -1;
+        ({ finished, completed } = atCut);
+        steps = finished;
+        streaming = false;
+        stepText = '';
+        this.#emit();
+        await pauseBeforeRetry(retryDelays[attempt]!, controller.signal);
+        if (controller.signal.aborted) break;
+        since = Date.now();
       }
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
       else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where());
@@ -217,6 +282,12 @@ export class Agent extends EventTarget {
     turn.assistant.errorKind = human.kind;
     turn.assistant.errorTrace = trace;
     this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { ...human, trace } }));
+  }
+
+  /** Notes a cut the reply recovers from by itself: kept on the turn for this session, and sent as `network-retry`. */
+  #retrying(turn: Turn, attempt: number, trace: ErrorTrace): void {
+    (turn.assistant.networkRetries ??= []).push(trace);
+    this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt, trace } }));
   }
 
   /** Where the reply is, for an error's trace: a tool still running wins over the step's request or stream. */

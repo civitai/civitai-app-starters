@@ -39,8 +39,20 @@ export interface Turn {
    * `errorDetail` is what the service said, shown only under Details; `errorTrace` is where the reply
    * failed, kept for this session only. `ranOut`: the reply used every step it may take. `stopped`:
    * the page ended the reply (`beforeToolCall` answered `stop: true`), and these are the words shown.
+   * `networkRetries`: where the browser's network cut the reply off each time it then retried by
+   * itself, oldest first; kept for this session only, like `errorTrace`.
    */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string; errorTrace?: ErrorTrace; ranOut?: boolean; stopped?: string };
+  assistant: {
+    messages: ModelMessage[];
+    status: TurnStatus;
+    error?: string;
+    errorDetail?: string;
+    errorKind?: string;
+    errorTrace?: ErrorTrace;
+    networkRetries?: ErrorTrace[];
+    ranOut?: boolean;
+    stopped?: string;
+  };
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */
