@@ -1890,6 +1890,52 @@ export function isValidImagePickerResult(p: unknown): boolean {
   return true;
 }
 
+const MEDIA_UPLOAD_KINDS = new Set<string>(['image', 'video', 'audio']);
+
+const isPositiveInteger = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0;
+
+/**
+ * One `BlockMediaUploadInfo`: a non-empty `url`, a known `kind`, a string
+ * `mimeType`, a whole `sizeBytes` ≥ 0, and dimensions by kind. `width` and
+ * `height` are positive whole numbers when present, REQUIRED for `image` and
+ * `video` (the host always measures them) and ABSENT for `audio`. `durationMs`
+ * is a finite number ≥ 0 when present.
+ */
+function isValidMediaUploadInfo(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (typeof s.kind !== 'string' || !MEDIA_UPLOAD_KINDS.has(s.kind)) return false;
+  if (typeof s.mimeType !== 'string') return false;
+  if (!isFiniteNumber(s.sizeBytes) || !Number.isInteger(s.sizeBytes) || s.sizeBytes < 0) return false;
+  if (s.kind === 'audio') {
+    if (s.width !== undefined || s.height !== undefined) return false;
+  } else if (!isPositiveInteger(s.width) || !isPositiveInteger(s.height)) {
+    return false;
+  }
+  if (s.durationMs !== undefined && (!isFiniteNumber(s.durationMs) || s.durationMs < 0)) return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD`: `{ requestId, selected }`, `{ requestId, error }`
+ * or a bare `{ requestId }` (dismissed / declined).
+ *
+ * `error` must be a string when present, and a reply carrying one is accepted
+ * without looking further: `useMediaUpload` throws on a PRESENT `error` before
+ * it reads `selected`. 🔴 Accepting it is load-bearing: dropping
+ * `{ requestId, error }` would leave the hook waiting out its whole
+ * human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidMediaUploadResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `selected`
+  if (p.selected !== undefined && !isValidMediaUploadInfo(p.selected)) return false;
+  return true;
+}
+
 /**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
@@ -2070,6 +2116,8 @@ export function payloadValidatorFor(
       return isValidResourcePickerResult;
     case 'IMAGE_PICKER_RESULT':
       return isValidImagePickerResult;
+    case 'MEDIA_UPLOAD_RESULT':
+      return isValidMediaUploadResult;
     case 'USER_CHECKPOINT_SET':
       return isValidUserCheckpointSetResult;
     case 'SUSPEND':

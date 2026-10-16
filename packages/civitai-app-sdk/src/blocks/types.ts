@@ -401,6 +401,53 @@ export interface BlockPickedImageInfo {
 }
 
 /**
+ * What kind of media `OPEN_MEDIA_UPLOAD` (via `useMediaUpload`) uploads. The
+ * host decides the file's real type from its MAGIC BYTES, never from a declared
+ * MIME type, and accepts per kind:
+ *  - `'image'`: PNG, JPEG or WebP;
+ *  - `'video'`: MP4 or WebM;
+ *  - `'audio'`: MP3, WAV or WebM.
+ */
+export type BlockMediaKind = 'image' | 'video' | 'audio';
+
+/**
+ * One media file the host uploaded for the block as a GENERATION INPUT
+ * (`MEDIA_UPLOAD_RESULT.selected`, via `useMediaUpload`).
+ *
+ * `url` is a PRIVATE generation-input URL: pass it into a workflow step input
+ * (an image, video or audio input). It is not a public Civitai image and has no
+ * `imageId`. The host refuses data URIs and inline
+ * base64 in step inputs, so this is how a block gets media it holds (a picked
+ * file, a canvas, a recording) into a step.
+ *
+ * Per kind:
+ *  - `'image'`: the host RESIZES the picture so both sides are within 64–2048
+ *    pixels and RE-ENCODES it as JPEG. `mimeType` is always `'image/jpeg'`,
+ *    and `sizeBytes`, `width` and `height` describe that JPEG.
+ *  - `'video'`: uploaded as sent. `width` / `height` are always set (the host
+ *    refuses a file with no video track); `durationMs` is set when the browser
+ *    reports a finite duration.
+ *  - `'audio'`: uploaded as sent. No `width` / `height`; `durationMs` as for
+ *    video. A `MediaRecorder` WebM can report no duration, so do not rely on it.
+ */
+export interface BlockMediaUploadInfo {
+  /** The private generation-input URL. Pass it into a step input. */
+  url: string;
+  /** The kind that was requested. */
+  kind: BlockMediaKind;
+  /** The type actually uploaded. Always `'image/jpeg'` for `'image'`. */
+  mimeType: string;
+  /** Bytes actually uploaded (for `'image'`, the re-encoded JPEG's size). */
+  sizeBytes: number;
+  /** Pixel width. Always set for `'image'` and `'video'`; absent for `'audio'`. */
+  width?: number;
+  /** Pixel height. Always set for `'image'` and `'video'`; absent for `'audio'`. */
+  height?: number;
+  /** Duration in milliseconds, for `'video'` / `'audio'` when known. Never set for `'image'`. */
+  durationMs?: number;
+}
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

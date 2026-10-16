@@ -2482,6 +2482,117 @@ an invalid `sources` or `multiple` with an error, and answers
 list the viewer's images, so there `open` rejects with a message saying to use
 the mock host.
 
+### `useMediaUpload()`
+
+**The way to pass any media (image, video or audio) into a workflow step.** The
+host refuses data URIs and inline base64 in step inputs, so upload the file
+with this hook and pass the `url` it returns into the step input. Returns
+`{ open, upload }`.
+
+- **`open({ kind })`** opens the host's own file picker for that kind. The
+  viewer picks a file, the host uploads it, and `open` resolves with the
+  upload, or `null` if nothing was uploaded.
+- **`upload({ kind, bytes, mimeType? })`** uploads media your app already
+  holds in the tab, with no picker: a canvas export, a crop, a `MediaRecorder`
+  recording. It resolves with the upload, and never resolves without one.
+
+```tsx
+import { useMediaUpload } from '@civitai/blocks-react';
+
+function UseRecording({ recording }: { recording: Blob }) {
+  const { upload } = useMediaUpload();
+
+  async function onClick() {
+    const audio = await upload({
+      kind: 'audio',
+      bytes: await recording.arrayBuffer(),
+      mimeType: recording.type, // optional; checked against the content
+    });
+    // audio.url goes into the step's audio input
+    startStep({ audioUrl: audio.url });
+  }
+
+  return <button onClick={onClick}>Use this recording</button>;
+}
+```
+
+```tsx
+const { open } = useMediaUpload();
+
+const video = await open({ kind: 'video' }); // BlockMediaUploadInfo | null
+if (video) {
+  // video.url, video.width, video.height, video.durationMs (when known)
+}
+```
+
+What each kind accepts, decided by the file's **content** (its first bytes),
+never by its name or declared type:
+
+| `kind` | Accepted | What you get back |
+|---|---|---|
+| `'image'` | PNG, JPEG, WebP | Resized so both sides are 64 to 2048 pixels and re-encoded as JPEG: `mimeType` is always `'image/jpeg'`, and `sizeBytes`, `width` and `height` describe that JPEG. |
+| `'video'` | MP4, WebM | Uploaded as sent. `width` and `height` are always set (a file with no video track is refused). `durationMs` when the browser reports a duration. |
+| `'audio'` | MP3, WAV, WebM | Uploaded as sent. No `width` or `height`. `durationMs` when the browser reports a duration: a `MediaRecorder` WebM often reports none, so do not rely on it. |
+
+- **At most 64 MB per file.** `upload` refuses a larger buffer before sending
+  it, with the host's own message `file exceeds the 64 MB upload limit`.
+- **`upload` is rate-limited:** at most 8 uploads and 128 MB per 60 seconds
+  per page. Past that the host replies `busy`; wait and retry. A refused upload
+  does not count. `open` is not limited this way, because a person picks each
+  file.
+- **`mimeType` is optional.** When you pass it (for example `blob.type`) it
+  must match the content, or the upload is refused with
+  `mimeType does not match the file's content`. Case and parameters such as
+  `;codecs=opus` are ignored, and `audio/x-wav` counts as `audio/wav`.
+- Pass an `ArrayBuffer` (`await blob.arrayBuffer()`). A `Blob`, a typed array
+  or an empty buffer is refused before sending with
+  `invalid media-upload request`. The buffer is copied, not transferred.
+- A file whose content is not one of its kind's types is refused with
+  `images must be PNG, JPEG or WebP`, `videos must be MP4 or WebM` or
+  `audio must be MP3, WAV or WebM`. The host also refuses a file it cannot
+  read (`could not read this video file`, `could not read this audio file`), a
+  video with no video track (`this file has no video track`), and an image too
+  small to resize to 64 pixels.
+
+What `open` and `upload` resolve and reject with:
+
+- **`open` resolves `null` when nothing was uploaded.** Usually the viewer
+  closed the picker. The host also answers that way at once, without showing a
+  picker, while your app is viewed in review mode or is not ready yet. A
+  problem with the picked file is shown in the picker, where the viewer can
+  pick another one.
+- **`upload` never resolves `null`.** When the host declines without
+  uploading (review mode, not ready), `upload` rejects with
+  `the host did not upload the media (the app is in review mode or not ready)`.
+- **A refusal rejects** with the host's message, in both modes. On a surface
+  other than a page app the host answers at once with
+  `unsupported on this host`.
+- **Both wait up to 10 minutes** for the host (a person picking a file, or a
+  large upload), then reject with a `RequestTimeoutError`.
+
+For images only, `useImageUpload().open({ purpose: 'generationSource' })` still
+works and returns `{ url, width, height }`. Use `useMediaUpload` for video,
+audio, or bytes your app made in the tab.
+
+🔴 **Needs a host that answers `OPEN_MEDIA_UPLOAD`.** On a civitai.com that
+predates it, the request gets no answer and both calls reject with a
+`RequestTimeoutError` after 10 minutes.
+
+With the mock host (`createMockHost` or `Harness` from
+`@civitai/blocks-react/testing`) there is no picker: `open` resolves at once
+with a built-in upload for the kind. Set `cannedMediaUploads: { video: {...} }`
+to choose what a kind returns, or `{ audio: null }` for a viewer who closes
+that picker. `upload` runs the host's checks in the host's order (kind,
+purpose, an invalid buffer, the 64 MB cap, the rate window, the content type,
+a mismatching `mimeType`) and answers with that kind's upload, carrying the
+sniffed `mimeType` and the buffer's size for video and audio. The mock cannot
+decode media, so it never produces the host's decode-time refusals (an
+unreadable file, no video track, an image too small): set
+`mediaUploadError: 'this file has no video track'` to force one. A model-slot
+`context` answers `unsupported on this host`. `dev:live` cannot upload
+generation inputs, so there both calls reject with a message saying to use the
+mock host.
+
 ### `useSaveImage()`
 
 Ask the host to download a file to the viewer's device. **A block cannot
@@ -3431,6 +3542,7 @@ MockHost
 MockHostFailMode
 MockHostOptions
 MockHostScenarioPatch
+MockMediaUploads
 MockReactionSeed
 MockSharedScenario
 MockSharedSeed

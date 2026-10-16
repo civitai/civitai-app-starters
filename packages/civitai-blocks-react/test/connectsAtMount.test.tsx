@@ -70,6 +70,7 @@ const CASES: Record<string, HookCall> = {
   useHostOrigin: () => entry.useHostOrigin(),
   useImagePicker: () => entry.useImagePicker(),
   useImageUpload: () => entry.useImageUpload(),
+  useMediaUpload: () => entry.useMediaUpload(),
   useNestedDocument: () => entry.useNestedDocument(),
   usePrepareTrainingDataset: () => entry.usePrepareTrainingDataset(),
   usePublishGenerationOutputs: () => entry.usePublishGenerationOutputs(),

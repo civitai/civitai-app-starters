@@ -86,6 +86,7 @@ const REQUEST_TIMEOUT_CLASS = {
   OPEN_CHECKPOINT_PICKER: 'human', //      viewer browses + picks
   OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
+  OPEN_MEDIA_UPLOAD: 'human', //           viewer picks a file, or a 64 MB upload + host retries
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)
   // 🔴 `'human'` for the SAME reason as PUBLISH_GENERATION_OUTPUTS, and the

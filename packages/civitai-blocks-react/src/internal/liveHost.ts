@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 52, of which 14 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 53, of which 15 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -135,6 +135,9 @@
  *   • OPEN_IMAGE_PICKER — needs the host's picker over the viewer's own posted
  *     images and generator outputs, read off their signed-in session; no
  *     block-token endpoint lists either. Replies with a refusal.
+ *   • OPEN_MEDIA_UPLOAD — the generation-input upload runs in the host with the
+ *     viewer's signed-in session, which the local harness does not have.
+ *     Replies with a refusal.
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -185,6 +188,13 @@ const REACTIONS_UNSUPPORTED_LOG =
  */
 export const IMAGE_PICKER_UNSUPPORTED_ERROR =
   'the image picker is not supported in dev:live — use dev:mock';
+
+/**
+ * The `error` the live host answers `OPEN_MEDIA_UPLOAD` with. `useMediaUpload()`
+ * rejects with it, so it says what to do instead.
+ */
+export const MEDIA_UPLOAD_UNSUPPORTED_ERROR =
+  'media upload is not supported in dev:live — use dev:mock';
 
 /** Default civitai backend the live host forwards to. */
 const DEFAULT_BACKEND_BASE_URL = 'https://civitai.com';
@@ -1777,6 +1787,27 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'IMAGE_PICKER_RESULT',
               payload: { requestId, error: IMAGE_PICKER_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'OPEN_MEDIA_UPLOAD': {
+            // REFUSED. The host uploads the file with the viewer's signed-in
+            // session; this harness has none, and nothing a dev block token can
+            // call takes the upload. Rather than let `useMediaUpload()` hang to
+            // its 10-minute timeout, or hand back an invented URL a step would
+            // then fail on, answer with an error (the hook rejects).
+            logOnce(
+              'open-media-upload',
+              'OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+                '— useMediaUpload() REJECTS. Test it against the real site, ' +
+                'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+            );
+            // A refusal nobody can route is not worth sending.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'MEDIA_UPLOAD_RESULT',
+              payload: { requestId, error: MEDIA_UPLOAD_UNSUPPORTED_ERROR },
             });
             return;
           }

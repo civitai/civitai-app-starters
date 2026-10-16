@@ -80,6 +80,7 @@ import type {
   useHostOrigin,
   useImagePicker,
   useImageUpload,
+  useMediaUpload,
   useNestedDocument,
   usePrepareTrainingDataset,
   usePublishGenerationOutputs,
@@ -128,6 +129,7 @@ import type {
   UseHostOrigin,
   UseImagePicker,
   UseImageUpload,
+  UseMediaUpload,
   UseNestedDocument,
   UsePrepareTrainingDataset,
   UsePublishGenerationOutputs,
@@ -223,6 +225,7 @@ type _useReactions = Assert<Exact<ReturnType<typeof useReactions>, UseReactions>
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
 type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;
+type _useMediaUpload = Assert<Exact<ReturnType<typeof useMediaUpload>, UseMediaUpload>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
 type _useRunConfirmedStep = Assert<
   Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>

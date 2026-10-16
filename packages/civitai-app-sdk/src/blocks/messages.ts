@@ -17,6 +17,8 @@ import type {
   BlockGenerationSourceImageInfo,
   BlockImagePickerSource,
   BlockPickedImageInfo,
+  BlockMediaKind,
+  BlockMediaUploadInfo,
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
@@ -999,6 +1001,24 @@ export type ParentToBlockMessage =
       };
     }
   | {
+      // Reply to OPEN_MEDIA_UPLOAD. Exactly one of three shapes:
+      //   - `{ requestId, selected }` — uploaded; `selected` is the
+      //     {@link BlockMediaUploadInfo} whose `url` goes into a step input.
+      //   - `{ requestId, error }` — refused or failed (a host string such as
+      //     `busy` or `videos must be MP4 or WebM`, or an upload failure).
+      //   - `{ requestId }` — nothing uploaded: the viewer closed the picker,
+      //     or the host declined at once (review mode, or the block is not
+      //     ready). The hook resolves `null` for a picker request and REJECTS
+      //     for a bytes request, which has no viewer to dismiss anything.
+      // `error` is never sent beside `selected`.
+      type: 'MEDIA_UPLOAD_RESULT';
+      payload: {
+        requestId: string;
+        selected?: BlockMediaUploadInfo;
+        error?: string;
+      };
+    }
+  | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
       // `error` string (e.g. "wrong-ecosystem"), distinct from the block
       // lifecycle error class.
@@ -1756,6 +1776,48 @@ export type BlockToParentMessage =
       };
     }
   | {
+      // Upload an image, video or audio file as a GENERATION INPUT and get back
+      // a private URL to pass into a workflow step input
+      // ({@link BlockMediaUploadInfo} on `MEDIA_UPLOAD_RESULT`). The host
+      // refuses data URIs and inline base64 in step inputs; this is the way to
+      // get media the block holds into a step. PAGE apps only.
+      //
+      // Two modes, chosen by `bytes`:
+      //   - PICKER (no `bytes`): the host opens its own file picker for `kind`.
+      //     The viewer can re-pick after a refusal shown in the picker; the one
+      //     reply is sent when it closes.
+      //   - BYTES (`bytes` present): media the block made in the tab (a canvas,
+      //     a crop, a `MediaRecorder` recording). No picker. An `ArrayBuffer`
+      //     (structured-cloned; a typed-array view or an empty buffer is
+      //     refused) of at most 64 MB. The host allows at most 8 bytes uploads
+      //     and 128 MB per 60 s per page, and replies `busy` past that.
+      //
+      // The file's type is decided by its MAGIC BYTES (image: PNG/JPEG/WebP;
+      // video: MP4/WebM; audio: MP3/WAV/WebM). `mimeType` is optional and only
+      // cross-checked against the sniffed type. `purpose` is required and is
+      // `'generationSource'`, the only purpose today.
+      //
+      // A NEW message rather than an `OPEN_IMAGE_UPLOAD` variant: a host that
+      // predates it would ignore an unknown `kind` there and open its image
+      // modal, a silently wrong answer.
+      //
+      // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT, so against an
+      // older host the request ends at the caller's timeout. A model-slot
+      // host answers `unsupported on this host`.
+      type: 'OPEN_MEDIA_UPLOAD';
+      payload: {
+        requestId: string;
+        /** What kind of media to upload. The host refuses any other value. */
+        kind: BlockMediaKind;
+        /** Required. The only accepted value today. */
+        purpose: 'generationSource';
+        /** In-tab bytes: present = bytes mode (no picker), absent = picker mode. */
+        bytes?: ArrayBuffer;
+        /** Bytes mode only: the type the app believes it is sending; must match the content. */
+        mimeType?: string;
+      };
+    }
+  | {
       // Persist a viewer's checkpoint override via the host. `null` clears
       // the override and falls back to the publisher default.
       type: 'SET_USER_CHECKPOINT';
@@ -2135,6 +2197,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'OPEN_RESOURCE_PICKER',
   'OPEN_IMAGE_UPLOAD',
   'OPEN_IMAGE_PICKER',
+  'OPEN_MEDIA_UPLOAD',
   'SET_USER_CHECKPOINT',
   'NAVIGATE',
   'REQUEST_SIGN_IN',

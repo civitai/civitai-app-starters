@@ -117,6 +117,11 @@ import {
   type UploadBytesWindowEntry,
 } from './uploadBytes.js';
 import {
+  mockMediaUploadReply,
+  type MediaUploadWindowEntry,
+  type MockMediaUploads,
+} from './mediaUploadBytes.js';
+import {
   mockUnpricedWorkflowRefusal,
   mockUnquotedWorkflowEstimateRefusal,
   type MockWorkflowQuoteFailure,
@@ -1596,6 +1601,31 @@ export interface MockHostOptions {
    */
   onUploadImageBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
   /**
+   * What `OPEN_MEDIA_UPLOAD` (`useMediaUpload()`) answers, per kind. A kind
+   * left out answers a built-in default for that kind; `null` makes the viewer
+   * close that kind's picker (`open()` resolves `null`). A bytes `upload()`
+   * answers the kind's entry (or the default) with the sniffed `mimeType` and
+   * the buffer's `sizeBytes` for video and audio, and `image/jpeg` for an
+   * image, as the host re-encodes it.
+   *
+   * The host's checks run in the host's order (`./mediaUploadBytes.ts`): kind,
+   * purpose, then for bytes an invalid buffer, the 64 MB cap, the bytes-mode
+   * window (8 uploads or 128 MB per 60 s, per install) → `busy`, the content
+   * sniff per kind, and a declared `mimeType` that disagrees. A model-slot
+   * `context` answers `unsupported on this host`. 🔴 The mock cannot decode
+   * media, so the host's decode-time refusals (an unreadable file, a video with
+   * no video track, an image too small to resize) never happen here: force one
+   * with {@link mediaUploadError}. Live-tunable via {@link MockHost.setScenario}.
+   */
+  cannedMediaUploads?: MockMediaUploads;
+  /**
+   * Force an `OPEN_MEDIA_UPLOAD` that passed the checks above to reply with
+   * this `error` (e.g. `this file has no video track`). A bytes upload it fails
+   * still counts against the window, as on the host. Absent → it succeeds.
+   * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  mediaUploadError?: string;
+  /**
    * Image ids the mock treats as already issued and postable when the host is
    * created, as production treats an image this app stamped for the viewer in
    * an EARLIER session that is not in a post yet. Each seeded id may be posted
@@ -1818,6 +1848,8 @@ export type MockHostScenarioPatch = Pick<
   | 'saveImageError'
   | 'uploadImageBytesResult'
   | 'uploadImageBytesError'
+  | 'cannedMediaUploads'
+  | 'mediaUploadError'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -2638,6 +2670,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     options.uploadImageBytesResult ?? DEFAULT_IMAGE_BYTES_UPLOAD;
   let uploadImageBytesError: string | undefined = options.uploadImageBytesError;
   let uploadBytesWindow: UploadBytesWindowEntry[] = [];
+  // OPEN_MEDIA_UPLOAD: canned per-kind answers, a forced refusal, and the
+  // bytes-mode window (per install, like the host's per mount).
+  let cannedMediaUploads: MockMediaUploads = options.cannedMediaUploads ?? {};
+  let mediaUploadError: string | undefined = options.mediaUploadError;
+  let mediaUploadWindow: MediaUploadWindowEntry[] = [];
   // The ids a `CREATE_POST_FROM_APP` `{ kind: 'published' }` source may name:
   // ONLY ids this mock itself issued as postable (an accepted bytes upload, or a
   // PUBLISH_GENERATION_OUTPUTS reply) plus the seeded `postableImageIds` (an
@@ -4737,6 +4774,30 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'OPEN_MEDIA_UPLOAD': {
+            // Generation-input media upload. The rules live in
+            // ./mediaUploadBytes.ts, in the host's order; there is no picker
+            // UI, so picker mode answers at once from `cannedMediaUploads`.
+            if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'MEDIA_UPLOAD_RESULT',
+                payload: { requestId, error: 'unsupported on this host' },
+              });
+              return;
+            }
+            const answer = mockMediaUploadReply({
+              payload: typed.payload ?? {},
+              canned: cannedMediaUploads,
+              forcedError: mediaUploadError,
+              recent: mediaUploadWindow,
+              now: Date.now(),
+            });
+            mediaUploadWindow = answer.recent;
+            dispatchToBlock({ type: 'MEDIA_UPLOAD_RESULT', payload: { requestId, ...answer.reply } });
+            return;
+          }
+
           case 'OPEN_IMAGE_UPLOAD': {
             // Host-chrome image upload: return the canned result keyed by the
             // requested `purpose` (mirrors the real host's IMAGE_UPLOAD_RESULT).
@@ -5525,6 +5586,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       uploadImageBytesResult = patch.uploadImageBytesResult;
     }
     if ('uploadImageBytesError' in patch) uploadImageBytesError = patch.uploadImageBytesError;
+    if ('cannedMediaUploads' in patch) cannedMediaUploads = patch.cannedMediaUploads ?? {};
+    if ('mediaUploadError' in patch) mediaUploadError = patch.mediaUploadError;
     if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if ('runConfirmedStepError' in patch) runConfirmedStepError = patch.runConfirmedStepError;
     if ('runConfirmedStepCapRefusal' in patch) {

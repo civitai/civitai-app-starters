@@ -257,6 +257,8 @@ export type {
   BlockGenerationSourceImageInfo,
   BlockImagePickerSource,
   BlockPickedImageInfo,
+  BlockMediaKind,
+  BlockMediaUploadInfo,
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
