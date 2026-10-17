@@ -217,6 +217,12 @@ describe('findInlineMediaPath — the value budget', () => {
     );
   });
 
+  it('honours a caller-set maxVisits in place of the default budget', () => {
+    expect(findInlineMediaPath({ a: 1, b: 2 }, { visits: 0, maxVisits: 3 })).toBeNull();
+    expect(findInlineMediaPath({ a: 1, b: 2, c: 3 }, { visits: 0, maxVisits: 3 })).toBe(INLINE_MEDIA_TOO_MANY_VALUES);
+    expect(findInlineMediaPath(pad(INLINE_MEDIA_MAX_VISITS), { visits: 0, maxVisits: INLINE_MEDIA_MAX_VISITS + 1 })).toBeNull();
+  });
+
   it('spends one budget across every field it is passed', () => {
     const budget = { visits: 0 };
     expect(findInlineMediaPath(pad(150_000), budget)).toBeNull();
