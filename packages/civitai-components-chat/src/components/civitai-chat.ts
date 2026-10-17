@@ -48,6 +48,11 @@ export interface ChatChangeDetail {
   chatId: string | null;
 }
 
+/** `before-send`'s detail: the message about to go as the viewer's (`''` when it is only files). */
+export interface BeforeSendDetail {
+  text: string;
+}
+
 /**
  * The whole chat as one element, for a page of its own or a panel inside another app. The page
  * hands it a signed-in `app` and may add `tools` and `instructions` of its own; its own shadow
@@ -273,7 +278,10 @@ export class CivitaiChat extends LitElement {
     return Boolean(this.signIn) && !this.backend;
   }
 
-  /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
+  /**
+   * Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in
+   * first. Like a typed message it fires `before-send`, which the page can cancel.
+   */
   async send(text: string): Promise<void> {
     if (!this.#session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     await this.#started;
@@ -803,6 +811,9 @@ export class CivitaiChat extends LitElement {
       this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
       return;
     }
+    // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
+    // the files and earlier results added to it stay for the next message.
+    if (!this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail: { text }, bubbles: true, composed: true, cancelable: true }))) return;
     const uploads = this.uploads.filter((upload) => upload.attachment);
     const refs = this.refs.map((ref) => ref.id);
     this.uploads = [];
