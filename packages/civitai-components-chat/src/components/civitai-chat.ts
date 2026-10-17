@@ -43,6 +43,16 @@ type Lightboxed = { attachment: Attachment; job?: undefined } | { job: Generatio
 
 export type ChatLayout = 'auto' | 'compact' | 'wide';
 
+/** `chat-change`'s detail: the chat now open, or `null` while none is. */
+export interface ChatChangeDetail {
+  chatId: string | null;
+}
+
+/** `before-send`'s detail: the message about to go as the viewer's (`''` when it is only files). */
+export interface BeforeSendDetail {
+  text: string;
+}
+
 /**
  * The whole chat as one element, for a page of its own or a panel inside another app. The page
  * hands it a signed-in `app` and may add `tools` and `instructions` of its own; its own shadow
@@ -196,6 +206,10 @@ export class CivitaiChat extends LitElement {
   #carriedDraft?: string;
   /** Counts the chats opened, so only the latest one's end clears the loader. */
   #opening = 0;
+  /** The chat `chat-change` last named, so each change is announced once. */
+  #announcedChat: string | null = null;
+  /** The open chat being deleted: the moment with no chat open, before the new one, is not announced. */
+  #leaving?: string;
 
   constructor() {
     super();
@@ -264,7 +278,10 @@ export class CivitaiChat extends LitElement {
     return Boolean(this.signIn) && !this.backend;
   }
 
-  /** Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in first. */
+  /**
+   * Sends a message as if the user typed it, once the chat has started; signed out, it asks to sign in
+   * first. Like a typed message it fires `before-send`, which the page can cancel.
+   */
   async send(text: string): Promise<void> {
     if (!this.#session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     await this.#started;
@@ -316,6 +333,23 @@ export class CivitaiChat extends LitElement {
   #composeWith(message: string, refs: string[]): void {
     this.refs = this.#refsFor(refs);
     void this.compose(message);
+  }
+
+  /**
+   * The id of the chat now open (`null` before the chat has started). A new chat has its id from the
+   * start, before anything in it is saved. `chat-change` fires whenever this changes.
+   */
+  get chatId(): string | null {
+    return this.#session?.store.current?.id ?? null;
+  }
+
+  #announceChat(): void {
+    const chatId = this.chatId;
+    if (chatId === this.#announcedChat) return;
+    // Deleting the open chat leaves none open for a moment, then starts a new one: only that one is news.
+    if (chatId === null && this.#leaving) return;
+    this.#announcedChat = chatId;
+    this.dispatchEvent(new CustomEvent<ChatChangeDetail>('chat-change', { detail: { chatId }, bubbles: true, composed: true }));
   }
 
   #announceActivePanel(): void {
@@ -390,7 +424,10 @@ export class CivitaiChat extends LitElement {
     session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
     // Only a host's store says so; the viewer learns a chat may not be kept, and that the next change tries again.
     session.store.addEventListener('save-error', () => this.#toast('Could not save this chat. It is saved again with your next message.'));
-    session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
+    session.store.addEventListener('conversation-change', () => {
+      this.#announceActivePanel();
+      this.#announceChat();
+    });
     this.requestUpdate();
     // Into the new box as soon as it shows, before the last chat loads: nothing to flash empty or overwrite.
     const carried = this.#carriedDraft;
@@ -774,6 +811,9 @@ export class CivitaiChat extends LitElement {
       this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
       return;
     }
+    // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
+    // the files and earlier results added to it stay for the next message.
+    if (!this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail: { text }, bubbles: true, composed: true, cancelable: true }))) return;
     const uploads = this.uploads.filter((upload) => upload.attachment);
     const refs = this.refs.map((ref) => ref.id);
     this.uploads = [];
@@ -851,6 +891,7 @@ export class CivitaiChat extends LitElement {
     // A store that takes the chat off the list as its delete starts: off the open chat at once, so a
     // delete that is slow (or never answers) holds nothing up. Otherwise only once the delete worked.
     const leaveAtOnce = Boolean(store?.supersedesOpens);
+    if (wasCurrent) this.#leaving = id;
     try {
       const removing = store?.remove(id);
       if (wasCurrent && leaveAtOnce) this.newChat();
@@ -858,6 +899,8 @@ export class CivitaiChat extends LitElement {
       if (wasCurrent && !leaveAtOnce) this.newChat();
     } catch (error) {
       this.#toast('Could not delete that chat.', error);
+    } finally {
+      if (this.#leaving === id) this.#leaving = undefined;
     }
   }
 

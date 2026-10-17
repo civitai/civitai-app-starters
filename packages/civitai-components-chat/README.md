@@ -298,6 +298,60 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `addFiles(files)`,
 `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
 
+`send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
+out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
+in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
+like a typed message.
+
+### Before a message goes
+
+`before-send` fires with `{ text }` (type `BeforeSendDetail`; it bubbles, is composed and is
+cancelable) at the last moment before a new message goes as the viewer's, once per message. Call
+`preventDefault()` and the message is not sent, not shown in the chat and not saved. Use it to get
+something ready first, say wake the app the reply will work on, then send the text yourself with
+`send(text)`, which fires `before-send` again: let that one through (a flag set before you call it
+will do).
+
+- **It fires for** a typed message (Enter or Send), the voice recorder's "Send what you said",
+  `send(text)`, a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
+  for something (such as making a video of it), a message the assistant's own tools send for the
+  viewer, and a page command's `send`.
+- **It does not fire for** a slash command the chat handles itself (`/clear`, `/model`, `/help`),
+  a reply asked for again ("Continue with Buzz", "Allow paid replies and try again", and the
+  automatic retries after a dropped connection: none of them sends a new message), or a message the chat does not send anyway: one held by `holdReason` (it waits in the
+  message box), one sent while a reply is running, and one sent before sign-in finishes (it fires once
+  the viewer is signed in and the message goes).
+- **Files only:** a message with files and no words fires with `text: ''`.
+- **When you cancel**, the message box is already empty (it clears as the viewer sends, before the
+  chat asks you), and the files and earlier results added to the message stay attached, for the
+  message you send in its place. The text is yours from then on: send it with `send(text)`, or put it
+  back for the viewer with `compose(text)` if you decide not to.
+
+```ts
+let resuming = false;
+chat.addEventListener('before-send', (e) => {
+  if (resuming || appIsAwake()) return;
+  e.preventDefault();
+  void wakeApp().then(() => {
+    resuming = true;
+    return chat.send(e.detail.text).finally(() => (resuming = false));
+  });
+});
+```
+
+### Which chat is open
+
+`chat.chatId` is the id of the chat now open (`null` before the chat has started). A new chat has
+its id from the start, before anything in it is saved, and keeps it once it is. `chat-change` fires
+with `{ chatId }` (type `ChatChangeDetail`; it bubbles and is composed) each time that changes: when
+the last chat is opened on load (or a fresh one started), when the viewer opens one from the list,
+on `newChat()`, and when the open chat is deleted (naming the new chat that replaces it). It fires
+once per change; reloading the chat already open, or deleting another one, fires nothing.
+
+```ts
+chat.addEventListener('chat-change', (e) => restoreFor(e.detail.chatId));
+```
+
 ### The empty chat
 
 An empty chat greets the viewer and offers a few examples to start from: making a picture, changing a
