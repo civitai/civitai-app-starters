@@ -1,10 +1,22 @@
 import { APICallError, RetryError } from 'ai';
 
 /**
- * How long to wait before each automatic retry of a reply the network cut off; one entry per retry,
- * so its length is how many retries a reply gets.
+ * How long to wait before each automatic retry of one drop; its length is how many retries one drop
+ * gets. The count starts again once a step finishes after a retry (the connection came back), so a
+ * long reply that lives through several network changes recovers from each.
+ *
+ * Measured: one network change makes the browser drop connections twice, about 1 s apart, so a
+ * retry within that second fails at once (a 500 ms retry failed 104 to 144 ms in). The first wait,
+ * 1.5 s, is past that second drop; 4 s and 8 s cover a slower settle, 13.5 s in all.
  */
-export const NETWORK_RETRY_DELAYS_MS: readonly number[] = [500, 2_000];
+export const NETWORK_RETRY_DELAYS_MS: readonly number[] = [1_500, 4_000, 8_000];
+
+/**
+ * The most automatic retries one reply makes in all, so a network that keeps dropping still ends the
+ * reply. A long reply (75 steps over 10 to 15 minutes was measured) lives through two or three
+ * network changes at one address change every five minutes, each needing one retry or, rarely, two.
+ */
+export const MAX_NETWORK_RETRIES_PER_REPLY = 10;
 
 /** The longest a retry waits for a browser that reports itself offline to come back online. */
 export const ONLINE_WAIT_MS = 15_000;

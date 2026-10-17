@@ -794,3 +794,78 @@ describe('a reply the network cut off', () => {
     }
   });
 });
+
+describe('a cut after an earlier error the stream recovered from', () => {
+  const parseError = () => Object.assign(new Error('JSON parsing failed: Text: {not json.'), { name: 'AI_JSONParseError' });
+  /** A step with an in-band error that the stream gets past: it still closes with a tool call and a tool-calls finish. */
+  const recovered = (toolCallId: string): StreamPart[] => [
+    { type: 'stream-start', warnings: [] },
+    { type: 'error', error: parseError() },
+    { type: 'tool-call', toolCallId, toolName: 'generate_image', input: JSON.stringify({ prompt: toolCallId }) },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+  ];
+
+  function run(responses: Parameters<typeof setup>[0], delays: readonly number[]) {
+    const made = setup(responses, undefined, {}, { networkRetryDelaysMs: delays });
+    const retries: { trace: Record<string, unknown> }[] = [];
+    made.agent.addEventListener('network-retry', (event) => retries.push((event as CustomEvent).detail));
+    return { ...made, retries };
+  }
+
+  it('asks again when a later request fails to fetch, every tool running once (the long-reply shape)', async () => {
+    const { agent, store, prompts, generate, retries } = run(
+      [toolCall('generate_image', { prompt: 'a' }, 'call_a'), recovered('call_b'), toolCall('generate_image', { prompt: 'c' }, 'call_c'), new TypeError('Failed to fetch'), text('Done.')],
+      [0],
+    );
+    await agent.send('build it');
+    const { assistant } = store.current!.turns[0]!;
+    expect(assistant.status).toBe('done');
+    expect(generate.mock.calls.map((call) => ((call as unknown[])[0] as { prompt: string }).prompt)).toEqual(['a', 'call_b', 'c']);
+    expect(prompts).toHaveLength(5);
+    for (const id of ['call_a', 'call_b', 'call_c']) expect(callsIn(prompts[4], id)).toBe(1);
+    expect(retries).toMatchObject([{ trace: { stage: 'request', step: 4, name: 'TypeError', message: 'Failed to fetch' } }]);
+    expect(JSON.stringify(assistant.messages).match(/Done\./g)).toHaveLength(1);
+  });
+
+  it('does not ask again when the step the network cut had already called a tool', async () => {
+    const { agent, store, prompts, retries } = run(
+      [
+        toolCall('generate_image', { prompt: 'a' }, 'call_a'),
+        recovered('call_b'),
+        cutAfter([{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: 'call_c', toolName: 'generate_image', input: JSON.stringify({ prompt: 'c' }) }], bodyCut),
+        text('should not run'),
+      ],
+      [0],
+    );
+    await agent.send('build it');
+    expect(retries).toEqual([]);
+    expect(prompts).toHaveLength(3);
+    expect(store.current!.turns[0]!.assistant.status).toBe('error');
+  });
+
+  it('does not count a step the stream closed after a network error as the connection coming back', async () => {
+    const closedAfterCut = (): StreamPart[] => [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 't' },
+      { type: 'text-delta', id: 't', delta: 'Working' },
+      { type: 'error', error: new TypeError('network error') },
+      { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage },
+    ];
+    const { agent, store, retries } = run([closedAfterCut(), closedAfterCut(), closedAfterCut(), closedAfterCut(), text('should not run')], [0, 0, 0]);
+    await agent.send('build it');
+    expect(retries).toHaveLength(3);
+    expect(store.current!.turns[0]!.assistant.status).toBe('error');
+  });
+
+  it("describes in its trace the error that ended the reply, not the earlier one", async () => {
+    const { agent, store } = run([toolCall('generate_image', { prompt: 'a' }, 'call_a'), recovered('call_b'), toolCall('generate_image', { prompt: 'c' }, 'call_c'), new TypeError('Failed to fetch')], []);
+    await agent.send('build it');
+    expect(store.current!.turns[0]!.assistant.errorTrace).toMatchObject({
+      stage: 'request',
+      step: 4,
+      name: 'TypeError',
+      message: 'Failed to fetch',
+      lastTool: { name: 'generate_image', state: 'done' },
+    });
+  });
+});

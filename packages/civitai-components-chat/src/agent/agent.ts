@@ -9,7 +9,7 @@ import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
-import { isNetworkDrop, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
+import { isNetworkDrop, MAX_NETWORK_RETRIES_PER_REPLY, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
 import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
@@ -58,10 +58,12 @@ export interface AgentDeps {
   describeError?(error: unknown): HumanError;
   now?(): Date;
   /**
-   * The wait before each automatic retry of a reply the browser's network cut off (see
-   * `network-retry.ts`); its length is how many retries a reply gets, and `[]` turns them off.
+   * The wait before each automatic retry of one drop of the browser's network (see
+   * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
    */
   networkRetryDelaysMs?: readonly number[];
+  /** The most automatic retries one reply makes in all; `MAX_NETWORK_RETRIES_PER_REPLY` unless set. */
+  maxNetworkRetries?: number;
 }
 
 /** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
@@ -69,7 +71,7 @@ export interface AgentErrorDetail extends HumanError {
   trace: ErrorTrace;
 }
 
-/** What the agent's `network-retry` event carries: which retry this is (from 1), and where the reply was cut. */
+/** What the agent's `network-retry` event carries: which retry of the reply this is (from 1), and where the reply was cut. */
 export interface AgentRetryDetail {
   attempt: number;
   trace: ErrorTrace;
@@ -154,24 +156,39 @@ export class Agent extends EventTarget {
       const model = this.#deps.model();
       const maxOutputTokens = outputTokenCap(this.#deps.maxOutputTokens?.());
       const retryDelays = this.#deps.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
+      const retryCap = this.#deps.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
+      // Retries of the drop now being recovered from (reset once a step finishes, i.e. the connection
+      // came back), and of the whole reply.
+      let retriesThisDrop = 0;
+      let retriesInReply = 0;
       // Counted from the steps that started, not from what they said: a last step that returns nothing
       // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
       let forcedAt = -1;
       // One pass per attempt. A pass the browser's network cut off resumes from the last step that
       // finished: those steps' messages (and every tool they ran) are sent as they are and not asked
       // for again; only the step that was cut is asked for again.
-      for (let attempt = 0; ; attempt++) {
+      for (;;) {
         const resumeFrom = completed;
         const before = finished;
         // What the viewer was shown up to the step now being asked for.
         let shownBeforeStep = this.live?.parts.length ?? 0;
-        // Tool calls since that step began. Once an error came it is no longer reset at a step's end, so
-        // it counts every call to the end of the stream: a provider may still send a call after an error
-        // part, and the SDK may still run it.
+        // Tool calls (and their results) in the step now streaming.
         let callsInStep = 0;
-        // The reply as it was when the first error came, for asking again from there.
-        let atCut: { shown: number; finished: number; completed: ModelMessage[] } | undefined;
-        const cutHere = () => (atCut ??= { shown: shownBeforeStep, finished, completed });
+        // Whether an error came in the step now streaming: a step that finishes without one shows the
+        // connection is back.
+        let errorInStep = false;
+        // The cut: where the latest error came, which is the one that ended the stream. An earlier error
+        // the stream recovered from by itself (it carried on and finished steps) is not the cut. Kept
+        // with the reply as it was then, for asking again from there, the tool calls its step had made
+        // by then, and every call that came after it to the end of the stream: a provider may still send
+        // a call after an error part, and the SDK may still run it.
+        let atCut: { shown: number; finished: number; completed: ModelMessage[]; calls: number } | undefined;
+        let callsAfterCut = 0;
+        const cutHere = () => {
+          failedAt = where();
+          atCut = { shown: shownBeforeStep, finished, completed, calls: callsInStep };
+          callsAfterCut = 0;
+        };
         streamError = undefined;
         failedAt = undefined;
         stepText = '';
@@ -200,46 +217,62 @@ export class Agent extends EventTarget {
               steps++;
               streaming = true;
               shownBeforeStep = this.live?.parts.length ?? 0;
-              if (streamError === undefined) callsInStep = 0;
+              callsInStep = 0;
+              errorInStep = false;
               if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
             } else if (part.type === 'finish-step') {
               finished++;
               streaming = false;
               stepOpen = false;
               since = Date.now();
-              // A step that finished before any error is kept as it is: what it showed and the tools it
-              // called are not cut.
+              // A step that finished with no error came back from any drop: the next drop gets its own retries.
+              if (!errorInStep) retriesThisDrop = 0;
+              // A finished step is kept as it is: what it showed and the tools it called are not cut.
               shownBeforeStep = this.live?.parts.length ?? 0;
-              if (streamError === undefined) callsInStep = 0;
+              callsInStep = 0;
             }
-            if (part.type === 'tool-call' || part.type === 'tool-result' || part.type === 'tool-error') callsInStep++;
+            if (part.type === 'tool-call' || part.type === 'tool-result' || part.type === 'tool-error') {
+              callsInStep++;
+              callsAfterCut++;
+            }
             if (part.type === 'text-delta') stepText += part.text;
-            // Where it was when the first error came: the stream may still close its step after it.
-            if (part.type === 'error' && streamError === undefined) {
-              failedAt = where();
+            // Each error moves the cut there, with the trace's context: the stream may still close its
+            // step after it, or carry on past it.
+            if (part.type === 'error') {
+              streamError = part.error;
+              errorInStep = true;
               cutHere();
             }
-            if (part.type === 'error') streamError = part.error;
             // The last step cannot call tools; tool-call syntax it writes as text is not shown (see tool-markup.ts).
             if (forcedAt >= 0 && part.type === 'text-delta') this.#showForced(forcedAt, stripToolMarkup(stepText));
             else this.#onPart(part);
           }
         } catch (error) {
-          if (!controller.signal.aborted && streamError === undefined) {
-            failedAt = where();
+          if (!controller.signal.aborted) {
             streamError = error;
+            cutHere();
           }
-          cutHere();
         }
         if (controller.signal.aborted || streamError === undefined || !atCut) break;
-        // Asked again only when no tool call came from the cut step to the end of the stream, so a tool
-        // can never run twice. The stream is read to its end rather than dropped at the error: an abort
-        // cannot take back a tool the SDK already started, and only the whole stream shows every call it
-        // made. (A provider may follow an error part with a call and a tool-calls finish, which ai 6
-        // runs.) A failed reply keeps every step that finished, after the error too: one that ran a tool
-        // keeps its call and result.
-        if (attempt >= retryDelays.length || callsInStep > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
-        this.#retrying(turn, attempt + 1, errorTrace(streamError, failedAt ?? where()));
+        // Asked again only when the cut step had called no tool and no call came after the cut to the end
+        // of the stream, so a tool can never run twice. The stream is read to its end rather than dropped
+        // at the error: an abort cannot take back a tool the SDK already started, and only the whole
+        // stream shows every call it made. (A provider may follow an error part with a call and a
+        // tool-calls finish, which ai 6 runs.) Steps that finished before the cut, after an earlier error
+        // the stream recovered from too, are finished steps and are kept. A failed reply keeps every
+        // step that finished: one that ran a tool keeps its call and result.
+        if (
+          retriesThisDrop >= retryDelays.length ||
+          retriesInReply >= retryCap ||
+          atCut.calls + callsAfterCut > 0 ||
+          atCut.finished >= maxSteps ||
+          !isNetworkDrop(streamError)
+        )
+          break;
+        const wait = retryDelays[retriesThisDrop]!;
+        retriesThisDrop++;
+        retriesInReply++;
+        this.#retrying(turn, retriesInReply, errorTrace(streamError, failedAt ?? where()));
         // What the cut step showed goes, with any step closed after the error (none called a tool); the
         // step asked for again shows its own answer.
         this.live?.parts.splice(atCut.shown);
@@ -250,7 +283,7 @@ export class Agent extends EventTarget {
         stepText = '';
         stepOpen = false;
         this.#emit();
-        await pauseBeforeRetry(retryDelays[attempt]!, controller.signal);
+        await pauseBeforeRetry(wait, controller.signal);
         if (controller.signal.aborted) break;
         since = Date.now();
       }
