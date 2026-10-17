@@ -6,6 +6,8 @@
  * and `blocks.setReactionFromApp` / `blocks.getReactionsForApp`:
  *
  *   1. no usable `requestId` → dropped (nothing to reply to);
+ *   1b. a forced `review-mode` / `not-ready` (`reactionError`) → that code,
+ *      since the host's preflight checks both before anything else;
  *   2. no viewer → `sign-in-required` (identity before payload);
  *   3. malformed payload, or a reaction apps may not set (`Dislike`) →
  *      `invalid-request`;
@@ -21,9 +23,8 @@
  * here and fails in production with `entity-unavailable`; the tickets a block
  * passes should be the `reactTicket` fields its images arrived with.
  *
- * Steps 2 to 4 are skipped by the real host's `review-mode` and `not-ready`
- * refusals, which this mock does not produce on its own: force them with
- * `reactionError`.
+ * The mock never produces `review-mode` or `not-ready` on its own; force them
+ * with `reactionError`, and they are answered at step 1b, as the host would.
  */
 
 import type {
@@ -100,6 +101,11 @@ export function createMockReactions(opts: {
 
   /** Steps 2 to 5; `null` when the request may proceed. */
   const refuse = (validPayload: boolean): string | null => {
+    // The host's own preflight refusals come before everything else
+    // (`reactionGate.ts`: review mode, then the handshake, then the viewer), so
+    // a forced one is answered first. Every other forced code stands for a
+    // SERVER answer, which only a request past the host's gate can get.
+    if (forcedError === 'review-mode' || forcedError === 'not-ready') return forcedError;
     if (!opts.signedIn()) return 'sign-in-required';
     if (!validPayload) return 'invalid-request';
     if (!opts.hasScope()) return 'needs-consent';

@@ -242,17 +242,45 @@ export function useReactions(
   const ticketsRef = useRef(options.tickets);
   ticketsRef.current = options.tickets;
 
-  // A read started for an earlier `ids` must not overwrite the current ones.
+  // ── Read bookkeeping ────────────────────────────────────────────────────
+  //
+  // Every read and every write start takes a tick of ONE monotonic clock, so
+  // "which happened later" is a comparison of two numbers. Three rules decide
+  // whether a read's answer for an image is applied, each pinned by a test in
+  // `test/useReactions.test.tsx` ("read economy and ordering"):
+  //
+  //   1. NOT while a write on that image is in flight: the write owns the state
+  //      until it settles (its revert or its result is the next truth).
+  //   2. NOT if a write on that image STARTED after the read was issued: the
+  //      read describes the state before the write, and applying it would
+  //      overwrite a settled result (and its count reconciliation).
+  //   3. NOT if a NEWER read for that image was issued: answers can arrive out
+  //      of order, and only the latest one sent for an image is the truth.
+  const clock = useRef(0);
+  const writeStartedAt = useRef(new Map<number, number>());
+  const latestReadAt = useRef(new Map<number, number>());
+  // The ticket each image was last READ with ('' for none). An image is read
+  // again only when it has never been read or its ticket changed, because the
+  // host bills every read to the block instance's shared catalog budget.
+  const readWithTicket = useRef(new Map<number, string>());
+  // A newer pass supersedes an older one: the older pass sends no further
+  // chunks. Its chunks already sent are still applied, under the rules above.
   const readGeneration = useRef(0);
 
   const readIds = useCallback(
     async (targetIds: readonly number[], generation: number): Promise<void> => {
       for (let start = 0; start < targetIds.length; start += READ_CHUNK) {
+        // Superseded: the newer pass reads whatever this one has not sent.
+        if (generation !== readGeneration.current) break;
         const chunk = targetIds.slice(start, start + READ_CHUNK);
         const tickets: Record<string, string> = {};
+        clock.current += 1;
+        const issuedAt = clock.current;
         for (const id of chunk) {
           const ticket = ticketsRef.current[id];
           if (ticket) tickets[String(id)] = ticket;
+          readWithTicket.current.set(id, ticket ?? '');
+          latestReadAt.current.set(id, issuedAt);
         }
         if (mountedRef.current) setLoadingCount((n) => n + 1);
         try {
@@ -265,31 +293,44 @@ export function useReactions(
             throw new ReactionError(reply.error || 'entity-unavailable');
           }
           const result = reply.result;
-          if (!mountedRef.current || generation !== readGeneration.current) continue;
+          if (!mountedRef.current) return;
+          const applicable = chunk.filter(
+            (id) =>
+              // Rule 1.
+              !REACTIONS.some((r) => inFlight.current.has(pendingKey(id, r))) &&
+              // Rule 2.
+              (writeStartedAt.current.get(id) ?? 0) < issuedAt &&
+              // Rule 3.
+              latestReadAt.current.get(id) === issuedAt,
+          );
+          if (applicable.length === 0) continue;
+          const unanswered = new Set(result.unavailable);
           setStore((prev) => {
             const byId = { ...prev.byId };
-            for (const id of chunk) {
-              // A write in flight owns its image's state until it settles.
-              if (REACTIONS.some((r) => inFlight.current.has(pendingKey(id, r)))) continue;
+            const applied = new Set(applicable);
+            for (const id of applicable) {
               const state = result.byId[String(id)];
               if (state) byId[id] = state;
               else delete byId[id];
             }
-            const answered = new Set(chunk);
             const unavailable = [
-              ...prev.unavailable.filter((id) => !answered.has(id)),
-              ...result.unavailable,
+              ...prev.unavailable.filter((id) => !applied.has(id)),
+              ...applicable.filter((id) => unanswered.has(id)),
             ];
             return { byId, unavailable };
           });
         } catch (err: unknown) {
+          // A failed read leaves its images unread, so the next pass retries them.
+          for (const id of chunk) {
+            if (latestReadAt.current.get(id) === issuedAt) readWithTicket.current.delete(id);
+          }
           const wrapped =
             err instanceof ReactionError
               ? err
               : new ReactionError(err instanceof Error ? err.message : String(err), {
                   timedOut: err instanceof RequestTimeoutError,
                 });
-          if (mountedRef.current && generation === readGeneration.current) setError(wrapped);
+          if (mountedRef.current) setError(wrapped);
         } finally {
           if (mountedRef.current) setLoadingCount((n) => n - 1);
         }
@@ -298,15 +339,19 @@ export function useReactions(
     [entityType],
   );
 
-  // Read every id: on mount and whenever the ids or their tickets change.
-  // `ticketKey` is a dependency so a ticket arriving for an id already listed
-  // re-reads it. A new read supersedes an older one still in flight.
+  // Read on mount and whenever the ids or their tickets change, but only the
+  // images that need it: never read, or read with a different ticket. An image
+  // that leaves the list needs nothing. `ticketKey` is a dependency so a ticket
+  // arriving for an image already listed re-reads it.
   useEffect(() => {
-    if (uniqueIds.length === 0) return;
     readGeneration.current += 1;
     const generation = readGeneration.current;
+    const needed = uniqueIds.filter(
+      (id) => readWithTicket.current.get(id) !== (ticketsRef.current[id] ?? ''),
+    );
+    if (needed.length === 0) return;
     setError(null);
-    void readIds(uniqueIds, generation);
+    void readIds(needed, generation);
   }, [readIds, uniqueIds, ticketKey]);
 
   const toggle = useCallback(
@@ -317,9 +362,13 @@ export function useReactions(
     ): Promise<BlockEntityReactionResult> => {
       const key = pendingKey(id, reaction);
       if (inFlight.current.has(key)) {
-        throw new ReactionError(`a ${reaction} on ${entityType} ${id} is already in flight`, {
+        const busy = new ReactionError(`a ${reaction} on ${entityType} ${id} is already in flight`, {
           busy: true,
         });
+        // Recorded like every other failure, so the owner re-renders and an
+        // element bound to `byId` is rewritten over its own optimistic flip.
+        if (mountedRef.current) setError(busy);
+        throw busy;
       }
       const ticket = ticketsRef.current[id];
       if (!ticket) {
@@ -331,6 +380,8 @@ export function useReactions(
       }
 
       inFlight.current.add(key);
+      clock.current += 1;
+      writeStartedAt.current.set(id, clock.current);
       // Optimistic only when the state is known and the request would change
       // it. An unread image, or one already in the asked-for state, waits for
       // the host's answer instead.

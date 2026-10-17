@@ -1277,8 +1277,12 @@ wires all of the above.
 
 Read and set the **viewer's** reactions on images this app was served, over
 `GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION`. Returns
-`{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` on
-mount and again whenever the ids or their tickets change.
+`{ byId, unavailable, loading, error, toggle, pending }`.
+
+It reads on mount, then reads again only the images that need it: an id added
+to `ids`, or one whose ticket changed. An id that leaves `ids` costs nothing.
+Every read counts against the block instance's catalog rate limit on the host,
+which every viewer of a page app shares with its other catalog reads.
 
 A reaction made here **is** a reaction on civitai.com: it pays the reactor and
 the image owner exactly as the site's own button does, moves rankings, notifies,
@@ -1291,12 +1295,16 @@ quota as the site. Apps may set `Like`, `Heart`, `Laugh` and `Cry`; never
 `needs-consent` (`err.needsConsent`): ask with `useRequestConsent()`. There is
 no per-tap confirm.
 
-🔴 **Tickets are required.** Each image a block endpoint serves
-(`/api/v1/blocks/images`, `/gated-images`, a collection's images) carries a
-`reactTicket`, signed for this app and this viewer for 24 hours. Pass them as
-`tickets`, keyed by image id. An image without a valid one is not answered by
-the read (it lands in `unavailable`, which is **not** "not reacted") and a
-`toggle` on it is refused locally, before anything is sent.
+🔴 **Tickets are required, and only the REST block endpoints supply them.** Each
+image that `/api/v1/blocks/images`, `/api/v1/blocks/gated-images` or
+`/api/v1/blocks/collections/{id}` serves, fetched with the block token for a
+signed-in viewer, carries a `reactTicket` signed for this app and this viewer
+for 24 hours. **No hook in this package supplies one yet:** `useGatedImages()`
+goes through the host bridge, whose reply carries no `reactTicket`
+([#687](https://github.com/civitai/civitai-app-starters/issues/687)). Pass the
+tickets as `tickets`, keyed by image id. An image without a valid one is not
+answered by the read (it lands in `unavailable`, which is **not** "not reacted")
+and a `toggle` on it is refused locally, before anything is sent.
 
 `toggle(id, reaction, reacted)` sets a **desired state**, moves `byId[id]`
 optimistically, and puts it back on failure. It rejects with a `ReactionError`:
@@ -1311,18 +1319,62 @@ optimistically, and puts it back on failure. It rejects with a `ReactionError`:
 | `err.timedOut` | no reply within 30s | the write **may** have landed; the hook re-reads that image |
 | `err.busy` | the same image and reaction already has a request in flight | disable the control while `pending(id, reaction)` |
 
+🔴 **Bind `<civitai-reaction>` from `byId` on every render; never let it keep
+its own state.** The element flips `reacted` and `count` itself on a click. When
+the hook makes no optimistic move of its own (an image not read yet, or a
+refusal such as a missing ticket), `byId` does not change, so an element that
+only listens would keep showing a reaction that does not exist. Every rejected
+`toggle` sets `error`, so the owner re-renders; an element whose `reacted` and
+`count` come from `byId` on each render is then put back. Outside React, set
+the two properties back yourself after a rejection.
+
 ```tsx
-// Each image as a block endpoint served it, with its `reactTicket`.
-const images: { id: number; reactTicket?: string }[] = await loadImages();
+import { useEffect, useState } from 'react';
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+import { useBlockToken, useHostOrigin, useReactions } from '@civitai/blocks-react';
 
-const { byId, toggle, pending } = useReactions(
-  'image',
-  images.map((image) => image.id),
-  { tickets: Object.fromEntries(images.map((image) => [image.id, image.reactTicket])) },
-);
+type ServedImage = { id: number; url: string; reactTicket?: string };
 
-const liked = byId[imageId]?.viewerReactions.includes('Like') ?? false;
-await toggle(imageId, 'Like', !liked);
+function useReactableImages() {
+  const host = useHostOrigin();
+  const { raw } = useBlockToken();
+  const [images, setImages] = useState<ServedImage[]>([]);
+
+  // The tickets come from the REST endpoint, fetched with the block token.
+  useEffect(() => {
+    if (!host || !raw) return;
+    void fetch(`${host}/api/v1/blocks/images?limit=20`, {
+      headers: { Authorization: `Bearer ${raw}` },
+    })
+      .then((res) => res.json() as Promise<{ items: ServedImage[] }>)
+      .then((body) => setImages(body.items));
+  }, [host, raw]);
+
+  const reactions = useReactions(
+    'image',
+    images.map((image) => image.id),
+    { tickets: Object.fromEntries(images.map((image) => [image.id, image.reactTicket])) },
+  );
+
+  // Props for one `<civitai-reaction>` (e.g. `CivitaiReaction` from
+  // `@civitai/components-react`), derived from `byId` on every render.
+  const bind = (id: number, reaction: 'Like' | 'Heart' | 'Laugh' | 'Cry') => ({
+    reaction,
+    reacted: reactions.byId[id]?.viewerReactions.includes(reaction) ?? false,
+    count: reactions.byId[id]?.counts[reaction] ?? 0,
+    disabled: !reactions.byId[id] || reactions.pending(id, reaction),
+    onReact: (event: CustomEvent<{ reaction?: string; reacted: boolean }>) => {
+      const { reaction: which, reacted } = event.detail;
+      // `detail.reaction` is any string the element was given; narrow it.
+      if (!isAppReaction(which)) return;
+      // A rejection needs no handling here to put the element back: it
+      // re-renders, and `bind` reads `byId` again.
+      reactions.toggle(id, which, reacted).catch(() => {});
+    },
+  });
+
+  return { images, bind, error: reactions.error };
+}
 ```
 
 ### `useCreatePostFromApp()`

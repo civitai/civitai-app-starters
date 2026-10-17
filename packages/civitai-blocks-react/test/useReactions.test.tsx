@@ -415,6 +415,9 @@ describe('useReactions', () => {
       });
       expect((caught as ReactionError).code).toBe('entity-unavailable');
       expect(sent(postMessageMock, 'SET_ENTITY_REACTION')).toHaveLength(0);
+      // Recorded as the error, so the owner re-renders and a bound element is
+      // rewritten from `byId` (which this refusal never moved).
+      expect(result.current.error).toBe(caught);
     });
 
     it('flags a transport timeout, reverts, and re-reads that image', async () => {
@@ -458,6 +461,197 @@ describe('useReactions', () => {
       });
       await waitFor(() => expect(caught).toBeInstanceOf(ReactionError));
       expect((caught as ReactionError).timedOut).toBe(false);
+    });
+  });
+
+  describe('read economy and ordering', () => {
+    /** Reply to one specific read message. */
+    const answer = (req: Sent, byId: Record<string, unknown>, unavailable: number[] = []) =>
+      reply('ENTITY_REACTIONS_RESULT', {
+        requestId: req.payload.requestId,
+        result: { entityType: 'image', byId, unavailable },
+      });
+    const okWrite = (req: Sent, over: Record<string, unknown> = {}) =>
+      reply('ENTITY_REACTION_RESULT', {
+        requestId: req.payload.requestId,
+        result: {
+          entityType: 'image',
+          entityId: 11,
+          reaction: 'Like',
+          reacted: true,
+          changed: true,
+          counts: counts(4, 1), // lagging: the store has not counted the Like yet
+          viewerReactions: ['Heart', 'Like'],
+          statsUnknown: false,
+          ...over,
+        },
+      });
+    const STATE_11 = { counts: counts(4, 1), viewerReactions: ['Heart'], statsUnknown: false };
+    const ids = (req: Sent) => req.payload.ids as number[];
+
+    function grow(initial: number[], tickets: Record<number, string> = TICKETS) {
+      return renderHook(
+        ({ list, t }: { list: number[]; t: Record<number, string> }) =>
+          useReactions('image', list, { tickets: t }),
+        { initialProps: { list: initial, t: tickets } },
+      );
+    }
+
+    it('growing the ids reads only the new id', async () => {
+      const { rerender } = grow([11, 12]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 }, [12]);
+      rerender({ list: [11, 12, 13], t: { ...TICKETS, 13: 'v1.113.sig-c' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      expect(ids(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!)).toEqual([13]);
+    });
+
+    it('an id leaving the list needs no read', async () => {
+      const { rerender } = grow([11, 12]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 }, [12]);
+      rerender({ list: [11], t: TICKETS });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1);
+    });
+
+    it('a ticket change for one id re-reads that id only', async () => {
+      const { rerender } = grow([11, 12]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 }, [12]);
+      rerender({ list: [11, 12], t: { ...TICKETS, 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      const req = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!;
+      expect(ids(req)).toEqual([11]);
+      expect(req.payload.tickets).toEqual({ '11': 'v1.211.sig-new' });
+    });
+
+    it('a superseded read sends none of its remaining chunks', async () => {
+      const list = Array.from({ length: 250 }, (_, i) => i + 1);
+      const { rerender } = grow(list, {});
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      // Chunk 1 of the first pass is out; the list grows before it is answered.
+      rerender({ list: [...list, 251], t: {} });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS').length).toBeGreaterThan(1));
+      // Answer every read as it arrives until the traffic stops.
+      for (let answered = 0; answered < sent(postMessageMock, 'GET_ENTITY_REACTIONS').length; answered++) {
+        const req = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[answered]!;
+        answer(req, {}, ids(req));
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const chunks = sent(postMessageMock, 'GET_ENTITY_REACTIONS').map(ids);
+      // Exactly one read per id: the first pass's chunk 1, then the second pass
+      // for everything not yet sent. Nothing from the first pass after the change.
+      expect(chunks.map((c) => [c[0], c[c.length - 1]])).toEqual([
+        [1, 100],
+        [101, 200],
+        [201, 251],
+      ]);
+    });
+
+    it('🔴 a read issued before a write, answered after it settled, does not overwrite it (grown ids)', async () => {
+      const { result, rerender } = grow([11, 12]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 }, [12]);
+      await waitFor(() => expect(result.current.byId[11]).toBeDefined());
+      rerender({ list: [11, 12, 13], t: { ...TICKETS, 13: 'v1.113.sig-c' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      const stale = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!; // left unanswered
+
+      await act(async () => {
+        const p = result.current.toggle(11, 'Like', true);
+        okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!);
+        await p;
+      });
+      expect(result.current.byId[11]!.counts.Like).toBe(5);
+
+      // The stale read now answers "not reacted" for everything it was asked.
+      answer(stale, Object.fromEntries(ids(stale).map((id) => [String(id), STATE_11])));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.byId[11]!.viewerReactions).toEqual(['Heart', 'Like']);
+      expect(result.current.byId[11]!.counts.Like).toBe(5);
+    });
+
+    it('🔴 the same, for a read of the written image itself (a ticket change)', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toBeDefined());
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      const stale = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!;
+      expect(ids(stale)).toEqual([11]);
+
+      await act(async () => {
+        const p = result.current.toggle(11, 'Like', true);
+        okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!);
+        await p;
+      });
+      answer(stale, { '11': STATE_11 });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.byId[11]!.viewerReactions).toEqual(['Heart', 'Like']);
+      expect(result.current.byId[11]!.counts.Like).toBe(5);
+    });
+
+    it('a read answered WHILE a write on that image is in flight does not touch it', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toBeDefined());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.toggle(11, 'Like', true);
+      });
+      await waitFor(() => expect(result.current.byId[11]!.counts.Like).toBe(5));
+      // A read issued AFTER the write started, answered before it settles.
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!, { '11': STATE_11 });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.byId[11]!.counts.Like).toBe(5);
+      expect(result.current.byId[11]!.viewerReactions).toEqual(['Heart', 'Like']);
+      okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!, { counts: counts(5, 1) });
+      await act(async () => {
+        await p;
+      });
+    });
+
+    it('a failed read leaves its images unread, so the next pass reads them again', async () => {
+      const { rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      reply('ENTITY_REACTIONS_RESULT', {
+        requestId: sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!.payload.requestId,
+        error: 'rate-limited',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      rerender({ list: [11, 12], t: TICKETS });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      expect(ids(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!)).toEqual([11, 12]);
+    });
+
+    it('an older read answered after a newer one for the same image is discarded', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      const older = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!;
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      const newer = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!;
+      answer(newer, { '11': { counts: counts(9), viewerReactions: ['Like'], statsUnknown: false } });
+      await waitFor(() => expect(result.current.byId[11]?.counts.Like).toBe(9));
+      answer(older, { '11': STATE_11 });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.byId[11]!.counts.Like).toBe(9);
+    });
+
+    it('a busy refusal is recorded as the error, so a bound element re-renders', async () => {
+      const { result } = await mounted();
+      act(() => {
+        void result.current.toggle(11, 'Like', true).catch(() => {});
+      });
+      await act(async () => {
+        await result.current.toggle(11, 'Like', false).catch(() => {});
+      });
+      expect(result.current.error?.busy).toBe(true);
     });
   });
 

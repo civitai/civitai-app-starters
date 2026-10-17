@@ -183,6 +183,20 @@ describe('createMockReactions — the decision order', () => {
     expect(make({ hasScope: () => false }).set(SET)).toEqual({ error: 'needs-consent' });
   });
 
+  it('answers a forced review-mode or not-ready FIRST, before identity, payload and consent', () => {
+    // The real host's preflight (civitai `reactionGate.ts`) checks review mode,
+    // then the handshake, before the viewer, the payload or the grant.
+    const worst = { signedIn: () => false, hasScope: () => false };
+    for (const code of ['review-mode', 'not-ready']) {
+      expect(make({ ...worst, error: code }).set({ entityId: 'x' })).toEqual({ error: code });
+      expect(make({ ...worst, error: code }).get({ ids: 'x' })).toEqual({ error: code });
+    }
+    // A forced SERVER-side code still comes after consent, as the server's would.
+    expect(make({ hasScope: () => false, error: 'rate-limited' }).set(SET)).toEqual({
+      error: 'needs-consent',
+    });
+  });
+
   it('refuses a Dislike as invalid-request, as the host does', () => {
     expect(make().set({ ...SET, reaction: 'Dislike' })).toEqual({ error: 'invalid-request' });
   });

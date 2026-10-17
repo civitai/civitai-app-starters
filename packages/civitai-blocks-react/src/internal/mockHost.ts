@@ -1352,6 +1352,10 @@ export interface MockHostOptions {
    * `entity-unavailable`, `review-mode`, `not-ready`…) or any string for a code
    * a newer host might add. Absent → the request succeeds. Live-tunable via
    * {@link MockHost.setScenario}; pass `null` there to clear it.
+   *
+   * `review-mode` and `not-ready` are answered FIRST, ahead of the sign-in,
+   * payload and scope checks, because the real host's gate checks them first;
+   * every other code is answered only once those pass, as a server answer is.
    */
   reactionError?: BlockEntityReactionErrorCode | string | null;
   /**
