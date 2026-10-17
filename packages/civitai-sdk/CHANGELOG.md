@@ -1,5 +1,14 @@
 # @civitai/sdk
 
+## 0.16.0
+
+### Minor Changes
+
+- 25ad9f9: **A shared storage collection can require that the model versions it stores are the writer's own (`ownedModelVersions`, civitai/civitai#6132).**
+
+  - **`@civitai/app-sdk`.** The vendored manifest schema is re-vendored from https://civitai.com/schemas/app-block/v1.json, and `BlockStorageSharedCollectionDeclaration` gains `ownedModelVersions?: string[]`: 1 to 4 distinct pointers into a document's `data` (each 1 to 4 segments of `/` then a letter or `_` and up to 63 letters, digits or `_`, such as `/workflow/modelVersionId`). The canonical allows it only on a shared collection with `write: "own"`, and `defineBlock` enforces that from the schema. On every create and update civitai.com refuses a declared field holding anything but a model version the writer owns: 403 `resource_not_owned`, before moderation and before any write budget. An absent field is allowed. The same re-vendor brings the canonical's new `social:react:self` scope (app reactions, civitai/civitai#6144: sensitive and consent-gated), now `BLOCK_SCOPES.SOCIAL_REACT_SELF`. This package has no reaction helper yet. Additive for authors: nothing that validated before is rejected.
+  - **`@civitai/sdk`.** `StorageErrorCode` names `resource_not_owned`. `createFakeStorage` enforces a collection's `ownedModelVersions` rule in the server's order: before the trust gate, the write budget and moderation, with every value checked before any ownership. The fake has no model versions of its own, so `FakeStorageViewer.modelVersions` lists the ids a viewer owns. It defaults to none, so every id is refused, as the server refuses one that is not the writer's. A declaration the platform would refuse (on a private or `write: "none"` collection, or a malformed pointer list) makes `createFakeStorage` throw.
+
 ## 0.15.0
 
 ### Minor Changes
