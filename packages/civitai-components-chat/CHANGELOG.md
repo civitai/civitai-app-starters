@@ -1,5 +1,12 @@
 # @civitai/components-chat
 
+## 0.10.2
+
+### Patch Changes
+
+- Updated dependencies [ae33f6c]
+  - @civitai/components@0.13.0
+
 ## 0.10.1
 
 ### Patch Changes
