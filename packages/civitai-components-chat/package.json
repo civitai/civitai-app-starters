@@ -42,7 +42,8 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --project node --project dom",
+    "test:browser": "vitest run --project browser"
   },
   "engines": {
     "node": ">=20"
@@ -63,8 +64,10 @@
   "devDependencies": {
     "@civitai/sdk": "workspace:*",
     "@types/node": "^25.9.1",
+    "@vitest/browser-playwright": "^4.1.11",
     "jsdom": "^25.0.0",
     "lit": "^3.3.3",
+    "playwright": "^1.60.0",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
     "vitest": "^4.1.11"
