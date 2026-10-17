@@ -192,3 +192,49 @@ defineBlock({
     },
   },
 });
+
+// --- ownedModelVersions (civitai/civitai#6132) ---------------------------------
+expectTypeOf<BlockStorageSharedCollectionDeclaration['ownedModelVersions']>().toEqualTypeOf<
+  string[] | undefined
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers publish their own workflows.' },
+    storage: {
+      collections: {
+        workflows: { visibility: 'shared', write: 'own', ownedModelVersions: ['/workflow/modelVersionId'] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `ownedModelVersions` is shared-only
+        notes: { visibility: 'private', ownedModelVersions: ['/modelVersionId'] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        workflows: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — pointers are strings, not ids
+          ownedModelVersions: [123],
+        },
+      },
+    },
+  },
+});

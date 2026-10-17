@@ -808,7 +808,7 @@ export interface DocumentStorage {
  * Every code the server documents for these routes. The type stays open
  * (`string & {}`) so a code a later server adds still reaches the caller.
  */
-export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable' | (string & {});
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable' | (string & {});
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -3290,6 +3290,13 @@ export interface FakeStorageViewer {
     trusted?: boolean;
     /** `details.reason` when untrusted. Default `account_too_new`. */
     untrustedReason?: string;
+    /**
+     * Ids of the model versions whose model this viewer owns — what a collection's
+     * `ownedModelVersions` rule checks a write against. Default: none, so every id
+     * at a declared field is refused `resource_not_owned`, as the server refuses a
+     * version that is not the writer's (or does not exist).
+     */
+    modelVersions?: readonly number[];
 }
 
 /** Who is calling: a viewer (or `null`, anonymous) holding a token of some kind and scopes. */

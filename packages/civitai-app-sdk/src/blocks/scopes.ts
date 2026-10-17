@@ -90,6 +90,13 @@ export const BLOCK_SCOPES = {
   // Requires a signed-in (non-anonymous) subject. 4-segment, like the shared
   // storage scopes — see BLOCK_SCOPE_PATTERN below.
   APPS_STORE_ITEMS_WRITE: 'apps:store:items:write',
+  // social:react:self — set the VIEWER'S reaction on an image a block endpoint
+  // served the app (civitai/civitai#6144). SENSITIVE (a public, reward-paying
+  // reaction under the viewer's name, so a declaring manifest MUST carry a
+  // `scopeJustifications` entry) and CONSENT-GATED. Listed here because the
+  // canonical schema's `scopes` enum carries it; the server ships the feature
+  // behind a dark flag, and this package has no reaction helper yet.
+  SOCIAL_REACT_SELF: 'social:react:self',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;

@@ -2772,7 +2772,8 @@ export interface BlockStorageIndexes {
 /**
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
- * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`); the canonical
+ * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
+ * `ownedModelVersions`); the canonical
  * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
  * the fields both kinds share.
  */
@@ -2856,6 +2857,32 @@ export interface BlockStorageSharedCollectionDeclaration {
    * collection viewers write (`write` `'own'` or `'anyone'` only).
    */
   dailyWritesPerAuthor?: number;
+  /**
+   * `write` `'own'` collections only — the canonical refuses it under
+   * `'anyone'`, `'owner'` and `'none'`, and on private collections. Fields of a
+   * document's `data` that, when present, must hold the id of a Civitai model
+   * version owned by the viewer writing the document — for example
+   * `['/workflow/modelVersionId']` for a collection where viewers publish their
+   * own workflows.
+   *
+   * 1 to 4 distinct pointers, each 1 to 4 segments of `/` then a letter or `_`
+   * followed by up to 63 letters, digits or `_` (pattern
+   * `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`). A pointer names one field of
+   * nested objects: it never indexes into an array, and a step through an
+   * array or any other non-object finds nothing.
+   *
+   * On every create and update the server resolves each pointer in the new
+   * `data`. An absent field is allowed. A present one must be a positive
+   * integer naming a model version whose model the writer owns; anything else
+   * — someone else's version, a missing or deleted one, a value that is not a
+   * positive integer — is refused 403 `resource_not_owned`, with
+   * `details.pointer` naming the field, before moderation and before any
+   * write budget is spent. If the ownership lookup itself fails, the write is
+   * refused 503 `service_unavailable` (retryable). Ownership is checked only
+   * when a document is written: documents already stored keep the id if the
+   * model later changes hands or is deleted.
+   */
+  ownedModelVersions?: string[];
 }
 
 /**

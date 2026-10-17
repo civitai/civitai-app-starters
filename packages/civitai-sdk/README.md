@@ -274,7 +274,12 @@ Anonymous viewers may read `shared` collections and nothing else
 (`sign_in_required`). Creating or editing a document in a viewer-written shared
 collection needs the consent-gated `apps:storage:publish`; deleting your own, marks
 and counters need only `apps:storage`. Shared writes pass a minimum-trust gate and
-moderation. Only phase-one operations exist: no batch writes, change feed, TTL or
+moderation. A shared `write: "own"` collection whose manifest declares
+`ownedModelVersions` (pointers such as `/workflow/modelVersionId`) refuses a create
+or `put` whose `data` holds, at one of those fields, anything but a model version
+the viewer owns: `resource_not_owned` (403), `details.pointer` naming the field,
+before moderation and before any write budget. An absent field is allowed;
+ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
 owner-written documents yet.
 
 The legacy stores below keep working, unchanged, while apps move; their methods are
@@ -974,6 +979,13 @@ Where it differs from the server on purpose:
   not a manifest validator otherwise; `civitai app validate` is.
 - A list `nextCursor` is an opaque token, refused for any other collection, sort or
   filter than the query that issued it. Treat it as opaque against the server too.
+- It has no model versions of its own, so a collection's `ownedModelVersions` rule
+  checks writes against the viewer's `modelVersions` — the ids that viewer owns,
+  none by default (so every id is refused, as the server refuses one that is not
+  the writer's):
+  `fake.as({ viewer: { username: 'bob', modelVersions: [4317] } })`. It does not
+  model the server's ownership lookup failing (a retryable 503
+  `service_unavailable`).
 
 `fake.calls` records every request and answer. Options also cover smaller `limits`,
 `consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom
