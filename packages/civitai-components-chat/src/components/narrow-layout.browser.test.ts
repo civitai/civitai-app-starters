@@ -12,7 +12,7 @@ import { defineElements } from './define.js';
  * button, the Send button and the right edge of every message landed off-screen.
  */
 
-// 60 characters (the title cap), and far wider than the host at the title's font size.
+// 59 characters (titles are capped at 60), and far wider than the host at the title's font size.
 const LONG_TITLE = 'A cozy Pomodoro timer app with ambient lofi soundscapes too';
 
 // The widths measured live: an iPhone 15 (393px viewport) with a long title, and an iPhone SE
