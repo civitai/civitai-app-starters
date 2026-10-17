@@ -200,6 +200,7 @@ export type StorageErrorCode =
   | 'not_eligible'
   | 'not_author'
   | 'write_policy'
+  | 'resource_not_owned'
   | 'not_found'
   | 'collection_not_declared'
   | 'method_not_allowed'
