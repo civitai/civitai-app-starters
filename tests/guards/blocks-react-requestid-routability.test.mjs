@@ -226,15 +226,16 @@ test('no routability or wire-shape decision is open-coded outside the helper', (
 const HELPER_CALL_LEDGER = {
   // +1 OPEN_RESOURCE_PICKER { multiple } refusal reply, +1 ESTIMATE_WORKFLOW_BATCH,
   // +1 SET_USER_CHECKPOINT page refusal, +1 RUN_CONFIRMED_STEP, +1 OPEN_IMAGE_PICKER refusal,
-  // +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS refusals
-  'internal/liveHost.ts': 23,
+  // +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS refusals, +1 OPEN_MEDIA_UPLOAD refusal
+  'internal/liveHost.ts': 24,
   // +1 SAVE_IMAGE (#583), +1 OPEN_IMAGE_UPLOAD { bytes } (#582), +1 ESTIMATE_WORKFLOW_BATCH,
-  // +1 RUN_CONFIRMED_STEP, +1 OPEN_IMAGE_PICKER (#626), +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS
-  'internal/mockHost.ts': 23,
+  // +1 RUN_CONFIRMED_STEP, +1 OPEN_IMAGE_PICKER (#626), +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS,
+  // +1 OPEN_MEDIA_UPLOAD
+  'internal/mockHost.ts': 24,
   'transport/iframeTransport.ts': 2,
   // +1 isValidEstimateBatchResult, +1 isValidConfirmedStepResult, +1 isValidImagePickerResult,
-  // +2 isValidEntityReactionResult / isValidEntityReactionsResult
-  'transport/validate.ts': 41,
+  // +2 isValidEntityReactionResult / isValidEntityReactionsResult, +1 isValidMediaUploadResult
+  'transport/validate.ts': 42,
 };
 
 test('every consolidated call site is accounted for (asserted ledger)', () => {
@@ -315,8 +316,8 @@ test('mutation battery: every re-introduced spelling is caught BY THIS DETECTOR'
     assert.ok(mutated.includes(spelling), `${label}: mutant text absent after splice`);
     assert.equal(
       (mutated.match(new RegExp(ANCHOR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length,
-      39,
-      `${label}: expected exactly one of the 40 anchors to be replaced`,
+      40,
+      `${label}: expected exactly one of the 41 anchors to be replaced`,
     );
 
     const hits = findOpenCodedDecisions(mutated);

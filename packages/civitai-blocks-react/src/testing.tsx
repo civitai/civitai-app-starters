@@ -59,6 +59,8 @@ export {
   type ImageSpec,
   type CannedPick,
 } from './internal/mockHost.js';
+// The declared type of `MockHostOptions.cannedMediaUploads` (same closure rule).
+export { type MockMediaUploads } from './internal/mediaUploadBytes.js';
 
 export { type MockReactionSeed } from './internal/mockHostReactions.js';
 

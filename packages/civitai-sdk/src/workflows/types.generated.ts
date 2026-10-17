@@ -631,9 +631,10 @@ export type WorkflowBodyPassThroughStep = {
    * serialized, which is a payload-DoS bound and not a shape gate.
    *
    * 🔴 **No inline media.** The host refuses a `data:image|video|audio` URI or a
-   * long raw base64 string anywhere in here: upload the file with
-   * `useImageUpload({ purpose: 'generationSource' })` (or pick one with
-   * `useImagePicker()`) and pass the returned `url`.
+   * long raw base64 string anywhere in here: upload the image, video or audio
+   * with `useMediaUpload()` (an image also works with
+   * `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`)
+   * and pass the returned `url`.
    */
   input: Record<string, unknown>;
   /**

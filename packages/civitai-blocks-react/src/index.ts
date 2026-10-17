@@ -247,6 +247,12 @@ export type {
   UploadImageBytesOptions,
   UseUploadImageBytes,
 } from './hooks/useUploadImageBytes.js';
+export { useMediaUpload } from './hooks/useMediaUpload.js';
+export type {
+  UseMediaUpload,
+  MediaUploadOpenOptions,
+  MediaUploadBytesOptions,
+} from './hooks/useMediaUpload.js';
 export { useImagePicker, IMAGE_PICKER_MULTIPLE_MAX } from './hooks/useImagePicker.js';
 export type {
   UseImagePicker,

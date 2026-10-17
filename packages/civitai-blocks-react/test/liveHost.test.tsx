@@ -8,8 +8,13 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
-import { IMAGE_PICKER_UNSUPPORTED_ERROR, decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import {
+  IMAGE_PICKER_UNSUPPORTED_ERROR,
+  MEDIA_UPLOAD_UNSUPPORTED_ERROR,
+  decodeBlockTokenPayload,
+} from '../src/internal/liveHost.js';
 import { useImagePicker } from '../src/hooks/useImagePicker.js';
+import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
@@ -3186,6 +3191,78 @@ describe('createLiveHost — OPEN_IMAGE_PICKER (refused: nothing lists the viewe
       expect(multi).toEqual({
         rejected: 'the image picker is not supported in dev:live — use dev:mock',
       });
+    } finally {
+      resetTransport();
+    }
+  });
+});
+
+describe('createLiveHost — OPEN_MEDIA_UPLOAD (refused: the upload needs the viewer\'s session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_MEDIA_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('replies MEDIA_UPLOAD_RESULT with an error and no upload, and logs once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-1', kind: 'video', purpose: 'generationSource' });
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-2', kind: 'audio', purpose: 'generationSource' });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT')).toHaveLength(2),
+    );
+    expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT').map((m) => m.payload)).toEqual([
+      { requestId: 'r-media-1', error: 'media upload is not supported in dev:live — use dev:mock' },
+      { requestId: 'r-media-2', error: 'media upload is not supported in dev:live — use dev:mock' },
+    ]);
+    expect(MEDIA_UPLOAD_UNSUPPORTED_ERROR).toBe('media upload is not supported in dev:live — use dev:mock');
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_MEDIA_UPLOAD received'))).toEqual([
+      '[createLiveHost] OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+        '— useMediaUpload() REJECTS. Test it against the real site, ' +
+        'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+    ]);
+  });
+
+  it('useMediaUpload() rejects with the refusal in both modes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      const { result } = renderHook(() => useMediaUpload());
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          (value) => ({ resolved: value }),
+          (err: Error) => ({ rejected: err.message }),
+        );
+      expect(await settle(result.current.open({ kind: 'image' }))).toEqual({
+        rejected: 'media upload is not supported in dev:live — use dev:mock',
+      });
+      expect(
+        await settle(result.current.upload({ kind: 'audio', bytes: new Uint8Array([0x49, 0x44, 0x33]).buffer })),
+      ).toEqual({ rejected: 'media upload is not supported in dev:live — use dev:mock' });
     } finally {
       resetTransport();
     }
