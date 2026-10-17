@@ -892,6 +892,8 @@ civitai-chat-composer {
 
 .cvt-composer-box {
   display: grid;
+  /* Bounded to the box, so a row wider than it shrinks to fit rather than widening the column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   max-width: 800px;
   margin: 0 auto;
@@ -925,8 +927,19 @@ civitai-chat-composer {
   gap: 8px;
 }
 
+/* The buttons keep their full size; the hint, then the model's name, give way in a narrow chat. */
+.cvt-composer-actions > .cvt-icon-button,
+.cvt-composer-actions > .cvt-voice-language {
+  flex: none;
+}
+
+/* The hint is also the space pushing the buttons after it to the right: it stays, and can shrink to nothing. */
 .cvt-hint {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: var(--civitai-color-text-dimmed);
   opacity: 0;

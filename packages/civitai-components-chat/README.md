@@ -298,6 +298,23 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `addFiles(files)`,
 `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
 
+`send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
+out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
+in an empty message box; while a reply is still running it sends nothing.
+
+### Which chat is open
+
+`chat.chatId` is the id of the chat now open (`null` before the chat has started). A new chat has
+its id from the start, before anything in it is saved, and keeps it once it is. `chat-change` fires
+with `{ chatId }` (type `ChatChangeDetail`; it bubbles and is composed) each time that changes: when
+the last chat is opened on load (or a fresh one started), when the viewer opens one from the list,
+on `newChat()`, and when the open chat is deleted (naming the new chat that replaces it). It fires
+once per change; reloading the chat already open, or deleting another one, fires nothing.
+
+```ts
+chat.addEventListener('chat-change', (e) => restoreFor(e.detail.chatId));
+```
+
 ### The empty chat
 
 An empty chat greets the viewer and offers a few examples to start from: making a picture, changing a
