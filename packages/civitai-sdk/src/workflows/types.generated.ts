@@ -627,8 +627,13 @@ export type WorkflowBodyPassThroughStep = {
    *
    * Consequently the orchestrator's per-`$type` schema is the ONLY authority for
    * what a given `$type` accepts; nothing in this package or on the host mirrors
-   * it. Bounded only by size: at most **262144 bytes** (256 KB) serialized, which
-   * is a payload-DoS bound and not a shape gate.
+   * it. Its shape is not checked; its size is: at most **262144 bytes** (256 KB)
+   * serialized, which is a payload-DoS bound and not a shape gate.
+   *
+   * 🔴 **No inline media.** The host refuses a `data:image|video|audio` URI or a
+   * long raw base64 string anywhere in here: upload the file with
+   * `useImageUpload({ purpose: 'generationSource' })` (or pick one with
+   * `useImagePicker()`) and pass the returned `url`.
    */
   input: Record<string, unknown>;
   /**

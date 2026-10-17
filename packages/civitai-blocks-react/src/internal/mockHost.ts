@@ -104,6 +104,7 @@ import {
   idempotencyKeyDeniedMessage,
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
+import { stepInputRefusal } from './mockHostStepInput.js';
 import {
   SAVE_IMAGE_INVALID_REQUEST_ERROR,
   prepareSaveBytes,
@@ -3244,7 +3245,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           // TRUE only from the single ESTIMATE_WORKFLOW. The server's batch
           // estimate persists nothing, so a batch cell never stores a
           // confirmed-step quote and never carries a `stepQuote`.
-          opts: { storeQuotes: boolean },
+          opts: {
+            storeQuotes: boolean;
+            // Where the body sits in what the server parsed: `['body']` for the
+            // single estimate's procedure input, `[]` for a batch cell.
+            issuePathPrefix: ReadonlyArray<string | number>;
+          },
         ): BlockWorkflowSnapshot => {
           // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
           // the two real producers byte-for-byte so a block's `catch` around
@@ -3283,6 +3289,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           // The batch path refuses the WHOLE call before it reaches this function
           // (see ESTIMATE_WORKFLOW_BATCH), so this branch is the single-estimate
           // one in practice.
+          //
+          // 🔴 THE STEP-INPUT GATE comes first of the server's checks — see
+          // ./mockHostStepInput.ts. Its rules are zod refinements of the body,
+          // so they refuse at the procedure's `.input()`, before the handler's
+          // scope check. The host catches that into `failureSnapshot(err)`.
+          const inputRefusal = stepInputRefusal(body, opts.issuePathPrefix);
+          if (inputRefusal !== null) {
+            return { workflowId: 'failed', status: 'failed', error: inputRefusal };
+          }
           if (!consentGranted) {
             return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
           }
@@ -3512,7 +3527,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
-              payload: { requestId, snapshot: estimateSnapshotFor(body, { storeQuotes: true }) },
+              payload: {
+                requestId,
+                snapshot: estimateSnapshotFor(body, { storeQuotes: true, issuePathPrefix: ['body'] }),
+              },
             });
             return;
           }
@@ -3584,7 +3602,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   error: MOCK_TRAINING_IN_BATCH_ERROR,
                 };
               }
-              return estimateSnapshotFor(cell ?? ({} as WorkflowBody), { storeQuotes: false });
+              return estimateSnapshotFor(cell ?? ({} as WorkflowBody), {
+                storeQuotes: false,
+                issuePathPrefix: [],
+              });
             });
             // The server's aggregate rule: the cells that priced, i.e. not
             // `'failed'` and carrying a numeric `cost.total`.
@@ -3637,6 +3658,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 },
               });
               return;
+            }
+
+            // 🔴 THE STEP-INPUT GATE (./mockHostStepInput.ts): inline media in a
+            // pass-through step input, then its byte cap. zod refinements of the
+            // body, so the server refuses at `.input()` — ahead of the spend-scope
+            // gate below, which is the handler's first act. Nothing is debited.
+            {
+              const inputRefusal = stepInputRefusal(body, ['body']);
+              if (inputRefusal !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_SUBMITTED',
+                  payload: {
+                    requestId,
+                    snapshot: { workflowId: 'failed', status: 'failed', error: inputRefusal },
+                  },
+                });
+                return;
+              }
             }
 
             // 🔴 THE SPEND-SCOPE GATE. civitai's `submitWorkflow` throws
