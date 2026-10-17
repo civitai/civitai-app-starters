@@ -548,7 +548,7 @@ sends it once the last words are back. Recordings stop by themselves after two m
 
 A reply that fails fires `reply-error` on the chat, for the page's own telemetry: `detail` is
 `{ kind, message, detail, trace }`, where `message` is what the viewer saw and `trace` (type
-`ChatErrorTrace`) says where it broke: `stage` (`tools`, `request`, `stream` or `tool`), `step`, the
+`ChatErrorTrace`) says where it broke, all of it about the error that ended the reply: `stage` (`tools`, `request`, `stream` or `tool`), `step`, the
 last tool call, and for a service error its `statusCode`, host, `cause`, request id and the first 500
 characters of the response body. The viewer sees a one-line summary of it under Details; it is not
 saved with the conversation.
@@ -561,9 +561,11 @@ a second after a network change. Each drop gets its own three tries once a step 
 retry, so a long reply lives through several network changes; one reply retries at most 10 times in
 all, so a network that keeps dropping still ends it. It resumes from the last step that finished, so tools that already ran are not called
 again and words already kept are not repeated; the cut step's words are replaced by its new answer.
-If any tool call comes from the cut step before its stream ends (even after the error), it is not
-asked again, so no tool can run twice; a reply that then fails keeps every step that finished, with
-the calls it ran and their results. Only two errors count as
+The cut is the error that ended the reply: an earlier error the reply got past by itself does not
+count, and steps that finished after it are kept like any others. If the cut step had called a tool,
+or any tool call comes after the cut before the stream ends, it is not asked again, so no tool can
+run twice; a reply that then fails keeps every step that finished, with the calls it ran and their
+results. Only two errors count as
 a dropped connection: fetch's own `TypeError` with Chromium's wording (`Failed to fetch` for a request,
 `network error` for a body), or Firefox's and Safari's wording for a failed request, and a 2xx answer
 whose body was cut by one (`Failed to process successful response` caused by it). Other browsers'
