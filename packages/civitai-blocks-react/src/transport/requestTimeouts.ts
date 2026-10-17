@@ -177,6 +177,12 @@ const REQUEST_TIMEOUT_CLASS = {
   // whether a human is involved. Not reclassified here.
   SAVE_IMAGE: 'protocol',
   SET_USER_CHECKPOINT: 'protocol',
+  // App reactions. `'protocol'`, NOT `'human'`, and that is a decision rather
+  // than an omission: unlike SET_COLLECTION_FOLLOW there is no host confirm to
+  // wait on. The consent is the `social:react:self` grant, made beforehand; a
+  // host without it refuses `needs-consent` at once.
+  SET_ENTITY_REACTION: 'protocol',
+  GET_ENTITY_REACTIONS: 'protocol',
   SHARED_APPEND: 'protocol',
   SHARED_GET: 'protocol',
   SHARED_GET_COUNT: 'protocol',

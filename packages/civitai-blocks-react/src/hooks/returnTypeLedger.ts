@@ -83,6 +83,7 @@ import type {
   useNestedDocument,
   usePrepareTrainingDataset,
   usePublishGenerationOutputs,
+  useReactions,
   useRequestConsent,
   useRequestSignIn,
   useResourcePicker,
@@ -130,6 +131,7 @@ import type {
   UseNestedDocument,
   UsePrepareTrainingDataset,
   UsePublishGenerationOutputs,
+  UseReactions,
   UseRequestConsent,
   UseRequestSignIn,
   UseResourcePicker,
@@ -217,6 +219,7 @@ type _usePrepareTrainingDataset = Assert<
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;
+type _useReactions = Assert<Exact<ReturnType<typeof useReactions>, UseReactions>>;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
 type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;

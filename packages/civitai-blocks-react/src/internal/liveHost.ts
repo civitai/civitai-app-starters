@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 50, of which 12 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 52, of which 14 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -106,6 +106,11 @@
  *     links the real purchase page and replies `purchased: false`.
  *   • SET_COLLECTION_FOLLOW — needs the session-authed follow procedures plus
  *     host-chrome consent. Replies `collection-unavailable`.
+ *   • SET_ENTITY_REACTION — the server's reaction procedures take the viewer's
+ *     signed-in SESSION alongside the block token, and refuse any token as
+ *     authentication. Replies `entity-unavailable`.
+ *   • GET_ENTITY_REACTIONS — the same session-authed procedure pair. Replies
+ *     `entity-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
  *   • PREPARE_TRAINING_DATASET — the server refuses every `kind: 'training'`
@@ -167,6 +172,12 @@ import {
   type OpenPickerOptions,
   type PickerResultChannel,
 } from './pickerOverlay.js';
+
+/** Logged once when a block sends either reaction message to the live host. */
+const REACTIONS_UNSUPPORTED_LOG =
+  'SET_ENTITY_REACTION / GET_ENTITY_REACTIONS are not supported in dev:live (the reaction ' +
+  'procedures need the signed-in civitai.com session). Replying `entity-unavailable`. Use ' +
+  'dev:mock to exercise the reaction bridge.';
 
 /**
  * The `error` the live host answers `OPEN_IMAGE_PICKER` with. `useImagePicker()`
@@ -1371,6 +1382,40 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'COLLECTION_FOLLOW_RESULT',
               payload: { requestId, error: 'collection-unavailable' },
+            });
+            return;
+          }
+
+          case 'SET_ENTITY_REACTION': {
+            // UNSUPPORTED in live: `blocks.setReactionFromApp` /
+            // `blocks.getReactionsForApp` are session procedures marked
+            // `blockApiKeys`, so the server refuses ANY token as the caller's
+            // authentication and then checks that the block token's subject IS
+            // the session user. A liveHost holds a token and no session.
+            //
+            // `entity-unavailable`: the closed code that already means "this
+            // request cannot be served, nothing was written". `sign-in-required`
+            // would send the block into a REQUEST_SIGN_IN loop against a harness
+            // with no sign-in; `needs-consent` into a consent ask that cannot
+            // help. Use dev:mock (`reactionStates` / `reactionError`, with
+            // `social:react:self` in `declaredScopes`) to exercise the bridge.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTION_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
+            });
+            return;
+          }
+
+          case 'GET_ENTITY_REACTIONS': {
+            // UNSUPPORTED in live, for the reason on SET_ENTITY_REACTION directly
+            // above: the read is the same session-authed procedure pair.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTIONS_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
             });
             return;
           }

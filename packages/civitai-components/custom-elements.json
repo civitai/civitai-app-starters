@@ -7412,6 +7412,18 @@
               "reflects": true
             },
             {
+              "kind": "field",
+              "name": "reaction",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The reaction this element stands for, e.g. `Like` (civitai.com's reaction\nnames). Any non-empty string is carried as-is in the `react` event's\n`detail.reaction`, and is the accessible name when `label` is empty; the\nelement does not judge which reactions exist. `emoji` stays display only.",
+              "default": "''",
+              "attribute": "reaction",
+              "reflects": true
+            },
+            {
               "kind": "method",
               "name": "#toggle",
               "privacy": "private",
@@ -7494,6 +7506,15 @@
               "description": "Names the reaction for a screen reader, e.g. \"Like\".",
               "default": "''",
               "fieldName": "label"
+            },
+            {
+              "name": "reaction",
+              "type": {
+                "text": "string"
+              },
+              "description": "The reaction this element stands for, e.g. `Like` (civitai.com's reaction\nnames). Any non-empty string is carried as-is in the `react` event's\n`detail.reaction`, and is the accessible name when `label` is empty; the\nelement does not judge which reactions exist. `emoji` stays display only.",
+              "default": "''",
+              "fieldName": "reaction"
             }
           ],
           "superclass": {

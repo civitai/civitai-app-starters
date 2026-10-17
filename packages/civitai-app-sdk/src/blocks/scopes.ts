@@ -93,9 +93,10 @@ export const BLOCK_SCOPES = {
   // social:react:self — set the VIEWER'S reaction on an image a block endpoint
   // served the app (civitai/civitai#6144). SENSITIVE (a public, reward-paying
   // reaction under the viewer's name, so a declaring manifest MUST carry a
-  // `scopeJustifications` entry) and CONSENT-GATED. Listed here because the
-  // canonical schema's `scopes` enum carries it; the server ships the feature
-  // behind a dark flag, and this package has no reaction helper yet.
+  // `scopeJustifications` entry) and CONSENT-GATED. The bridge is
+  // SET_ENTITY_REACTION / GET_ENTITY_REACTIONS (see `reactions.ts`), and
+  // `useReactions` in `@civitai/blocks-react` drives it. The server gates it
+  // behind a fail-closed flag as well as the grant.
   SOCIAL_REACT_SELF: 'social:react:self',
 } as const;
 

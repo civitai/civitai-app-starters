@@ -1273,6 +1273,112 @@ async function toggle() {
 Most blocks want `<FollowButton>` from `@civitai/blocks-react/ui` instead, which
 wires all of the above.
 
+### `useReactions(entityType, ids, { tickets })`
+
+Read and set the **viewer's** reactions on images this app was served, over
+`GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION`. Returns
+`{ byId, unavailable, loading, error, toggle, pending }`.
+
+It reads on mount, then reads again only the images that need it: an id added
+to `ids`, or one whose ticket changed. An id that leaves `ids` costs nothing.
+Every read counts against the block instance's catalog rate limit on the host,
+which every viewer of a page app shares with its other catalog reads.
+
+A reaction made here **is** a reaction on civitai.com: it pays the reactor and
+the image owner exactly as the site's own button does, moves rankings, notifies,
+and lists the viewer among the reactors. It draws on the **same** per-viewer
+quota as the site. Apps may set `Like`, `Heart`, `Laugh` and `Cry`; never
+`Dislike`. Image is the only entity type today.
+
+🔴 **Scope `social:react:self`: consent-gated and sensitive.** Declare it with a
+`scopeJustifications` entry. Until the viewer grants it, every call fails with
+`needs-consent` (`err.needsConsent`): ask with `useRequestConsent()`. There is
+no per-tap confirm.
+
+🔴 **Tickets are required, and only the REST block endpoints supply them.** Each
+image that `/api/v1/blocks/images`, `/api/v1/blocks/gated-images` or
+`/api/v1/blocks/collections/{id}` serves, fetched with the block token for a
+signed-in viewer, carries a `reactTicket` signed for this app and this viewer
+for 24 hours. **No hook in this package supplies one yet:** `useGatedImages()`
+goes through the host bridge, whose reply carries no `reactTicket`
+([#687](https://github.com/civitai/civitai-app-starters/issues/687)). Pass the
+tickets as `tickets`, keyed by image id. An image without a valid one is not
+answered by the read (it lands in `unavailable`, which is **not** "not reacted")
+and a `toggle` on it is refused locally, before anything is sent.
+
+`toggle(id, reaction, reacted)` sets a **desired state**, moves `byId[id]`
+optimistically, and puts it back on failure. It rejects with a `ReactionError`:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.needsConsent` | the scope is not granted | `useRequestConsent()` |
+| `err.code === 'rate-limited'` | the viewer's reaction quota is spent | back off |
+| `err.code === 'entity-unavailable'` | no valid ticket, an image the viewer may not react to, the kill switch, or a network failure | retry later or give up |
+| `err.code` otherwise | `invalid-request` / `review-mode` / `not-ready` | a block bug, a review sandbox, or retry after `ready` |
+| `err.timedOut` | no reply within 30s | the write **may** have landed; the hook re-reads that image |
+| `err.busy` | the same image and reaction already has a request in flight. Rejects the call only: `error` is not set, because the write it collided with is still running | disable the control while `pending(id, reaction)` |
+
+🔴 **Bind `<civitai-reaction>` from `byId` on every render; never let it keep
+its own state.** The element flips `reacted` and `count` itself on a click. When
+the hook makes no optimistic move of its own (an image not read yet, or a
+refusal such as a missing ticket), `byId` does not change, so an element that
+only listens would keep showing a reaction that does not exist. Every rejected
+`toggle` re-renders the owner: a refusal or a failed write sets `error`, and a
+`busy` refusal is followed by the in-flight write's own settle, which clears
+`pending`. An element whose `reacted` and `count` come from `byId` on each
+render is then put back. Outside React, set the two properties back yourself
+after a rejection.
+
+```tsx
+import { useEffect, useState } from 'react';
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+import { useBlockToken, useHostOrigin, useReactions } from '@civitai/blocks-react';
+
+type ServedImage = { id: number; url: string; reactTicket?: string };
+
+function useReactableImages() {
+  const host = useHostOrigin();
+  const { raw } = useBlockToken();
+  const [images, setImages] = useState<ServedImage[]>([]);
+
+  // The tickets come from the REST endpoint, fetched with the block token.
+  useEffect(() => {
+    if (!host || !raw) return;
+    void fetch(`${host}/api/v1/blocks/images?limit=20`, {
+      headers: { Authorization: `Bearer ${raw}` },
+    })
+      .then((res) => res.json() as Promise<{ items: ServedImage[] }>)
+      .then((body) => setImages(body.items));
+  }, [host, raw]);
+
+  const reactions = useReactions(
+    'image',
+    images.map((image) => image.id),
+    { tickets: Object.fromEntries(images.map((image) => [image.id, image.reactTicket])) },
+  );
+
+  // Props for one `<civitai-reaction>` (e.g. `CivitaiReaction` from
+  // `@civitai/components-react`), derived from `byId` on every render.
+  const bind = (id: number, reaction: 'Like' | 'Heart' | 'Laugh' | 'Cry') => ({
+    reaction,
+    reacted: reactions.byId[id]?.viewerReactions.includes(reaction) ?? false,
+    count: reactions.byId[id]?.counts[reaction] ?? 0,
+    disabled: !reactions.byId[id] || reactions.pending(id, reaction),
+    onReact: (event: CustomEvent<{ reaction?: string; reacted: boolean }>) => {
+      const { reaction: which, reacted } = event.detail;
+      // `detail.reaction` is any string the element was given; narrow it.
+      if (!isAppReaction(which)) return;
+      // A rejection needs no handling here to put the element back: it
+      // re-renders, and `bind` reads `byId` again.
+      reactions.toggle(id, which, reacted).catch(() => {});
+    },
+  });
+
+  return { images, bind, error: reactions.error };
+}
+```
+
 ### `useCreatePostFromApp()`
 
 Publish a **real, published Post on the viewer's profile** from this app's own
@@ -3318,6 +3424,7 @@ MockHost
 MockHostFailMode
 MockHostOptions
 MockHostScenarioPatch
+MockReactionSeed
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario

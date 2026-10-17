@@ -193,6 +193,30 @@ hangs under it — while `top-start` and `bottom` stay in a row, which is where
 the rating and the `POI` badges sit side by side. `<civitai-reaction>`
 abbreviates its count the way the site does.
 
+A click flips `reacted` and `count` at once and dispatches `react`, whose
+`detail` is `{ emoji, reacted, count }`; set the property back if the write
+fails. Give it a `reaction` such as `reaction="Like"` and the detail also
+carries it, as-is, so a handler knows which reaction it is without reading the
+emoji, which is display only. Without `reaction` (or with an empty one) the
+event is unchanged.
+
+`detail.reaction` is whatever string the element was given, so narrow it before
+handing it to `useReactions().toggle` in `@civitai/blocks-react`, which takes
+only the reactions an app may set:
+
+```ts
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+
+el.addEventListener('react', (event) => {
+  const { reaction, reacted } = (event as CustomEvent<ReactionDetail>).detail;
+  if (!isAppReaction(reaction)) return;
+  toggle(imageId, reaction, reacted);
+});
+```
+
+The full binding, including putting the element back after a refused write, is
+under `useReactions` in `@civitai/blocks-react`'s README.
+
 ### Image, video and audio
 
 `<civitai-image>`, `<civitai-video>` and `<civitai-audio>` follow HTML's three

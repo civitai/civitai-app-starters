@@ -1254,6 +1254,97 @@ export function isValidCollectionFollowResult(p: unknown): boolean {
   return true;
 }
 
+/** A positive integer id: what a reaction reply keys UI state by. */
+function isPositiveIntId(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0;
+}
+
+/**
+ * One image's reaction state inside an `ENTITY_REACTION(S)_RESULT`: `counts` an
+ * object of finite numbers, `viewerReactions` an array of strings,
+ * `statsUnknown` a boolean.
+ *
+ * 🔴 The reaction NAMES are not membership-checked, in `counts` or in
+ * `viewerReactions`. The site stores five reactions and may add a sixth; a
+ * reply naming one this SDK does not know is still a true statement about the
+ * viewer, and dropping it would hang the request to its timeout instead.
+ */
+function isValidEntityReactionState(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (!isObject(v.counts)) return false;
+  for (const n of Object.values(v.counts)) {
+    if (!isFiniteNumber(n)) return false;
+  }
+  if (!Array.isArray(v.viewerReactions)) return false;
+  for (const r of v.viewerReactions) {
+    if (typeof r !== 'string') return false;
+  }
+  if (typeof v.statsUnknown !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `SET_ENTITY_REACTION`. A well-formed reply carries
+ * EITHER a `result` OR an `error`; one with neither is malformed and dropped.
+ *
+ * `error` is SHAPE-CHECKED ONLY, although the host's set is closed
+ * (`ENTITY_REACTION_ERROR_CODES`): a code a newer host adds must still reach
+ * the block as a rejection. A membership check would drop it, and a dropped
+ * reply on a request-style message does not reject, it waits out the timeout.
+ * `useReactions` turns an unknown string into a `ReactionError` with no `code`.
+ *
+ * `result` is checked as far as a consumer reads it: `entityId` a positive
+ * integer (state is keyed by it), `reaction` a non-empty string, `reacted` and
+ * `changed` booleans, plus the state fields.
+ */
+export function isValidEntityReactionResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isPositiveIntId(r.entityId)) return false;
+    if (!isNonEmptyString(r.reaction)) return false;
+    if (typeof r.reacted !== 'boolean') return false;
+    if (typeof r.changed !== 'boolean') return false;
+    if (!isValidEntityReactionState(r)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_ENTITY_REACTIONS`. Same one-of and shape-only
+ * `error` contract as {@link isValidEntityReactionResult}.
+ *
+ * `result.byId` must be an object whose every key is a positive-integer id
+ * spelled as a string and whose every value is a valid state;
+ * `result.unavailable` an array of positive-integer ids.
+ */
+export function isValidEntityReactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isObject(r.byId)) return false;
+    for (const [key, state] of Object.entries(r.byId)) {
+      if (!/^[1-9][0-9]*$/.test(key)) return false;
+      if (!isValidEntityReactionState(state)) return false;
+    }
+    if (!Array.isArray(r.unavailable)) return false;
+    for (const id of r.unavailable) {
+      if (!isPositiveIntId(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
 /**
  * Reply to a block-initiated `CREATE_POST_FROM_APP`. A well-formed reply carries
  * EITHER a `result` (`{ postId: positive int, url: non-empty string, imageIds:
@@ -1919,6 +2010,10 @@ export function payloadValidatorFor(
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
       return isValidCollectionFollowResult;
+    case 'ENTITY_REACTION_RESULT':
+      return isValidEntityReactionResult;
+    case 'ENTITY_REACTIONS_RESULT':
+      return isValidEntityReactionsResult;
     // 🔴 PRESENCE of this entry IS compiler-enforced (the `never` bind in
     // `default:`); WHICH validator it names is not. This reply settles a PUBLIC
     // POST, so the identity is pinned by test as well — see the mapping pin in
