@@ -114,8 +114,6 @@ export interface UseReactionsOptions {
    * reactions from the quota the site's own button shares.
    */
   tickets: Readonly<Record<number | string, string | undefined>>;
-  /** `false` skips the read (for a signed-out viewer, say). Defaults to `true`. */
-  enabled?: boolean;
 }
 
 /** What {@link useReactions} returns. */
@@ -152,8 +150,6 @@ export interface UseReactions {
   ) => Promise<BlockEntityReactionResult>;
   /** `true` while a `toggle` for this image and reaction is in flight. */
   pending: (id: number, reaction: BlockAppReaction) => boolean;
-  /** Read every id again. Resolves when every chunk has settled. */
-  refresh: () => Promise<void>;
 }
 
 interface Store {
@@ -211,7 +207,6 @@ export function useReactions(
   options: UseReactionsOptions,
 ): UseReactions {
   useTransportConnection();
-  const enabled = options.enabled !== false;
 
   const [store, setStore] = useState<Store>({ byId: {}, unavailable: [] });
   // The latest committed store, read synchronously by `toggle` to decide whether
@@ -303,19 +298,16 @@ export function useReactions(
     [entityType],
   );
 
-  const refresh = useCallback(async (): Promise<void> => {
+  // Read every id: on mount and whenever the ids or their tickets change.
+  // `ticketKey` is a dependency so a ticket arriving for an id already listed
+  // re-reads it. A new read supersedes an older one still in flight.
+  useEffect(() => {
+    if (uniqueIds.length === 0) return;
     readGeneration.current += 1;
     const generation = readGeneration.current;
-    if (mountedRef.current) setError(null);
-    await readIds(uniqueIds, generation);
-  }, [readIds, uniqueIds]);
-
-  // `ticketKey` is a dependency so a ticket arriving for an id already listed
-  // re-reads it.
-  useEffect(() => {
-    if (!enabled || uniqueIds.length === 0) return;
-    void refresh();
-  }, [enabled, refresh, uniqueIds, ticketKey]);
+    setError(null);
+    void readIds(uniqueIds, generation);
+  }, [readIds, uniqueIds, ticketKey]);
 
   const toggle = useCallback(
     async (
@@ -455,6 +447,5 @@ export function useReactions(
     error,
     toggle: toggleWithResync,
     pending,
-    refresh,
   };
 }

@@ -66,8 +66,6 @@ export type { ReportButtonProps } from './ReportButton.js';
 
 export { FollowButton } from './FollowButton.js';
 export type { FollowButtonProps } from './FollowButton.js';
-export { ReactionBar, REACTION_EMOJI } from './ReactionBar.js';
-export type { ReactionBarProps } from './ReactionBar.js';
 
 export { TipButton } from './TipButton.js';
 export type { TipButtonProps } from './TipButton.js';

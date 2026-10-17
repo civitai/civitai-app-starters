@@ -1277,7 +1277,8 @@ wires all of the above.
 
 Read and set the **viewer's** reactions on images this app was served, over
 `GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION`. Returns
-`{ byId, unavailable, loading, error, toggle, pending, refresh }`.
+`{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` on
+mount and again whenever the ids or their tickets change.
 
 A reaction made here **is** a reaction on civitai.com: it pays the reactor and
 the image owner exactly as the site's own button does, moves rankings, notifies,
@@ -1323,11 +1324,6 @@ const { byId, toggle, pending } = useReactions(
 const liked = byId[imageId]?.viewerReactions.includes('Like') ?? false;
 await toggle(imageId, 'Like', !liked);
 ```
-
-`<ReactionBar id={imageId} reactions={useReactionsResult} />` from
-`@civitai/blocks-react/ui` renders one `<civitai-reaction>` per reaction and
-wires all of the above, including putting a button back after a refusal that
-never moved `byId`.
 
 ### `useCreatePostFromApp()`
 

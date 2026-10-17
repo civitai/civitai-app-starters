@@ -78,10 +78,10 @@ describe('createMockHost — app reactions', () => {
     // Desired state, not a toggle: already reacted, so nothing moved.
     expect(r).toMatchObject({ reacted: true, changed: false, counts: { Heart: 1 } });
 
-    await act(async () => {
-      await result.current.refresh();
-    });
-    expect(result.current.byId[1]!.viewerReactions).toEqual(['Heart']);
+    // A fresh read (a second mount) sees the write: the mock persists it.
+    const again = await hook([1]);
+    await waitFor(() => expect(again.result.current.byId[1]).toBeDefined());
+    expect(again.result.current.byId[1]!.viewerReactions).toEqual(['Heart']);
   });
 
   it('refuses every call with needs-consent when the manifest does not declare the scope', async () => {
@@ -132,11 +132,12 @@ describe('createMockHost — app reactions', () => {
     uninstall = host.install();
     const { result } = await hook([1]);
     await waitFor(() => expect(result.current.byId[1]).toBeDefined());
+    expect(result.current.byId[1]!.counts.Cry).toBe(0);
     host.setScenario({ reactionStates: { 1: { counts: { Cry: 9 }, statsUnknown: true } } });
-    await act(async () => {
-      await result.current.refresh();
-    });
-    expect(result.current.byId[1]).toMatchObject({ counts: { Cry: 9 }, statsUnknown: true });
+    const again = await hook([1]);
+    await waitFor(() =>
+      expect(again.result.current.byId[1]).toMatchObject({ counts: { Cry: 9 }, statsUnknown: true }),
+    );
   });
 });
 

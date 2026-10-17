@@ -195,9 +195,9 @@ abbreviates its count the way the site does.
 
 A click flips `reacted` and `count` at once and dispatches `react`, whose
 `detail` is `{ emoji, reacted, count }`; set the property back if the write
-fails. Give it `reaction="Like"` (or `Heart`, `Laugh`, `Cry`) and the detail
-also carries `reaction`, so a handler knows which reaction it is without
-reading the emoji, which is display only. That is what
+fails. Give it a `reaction` such as `reaction="Like"` and the detail also
+carries it, as-is, so a handler knows which reaction it is without reading the
+emoji, which is display only. That is what
 `useReactions().toggle(id, detail.reaction, detail.reacted)` in
 `@civitai/blocks-react` takes. Without `reaction` the event is unchanged.
 

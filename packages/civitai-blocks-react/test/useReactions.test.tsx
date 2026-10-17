@@ -149,9 +149,8 @@ describe('useReactions', () => {
       expect(second!.payload.ids).toEqual(ids.slice(100));
     });
 
-    it('sends nothing for no ids, or when disabled', async () => {
+    it('sends nothing for no ids', async () => {
       renderHook(() => useReactions('image', [], { tickets: {} }));
-      renderHook(() => useReactions('image', [11], { tickets: TICKETS, enabled: false }));
       await new Promise((r) => setTimeout(r, 20));
       expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(0);
     });

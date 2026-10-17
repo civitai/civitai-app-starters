@@ -261,15 +261,27 @@ describe('<civitai-reaction>', () => {
     expect(seen[0]).toEqual({ emoji: '👍', reacted: true, count: 3 });
   });
 
-  it('ignores a `reaction` that is not one an app may set', async () => {
+  it('passes any non-empty `reaction` string through unjudged', async () => {
+    // The element names no reaction set; which reactions exist is the host's
+    // business. A value outside civitai.com's four still reaches the handler.
     const el = await single('<civitai-reaction emoji="x" reaction="Dislike" count="1"></civitai-reaction>');
     const seen = details(el);
 
     button(el).click();
     await el.updateComplete;
 
+    expect(seen).toEqual([{ emoji: 'x', reacted: true, count: 2, reaction: 'Dislike' }]);
+  });
+
+  it('treats an EMPTY `reaction` as absent: the old detail exactly', async () => {
+    const el = await single('<civitai-reaction emoji="x" reaction="" count="1"></civitai-reaction>');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+
     expect(seen).toHaveLength(1);
-    expect('reaction' in seen[0]!).toBe(false);
+    expect(Object.keys(seen[0]!).sort()).toEqual(['count', 'emoji', 'reacted']);
   });
 
   it('carries a `reaction` set as a property', async () => {

@@ -7350,15 +7350,6 @@
       "path": "src/elements/civitai-reaction.ts",
       "declarations": [
         {
-          "kind": "variable",
-          "name": "REACTION_KINDS",
-          "type": {
-            "text": "['Like', 'Heart', 'Laugh', 'Cry']"
-          },
-          "default": "['Like', 'Heart', 'Laugh', 'Cry']",
-          "description": "The reactions civitai.com lets an app set, and the values `reaction` accepts.\nMirrors `APP_REACTIONS` in `@civitai/app-sdk/blocks`; this package does not\ndepend on it."
-        },
-        {
           "kind": "class",
           "description": "",
           "name": "CivitaiReaction",
@@ -7425,9 +7416,9 @@
               "name": "reaction",
               "privacy": "public",
               "type": {
-                "text": "ReactionKind | ''"
+                "text": "string"
               },
-              "description": "The reaction this element stands for: `Like`, `Heart`, `Laugh` or `Cry`.\nCarried in the `react` event's `detail.reaction`, and the accessible name\nwhen `label` is empty. Any other value is ignored, as if unset. `emoji`\nstays display only.",
+              "description": "The reaction this element stands for, e.g. `Like` (civitai.com's reaction\nnames). Any non-empty string is carried as-is in the `react` event's\n`detail.reaction`, and is the accessible name when `label` is empty; the\nelement does not judge which reactions exist. `emoji` stays display only.",
               "default": "''",
               "attribute": "reaction",
               "reflects": true
@@ -7519,9 +7510,9 @@
             {
               "name": "reaction",
               "type": {
-                "text": "ReactionKind | ''"
+                "text": "string"
               },
-              "description": "The reaction this element stands for: `Like`, `Heart`, `Laugh` or `Cry`.\nCarried in the `react` event's `detail.reaction`, and the accessible name\nwhen `label` is empty. Any other value is ignored, as if unset. `emoji`\nstays display only.",
+              "description": "The reaction this element stands for, e.g. `Like` (civitai.com's reaction\nnames). Any non-empty string is carried as-is in the `react` event's\n`detail.reaction`, and is the accessible name when `label` is empty; the\nelement does not judge which reactions exist. `emoji` stays display only.",
               "default": "''",
               "fieldName": "reaction"
             }
@@ -7563,14 +7554,6 @@
         }
       ],
       "exports": [
-        {
-          "kind": "js",
-          "name": "REACTION_KINDS",
-          "declaration": {
-            "name": "REACTION_KINDS",
-            "module": "src/elements/civitai-reaction.ts"
-          }
-        },
         {
           "kind": "js",
           "name": "CivitaiReaction",
