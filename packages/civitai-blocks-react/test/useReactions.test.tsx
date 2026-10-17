@@ -713,6 +713,45 @@ describe('useReactions', () => {
       expect(ids(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[2]!)).toEqual([12]);
     });
 
+    it('a failed write on an image with state sends no further read', async () => {
+      const { result } = await mounted(); // byId[11] is known; mockClear()ed
+      await act(async () => {
+        const p = result.current.toggle(11, 'Like', true).catch(() => {});
+        reply('ENTITY_REACTION_RESULT', {
+          requestId: sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!.payload.requestId,
+          error: 'rate-limited',
+        });
+        await p;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      // Not a timeout and the image has state to fall back on: nothing to re-read.
+      expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(0);
+    });
+
+    it('a successful write sends no further read', async () => {
+      const { result } = await mounted();
+      await act(async () => {
+        const p = result.current.toggle(11, 'Like', true);
+        okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!, { counts: counts(5, 1) });
+        await p;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(0);
+    });
+
+    it('an image listed unavailable leaves the list once a read answers it with state', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, {}, [11]);
+      await waitFor(() => expect(result.current.unavailable).toEqual([11]));
+      // A new ticket arrives; the re-read answers with state.
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toEqual(STATE_11));
+      expect(result.current.unavailable).toEqual([]);
+    });
+
     it('an older read answered after a newer one for the same image is discarded', async () => {
       const { result, rerender } = grow([11]);
       await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));

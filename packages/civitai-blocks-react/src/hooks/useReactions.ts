@@ -475,7 +475,9 @@ export function useReactions(
             next.delete(key);
             return next;
           });
-          // After the in-flight mark is gone, so the answer is not discarded.
+          // Its placement after the in-flight mark is cleared does not matter for
+          // discarding: rule 1 is checked when the answer arrives, which is always
+          // after this `finally` has run.
           if (reread) void readIds([id], readGeneration.current);
         }
       }
