@@ -677,9 +677,10 @@ showImages(done.imageUrls ?? []);
   counts one unit per step, and a `repeat` step one per iteration instead.
 - **No inline media** in a step `input` or in `arguments` — here or in a
   pass-through `kind: 'step'` body's `input`: no `data:image|video|audio` URI
-  and no raw base64 string of 4096+ characters, at any depth. Upload the file
-  with `useImageUpload({ purpose: 'generationSource' })` (or pick it with
-  `useImagePicker()`) and pass the returned `url`. A body holding more than
+  and no raw base64 string of 4096+ characters, at any depth. Upload the image,
+  video or audio with [`useMediaUpload()`](#usemediaupload) (an image also works
+  with `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`)
+  and pass the returned `url`. A body holding more than
   262144 values in those fields is refused outright. `createMockHost` refuses
   both as the host does, naming the path.
 - `suppressOutput: true` marks an intermediate step. Its images are left out of
