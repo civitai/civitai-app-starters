@@ -110,11 +110,17 @@ civitai-toast-region {
   height: 100%;
 }
 
+/* An implicit column sizes to its widest content, so a long title once widened the whole chat past a phone. */
 .cvt-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   height: 100%;
+}
+
+.cvt-main > * {
+  min-width: 0;
 }
 
 .cvt-main::part(overlay) {
