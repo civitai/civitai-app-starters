@@ -1317,16 +1317,18 @@ optimistically, and puts it back on failure. It rejects with a `ReactionError`:
 | `err.code === 'entity-unavailable'` | no valid ticket, an image the viewer may not react to, the kill switch, or a network failure | retry later or give up |
 | `err.code` otherwise | `invalid-request` / `review-mode` / `not-ready` | a block bug, a review sandbox, or retry after `ready` |
 | `err.timedOut` | no reply within 30s | the write **may** have landed; the hook re-reads that image |
-| `err.busy` | the same image and reaction already has a request in flight | disable the control while `pending(id, reaction)` |
+| `err.busy` | the same image and reaction already has a request in flight. Rejects the call only: `error` is not set, because the write it collided with is still running | disable the control while `pending(id, reaction)` |
 
 🔴 **Bind `<civitai-reaction>` from `byId` on every render; never let it keep
 its own state.** The element flips `reacted` and `count` itself on a click. When
 the hook makes no optimistic move of its own (an image not read yet, or a
 refusal such as a missing ticket), `byId` does not change, so an element that
 only listens would keep showing a reaction that does not exist. Every rejected
-`toggle` sets `error`, so the owner re-renders; an element whose `reacted` and
-`count` come from `byId` on each render is then put back. Outside React, set
-the two properties back yourself after a rejection.
+`toggle` re-renders the owner: a refusal or a failed write sets `error`, and a
+`busy` refusal is followed by the in-flight write's own settle, which clears
+`pending`. An element whose `reacted` and `count` come from `byId` on each
+render is then put back. Outside React, set the two properties back yourself
+after a rejection.
 
 ```tsx
 import { useEffect, useState } from 'react';

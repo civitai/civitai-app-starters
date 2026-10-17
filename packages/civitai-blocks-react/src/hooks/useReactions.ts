@@ -193,8 +193,10 @@ function withReaction(
  * every call rejects with `needs-consent` (`.needsConsent`), which is the cue
  * for `useRequestConsent()`. There is no per-tap confirm.
  *
- * Reads `ids` on mount and whenever `ids`, `entityType` or their tickets change,
- * in chunks of 100. Image is the only entity type the host accepts today.
+ * Reads `ids` on mount in chunks of 100, then reads only what needs it: an id
+ * added to `ids`, or one whose ticket changed. Changing `entityType` re-reads
+ * nothing (image is the only type the host accepts today). After a write fails,
+ * an image is read again if the write timed out or the image has no state.
  *
  * @example
  * const { byId, toggle, pending } = useReactions('image', images.map((i) => i.id), {
@@ -320,10 +322,13 @@ export function useReactions(
             return { byId, unavailable };
           });
         } catch (err: unknown) {
-          // A failed read leaves its images unread, so the next pass retries them.
-          for (const id of chunk) {
-            if (latestReadAt.current.get(id) === issuedAt) readWithTicket.current.delete(id);
-          }
+          // Only the LATEST read for an image speaks for it (rule 3 again): a
+          // failed one leaves the image unread, so the next pass retries it,
+          // and reports the failure. An older read failing after a newer one
+          // answered does neither.
+          const current = chunk.filter((id) => latestReadAt.current.get(id) === issuedAt);
+          for (const id of current) readWithTicket.current.delete(id);
+          if (current.length === 0) continue;
           const wrapped =
             err instanceof ReactionError
               ? err
@@ -365,9 +370,10 @@ export function useReactions(
         const busy = new ReactionError(`a ${reaction} on ${entityType} ${id} is already in flight`, {
           busy: true,
         });
-        // Recorded like every other failure, so the owner re-renders and an
-        // element bound to `byId` is rewritten over its own optimistic flip.
-        if (mountedRef.current) setError(busy);
+        // Rejects the CALL only; the hook-level `error` is left alone. A busy
+        // refusal is not an outcome of the image: the write it collided with
+        // is still running, and its settle re-renders the owner (it clears
+        // `pending`), which is what rewrites a bound element.
         throw busy;
       }
       const ticket = ticketsRef.current[id];
@@ -380,6 +386,7 @@ export function useReactions(
       }
 
       inFlight.current.add(key);
+      let reread = false;
       clock.current += 1;
       writeStartedAt.current.set(id, clock.current);
       // Optimistic only when the state is known and the request would change
@@ -452,6 +459,10 @@ export function useReactions(
             });
           }
           setError(wrapped);
+          // A failed write leaves no truth behind it. Read the image again when
+          // the write may have landed (a timeout) or when there is no state to
+          // fall back on, which also covers a read discarded behind this write.
+          reread = wrapped.timedOut || storeRef.current.byId[id] === undefined;
         }
         // 🔴 Thrown even when unmounted: the caller's `await` is not the
         // component, and an unmount must not read as a success.
@@ -464,26 +475,12 @@ export function useReactions(
             next.delete(key);
             return next;
           });
+          // After the in-flight mark is gone, so the answer is not discarded.
+          if (reread) void readIds([id], readGeneration.current);
         }
       }
     },
-    [entityType],
-  );
-
-  // A timed-out write may have landed: re-read that image once the write has
-  // settled, so the view converges on the host's truth.
-  const toggleWithResync = useCallback<UseReactions['toggle']>(
-    async (id, reaction, reacted) => {
-      try {
-        return await toggle(id, reaction, reacted);
-      } catch (err) {
-        if (err instanceof ReactionError && err.timedOut && mountedRef.current) {
-          void readIds([id], readGeneration.current);
-        }
-        throw err;
-      }
-    },
-    [toggle, readIds],
+    [entityType, readIds],
   );
 
   const pending = useCallback(
@@ -496,7 +493,7 @@ export function useReactions(
     unavailable: store.unavailable,
     loading: loadingCount > 0,
     error,
-    toggle: toggleWithResync,
+    toggle,
     pending,
   };
 }

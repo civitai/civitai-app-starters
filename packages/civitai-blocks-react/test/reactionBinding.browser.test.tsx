@@ -15,8 +15,9 @@ import { createMockHost, resetTransport, type MockHost } from '../src/testing.js
 //
 // The binding writes `reacted` / `count` from `byId` on EVERY render, and that
 // rewrite is what undoes the element's own flip. That every rejected `toggle`
-// re-renders its owner, including the refusals that never move `byId` (no
-// ticket, busy), is pinned in `useReactions.test.tsx`: each sets `error`.
+// re-renders its owner is pinned in `useReactions.test.tsx`: a no-ticket
+// refusal sets `error`; a busy refusal is followed by the in-flight write's
+// settle, which clears `pending`.
 
 const ORIGIN = window.location.origin;
 defineCivitaiReaction();

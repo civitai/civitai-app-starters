@@ -629,6 +629,90 @@ describe('useReactions', () => {
       expect(ids(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!)).toEqual([11, 12]);
     });
 
+    it('🔴 an unread image whose read was discarded behind a failed write is read again', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      const first = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!; // outstanding
+      let caught: unknown;
+      await act(async () => {
+        const p = result.current.toggle(11, 'Like', true).catch((e: unknown) => {
+          caught = e;
+        });
+        reply('ENTITY_REACTION_RESULT', {
+          requestId: sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!.payload.requestId,
+          error: 'rate-limited',
+        });
+        await p;
+      });
+      expect((caught as ReactionError).code).toBe('rate-limited');
+      answer(first, { '11': STATE_11 }); // discarded: the write started after it was sent
+      await new Promise((r) => setTimeout(r, 20));
+      rerender({ list: [11], t: TICKETS });
+      // The image has no state, so it must be read again and end up with some.
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS').length).toBeGreaterThan(1));
+      const again = sent(postMessageMock, 'GET_ENTITY_REACTIONS').slice(1);
+      expect(again.map(ids)).toEqual([[11]]);
+      answer(again[0]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toEqual(STATE_11));
+    });
+
+    it('a discarded answer does not flag an image the hook holds state for as unavailable', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toBeDefined());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.toggle(11, 'Like', true);
+      });
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      // Answered while the write is in flight: discarded, including its `unavailable`.
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!, {}, [11]);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.unavailable).toEqual([]);
+      okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!, { counts: counts(5, 1) });
+      await act(async () => {
+        await p;
+      });
+      expect(result.current.unavailable).toEqual([]);
+    });
+
+    it('a partly applied answer flags as unavailable only the images it applied to', async () => {
+      const { result } = grow([11, 12]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      const read = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!; // outstanding
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.toggle(11, 'Like', true);
+      });
+      // 11 has a write in flight, so its part of the answer is discarded; 12's applies.
+      answer(read, { '12': STATE_11 }, [11]);
+      await waitFor(() => expect(result.current.byId[12]).toBeDefined());
+      expect(result.current.unavailable).toEqual([]);
+      okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!, { counts: counts(5, 1) });
+      await act(async () => {
+        await p;
+      });
+    });
+
+    it('an OLDER read failing after a newer one answered neither re-queues the image nor sets error', async () => {
+      const { result, rerender } = grow([11]);
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
+      const older = sent(postMessageMock, 'GET_ENTITY_REACTIONS')[0]!;
+      rerender({ list: [11], t: { 11: 'v1.211.sig-new' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(2));
+      answer(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[1]!, { '11': STATE_11 });
+      await waitFor(() => expect(result.current.byId[11]).toBeDefined());
+      reply('ENTITY_REACTIONS_RESULT', { requestId: older.payload.requestId, error: 'rate-limited' });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.error).toBeNull();
+      // Image 11 is still read with its current ticket: growing the list reads only 12.
+      rerender({ list: [11, 12], t: { 11: 'v1.211.sig-new', 12: 'v1.112.sig-b' } });
+      await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(3));
+      expect(ids(sent(postMessageMock, 'GET_ENTITY_REACTIONS')[2]!)).toEqual([12]);
+    });
+
     it('an older read answered after a newer one for the same image is discarded', async () => {
       const { result, rerender } = grow([11]);
       await waitFor(() => expect(sent(postMessageMock, 'GET_ENTITY_REACTIONS')).toHaveLength(1));
@@ -643,15 +727,21 @@ describe('useReactions', () => {
       expect(result.current.byId[11]!.counts.Like).toBe(9);
     });
 
-    it('a busy refusal is recorded as the error, so a bound element re-renders', async () => {
+    it('a busy refusal rejects the call but leaves no hook error once the write succeeds', async () => {
       const { result } = await mounted();
+      let busy: unknown;
       act(() => {
         void result.current.toggle(11, 'Like', true).catch(() => {});
       });
       await act(async () => {
-        await result.current.toggle(11, 'Like', false).catch(() => {});
+        await result.current.toggle(11, 'Like', false).catch((e: unknown) => {
+          busy = e;
+        });
       });
-      expect(result.current.error?.busy).toBe(true);
+      expect((busy as ReactionError).busy).toBe(true);
+      okWrite(sent(postMessageMock, 'SET_ENTITY_REACTION')[0]!, { counts: counts(5, 1) });
+      await waitFor(() => expect(result.current.pending(11, 'Like')).toBe(false));
+      expect(result.current.error).toBeNull();
     });
   });
 
