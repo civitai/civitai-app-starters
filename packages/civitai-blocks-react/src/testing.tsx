@@ -60,6 +60,8 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
+export { type MockReactionSeed } from './internal/mockHostReactions.js';
+
 export {
   fakeResourceSource,
   type FakeResourceCanned,

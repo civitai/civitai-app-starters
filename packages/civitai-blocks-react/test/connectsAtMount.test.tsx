@@ -73,6 +73,7 @@ const CASES: Record<string, HookCall> = {
   useNestedDocument: () => entry.useNestedDocument(),
   usePrepareTrainingDataset: () => entry.usePrepareTrainingDataset(),
   usePublishGenerationOutputs: () => entry.usePublishGenerationOutputs(),
+  useReactions: () => entry.useReactions('image', [], { tickets: {} }),
   useRequestConsent: () => entry.useRequestConsent(),
   useRequestSignIn: () => entry.useRequestSignIn(),
   useResourcePicker: () => entry.useResourcePicker(),

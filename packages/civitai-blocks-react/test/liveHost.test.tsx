@@ -848,6 +848,33 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it('SET_ENTITY_REACTION and GET_ENTITY_REACTIONS are REFUSED without any HTTP', async () => {
+    // The reaction procedures need the viewer's civitai.com SESSION and refuse a
+    // token as authentication, so there is nothing this harness could call.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('SET_ENTITY_REACTION', {
+      requestId: 'r-react',
+      entityType: 'image',
+      entityId: 7,
+      reaction: 'Like',
+      reacted: true,
+      ticket: 't',
+    });
+    const set = await waitForMessage(inbound, 'ENTITY_REACTION_RESULT');
+    expect(set).toEqual({ requestId: 'r-react', error: 'entity-unavailable' });
+
+    post('GET_ENTITY_REACTIONS', { requestId: 'r-read', entityType: 'image', ids: [7] });
+    const get = await waitForMessage(inbound, 'ENTITY_REACTIONS_RESULT');
+    expect(get).toEqual({ requestId: 'r-read', error: 'entity-unavailable' });
+
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');

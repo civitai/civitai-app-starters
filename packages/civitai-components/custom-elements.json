@@ -7350,6 +7350,15 @@
       "path": "src/elements/civitai-reaction.ts",
       "declarations": [
         {
+          "kind": "variable",
+          "name": "REACTION_KINDS",
+          "type": {
+            "text": "['Like', 'Heart', 'Laugh', 'Cry']"
+          },
+          "default": "['Like', 'Heart', 'Laugh', 'Cry']",
+          "description": "The reactions civitai.com lets an app set, and the values `reaction` accepts.\nMirrors `APP_REACTIONS` in `@civitai/app-sdk/blocks`; this package does not\ndepend on it."
+        },
+        {
           "kind": "class",
           "description": "",
           "name": "CivitaiReaction",
@@ -7409,6 +7418,18 @@
               "description": "Names the reaction for a screen reader, e.g. \"Like\".",
               "default": "''",
               "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "reaction",
+              "privacy": "public",
+              "type": {
+                "text": "ReactionKind | ''"
+              },
+              "description": "The reaction this element stands for: `Like`, `Heart`, `Laugh` or `Cry`.\nCarried in the `react` event's `detail.reaction`, and the accessible name\nwhen `label` is empty. Any other value is ignored, as if unset. `emoji`\nstays display only.",
+              "default": "''",
+              "attribute": "reaction",
               "reflects": true
             },
             {
@@ -7494,6 +7515,15 @@
               "description": "Names the reaction for a screen reader, e.g. \"Like\".",
               "default": "''",
               "fieldName": "label"
+            },
+            {
+              "name": "reaction",
+              "type": {
+                "text": "ReactionKind | ''"
+              },
+              "description": "The reaction this element stands for: `Like`, `Heart`, `Laugh` or `Cry`.\nCarried in the `react` event's `detail.reaction`, and the accessible name\nwhen `label` is empty. Any other value is ignored, as if unset. `emoji`\nstays display only.",
+              "default": "''",
+              "fieldName": "reaction"
             }
           ],
           "superclass": {
@@ -7533,6 +7563,14 @@
         }
       ],
       "exports": [
+        {
+          "kind": "js",
+          "name": "REACTION_KINDS",
+          "declaration": {
+            "name": "REACTION_KINDS",
+            "module": "src/elements/civitai-reaction.ts"
+          }
+        },
         {
           "kind": "js",
           "name": "CivitaiReaction",

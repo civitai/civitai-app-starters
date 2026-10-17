@@ -144,6 +144,14 @@ export {
 } from './hooks/useCollectionFollow.js';
 export type { UseCollectionFollow } from './hooks/useCollectionFollow.js';
 export {
+  useReactions,
+  ReactionError,
+  REACTIONS,
+  REACTION_ERROR_CODES,
+  isReactionErrorCode,
+} from './hooks/useReactions.js';
+export type { UseReactions, UseReactionsOptions } from './hooks/useReactions.js';
+export {
   useCreatePostFromApp,
   CreatePostError,
   CREATE_POST_ERROR_CODES,
@@ -210,6 +218,14 @@ export type {
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
   BlockCollectionFollowResult,
+  BlockAppReaction,
+  BlockStoredReaction,
+  BlockReactionEntityType,
+  BlockEntityReactionErrorCode,
+  BlockReactionCounts,
+  BlockEntityReactionState,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export type { UseCheckpointPicker } from './hooks/useCheckpointPicker.js';

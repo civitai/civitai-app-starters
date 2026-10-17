@@ -123,6 +123,8 @@ const TESTING_TYPES = [
   'MockHostFailMode',
   'MockHostOptions',
   'MockHostScenarioPatch',
+  // The value type of `MockHostOptions.reactionStates`.
+  'MockReactionSeed',
   'MockSharedScenario',
   'MockSharedSeed',
   'MockStorageScenario',

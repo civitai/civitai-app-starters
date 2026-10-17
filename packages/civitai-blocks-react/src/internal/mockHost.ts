@@ -72,6 +72,7 @@ import {
   type BlockImagePickerSource,
   type BlockPickedImageInfo,
   type BlockCollectionFollowErrorCode,
+  type BlockEntityReactionErrorCode,
   type BlockCreatePostHostError,
   type BlockCreatePostResult,
   type BlockPrepareTrainingDatasetHostError,
@@ -128,6 +129,11 @@ import {
   STEP_QUOTE_ID_PATTERN,
 } from '../hooks/useRunConfirmedStep.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
+import {
+  createMockReactions,
+  REACTION_SCOPE,
+  type MockReactionSeed,
+} from './mockHostReactions.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -1326,6 +1332,29 @@ export interface MockHostOptions {
    */
   collectionFollowError?: BlockCollectionFollowErrorCode | string;
   /**
+   * The images `GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION` know, keyed by
+   * image id: counts and the viewer's existing reactions. An id that is not
+   * seeded starts with zero counts and no reactions. Writes persist for the
+   * life of the mock. Live-tunable via {@link MockHost.setScenario} (a new seed
+   * REPLACES the state).
+   *
+   * 🔴 BOTH MESSAGES ARE SCOPE-GATED HERE, as on the real host: unless
+   * {@link MockHostOptions.declaredScopes} includes `social:react:self`, every
+   * call replies `needs-consent`. A `null` {@link MockHostOptions.viewer}
+   * replies `sign-in-required`. Any well-formed ticket is accepted — a real one
+   * is an HMAC this mock cannot verify — but an image WITHOUT one is refused,
+   * as production refuses it. See `./mockHostReactions.ts`.
+   */
+  reactionStates?: Record<number, MockReactionSeed>;
+  /**
+   * Force both reaction messages to reply with this `error` once the request
+   * would otherwise proceed — one of `REACTION_ERROR_CODES` (`rate-limited`,
+   * `entity-unavailable`, `review-mode`, `not-ready`…) or any string for a code
+   * a newer host might add. Absent → the request succeeds. Live-tunable via
+   * {@link MockHost.setScenario}; pass `null` there to clear it.
+   */
+  reactionError?: BlockEntityReactionErrorCode | string | null;
+  /**
    * The post reported on `CREATE_POST_FROM_APP` (what
    * `useCreatePostFromApp().createPost()` resolves with). Absent →
    * {@link DEFAULT_CREATE_POST_RESULT}. Ignored when {@link createPostError} is
@@ -1763,6 +1792,8 @@ export type MockHostScenarioPatch = Pick<
   | 'wildcardPack'
   | 'wildcardPackError'
   | 'collectionFollowError'
+  | 'reactionStates'
+  | 'reactionError'
   | 'createPostResult'
   | 'createPostError'
   | 'trainingDatasetRejected'
@@ -2573,6 +2604,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // survived review. There is no READ op on this bridge for such a map to feed,
   // so the honest shape is not to offer one.
   let collectionFollowError: string | undefined = options.collectionFollowError;
+  // App reactions: per-image state + a forced-error knob, owned by
+  // `./mockHostReactions.ts`. The scope test is PRESENCE in the manifest's
+  // declared scopes, the same set the storage gate reads.
+  const reactionScopeDeclared = (options.declaredScopes ?? []).includes(REACTION_SCOPE);
+  const reactions = createMockReactions({
+    seed: options.reactionStates,
+    error: options.reactionError ?? undefined,
+    signedIn: () => viewer !== null,
+    hasScope: () => reactionScopeDeclared,
+  });
   // App Blocks → Post bridge: the canned post + a forced-refusal knob.
   let createPostResult: BlockCreatePostResult =
     options.createPostResult ?? DEFAULT_CREATE_POST_RESULT;
@@ -4210,6 +4251,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'SET_ENTITY_REACTION': {
+            // App reactions. Every path with a routable requestId replies exactly
+            // once; the decision order is the real host's (see
+            // `./mockHostReactions.ts`).
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'ENTITY_REACTION_RESULT',
+              payload: { requestId, ...reactions.set(typed.payload) },
+            });
+            return;
+          }
+
+          case 'GET_ENTITY_REACTIONS': {
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'ENTITY_REACTIONS_RESULT',
+              payload: { requestId, ...reactions.get(typed.payload) },
+            });
+            return;
+          }
+
           case 'CREATE_POST_FROM_APP': {
             // Publish a REAL Post on the viewer's profile from the app's own
             // outputs. Drop a request with no requestId (unroutable) — same as
@@ -5402,6 +5464,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
     if (patch.collectionFollowError !== undefined)
       collectionFollowError = patch.collectionFollowError;
+    if (patch.reactionStates !== undefined || patch.reactionError !== undefined) {
+      reactions.configure({ seed: patch.reactionStates, error: patch.reactionError });
+    }
     if (patch.createPostResult !== undefined) createPostResult = patch.createPostResult;
     if (patch.createPostError !== undefined) createPostError = patch.createPostError;
     if (patch.trainingDatasetRejected !== undefined) {

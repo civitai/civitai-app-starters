@@ -92,6 +92,7 @@ const HOOK_FILES = [
   'useNestedDocument',
   'usePrepareTrainingDataset',
   'usePublishGenerationOutputs',
+  'useReactions',
   'useRequestConsent',
   'useRequestSequencer',
   'useRequestSignIn',

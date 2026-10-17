@@ -45,6 +45,13 @@ import type {
   WorkflowBodyTraining,
   WorkflowBodyPassThroughStep,
 } from './types.js';
+import type {
+  BlockAppReaction,
+  BlockEntityReactionErrorCode,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
+  BlockReactionEntityType,
+} from './reactions.js';
 
 // ============================================================
 // Buzz self-read request params (block → parent)
@@ -827,6 +834,41 @@ export type ParentToBlockMessage =
         requestId: string;
         result?: BlockCollectionFollowResult;
         error?: BlockCollectionFollowErrorCode | string;
+      };
+    }
+  | {
+      // Reply to SET_ENTITY_REACTION. Exactly ONE of `result` / `error` is
+      // present, and the host replies EXACTLY ONCE on every path that has a
+      // usable `requestId` (civitai's `createReactionReplyLatch`).
+      //
+      // `error` is one of the CLOSED {@link BlockEntityReactionErrorCode} set:
+      // unlike COLLECTION_FOLLOW_RESULT, the host maps every server failure onto
+      // a code rather than forwarding its text. It is typed `| string` all the
+      // same, and the transport validator checks only its shape, so a code a
+      // NEWER host adds reaches the block as a rejection instead of being
+      // dropped into a 30-second timeout.
+      //
+      // 🔴 `result.reacted` IS THE TRUTH, NOT AN ECHO. It is read back on the
+      // primary after the write; when it differs from the request's `reacted`,
+      // a concurrent change won and this request did not apply. `result.counts`
+      // can lag it (an asynchronous metric store).
+      type: 'ENTITY_REACTION_RESULT';
+      payload: {
+        requestId: string;
+        result?: BlockEntityReactionResult;
+        error?: BlockEntityReactionErrorCode | string;
+      };
+    }
+  | {
+      // Reply to GET_ENTITY_REACTIONS. Same exactly-once, one-of and closed-code
+      // contract as ENTITY_REACTION_RESULT. `result.byId` is keyed by the id AS
+      // A STRING (it crossed JSON); ids the host would not answer, for want of a
+      // valid ticket, are listed in `result.unavailable` and have no entry.
+      type: 'ENTITY_REACTIONS_RESULT';
+      payload: {
+        requestId: string;
+        result?: BlockEntityReactionsResult;
+        error?: BlockEntityReactionErrorCode | string;
       };
     }
   | {
@@ -1961,6 +2003,62 @@ export type BlockToParentMessage =
         /** `true` ⇒ follow, `false` ⇒ unfollow. */
         follow: boolean;
       };
+    }
+  | {
+      // Set the VIEWER'S reaction on an image a block endpoint served this app,
+      // replying with ENTITY_REACTION_RESULT. Scope `social:react:self`.
+      //
+      // 🔴 THERE IS NO PER-TAP CONFIRM, ON PURPOSE. The consent is the
+      // consent-gated scope grant, made once per app; a host without it refuses
+      // `needs-consent` before any network call, and the server refuses again if
+      // a host ever forgot to. So the reply is a protocol round-trip
+      // (`'protocol'` in `@civitai/blocks-react`'s `requestTimeouts.ts`), not a
+      // wait on a person.
+      //
+      // A DESIRED STATE, not a toggle: `reacted: true` on an image the viewer
+      // already reacted to writes nothing and pays nothing.
+      //
+      // 🔴 `ticket` IS OPTIONAL ON THE WIRE AND REQUIRED IN PRACTICE. It is the
+      // `reactTicket` the block endpoint attached to this image when it served
+      // it (`GET /api/v1/blocks/images`, `/gated-images`, a collection's
+      // images), signed for this app and this viewer for 24 hours. The server
+      // refuses an image without a valid one (`entity-unavailable`), and does so
+      // AFTER its rate limit, so an unticketed write still spends one of the
+      // viewer's reactions.
+      type: 'SET_ENTITY_REACTION';
+      payload: {
+        requestId: string;
+        entityType: BlockReactionEntityType;
+        /** Positive integer. A numeric STRING is refused, never coerced. */
+        entityId: number;
+        /** One of `APP_REACTIONS`. `Dislike` is refused as `invalid-request`. */
+        reaction: BlockAppReaction;
+        /** `true` ⇒ the reaction exists afterwards; `false` ⇒ it does not. */
+        reacted: boolean;
+        /** 1 to `REACT_TICKET_MAX_LENGTH` characters. */
+        ticket?: string;
+      };
+    }
+  | {
+      // Read counts and the viewer's own reactions for up to
+      // `REACTION_READ_MAX_IDS` images, replying with ENTITY_REACTIONS_RESULT.
+      // Same scope, same refusals and the same no-confirm contract as
+      // SET_ENTITY_REACTION.
+      //
+      // 🔴 TICKETED, LIKE THE WRITE. Which images a viewer reacted to is visible
+      // on the site only to each image's owner, so an id without a valid ticket
+      // is not answered: it comes back in `result.unavailable`, never as an
+      // empty `viewerReactions`. Tickets for ids not in `ids` are discarded by
+      // the host.
+      type: 'GET_ENTITY_REACTIONS';
+      payload: {
+        requestId: string;
+        entityType: BlockReactionEntityType;
+        /** 1 to `REACTION_READ_MAX_IDS` positive integers. Duplicates are collapsed. */
+        ids: number[];
+        /** A ticket per id, keyed by the id as a string. */
+        tickets?: Record<string, string>;
+      };
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];
@@ -2059,6 +2157,8 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'SHARED_REPORT',
   'SAVE_IMAGE',
   'SET_COLLECTION_FOLLOW',
+  'SET_ENTITY_REACTION',
+  'GET_ENTITY_REACTIONS',
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

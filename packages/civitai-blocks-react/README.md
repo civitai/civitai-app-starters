@@ -1273,6 +1273,62 @@ async function toggle() {
 Most blocks want `<FollowButton>` from `@civitai/blocks-react/ui` instead, which
 wires all of the above.
 
+### `useReactions(entityType, ids, { tickets })`
+
+Read and set the **viewer's** reactions on images this app was served, over
+`GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION`. Returns
+`{ byId, unavailable, loading, error, toggle, pending, refresh }`.
+
+A reaction made here **is** a reaction on civitai.com: it pays the reactor and
+the image owner exactly as the site's own button does, moves rankings, notifies,
+and lists the viewer among the reactors. It draws on the **same** per-viewer
+quota as the site. Apps may set `Like`, `Heart`, `Laugh` and `Cry`; never
+`Dislike`. Image is the only entity type today.
+
+🔴 **Scope `social:react:self`: consent-gated and sensitive.** Declare it with a
+`scopeJustifications` entry. Until the viewer grants it, every call fails with
+`needs-consent` (`err.needsConsent`): ask with `useRequestConsent()`. There is
+no per-tap confirm.
+
+🔴 **Tickets are required.** Each image a block endpoint serves
+(`/api/v1/blocks/images`, `/gated-images`, a collection's images) carries a
+`reactTicket`, signed for this app and this viewer for 24 hours. Pass them as
+`tickets`, keyed by image id. An image without a valid one is not answered by
+the read (it lands in `unavailable`, which is **not** "not reacted") and a
+`toggle` on it is refused locally, before anything is sent.
+
+`toggle(id, reaction, reacted)` sets a **desired state**, moves `byId[id]`
+optimistically, and puts it back on failure. It rejects with a `ReactionError`:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.needsConsent` | the scope is not granted | `useRequestConsent()` |
+| `err.code === 'rate-limited'` | the viewer's reaction quota is spent | back off |
+| `err.code === 'entity-unavailable'` | no valid ticket, an image the viewer may not react to, the kill switch, or a network failure | retry later or give up |
+| `err.code` otherwise | `invalid-request` / `review-mode` / `not-ready` | a block bug, a review sandbox, or retry after `ready` |
+| `err.timedOut` | no reply within 30s | the write **may** have landed; the hook re-reads that image |
+| `err.busy` | the same image and reaction already has a request in flight | disable the control while `pending(id, reaction)` |
+
+```tsx
+// Each image as a block endpoint served it, with its `reactTicket`.
+const images: { id: number; reactTicket?: string }[] = await loadImages();
+
+const { byId, toggle, pending } = useReactions(
+  'image',
+  images.map((image) => image.id),
+  { tickets: Object.fromEntries(images.map((image) => [image.id, image.reactTicket])) },
+);
+
+const liked = byId[imageId]?.viewerReactions.includes('Like') ?? false;
+await toggle(imageId, 'Like', !liked);
+```
+
+`<ReactionBar id={imageId} reactions={useReactionsResult} />` from
+`@civitai/blocks-react/ui` renders one `<civitai-reaction>` per reaction and
+wires all of the above, including putting a button back after a refusal that
+never moved `byId`.
+
 ### `useCreatePostFromApp()`
 
 Publish a **real, published Post on the viewer's profile** from this app's own
@@ -3318,6 +3374,7 @@ MockHost
 MockHostFailMode
 MockHostOptions
 MockHostScenarioPatch
+MockReactionSeed
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario

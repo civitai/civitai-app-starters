@@ -57,6 +57,32 @@ export {
   APP_STORAGE_MAX_ROWS,
 } from './appStorageLimits.js';
 
+/**
+ * App reactions (`SET_ENTITY_REACTION` / `GET_ENTITY_REACTIONS`, scope
+ * `social:react:self`). The vocabulary mirrors civitai's
+ * `block-reaction.constants.ts`; see `reactions.ts`.
+ */
+export {
+  APP_REACTIONS,
+  STORED_REACTIONS,
+  REACTION_ENTITY_TYPES,
+  REACTION_READ_MAX_IDS,
+  REACT_TICKET_MAX_LENGTH,
+  ENTITY_REACTION_ERROR_CODES,
+  isEntityReactionErrorCode,
+  isAppReaction,
+} from './reactions.js';
+export type {
+  BlockAppReaction,
+  BlockStoredReaction,
+  BlockReactionEntityType,
+  BlockEntityReactionErrorCode,
+  BlockReactionCounts,
+  BlockEntityReactionState,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
+} from './reactions.js';
+
 export {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH,
