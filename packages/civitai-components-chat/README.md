@@ -554,9 +554,12 @@ characters of the response body. The viewer sees a one-line summary of it under 
 saved with the conversation.
 
 A reply cut off because the browser dropped its connection (it aborts every request in flight when
-the network changes, e.g. the address changes) is not a failure yet: the chat asks again by itself, up
-to twice, after a short wait (and, when the browser says it is offline, until it is back online, at
-most 15 s). It resumes from the last step that finished, so tools that already ran are not called
+the network changes, e.g. the address changes) is not a failure yet: the chat asks again by itself,
+up to three times for one drop, after 1.5 s, 4 s and 8 s (and, when the browser says it is offline,
+until it is back online, at most 15 s). The first wait is past the second drop a browser makes about
+a second after a network change. Each drop gets its own three tries once a step has finished after a
+retry, so a long reply lives through several network changes; one reply retries at most 10 times in
+all, so a network that keeps dropping still ends it. It resumes from the last step that finished, so tools that already ran are not called
 again and words already kept are not repeated; the cut step's words are replaced by its new answer.
 If any tool call comes from the cut step before its stream ends (even after the error), it is not
 asked again, so no tool can run twice; a reply that then fails keeps every step that finished, with

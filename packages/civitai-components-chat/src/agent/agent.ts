@@ -9,7 +9,7 @@ import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
-import { isNetworkDrop, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
+import { isNetworkDrop, MAX_NETWORK_RETRIES_PER_REPLY, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
 import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
@@ -58,10 +58,12 @@ export interface AgentDeps {
   describeError?(error: unknown): HumanError;
   now?(): Date;
   /**
-   * The wait before each automatic retry of a reply the browser's network cut off (see
-   * `network-retry.ts`); its length is how many retries a reply gets, and `[]` turns them off.
+   * The wait before each automatic retry of one drop of the browser's network (see
+   * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
    */
   networkRetryDelaysMs?: readonly number[];
+  /** The most automatic retries one reply makes in all; `MAX_NETWORK_RETRIES_PER_REPLY` unless set. */
+  maxNetworkRetries?: number;
 }
 
 /** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
@@ -69,7 +71,7 @@ export interface AgentErrorDetail extends HumanError {
   trace: ErrorTrace;
 }
 
-/** What the agent's `network-retry` event carries: which retry this is (from 1), and where the reply was cut. */
+/** What the agent's `network-retry` event carries: which retry of the reply this is (from 1), and where the reply was cut. */
 export interface AgentRetryDetail {
   attempt: number;
   trace: ErrorTrace;
@@ -154,13 +156,18 @@ export class Agent extends EventTarget {
       const model = this.#deps.model();
       const maxOutputTokens = outputTokenCap(this.#deps.maxOutputTokens?.());
       const retryDelays = this.#deps.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
+      const retryCap = this.#deps.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
+      // Retries of the drop now being recovered from (reset once a step finishes, i.e. the connection
+      // came back), and of the whole reply.
+      let retriesThisDrop = 0;
+      let retriesInReply = 0;
       // Counted from the steps that started, not from what they said: a last step that returns nothing
       // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
       let forcedAt = -1;
       // One pass per attempt. A pass the browser's network cut off resumes from the last step that
       // finished: those steps' messages (and every tool they ran) are sent as they are and not asked
       // for again; only the step that was cut is asked for again.
-      for (let attempt = 0; ; attempt++) {
+      for (;;) {
         const resumeFrom = completed;
         const before = finished;
         // What the viewer was shown up to the step now being asked for.
@@ -207,6 +214,8 @@ export class Agent extends EventTarget {
               streaming = false;
               stepOpen = false;
               since = Date.now();
+              // A step that finished with no error came back from any drop: the next drop gets its own retries.
+              if (streamError === undefined) retriesThisDrop = 0;
               // A step that finished before any error is kept as it is: what it showed and the tools it
               // called are not cut.
               shownBeforeStep = this.live?.parts.length ?? 0;
@@ -238,8 +247,11 @@ export class Agent extends EventTarget {
         // made. (A provider may follow an error part with a call and a tool-calls finish, which ai 6
         // runs.) A failed reply keeps every step that finished, after the error too: one that ran a tool
         // keeps its call and result.
-        if (attempt >= retryDelays.length || callsInStep > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
-        this.#retrying(turn, attempt + 1, errorTrace(streamError, failedAt ?? where()));
+        if (retriesThisDrop >= retryDelays.length || retriesInReply >= retryCap || callsInStep > 0 || atCut.finished >= maxSteps || !isNetworkDrop(streamError)) break;
+        const wait = retryDelays[retriesThisDrop]!;
+        retriesThisDrop++;
+        retriesInReply++;
+        this.#retrying(turn, retriesInReply, errorTrace(streamError, failedAt ?? where()));
         // What the cut step showed goes, with any step closed after the error (none called a tool); the
         // step asked for again shows its own answer.
         this.live?.parts.splice(atCut.shown);
@@ -250,7 +262,7 @@ export class Agent extends EventTarget {
         stepText = '';
         stepOpen = false;
         this.#emit();
-        await pauseBeforeRetry(retryDelays[attempt]!, controller.signal);
+        await pauseBeforeRetry(wait, controller.signal);
         if (controller.signal.aborted) break;
         since = Date.now();
       }
