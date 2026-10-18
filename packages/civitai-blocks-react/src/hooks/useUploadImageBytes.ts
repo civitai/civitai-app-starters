@@ -71,7 +71,7 @@ export interface UseUploadImageBytes {
  *   scope, so ask for it first with `useRequestConsent()`: the upload runs
  *   before any `useCreatePostFromApp()` call that would otherwise prompt.
  * - **Images only:** PNG, WebP or JPEG by magic bytes. The cap is 40 MiB, and
- *   the host also allows at most 3 uploads and 80 MiB per 60 s per page.
+ *   the host also allows at most 8 uploads and 80 MiB per 60 s per page.
  * - The buffer is COPIED across `postMessage`, never transferred, so the block
  *   can keep displaying it. Pass an `ArrayBuffer` (`await blob.arrayBuffer()`),
  *   not a `Blob` or a typed array, which the host refuses.

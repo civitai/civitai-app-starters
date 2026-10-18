@@ -2253,7 +2253,7 @@ render), with no picker, so the app can then post it. Returns `{ upload }`.
   sniffed type, whatever `filename` says.
 - **The cap is 40 MiB.** The hook refuses a larger buffer before sending it,
   with the host's error `file exceeds the maximum upload size`. The host also
-  allows at most 3 uploads and 80 MiB per 60 seconds per page, and replies
+  allows at most 8 uploads and 80 MiB per 60 seconds per page, and replies
   `busy` past that.
 - **The upload is blocking.** The host replies once the image is scanned, so
   allow for a wait of up to a few minutes. An image above the SFW ceiling or
