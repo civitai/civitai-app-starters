@@ -217,6 +217,10 @@ export class CivitaiChat extends LitElement {
   #leaving?: string;
   /** What `can-send-change` last said, so each change is announced once. */
   #announcedCanSend = false;
+  /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
+  #sessionFor?: AppClient | ChatBackend;
+  /** A send the chat took and has not yet handed to the agent (it may be asking for the viewer's grant). */
+  #sending = false;
 
   constructor() {
     super();
@@ -275,8 +279,10 @@ export class CivitaiChat extends LitElement {
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
 
-  // Everything `canSend` reads re-renders the chat when it changes (the session starting, `holdReason`,
-  // a reply starting or ending, a server's listing starting or ending), so this sees every change.
+  // Each change `canSend` reads either re-renders the chat (the session starting, `holdReason`, a reply
+  // starting or ending, a server's listing ending, a chat opening, a send being taken) or happens inside
+  // an update before this runs (a server's listing starting, in `willUpdate` or `#start`; a new `app` or
+  // `backend` while its session starts), so this sees every change.
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     const canSend = this.canSend;
@@ -382,10 +388,11 @@ export class CivitaiChat extends LitElement {
   }
 
   /**
-   * Whether `send()` now would send: the chat has started, no reply is running and nothing holds it
-   * (`holdReason`, or an added server still listing its tools). `can-send-change` fires each time this
-   * changes. The page's own `before-send` can still cancel the message, and a viewer who has not let
-   * the chat use their Buzz is asked first.
+   * Whether `send()` now would send: the chat has started (and is not starting again for a new `app`
+   * or `backend`), no reply is running, no other message is on its way, and nothing holds it
+   * (`holdReason`, a saved chat still opening, or an added server still listing its tools).
+   * `can-send-change` fires each time this changes. The page's own `before-send` can still cancel the
+   * message, and a viewer who has not let the chat use their Buzz is asked first.
    */
   get canSend(): boolean {
     const session = this.#session;
@@ -445,6 +452,7 @@ export class CivitaiChat extends LitElement {
     const { settings } = session;
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
+    this.#sessionFor = source;
     this.modelList = null;
     this.#models = new ModelDirectory(session.app.site, () => session.settings.allowMature);
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
@@ -839,17 +847,24 @@ export class CivitaiChat extends LitElement {
     ></civitai-chat-model-picker>`;
   }
 
-  /** Why nothing may be sent right now: the page's `holdReason`, or an added server still listing its tools. */
+  /**
+   * Why nothing may be sent right now: the page's `holdReason`, a saved chat still opening (until then the
+   * chat being left is the open one), or an added server still listing its tools.
+   */
   #held(session: ChatSession | undefined): string | undefined {
     const reason = this.holdReason?.trim();
     if (reason) return reason;
+    if (this.loading) return 'Opening this chat…';
     const listing = session?.mcpServers.listing ?? [];
     return listing.length ? `Connecting to ${listing.map((server) => server.label?.trim() || server.id).join(', ')}…` : undefined;
   }
 
-  /** Why a send goes nowhere, with no message kept: a reply is still running, or there is no one to send as. */
+  /**
+   * Why a send goes nowhere, with no message kept: a reply is still running, another send is on its way
+   * to the agent, a new session is starting in this one's place, or there is no one to send as.
+   */
   #busy(session: ChatSession): boolean {
-    return session.agent.running || (!session.backend && !this.app);
+    return session.agent.running || this.#sending || this.#sessionFor !== this.#startedWith || (!session.backend && !this.app);
   }
 
   async #send(text: string): Promise<void> {
@@ -864,23 +879,32 @@ export class CivitaiChat extends LitElement {
       if (composer && !composer.draft) composer.draft = text;
       return;
     }
-    if (app && !(await this.#ensureAiGrant(app))) {
-      const composer = await this.#composer();
-      if (composer && !composer.draft) composer.draft = text;
-      this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
-      return;
-    }
-    // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
-    // the files and earlier results added to it stay for the next message.
-    if (!this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail: { text }, bubbles: true, composed: true, cancelable: true }))) return;
-    const uploads = this.uploads.filter((upload) => upload.attachment);
-    const refs = this.refs.map((ref) => ref.id);
-    this.uploads = [];
-    this.refs = [];
+    // Taken: until the agent has it (past the grant, which may wait on the viewer), another send would be
+    // lost, so `canSend` says no.
+    this.#sending = true;
+    this.requestUpdate();
     try {
-      await session.send(text, uploads, refs);
-    } catch (error) {
-      this.#toast('That message did not go through.', error);
+      if (app && !(await this.#ensureAiGrant(app))) {
+        const composer = await this.#composer();
+        if (composer && !composer.draft) composer.draft = text;
+        this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
+        return;
+      }
+      // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
+      // the files and earlier results added to it stay for the next message.
+      if (!this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail: { text }, bubbles: true, composed: true, cancelable: true }))) return;
+      const uploads = this.uploads.filter((upload) => upload.attachment);
+      const refs = this.refs.map((ref) => ref.id);
+      this.uploads = [];
+      this.refs = [];
+      try {
+        await session.send(text, uploads, refs);
+      } catch (error) {
+        this.#toast('That message did not go through.', error);
+      }
+    } finally {
+      this.#sending = false;
+      this.requestUpdate();
     }
   }
 
