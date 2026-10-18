@@ -352,6 +352,27 @@ once per change; reloading the chat already open, or deleting another one, fires
 chat.addEventListener('chat-change', (e) => restoreFor(e.detail.chatId));
 ```
 
+### What is in the message box
+
+Two read-only properties tell the page what the viewer has in the message box, signed in or out,
+without reaching into the chat's shadow root:
+
+- `chat.draft` is the text in the message box now: what the viewer typed, or what `compose(text)`
+  (or an example) put there. It is `''` while the chat has no message box, e.g. before it is on the
+  page or while it is still starting. No event fires as it changes; read it when you need it.
+- `chat.dictating` is `true` from the moment the viewer starts talking into the microphone until
+  what they said has been added to the end of `draft` (or sent, with "Send what you said", or thrown
+  away). That takes in the recording, the moment after they stop while the recorder hands over their
+  last words, and turning it all into text. Meanwhile the box is hidden behind the recording or
+  transcribing bar (but for that moment) and `draft` is what it held before; once `dictating` is
+  `false` again the words are in `draft`. A chat on a host `backend` has no microphone, so it is
+  always `false` there, as it is signed out.
+
+```ts
+// Keep what the viewer was writing when the page navigates away, unless words are still on their way.
+if (!chat.dictating && chat.draft) saveDraft(chat.chatId, chat.draft);
+```
+
 ### The empty chat
 
 An empty chat greets the viewer and offers a few examples to start from: making a picture, changing a

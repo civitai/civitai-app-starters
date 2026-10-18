@@ -343,6 +343,27 @@ export class CivitaiChat extends LitElement {
     return this.#session?.store.current?.id ?? null;
   }
 
+  /**
+   * The text in the message box now: what the viewer typed, or what `compose()` (or an example) put
+   * there. `''` while the chat has no message box, e.g. before it is on the page. Signed in or out.
+   */
+  get draft(): string {
+    const draft = this.#composerNow()?.draft;
+    return typeof draft === 'string' ? draft : '';
+  }
+
+  /**
+   * Whether the viewer is dictating: true from the moment they start talking until what they said has
+   * been joined to the end of `draft` (or sent, with "Send what you said", or thrown away). That covers
+   * recording, the moment after they stop while the recorder hands over their last words, and turning
+   * it all into text. Meanwhile the message box is hidden behind the recording or transcribing bar (but
+   * for that moment), and `draft` is what it held before; the words are in `draft` by the time this is
+   * false again.
+   */
+  get dictating(): boolean {
+    return this.#voice !== undefined;
+  }
+
   #announceChat(): void {
     const chatId = this.chatId;
     if (chatId === this.#announcedChat) return;
@@ -471,7 +492,12 @@ export class CivitaiChat extends LitElement {
 
   async #composer(): Promise<CivitaiChatComposer | null> {
     await this.updateComplete;
-    return this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer');
+    return this.#composerNow();
+  }
+
+  /** The message box as rendered now; `null` before the chat has a render root or a box. */
+  #composerNow(): CivitaiChatComposer | null {
+    return this.renderRoot?.querySelector<CivitaiChatComposer>('civitai-chat-composer') ?? null;
   }
 
   async #open(id: string, announce = true): Promise<void> {
@@ -604,7 +630,7 @@ export class CivitaiChat extends LitElement {
       if (this.#voice !== voice) return;
       this.heard = voice.text;
       // The server stopped listening (a long pause); what it heard goes in the box.
-      if (live && !voice.pending && !voice.canceled) this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer')?.stopListening();
+      if (live && !voice.pending && !voice.canceled) this.#composerNow()?.stopListening();
     };
     const voice: VoiceTranscript = live ? session.liveTranscript(changed) : new LiveTranscript((recording, signal) => session.transcribe(recording, signal), changed);
     this.#voice = voice;
@@ -621,7 +647,7 @@ export class CivitaiChat extends LitElement {
   async #voiceDone(send: boolean): Promise<void> {
     const voice = this.#voice;
     const session = this.#session;
-    const composer = this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer');
+    const composer = this.#composerNow();
     if (!voice || !session || !composer) return;
     voice.stop();
     this.transcribing = voice.pending;
