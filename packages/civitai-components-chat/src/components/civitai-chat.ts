@@ -543,7 +543,8 @@ export class CivitaiChat extends LitElement {
 
   async #open(id: string, announce = true): Promise<void> {
     const session = this.#session;
-    if (!session) return;
+    // The chat being deleted stays listed until its delete settles; picking it then is not a pick.
+    if (!session || id === this.#leaving) return;
     const ticket = ++this.#opening;
     this.loading = true;
     // Each pick opens at once, whatever is still loading: the stores drop an open that lands after a

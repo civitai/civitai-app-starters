@@ -672,6 +672,10 @@ describe('<civitai-chat> deleting the open chat, then picking another before the
     const deleteAnswered = new Promise<void>((resolve) => (answerDelete = resolve));
     let answerY!: () => void;
     const yAnswered = new Promise<void>((resolve) => (answerY = resolve));
+    // X's first open answers at once; any later one waits for the test.
+    let xOpens = 0;
+    let answerXAgain!: () => void;
+    const xAgainAnswered = new Promise<void>((resolve) => (answerXAgain = resolve));
     const app = {
       ...(fakeApp() as object),
       orchestration: {
@@ -681,13 +685,14 @@ describe('<civitai-chat> deleting the open chat, then picking another before the
           const opening = query.tags.includes('cvt:head') || query.tags.includes('cvt:job');
           // The delete lists everything of X's (no head or job tag), then deletes it.
           if (conv === 'CONVX' && !opening) await deleteAnswered;
+          if (conv === 'CONVX' && query.tags.includes('cvt:head') && ++xOpens > 1) await xAgainAnswered;
           if (conv === 'CONVY') await yAnswered;
           return { items: query.tags.includes('cvt:head') ? [head(conv)] : [], next: '' };
         }),
         submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })),
       },
     } as never;
-    return { app, answerDelete, answerY };
+    return { app, answerDelete, answerY, answerXAgain, xOpens: () => xOpens };
   }
 
   async function openXThenDeleteItAndPickY() {
@@ -724,6 +729,64 @@ describe('<civitai-chat> deleting the open chat, then picking another before the
     const { chat, answerDelete, answerY } = await openXThenDeleteItAndPickY();
     answerY();
     await vi.waitFor(() => expect(chat.chatId).toBe('CONVY'));
+    answerDelete();
+    await settle(100);
+    expect(chat.chatId).toBe('CONVY');
+    expect(chat.canSend).toBe(true);
+  });
+
+  /** Opens X, deletes it, and picks X again from the list (it is still there until the delete settles). */
+  async function deleteXThenPickItAgain(first?: 'CONVY') {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    const history = deletableHistoryApp();
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = history.app;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    const sidebar = chat.shadowRoot!.querySelector('civitai-chat-sidebar')!;
+    const pick = (id: string) => sidebar.dispatchEvent(new CustomEvent('cvt-open', { detail: { id }, bubbles: true, composed: true }));
+    pick('CONVX');
+    await vi.waitFor(() => expect(chat.chatId).toBe('CONVX'));
+    chat.shadowRoot!.querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-dialog')!.ask = async () => true;
+    sidebar.dispatchEvent(new CustomEvent('cvt-delete', { detail: { id: 'CONVX', title: 'CONVX' }, bubbles: true, composed: true }));
+    await settle();
+    if (first) {
+      pick(first);
+      await settle();
+    }
+    pick('CONVX');
+    await settle();
+    return { chat, ...history };
+  }
+
+  it('🔴 picking the chat being deleted is ignored: once the delete settles the viewer is on a new chat (the re-open would answer after)', async () => {
+    const { chat, answerDelete, answerXAgain } = await deleteXThenPickItAgain();
+    answerDelete();
+    await settle(100);
+    answerXAgain();
+    await settle(100);
+    expect(chat.chatId).not.toBe('CONVX');
+    expect(chat.chatId).not.toBeNull();
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('🔴 picking the chat being deleted is ignored (the re-open would answer before the delete settles)', async () => {
+    const { chat, answerDelete, answerXAgain } = await deleteXThenPickItAgain();
+    answerXAgain();
+    await settle(100);
+    answerDelete();
+    await settle(100);
+    expect(chat.chatId).not.toBe('CONVX');
+    expect(chat.chatId).not.toBeNull();
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('🔴 picking another chat, then the one being deleted: the other chat ends open', async () => {
+    const { chat, answerDelete, answerY, answerXAgain } = await deleteXThenPickItAgain('CONVY');
+    answerY();
+    answerXAgain();
+    await settle(100);
     answerDelete();
     await settle(100);
     expect(chat.chatId).toBe('CONVY');
