@@ -301,7 +301,8 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `ad
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
 in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
-like a typed message.
+like a typed message. `canSend` says whether it would send now, and `can-send-change` when that
+changes: see [When a message can go](#when-a-message-can-go).
 
 ### Before a message goes
 
@@ -371,6 +372,34 @@ without reaching into the chat's shadow root:
 ```ts
 // Keep what the viewer was writing when the page navigates away, unless words are still on their way.
 if (!chat.dictating && chat.draft) saveDraft(chat.chatId, chat.draft);
+```
+
+### When a message can go
+
+`chat.canSend` is `true` when `send(text)` would send now: the chat has started (signed in, or on a
+host `backend`), no reply is running, and nothing holds it. Two things hold it: the page's
+`holdReason`, and the chat itself while an added server is still listing its tools (at most 15 s;
+see [More MCP servers](#more-mcp-servers)). It is `false` before the chat has started and while the
+viewer is signed out.
+
+`can-send-change` fires with `{ canSend }` (type `CanSendChangeDetail`; it bubbles and is composed)
+each time that changes, once per change: as the chat starts, as a hold begins or lifts, and as a
+reply starts and ends. A page holding a message of its own sends it then, once, instead of trying
+again on a timer. Even then two things can still stop it: the page's own `before-send`, and a viewer
+who has not yet let the chat use their Buzz (they are asked; refused, the text stays in an empty
+message box).
+
+```ts
+/** Sends `text` as soon as the chat can take it. */
+function sendWhenReady(text: string): void {
+  if (chat.canSend) return void chat.send(text);
+  const go = (): void => {
+    if (!chat.canSend) return;
+    chat.removeEventListener('can-send-change', go);
+    void chat.send(text);
+  };
+  chat.addEventListener('can-send-change', go);
+}
 ```
 
 ### The empty chat

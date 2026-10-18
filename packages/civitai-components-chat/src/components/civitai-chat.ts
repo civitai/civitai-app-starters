@@ -53,6 +53,11 @@ export interface BeforeSendDetail {
   text: string;
 }
 
+/** `can-send-change`'s detail: `canSend` as it now reads. */
+export interface CanSendChangeDetail {
+  canSend: boolean;
+}
+
 /**
  * The whole chat as one element, for a page of its own or a panel inside another app. The page
  * hands it a signed-in `app` and may add `tools` and `instructions` of its own; its own shadow
@@ -210,6 +215,8 @@ export class CivitaiChat extends LitElement {
   #announcedChat: string | null = null;
   /** The open chat being deleted: the moment with no chat open, before the new one, is not announced. */
   #leaving?: string;
+  /** What `can-send-change` last said, so each change is announced once. */
+  #announcedCanSend = false;
 
   constructor() {
     super();
@@ -266,6 +273,16 @@ export class CivitaiChat extends LitElement {
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
+  }
+
+  // Everything `canSend` reads re-renders the chat when it changes (the session starting, `holdReason`,
+  // a reply starting or ending, a server's listing starting or ending), so this sees every change.
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    const canSend = this.canSend;
+    if (canSend === this.#announcedCanSend) return;
+    this.#announcedCanSend = canSend;
+    this.dispatchEvent(new CustomEvent<CanSendChangeDetail>('can-send-change', { detail: { canSend }, bubbles: true, composed: true }));
   }
 
   /** What the chat runs on: the backend when set, else the signed-in app. */
@@ -362,6 +379,17 @@ export class CivitaiChat extends LitElement {
    */
   get dictating(): boolean {
     return this.#voice !== undefined;
+  }
+
+  /**
+   * Whether `send()` now would send: the chat has started, no reply is running and nothing holds it
+   * (`holdReason`, or an added server still listing its tools). `can-send-change` fires each time this
+   * changes. The page's own `before-send` can still cancel the message, and a viewer who has not let
+   * the chat use their Buzz is asked first.
+   */
+  get canSend(): boolean {
+    const session = this.#session;
+    return session !== undefined && !this.#busy(session) && this.#held(session) === undefined;
   }
 
   #announceChat(): void {
@@ -819,12 +847,17 @@ export class CivitaiChat extends LitElement {
     return listing.length ? `Connecting to ${listing.map((server) => server.label?.trim() || server.id).join(', ')}…` : undefined;
   }
 
+  /** Why a send goes nowhere, with no message kept: a reply is still running, or there is no one to send as. */
+  #busy(session: ChatSession): boolean {
+    return session.agent.running || (!session.backend && !this.app);
+  }
+
   async #send(text: string): Promise<void> {
     const session = this.#session;
     if (!session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     // With a backend there is no Civitai sign-in to ask for a grant: the host's gateway decides.
     const app = session?.backend ? undefined : this.app;
-    if (!session || session.agent.running || (!session.backend && !app)) return;
+    if (!session || this.#busy(session)) return;
     if (this.#held(session)) {
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
       const composer = await this.#composer();
