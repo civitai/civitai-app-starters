@@ -157,6 +157,9 @@ describe('<civitai-chat> canSend', () => {
     await vi.waitFor(() => expect(replies.asked).toHaveLength(1));
     await vi.waitFor(() => expect(changes.at(-1)).toEqual({ detail: false, read: false }));
     expect(chat.canSend).toBe(false);
+    // The running reply keeps sends out (with its Stop button), not a hold: no hold text under it.
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.querySelector('civitai-chat-composer .cvt-composer-hold')).toBeNull();
     // A send mid-reply goes nowhere, as canSend says.
     await chat.send('second');
     await settle();
@@ -402,3 +405,138 @@ describe('<civitai-chat> canSend across transitions', () => {
 });
 
 void textReply;
+
+/** Saved chats CONVA and CONVB on Civitai's own store, each answering only when the test opens its gate. */
+function gatedHistoryApp() {
+  const gates = new Map<string, () => void>();
+  const opened = new Map<string, Promise<void>>();
+  for (const id of ['CONVA', 'CONVB']) opened.set(id, new Promise<void>((resolve) => gates.set(id, resolve)));
+  const head = (conversationId: string) => ({
+    id: `head-${conversationId}`,
+    status: 'succeeded',
+    tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+    metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
+  });
+  const asked: string[] = [];
+  const app = {
+    ...(fakeApp() as object),
+    orchestration: {
+      queryWorkflows: vi.fn(async (query: { tags: string[] }) => {
+        const conv = query.tags.find((tag) => tag.startsWith('cvt:conv:'))?.slice('cvt:conv:'.length);
+        if (!conv) return { items: [head('CONVA'), head('CONVB')], next: '' };
+        asked.push(conv);
+        await opened.get(conv);
+        return { items: query.tags.includes('cvt:head') ? [head(conv)] : [], next: '' };
+      }),
+      submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })),
+    },
+  } as never;
+  return { app, asked, answer: (id: string) => gates.get(id)!() };
+}
+
+describe('<civitai-chat> canSend with overlapping opens and an unanswered grant', () => {
+  const openFromHistory = (chat: CivitaiChat, id: string) =>
+    chat.shadowRoot!.querySelector('civitai-chat-sidebar')!.dispatchEvent(new CustomEvent('cvt-open', { detail: { id }, bubbles: true, composed: true }));
+
+  for (const order of [['CONVA', 'CONVB'], ['CONVB', 'CONVA']] as const) {
+    it(`🔴 on Civitai's own store, two chats opened in turn: canSend stays false until the LATER one is open, and it stays open (answers ${order.join(' then ')})`, async () => {
+      vi.stubGlobal('fetch', heldReplies().fetch);
+      const history = gatedHistoryApp();
+      const { chat, changes } = await mountWith((c) => {
+        c.mcp = { orchestration: false, site: false };
+        c.app = history.app;
+      });
+      await vi.waitFor(() => expect(chat.canSend).toBe(true));
+      // What the chat says each time it reports it can send: the chat a page's message would go into.
+      const openWhenTrue: (string | null)[] = [];
+      chat.addEventListener('can-send-change', () => chat.canSend && openWhenTrue.push(chat.chatId));
+      openFromHistory(chat, 'CONVA');
+      await vi.waitFor(() => expect(history.asked).toContain('CONVA'));
+      openFromHistory(chat, 'CONVB');
+      await settle();
+      history.answer(order[0]);
+      await settle(100);
+      history.answer(order[1]);
+      await vi.waitFor(() => expect(chat.canSend).toBe(true));
+      await settle(100);
+      expect(chat.chatId).toBe('CONVB');
+      expect(openWhenTrue).toEqual(['CONVB']);
+      expect(changes.at(-1)).toEqual({ detail: true, read: true });
+    });
+  }
+
+  it('🔴 a Buzz request nobody answers (the viewer closed the dialog) does not leave the chat unable to send once it gets a new app', async () => {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    // As the SDK's block client: a closed dialog never settles, but a signal ends the wait.
+    const ignoring = { ...(fakeApp() as object), requestGrants: () => new Promise<boolean>(() => undefined) } as never;
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = ignoring;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    void chat.send('first');
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.app = fakeApp();
+    await settle(500);
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('🔴 a Buzz request nobody answers ends after a while: the message is back in the box and the chat can send again', async () => {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    let signalled: AbortSignal | undefined;
+    const closed = {
+      ...(fakeApp() as object),
+      requestGrants: (_scopes: unknown, options?: { signal?: AbortSignal }) => {
+        signalled = options?.signal;
+        return new Promise<boolean>(() => undefined);
+      },
+    } as never;
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = closed;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      void chat.send('first');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(chat.canSend).toBe(false);
+      expect(signalled).toBeInstanceOf(AbortSignal);
+      // Past the bound (2 minutes), and not so far that the toast it shows times out under fake timers.
+      await vi.advanceTimersByTimeAsync(2 * 60_000 + 100);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    expect(signalled!.aborted).toBe(true);
+    expect(chat.draft).toBe('first');
+  });
+
+  it('🔴 while a message is on its way the Send button is off and a message sent meanwhile is kept in the box, not lost', async () => {
+    let grant!: (ok: boolean) => void;
+    const granted = new Promise<boolean>((resolve) => (grant = resolve));
+    const replies = heldReplies();
+    vi.stubGlobal('fetch', replies.fetch);
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = { ...(fakeApp() as object), requestGrants: () => granted } as never;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    const composer = chat.shadowRoot!.querySelector('civitai-chat-composer')!;
+    void chat.send('first');
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    composer.draft = 'second';
+    await composer.updateComplete;
+    expect(composer.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(true);
+    // A send that still arrives (Enter can reach the chat) waits in the empty box.
+    composer.draft = '';
+    composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: 'second' } }));
+    await settle();
+    expect(composer.draft).toBe('second');
+    grant(true);
+    await vi.waitFor(() => expect(replies.asked).toHaveLength(1));
+    const said = (JSON.parse(replies.asked[0]!) as { messages: { role: string; content: string }[] }).messages.filter((message) => message.role === 'user').map((message) => message.content);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/\bfirst$/);
+  });
+});

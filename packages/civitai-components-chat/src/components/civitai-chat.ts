@@ -38,6 +38,9 @@ import type { MediaKind } from './lib/media.js';
 import { panelStyles } from './panel.styles.js';
 import type { Example as ChatExample } from './civitai-chat-welcome.js';
 
+/** How long a send waits for the viewer to answer the Buzz permission request before it counts as not given. */
+const GRANT_WAIT_MS = 2 * 60_000;
+
 /** A finished file, or a job that has none yet (the viewer then shows its details alone). */
 type Lightboxed = { attachment: Attachment; job?: undefined } | { job: GenerationJob; attachment?: undefined };
 
@@ -219,8 +222,10 @@ export class CivitaiChat extends LitElement {
   #announcedCanSend = false;
   /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
   #sessionFor?: AppClient | ChatBackend;
-  /** A send the chat took and has not yet handed to the agent (it may be asking for the viewer's grant). */
-  #sending = false;
+  /** The session a send was taken for and not yet handed to its agent (it may be asking for the viewer's grant). */
+  #sendingFor?: ChatSession;
+  /** When the last open asked for has settled; on a store that does not drop stale opens, the next one waits for it. */
+  #openSettled: Promise<void> = Promise.resolve();
 
   constructor() {
     super();
@@ -388,9 +393,9 @@ export class CivitaiChat extends LitElement {
   }
 
   /**
-   * Whether `send()` now would send: the chat has started (and is not starting again for a new `app`
-   * or `backend`), no reply is running, no other message is on its way, and nothing holds it
-   * (`holdReason`, a saved chat still opening, or an added server still listing its tools).
+   * Whether `send()` now would send: the chat has started, no reply is running, and nothing holds it
+   * (`holdReason`, the chat starting again for a new `app` or `backend`, a saved chat still opening, a
+   * message still on its way, or an added server still listing its tools).
    * `can-send-change` fires each time this changes. The page's own `before-send` can still cancel the
    * message, and a viewer who has not let the chat use their Buzz is asked first.
    */
@@ -429,6 +434,10 @@ export class CivitaiChat extends LitElement {
   async #start(source: AppClient | ChatBackend): Promise<void> {
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
+    // So is an open still loading in the old session: the new one is not held behind it.
+    this.#opening++;
+    this.loading = false;
+    this.#openSettled = Promise.resolve();
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
     if (this.#source() !== source) return;
@@ -541,7 +550,17 @@ export class CivitaiChat extends LitElement {
     if (!session) return;
     const ticket = ++this.#opening;
     this.loading = true;
+    // A store that does not drop stale opens lets whichever lands last become the open chat, so opens
+    // go one at a time there, and one overtaken while it waits is skipped: the latest asked for is the
+    // one that ends open. The chat holds until it has (only the latest open clears the loader).
+    const previous = this.#openSettled;
+    let settled!: () => void;
+    this.#openSettled = new Promise((resolve) => (settled = resolve));
     try {
+      if (!session.store.supersedesOpens) {
+        await previous;
+        if (ticket !== this.#opening) return;
+      }
       await session.openConversation(id);
     } catch (error) {
       // The viewer went to another chat meanwhile: nothing to undo or say, and theirs stays as it is.
@@ -549,9 +568,10 @@ export class CivitaiChat extends LitElement {
       session.newConversation();
       if (announce) this.#toast('Could not open that chat.', error);
     } finally {
-      // A store that drops stale opens lets only the latest one clear the loader; otherwise as always.
-      if (!session.store.supersedesOpens || ticket === this.#opening) this.loading = false;
+      // Only the latest open clears the loader: until it lands, the chat being left may still be open.
+      if (ticket === this.#opening) this.loading = false;
       this.historyOpen = false;
+      settled();
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
   }
@@ -650,7 +670,15 @@ export class CivitaiChat extends LitElement {
 
   // Asked from the click or key press itself, so a host that signs in with a popup may open one.
   #ensureAiGrant(app: AppClient): Promise<boolean> {
-    if (this.#aiGrant?.app !== app) this.#aiGrant = { app, granted: app.requestGrants(['ai:write:budgeted']).catch(() => false) };
+    if (this.#aiGrant?.app !== app) {
+      // A viewer who closes the consent dialog answers nothing, so the wait is bounded: after
+      // GRANT_WAIT_MS it counts as not granted, and is asked again next send. A new app is asked afresh.
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(new Error('the Buzz permission request was not answered')), GRANT_WAIT_MS);
+      const ended = new Promise<boolean>((resolve) => abort.signal.addEventListener('abort', () => resolve(false), { once: true }));
+      const asked = app.requestGrants(['ai:write:budgeted'], { signal: abort.signal }).catch(() => false);
+      this.#aiGrant = { app, granted: Promise.race([asked, ended]).finally(() => clearTimeout(timer)) };
+    }
     const { granted } = this.#aiGrant;
     void granted.then((ok) => {
       if (!ok && this.#aiGrant?.granted === granted) this.#aiGrant = undefined;
@@ -848,23 +876,24 @@ export class CivitaiChat extends LitElement {
   }
 
   /**
-   * Why nothing may be sent right now: the page's `holdReason`, a saved chat still opening (until then the
-   * chat being left is the open one), or an added server still listing its tools.
+   * Why nothing may be sent right now (shown in the message box, which keeps what is sent meanwhile): the
+   * page's `holdReason`, a new session starting in this one's place, a saved chat still opening (until
+   * then the chat being left may be the open one), a message still on its way to the agent, or an added
+   * server still listing its tools.
    */
   #held(session: ChatSession | undefined): string | undefined {
     const reason = this.holdReason?.trim();
     if (reason) return reason;
+    if (session && this.#sessionFor !== this.#startedWith) return 'Starting…';
     if (this.loading) return 'Opening this chat…';
+    if (session && this.#sendingFor === session) return 'Sending…';
     const listing = session?.mcpServers.listing ?? [];
     return listing.length ? `Connecting to ${listing.map((server) => server.label?.trim() || server.id).join(', ')}…` : undefined;
   }
 
-  /**
-   * Why a send goes nowhere, with no message kept: a reply is still running, another send is on its way
-   * to the agent, a new session is starting in this one's place, or there is no one to send as.
-   */
+  /** Why a send goes nowhere, with no message kept: a reply is still running, or there is no one to send as. */
   #busy(session: ChatSession): boolean {
-    return session.agent.running || this.#sending || this.#sessionFor !== this.#startedWith || (!session.backend && !this.app);
+    return session.agent.running || (!session.backend && !this.app);
   }
 
   async #send(text: string): Promise<void> {
@@ -879,12 +908,15 @@ export class CivitaiChat extends LitElement {
       if (composer && !composer.draft) composer.draft = text;
       return;
     }
-    // Taken: until the agent has it (past the grant, which may wait on the viewer), another send would be
-    // lost, so `canSend` says no.
-    this.#sending = true;
+    // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
+    // another message waits in the box and `canSend` says no.
+    this.#sendingFor = session;
     this.requestUpdate();
     try {
-      if (app && !(await this.#ensureAiGrant(app))) {
+      const granted = !app || (await this.#ensureAiGrant(app));
+      // Replaced by a new app or backend meanwhile: this message was for the old session.
+      if (this.#session !== session) return;
+      if (!granted) {
         const composer = await this.#composer();
         if (composer && !composer.draft) composer.draft = text;
         this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
@@ -897,14 +929,20 @@ export class CivitaiChat extends LitElement {
       const refs = this.refs.map((ref) => ref.id);
       this.uploads = [];
       this.refs = [];
+      // The reply starts inside this call, so from here the running reply keeps sends out, not the hold.
+      const sent = session.send(text, uploads, refs);
+      this.#sendingFor = undefined;
+      this.requestUpdate();
       try {
-        await session.send(text, uploads, refs);
+        await sent;
       } catch (error) {
         this.#toast('That message did not go through.', error);
       }
     } finally {
-      this.#sending = false;
-      this.requestUpdate();
+      if (this.#sendingFor === session) {
+        this.#sendingFor = undefined;
+        this.requestUpdate();
+      }
     }
   }
 

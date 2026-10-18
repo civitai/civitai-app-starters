@@ -377,14 +377,20 @@ if (!chat.dictating && chat.draft) saveDraft(chat.chatId, chat.draft);
 ### When a message can go
 
 `chat.canSend` is `true` when `send(text)` would send now: the chat has started (signed in, or on a
-host `backend`), no reply is running, no other message is on its way, and nothing holds it. Three
-things hold it: the page's `holdReason`, a saved chat the viewer is opening (until it has loaded, the
-chat they are leaving is still the open one), and the chat itself while an added server is still
-listing its tools (at most 15 s; see [More MCP servers](#more-mcp-servers)). It is `false` before
-the chat has started, while it starts again for a new `app` or `backend`, and while the viewer is
-signed out. A message is on its way from the moment `send(text)` takes it until its reply starts,
-which includes asking the viewer to let the chat use their Buzz; meanwhile another `send(text)` would
-be lost, so `canSend` is `false`.
+host `backend`), no reply is running, and nothing holds it. These hold it, each shown in the message
+box, which keeps whatever is sent meanwhile (the Send button is off):
+
+- the page's `holdReason`;
+- a saved chat the viewer is opening, until the last one they picked has loaded (until then the chat
+  they are leaving may still be the open one; opened one after another, the last one picked is the one
+  that ends open);
+- a message on its way, from the moment `send(text)` takes it until its reply starts, which includes
+  asking the viewer to let the chat use their Buzz. A viewer who closes that request without answering
+  counts as not having agreed after two minutes: the message goes back in the box;
+- a new `app` or `backend`, while the chat starts again for it;
+- an added server still listing its tools (at most 15 s; see [More MCP servers](#more-mcp-servers)).
+
+It is `false` before the chat has started and while the viewer is signed out.
 
 `can-send-change` fires with `{ canSend }` (type `CanSendChangeDetail`; it bubbles and is composed)
 each time that changes, once per change: as the chat starts, as a hold begins or lifts, and as a

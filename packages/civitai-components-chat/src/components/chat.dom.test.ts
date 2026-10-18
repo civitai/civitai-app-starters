@@ -139,7 +139,8 @@ describe('civitai-chat', () => {
     await chat.send('a blue bike');
 
     expect(app.requestGrants).toHaveBeenCalledTimes(1);
-    expect(app.requestGrants).toHaveBeenCalledWith(['ai:write:budgeted']);
+    // With a signal, so a consent dialog the viewer closes (which answers nothing) cannot hold the chat forever.
+    expect(app.requestGrants).toHaveBeenCalledWith(['ai:write:budgeted'], { signal: expect.any(AbortSignal) });
     expect(app.orchestration.submitWorkflow).toHaveBeenCalled();
   });
 
