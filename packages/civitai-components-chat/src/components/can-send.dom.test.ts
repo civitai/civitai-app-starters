@@ -410,7 +410,7 @@ void textReply;
 function gatedHistoryApp() {
   const gates = new Map<string, () => void>();
   const opened = new Map<string, Promise<void>>();
-  for (const id of ['CONVA', 'CONVB']) opened.set(id, new Promise<void>((resolve) => gates.set(id, resolve)));
+  for (const id of ['CONVA', 'CONVB', 'CONVC']) opened.set(id, new Promise<void>((resolve) => gates.set(id, resolve)));
   const head = (conversationId: string) => ({
     id: `head-${conversationId}`,
     status: 'succeeded',
@@ -418,20 +418,32 @@ function gatedHistoryApp() {
     metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
   });
   const asked: string[] = [];
+  const failing = new Set<string>();
   const app = {
     ...(fakeApp() as object),
     orchestration: {
       queryWorkflows: vi.fn(async (query: { tags: string[] }) => {
         const conv = query.tags.find((tag) => tag.startsWith('cvt:conv:'))?.slice('cvt:conv:'.length);
-        if (!conv) return { items: [head('CONVA'), head('CONVB')], next: '' };
+        if (!conv) return { items: [head('CONVA'), head('CONVB'), head('CONVC')], next: '' };
         asked.push(conv);
         await opened.get(conv);
+        if (failing.has(conv)) throw new Error('the request failed');
         return { items: query.tags.includes('cvt:head') ? [head(conv)] : [], next: '' };
       }),
       submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })),
     },
   } as never;
-  return { app, asked, answer: (id: string) => gates.get(id)!() };
+  return {
+    app,
+    asked,
+    answer: (id: string) => gates.get(id)!(),
+    /** Makes `id`'s requests fail once its gate opens. */
+    fail: (id: string) => {
+      failing.add(id);
+      gates.get(id)!();
+    },
+    failing,
+  };
 }
 
 describe('<civitai-chat> canSend with overlapping opens and an unanswered grant', () => {
@@ -538,5 +550,111 @@ describe('<civitai-chat> canSend with overlapping opens and an unanswered grant'
     const said = (JSON.parse(replies.asked[0]!) as { messages: { role: string; content: string }[] }).messages.filter((message) => message.role === 'user').map((message) => message.content);
     expect(said).toHaveLength(1);
     expect(said[0]).toMatch(/\bfirst$/);
+  });
+});
+
+describe('<civitai-chat> canSend when an open never answers, and across a new app', () => {
+  const openFromHistory = (chat: CivitaiChat, id: string) =>
+    chat.shadowRoot!.querySelector('civitai-chat-sidebar')!.dispatchEvent(new CustomEvent('cvt-open', { detail: { id }, bubbles: true, composed: true }));
+  const hold = (chat: CivitaiChat) => chat.shadowRoot!.querySelector('civitai-chat-composer .cvt-composer-hold')?.textContent ?? null;
+
+  async function historyChat() {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    const history = gatedHistoryApp();
+    const mounted = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = history.app;
+    });
+    await vi.waitFor(() => expect(mounted.chat.canSend).toBe(true));
+    return { ...mounted, history };
+  }
+
+  it('🔴 a chat whose open never answers does not block the next one picked: it opens, and the chat can send', async () => {
+    const { chat, history } = await historyChat();
+    openFromHistory(chat, 'CONVA');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVA'));
+    openFromHistory(chat, 'CONVB');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVB'));
+    history.answer('CONVB');
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    expect(chat.chatId).toBe('CONVB');
+    expect(hold(chat)).toBeNull();
+    // The stalled one answering at last does not take B's place.
+    history.answer('CONVA');
+    await settle(100);
+    expect(chat.chatId).toBe('CONVB');
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('🔴 a new chat while an open never answers: the hold lifts at once, and the late open does not take its place', async () => {
+    const { chat, history } = await historyChat();
+    openFromHistory(chat, 'CONVA');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVA'));
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.newChat();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    const fresh = chat.chatId;
+    expect(fresh).not.toBe('CONVA');
+    history.answer('CONVA');
+    await settle(100);
+    expect(chat.chatId).toBe(fresh);
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('an earlier open that fails after a later one landed changes nothing: no new chat, no error', async () => {
+    const { chat, history } = await historyChat();
+    openFromHistory(chat, 'CONVA');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVA'));
+    openFromHistory(chat, 'CONVB');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVB'));
+    history.answer('CONVB');
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    history.fail('CONVA');
+    await settle(100);
+    expect(chat.chatId).toBe('CONVB');
+    expect(chat.canSend).toBe(true);
+    expect(chat.shadowRoot!.querySelector('civitai-toast-region')?.textContent ?? '').not.toContain('Could not open that chat.');
+  });
+
+  it('three chats picked in a row, the middle one never answering: the last one ends open', async () => {
+    const { chat, history } = await historyChat();
+    for (const id of ['CONVA', 'CONVB', 'CONVC']) {
+      openFromHistory(chat, id);
+      await vi.waitFor(() => expect(history.asked).toContain(id));
+    }
+    history.answer('CONVA');
+    history.answer('CONVC');
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    expect(chat.chatId).toBe('CONVC');
+  });
+
+  it('🔴 an open that never answers in the old session does not hold the chat once it has a new app', async () => {
+    const { chat, history } = await historyChat();
+    openFromHistory(chat, 'CONVA');
+    await vi.waitFor(() => expect(history.asked).toContain('CONVA'));
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    expect(hold(chat)).toBeNull();
+  });
+
+  it('🔴 a Buzz permission given only after the chat has a new app sends nothing for the old one, and the message goes back in the box', async () => {
+    let grant!: (ok: boolean) => void;
+    const granted = new Promise<boolean>((resolve) => (grant = resolve));
+    const replies = heldReplies();
+    vi.stubGlobal('fetch', replies.fetch);
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = { ...(fakeApp() as object), requestGrants: () => granted } as never;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    void chat.send('first');
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    grant(true);
+    await settle(200);
+    expect(replies.asked).toHaveLength(0);
+    expect(chat.draft).toBe('first');
   });
 });

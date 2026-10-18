@@ -224,8 +224,6 @@ export class CivitaiChat extends LitElement {
   #sessionFor?: AppClient | ChatBackend;
   /** The session a send was taken for and not yet handed to its agent (it may be asking for the viewer's grant). */
   #sendingFor?: ChatSession;
-  /** When the last open asked for has settled; on a store that does not drop stale opens, the next one waits for it. */
-  #openSettled: Promise<void> = Promise.resolve();
 
   constructor() {
     super();
@@ -434,10 +432,8 @@ export class CivitaiChat extends LitElement {
   async #start(source: AppClient | ChatBackend): Promise<void> {
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
-    // So is an open still loading in the old session: the new one is not held behind it.
-    this.#opening++;
+    // An open still loading in the old session is moot: the new session is not held behind it.
     this.loading = false;
-    this.#openSettled = Promise.resolve();
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
     if (this.#source() !== source) return;
@@ -550,17 +546,9 @@ export class CivitaiChat extends LitElement {
     if (!session) return;
     const ticket = ++this.#opening;
     this.loading = true;
-    // A store that does not drop stale opens lets whichever lands last become the open chat, so opens
-    // go one at a time there, and one overtaken while it waits is skipped: the latest asked for is the
-    // one that ends open. The chat holds until it has (only the latest open clears the loader).
-    const previous = this.#openSettled;
-    let settled!: () => void;
-    this.#openSettled = new Promise((resolve) => (settled = resolve));
+    // Each pick opens at once, whatever is still loading: the stores drop an open that lands after a
+    // later open or new chat, so the latest pick is the one that ends open, and only it lifts the hold.
     try {
-      if (!session.store.supersedesOpens) {
-        await previous;
-        if (ticket !== this.#opening) return;
-      }
       await session.openConversation(id);
     } catch (error) {
       // The viewer went to another chat meanwhile: nothing to undo or say, and theirs stays as it is.
@@ -571,7 +559,6 @@ export class CivitaiChat extends LitElement {
       // Only the latest open clears the loader: until it lands, the chat being left may still be open.
       if (ticket === this.#opening) this.loading = false;
       this.historyOpen = false;
-      settled();
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
   }
@@ -624,12 +611,8 @@ export class CivitaiChat extends LitElement {
 
   /** Starts a new conversation and puts the cursor in the message box. */
   newChat(): void {
-    // A chat still loading is left behind: its loader goes, and its end (stale by then) changes nothing.
-    // Only where the store drops that late end; otherwise the loader stays and the chat opens as always.
-    if (this.#session?.store.supersedesOpens) {
-      this.#opening++;
-      this.loading = false;
-    }
+    // A chat still loading is left behind: its loader (and hold) goes, and the store drops its late end.
+    this.loading = false;
     this.#session?.newConversation();
     this.uploads = [];
     this.refs = [];
@@ -914,8 +897,13 @@ export class CivitaiChat extends LitElement {
     this.requestUpdate();
     try {
       const granted = !app || (await this.#ensureAiGrant(app));
-      // Replaced by a new app or backend meanwhile: this message was for the old session.
-      if (this.#session !== session) return;
+      // Replaced by a new app or backend meanwhile: nothing goes to the old session, and the message
+      // waits in the box for the new one.
+      if (this.#session !== session) {
+        const composer = await this.#composer();
+        if (composer && !composer.draft) composer.draft = text;
+        return;
+      }
       if (!granted) {
         const composer = await this.#composer();
         if (composer && !composer.draft) composer.draft = text;

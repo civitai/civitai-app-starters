@@ -323,7 +323,7 @@ describe('<civitai-chat> leaving a chat that is loading or being deleted', () =>
     metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
   });
 
-  it('default mode, as on main: New chat while a chat loads keeps the loader, then that chat opens', async () => {
+  it('default mode: New chat while a chat loads clears the loader, and the late load changes nothing (as backend mode)', async () => {
     spyOnRequests();
     let answer!: () => void;
     const held = new Promise<void>((resolve) => (answer = resolve));
@@ -341,9 +341,13 @@ describe('<civitai-chat> leaving a chat that is loading or being deleted', () =>
     await vi.waitFor(() => expect(loader(chat)).not.toBeNull());
     chat.newChat();
     await chat.updateComplete;
-    expect(loader(chat)).not.toBeNull();
+    expect(loader(chat)).toBeNull();
+    const fresh = currentId(chat);
+    expect(fresh).not.toBe('CONV1');
     answer();
-    await vi.waitFor(() => expect(currentId(chat)).toBe('CONV1'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Civitai's own store drops the late open too, so the new chat stays.
+    expect(currentId(chat)).toBe(fresh);
     expect(loader(chat)).toBeNull();
   });
 

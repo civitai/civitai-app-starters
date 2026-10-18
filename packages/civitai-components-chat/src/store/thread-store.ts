@@ -6,7 +6,7 @@ import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
-import type { ConversationStore } from './conversation-store.js';
+import { supersededError, type ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
   orchestration: Pick<OrchestrationClient, 'submitWorkflow' | 'queryWorkflows'>;
@@ -49,6 +49,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #cursor: string | null = null;
   #submits = new Map<string, Promise<string | undefined>>();
   #heads = new Map<string, Head>();
+  /** Bumped by every open and new chat, so an open that lands after a later one cannot take its place. */
+  #generation = 0;
 
   constructor(deps: ThreadStoreDeps) {
     super();
@@ -88,10 +90,19 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   async open(id: string): Promise<OpenedConversation> {
-    const [heads, jobWorkflows] = await Promise.all([
-      this.#deps.orchestration.queryWorkflows({ tags: [APP_TAG, HEAD_TAG, conversationTag(id)], take: 5 }),
-      this.#all([APP_TAG, JOB_TAG, conversationTag(id)]),
-    ]);
+    const generation = ++this.#generation;
+    let heads: Awaited<ReturnType<OrchestrationClient['queryWorkflows']>>;
+    let jobWorkflows: Workflow[];
+    try {
+      [heads, jobWorkflows] = await Promise.all([
+        this.#deps.orchestration.queryWorkflows({ tags: [APP_TAG, HEAD_TAG, conversationTag(id)], take: 5 }),
+        this.#all([APP_TAG, JOB_TAG, conversationTag(id)]),
+      ]);
+    } catch (error) {
+      throw generation === this.#generation ? error : supersededError();
+    }
+    // The viewer opened or started another chat meanwhile: this one must not take its place.
+    if (generation !== this.#generation) throw supersededError();
     const head = newestHead(heads.items);
     const now = this.#now().toISOString();
     const turns = (head?.metadata.turns ?? []).map(turnFrom).sort((a, b) => a.seq - b.seq);
@@ -116,6 +127,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   startNew(): Conversation {
+    this.#generation++;
     const now = this.#now().toISOString();
     this.current = { id: this.#deps.newId?.() ?? ulid(), title: 'New chat', titleSource: 'first-message', createdAt: now, updatedAt: now, turns: [] };
     this.#emit('conversation-change');

@@ -37,9 +37,10 @@ export interface ConversationStore extends EventTarget {
   /** What the latest save cost the viewer, when saving costs anything. */
   saveCost?: number;
   /**
-   * `open` rejects as superseded (`isSuperseded`) when another chat was opened or started before it
-   * finished, and `remove` takes a chat off the list as it starts. Only then may the element leave a
-   * chat that is loading or being deleted at once; without it, it waits as it always has.
+   * `remove` takes a chat off the list as it starts, so the element may leave a chat being deleted at
+   * once; without it, it waits as it always has. (Every store's `open` rejects as superseded,
+   * `isSuperseded`, when another chat was opened or started before it finished; this flag says the
+   * same of opens, and the element relies on it for every store.)
    */
   readonly supersedesOpens?: boolean;
   refreshList(): Promise<void>;
