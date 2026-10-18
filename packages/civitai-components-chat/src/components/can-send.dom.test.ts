@@ -658,3 +658,94 @@ describe('<civitai-chat> canSend when an open never answers, and across a new ap
     expect(chat.draft).toBe('first');
   });
 });
+
+describe('<civitai-chat> deleting the open chat, then picking another before the delete finishes', () => {
+  /** On Civitai's own store: CONVX and CONVY saved; X's delete and Y's open each answer when the test says. */
+  function deletableHistoryApp() {
+    const head = (conversationId: string) => ({
+      id: `head-${conversationId}`,
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+      metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
+    });
+    let answerDelete!: () => void;
+    const deleteAnswered = new Promise<void>((resolve) => (answerDelete = resolve));
+    let answerY!: () => void;
+    const yAnswered = new Promise<void>((resolve) => (answerY = resolve));
+    const app = {
+      ...(fakeApp() as object),
+      orchestration: {
+        queryWorkflows: vi.fn(async (query: { tags: string[] }) => {
+          const conv = query.tags.find((tag) => tag.startsWith('cvt:conv:'))?.slice('cvt:conv:'.length);
+          if (!conv) return { items: [head('CONVX'), head('CONVY')], next: '' };
+          const opening = query.tags.includes('cvt:head') || query.tags.includes('cvt:job');
+          // The delete lists everything of X's (no head or job tag), then deletes it.
+          if (conv === 'CONVX' && !opening) await deleteAnswered;
+          if (conv === 'CONVY') await yAnswered;
+          return { items: query.tags.includes('cvt:head') ? [head(conv)] : [], next: '' };
+        }),
+        submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })),
+      },
+    } as never;
+    return { app, answerDelete, answerY };
+  }
+
+  async function openXThenDeleteItAndPickY() {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    const history = deletableHistoryApp();
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = history.app;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    const sidebar = chat.shadowRoot!.querySelector('civitai-chat-sidebar')!;
+    sidebar.dispatchEvent(new CustomEvent('cvt-open', { detail: { id: 'CONVX' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(chat.chatId).toBe('CONVX'));
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    chat.shadowRoot!.querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-dialog')!.ask = async () => true;
+    sidebar.dispatchEvent(new CustomEvent('cvt-delete', { detail: { id: 'CONVX', title: 'CONVX' }, bubbles: true, composed: true }));
+    await settle();
+    sidebar.dispatchEvent(new CustomEvent('cvt-open', { detail: { id: 'CONVY' }, bubbles: true, composed: true }));
+    await settle();
+    return { chat, ...history };
+  }
+
+  it('🔴 the delete finishes first, then Y loads: the viewer ends on Y, not on a new chat', async () => {
+    const { chat, answerDelete, answerY } = await openXThenDeleteItAndPickY();
+    answerDelete();
+    await settle(100);
+    answerY();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    await settle(100);
+    expect(chat.chatId).toBe('CONVY');
+  });
+
+  it('🔴 Y loads first, then the delete finishes: the viewer stays on Y', async () => {
+    const { chat, answerDelete, answerY } = await openXThenDeleteItAndPickY();
+    answerY();
+    await vi.waitFor(() => expect(chat.chatId).toBe('CONVY'));
+    answerDelete();
+    await settle(100);
+    expect(chat.chatId).toBe('CONVY');
+    expect(chat.canSend).toBe(true);
+  });
+
+  it('NEGATIVE CONTROL: deleting the open chat with no other pick leaves the viewer on a new chat', async () => {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    const history = deletableHistoryApp();
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = history.app;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    const sidebar = chat.shadowRoot!.querySelector('civitai-chat-sidebar')!;
+    sidebar.dispatchEvent(new CustomEvent('cvt-open', { detail: { id: 'CONVX' }, bubbles: true, composed: true }));
+    await vi.waitFor(() => expect(chat.chatId).toBe('CONVX'));
+    chat.shadowRoot!.querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-dialog')!.ask = async () => true;
+    sidebar.dispatchEvent(new CustomEvent('cvt-delete', { detail: { id: 'CONVX', title: 'CONVX' }, bubbles: true, composed: true }));
+    history.answerDelete();
+    await vi.waitFor(() => expect(chat.chatId).not.toBe('CONVX'));
+    expect(chat.chatId).not.toBe('CONVY');
+    expect(chat.chatId).not.toBeNull();
+  });
+});

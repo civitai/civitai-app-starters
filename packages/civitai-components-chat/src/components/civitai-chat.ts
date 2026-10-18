@@ -997,15 +997,17 @@ export class CivitaiChat extends LitElement {
     if (!(await dialog.ask())) return;
     const store = this.#session?.store;
     const wasCurrent = store?.current?.id === id;
-    // A store that takes the chat off the list as its delete starts: off the open chat at once, so a
-    // delete that is slow (or never answers) holds nothing up. Otherwise only once the delete worked.
+    // A store that takes the chat off the list as its delete starts (`supersedesOpens`, which now says
+    // only this): off the open chat at once, so a delete that is slow (or never answers) holds nothing up.
+    // Otherwise only once the delete worked, and only if the viewer has not picked another chat meanwhile.
     const leaveAtOnce = Boolean(store?.supersedesOpens);
+    const picked = this.#opening;
     if (wasCurrent) this.#leaving = id;
     try {
       const removing = store?.remove(id);
       if (wasCurrent && leaveAtOnce) this.newChat();
       await removing;
-      if (wasCurrent && !leaveAtOnce) this.newChat();
+      if (wasCurrent && !leaveAtOnce && this.#opening === picked) this.newChat();
     } catch (error) {
       this.#toast('Could not delete that chat.', error);
     } finally {
