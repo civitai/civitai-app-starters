@@ -63,9 +63,94 @@ function fakeMicrophone() {
 
 /** Transcription that answers only when the test says so. */
 function fakeTranscription() {
-  const answers: ((words: string) => void)[] = [];
-  const transcribe = vi.spyOn(ChatSession.prototype, 'transcribe').mockImplementation(() => new Promise<string>((resolve) => answers.push(resolve)));
-  return { transcribe, answer: (words: string) => answers.splice(0).forEach((resolve) => resolve(words)) };
+  const calls: { resolve: (words: string) => void; reject: (error: unknown) => void }[] = [];
+  const transcribe = vi.spyOn(ChatSession.prototype, 'transcribe').mockImplementation(() => new Promise<string>((resolve, reject) => calls.push({ resolve, reject })));
+  return {
+    transcribe,
+    answer: (words: string) => calls.splice(0).forEach((call) => call.resolve(words)),
+    fail: (error: unknown) => calls.splice(0).forEach((call) => call.reject(error)),
+  };
+}
+
+/**
+ * `draft` read at the very moment `dictating` turns false. It checks after every microtask, not on a
+ * timer, so a draft that reached the box even one task later than `dictating` changed reads as the old
+ * one here. Call it straight after whatever ends the dictation, with no `await` in between.
+ */
+async function draftWhenDictatingEnds(chat: CivitaiChat): Promise<string> {
+  for (let tick = 0; tick < 2000; tick++) {
+    if (!chat.dictating) return chat.draft;
+    await Promise.resolve();
+  }
+  throw new Error('dictating did not end within the microtasks after the dictation finished');
+}
+
+/**
+ * A live (streaming) transcript, standing in for the one the chat opens on the orchestrator. Only its
+ * VoiceTranscript side is real here: what the chat reads and when; the streaming itself is not under test.
+ */
+function fakeLiveTranscript() {
+  const opened: { finish: (words: string) => void; serverStops: (words: string) => void }[] = [];
+  vi.spyOn(ChatSession.prototype, 'liveTranscript').mockImplementation((onChange: () => void) => {
+    let settle!: (words: string) => void;
+    const settled = new Promise<string>((resolve) => (settle = resolve));
+    const transcript = {
+      text: '',
+      pending: true,
+      canceled: false,
+      error: undefined as unknown,
+      stop: () => undefined,
+      settled: () => settled,
+      cancel: () => {
+        transcript.canceled = true;
+        transcript.pending = false;
+        settle(transcript.text);
+      },
+    };
+    opened.push({
+      finish: (words) => {
+        transcript.text = words;
+        transcript.pending = false;
+        settle(words);
+        onChange();
+      },
+      // The server stopped listening after a long pause: everything it heard is back.
+      serverStops: (words) => {
+        transcript.text = words;
+        transcript.pending = false;
+        onChange();
+        settle(words);
+      },
+    });
+    return transcript as never;
+  });
+  return opened;
+}
+
+/** Audio worklets, so the composer streams PCM (the live path) instead of recording phrases. */
+function fakeAudioWorklets(): void {
+  class FakeNode {
+    port = { onmessage: null };
+    connect<T>(next: T) {
+      return next;
+    }
+  }
+  class FakeContext {
+    sampleRate = 48_000;
+    destination = {};
+    audioWorklet = { addModule: async () => undefined };
+    createGain() {
+      return { gain: { value: 1 }, connect: <T>(next: T) => next };
+    }
+    createMediaStreamSource() {
+      return { connect: <T>(next: T) => next };
+    }
+    close() {
+      return Promise.resolve();
+    }
+  }
+  vi.stubGlobal('AudioWorkletNode', FakeNode);
+  vi.stubGlobal('AudioContext', FakeContext);
 }
 
 async function mount(set: (chat: CivitaiChat) => void): Promise<{ chat: CivitaiChat; composer: CivitaiChatComposer }> {
@@ -164,9 +249,97 @@ describe('<civitai-chat> dictating', () => {
     expect(chat.draft).toBe('draw');
 
     answer('a red bike');
-    await vi.waitFor(() => expect(chat.dictating).toBe(false));
     // The moment it is false the words are already in the box.
+    expect(await draftWhenDictatingEnds(chat)).toBe('draw a red bike');
     expect(chat.draft).toBe('draw a red bike');
+  });
+
+  /** Records, stops, and leaves the one phrase waiting on the transcription. */
+  async function dictate(composer: CivitaiChatComposer, finishRecording: () => void, stop: 'Stop and edit the text' | 'Send what you said') {
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    await press(composer, stop);
+    finishRecording();
+    await vi.waitFor(() => expect(composer.querySelector('.cvt-transcribing')).not.toBeNull());
+  }
+
+  it('ends when no words came back: false, and the box keeps what it held', async () => {
+    const finishRecording = fakeMicrophone();
+    const { answer } = fakeTranscription();
+    const { chat, composer } = await mount(signedIn);
+    await type(composer, 'draw');
+    await dictate(composer, finishRecording, 'Stop and edit the text');
+    expect(chat.dictating).toBe(true);
+
+    answer('');
+    expect(await draftWhenDictatingEnds(chat)).toBe('draw');
+    expect(chat.dictating).toBe(false);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('civitai-toast-region')?.textContent).toContain("Didn't catch any words"));
+    expect(chat.dictating).toBe(false);
+  });
+
+  it('ends when the transcription fails: false, and the box keeps what it held', async () => {
+    const finishRecording = fakeMicrophone();
+    const { fail } = fakeTranscription();
+    const { chat, composer } = await mount(signedIn);
+    await type(composer, 'draw');
+    await dictate(composer, finishRecording, 'Stop and edit the text');
+    expect(chat.dictating).toBe(true);
+
+    fail(new Error('transcription broke'));
+    expect(await draftWhenDictatingEnds(chat)).toBe('draw');
+    expect(chat.dictating).toBe(false);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('civitai-toast-region')?.textContent).toContain('Could not turn your recording into text'));
+    expect(chat.dictating).toBe(false);
+  });
+
+  it('ends on "Send what you said": false, and the words went as a message rather than into the box', async () => {
+    const finishRecording = fakeMicrophone();
+    const { answer } = fakeTranscription();
+    const { chat, composer } = await mount(signedIn);
+    const sent: string[] = [];
+    // Cancelled so no reply is asked for; what matters is that the message went.
+    chat.addEventListener('before-send', (event) => {
+      sent.push((event as CustomEvent<{ text: string }>).detail.text);
+      event.preventDefault();
+    });
+    await type(composer, 'draw');
+    await dictate(composer, finishRecording, 'Send what you said');
+    expect(chat.dictating).toBe(true);
+
+    answer('a red bike');
+    expect(await draftWhenDictatingEnds(chat)).toBe('');
+    await vi.waitFor(() => expect(sent).toEqual(['draw a red bike']));
+    expect(chat.dictating).toBe(false);
+    expect(chat.draft).toBe('');
+  });
+
+  it('live (streaming) transcription: true until the words are in draft, whether the viewer stops or the server does', async () => {
+    fakeMicrophone();
+    fakeAudioWorklets();
+    const opened = fakeLiveTranscript();
+    const { chat, composer } = await mount(signedIn);
+    await type(composer, 'draw');
+
+    // The viewer stops.
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(opened).toHaveLength(1));
+    expect(chat.dictating).toBe(true);
+    await press(composer, 'Stop and edit the text');
+    await vi.waitFor(() => expect(composer.querySelector('.cvt-transcribing')).not.toBeNull());
+    expect(chat.dictating).toBe(true);
+    opened[0]!.finish('a red bike');
+    expect(await draftWhenDictatingEnds(chat)).toBe('draw a red bike');
+
+    // The server stops listening after a long pause, while the viewer is still on the recording bar.
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+    expect(chat.dictating).toBe(true);
+    opened[1]!.serverStops('a blue boat');
+    expect(await draftWhenDictatingEnds(chat)).toBe('draw a red bike a blue boat');
+    await vi.waitFor(() => expect(composer.querySelector('textarea')).not.toBeNull());
+    expect(composer.recording).toBe(false);
+    expect(chat.dictating).toBe(false);
   });
 
   it('is false once the viewer cancels the recording, or the transcription', async () => {
