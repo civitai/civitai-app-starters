@@ -1573,8 +1573,9 @@ export interface MockHostOptions {
    * non-empty `ArrayBuffer`, or `purpose: 'generationSource'` →
    * `invalid image-upload request`; over 40 MiB →
    * `file exceeds the maximum upload size` (checked FIRST); a full rolling
-   * window (3 uploads or 80 MiB per 60 s, per install) → `busy`; not PNG /
-   * WebP / JPEG by magic bytes → `file type is not allowed`; then
+   * window (8 uploads or 80 MiB per 60 s, per mounted page host; here, per mock
+   * instance) → `busy`; not PNG / WebP / JPEG by magic bytes →
+   * `file type is not allowed`; then
    * {@link uploadImageBytesError}, standing in for the server persist and the
    * scan. 🔴 What the mock cannot model: that the variant is PAGE-ONLY, the
    * `posts:write:self` scope check (force `block lacks posts:write:self scope`

@@ -290,9 +290,12 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
     expect(reply.selected).toMatchObject({ imageId: 12345701 });
   });
 
-  it('refuses `busy` once the window holds 3 uploads, and checks the cap BEFORE the window', async () => {
+  // The host's count is 8 per 60 s (civitai/civitai#5888). Pinned as a literal,
+  // not read from the constant, so a drift in the constant fails here.
+  it('refuses `busy` once the window holds 8 uploads, and checks the cap BEFORE the window', async () => {
     await install();
-    for (let i = 0; i < 3; i++) expect((await raw({ bytes: buf(PNG) })).error).toBeUndefined();
+    // Tiny PNGs, so the count binds long before the 80 MiB budget.
+    for (let i = 0; i < 8; i++) expect((await raw({ bytes: buf(PNG) })).error).toBeUndefined();
     expect(await raw({ bytes: buf(PNG) })).toMatchObject({ error: 'busy' });
     // A full window still reports an over-cap file as too large: a retry could never succeed.
     expect(await raw({ bytes: new ArrayBuffer(UPLOAD_BYTES_MAX_BYTES + 1) })).toMatchObject({
@@ -300,7 +303,7 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
     });
     // And `busy` before the type: a GIF in a full window is `busy`, as on the host.
     expect(await raw({ bytes: buf(GIF) })).toMatchObject({ error: 'busy' });
-    expect(uploaded).toHaveLength(3);
+    expect(uploaded).toHaveLength(8);
   });
 
   it('refuses `busy` once the window holds 80 MiB, before the count limit is reached', async () => {
@@ -309,15 +312,28 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
     max.set(PNG);
     expect((await raw({ bytes: max.slice().buffer })).error).toBeUndefined();
     expect((await raw({ bytes: max.slice().buffer })).error).toBeUndefined();
-    // Two uploads (under the count of 3), 80 MiB held: one more byte is over budget.
+    // Two uploads (well under the count of 8), exactly 80 MiB held: one more byte is over budget.
     expect(await raw({ bytes: buf(PNG) })).toMatchObject({ error: 'busy' });
+  });
+
+  it('refuses `busy` when an upload would overshoot 80 MiB, with the count far from full', async () => {
+    await install();
+    // 30 MiB each: 60 MiB is admitted, a third would hold 90 MiB.
+    const mid = new Uint8Array(30 * 1024 * 1024);
+    mid.set(PNG);
+    expect((await raw({ bytes: mid.slice().buffer })).error).toBeUndefined();
+    expect((await raw({ bytes: mid.slice().buffer })).error).toBeUndefined();
+    expect(await raw({ bytes: mid.slice().buffer })).toMatchObject({ error: 'busy' });
+    // The budget, not the count, refused it: a small PNG still fits (63 MiB < 80).
+    expect((await raw({ bytes: buf(PNG) })).error).toBeUndefined();
+    expect(uploaded).toHaveLength(3);
   });
 
   it('frees the window after 60 s', async () => {
     await install();
     const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(1_000_000);
-    for (let i = 0; i < 3; i++) await raw({ bytes: buf(PNG) });
+    for (let i = 0; i < 8; i++) expect((await raw({ bytes: buf(PNG) })).error).toBeUndefined();
     now.mockReturnValue(1_000_000 + 59_999);
     expect((await raw({ bytes: buf(PNG) })).error).toBe('busy');
     now.mockReturnValue(1_000_000 + 60_000);
@@ -326,7 +342,10 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
 
   it('does not count a refused upload against the window', async () => {
     await install();
-    for (let i = 0; i < 3; i++) await raw({ bytes: buf(GIF) });
+    // Eight refused GIFs: had they counted, the window would be full.
+    for (let i = 0; i < 8; i++) {
+      expect((await raw({ bytes: buf(GIF) })).error).toBe('file type is not allowed');
+    }
     expect((await raw({ bytes: buf(PNG) })).error).toBeUndefined();
   });
 

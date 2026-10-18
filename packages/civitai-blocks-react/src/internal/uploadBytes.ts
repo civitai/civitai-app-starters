@@ -29,8 +29,8 @@ import {
  */
 export const UPLOAD_BYTES_MAX_BYTES = 40 * 1024 * 1024;
 
-/** The host's rolling window: at most this many admitted uploads… */
-export const UPLOAD_BYTES_MAX_PER_WINDOW = 3;
+/** The host's rolling window: at most this many admitted uploads (8 since civitai/civitai#5888)… */
+export const UPLOAD_BYTES_MAX_PER_WINDOW = 8;
 /** …and this many admitted bytes… */
 export const UPLOAD_BYTES_MAX_BYTES_PER_WINDOW = 2 * UPLOAD_BYTES_MAX_BYTES;
 /** …per this many milliseconds, per mounted page host. */
