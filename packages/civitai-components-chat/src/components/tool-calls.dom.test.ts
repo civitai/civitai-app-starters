@@ -39,7 +39,12 @@ async function turnWith(parts: TurnPart[], props: Record<string, unknown> = {}):
 
 /** The markup without lit's marker comments, which carry nothing a viewer sees. */
 function markup(el: Element): string {
-  return el.innerHTML.replace(/<!--[^]*?-->/g, '').replace(/\s+/g, ' ').trim();
+  const copy = el.cloneNode(true) as Element;
+  const walker = document.createTreeWalker(copy, NodeFilter.SHOW_COMMENT);
+  const comments: Node[] = [];
+  while (walker.nextNode()) comments.push(walker.currentNode);
+  for (const comment of comments) comment.parentNode!.removeChild(comment);
+  return copy.innerHTML.replace(/\s+/g, ' ').trim();
 }
 
 describe('tool calls with the option off', () => {
