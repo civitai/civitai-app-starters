@@ -14,6 +14,7 @@ beforeAll(() => defineElements());
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -40,6 +41,9 @@ const headOf = (v: number) => ({
 
 /** Opens the chat on a stored head of version `v`; returns every reply request the model got. */
 async function openOn(v: number) {
+  // Fixed well past the reply's save (00:00Z): it reads as gone, not as still running elsewhere.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.parse('2026-10-19T15:00:00Z'));
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const asked: string[] = [];
   vi.stubGlobal(

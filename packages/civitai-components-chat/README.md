@@ -760,7 +760,8 @@ viewer's message is not sent a second time, and it carries on from the last step
 the automatic retries do, so a tool that already ran is not called again and stays on screen. Retry is
 offered only where that holds: not when the step that failed had already called a tool (it may have
 run, and is in no finished step to send as it is), and not on a failed reply in a chat opened again
-later (where to carry on from is kept for the session only, not saved). A refusal (sign-in, Buzz,
+later (where to carry on from is kept for the session only, not saved; a reply saved after each step
+is the exception, see [A reply that had not ended when the chat was saved](#a-reply-that-had-not-ended-when-the-chat-was-saved)). A refusal (sign-in, Buzz,
 the safety filter) and a failure of unknown cause get no Retry; asking again would only repeat it.
 
 A phone that sleeps stops the page, and with it the reply and its retries; a reply that lost its
@@ -840,11 +841,31 @@ retention. Panels are saved on the conversation, and their runs are tagged workf
 Nothing is kept on the page beyond preferences.
 
 A conversation is saved as a v2 head. This version also reads v3 heads, which a later version will
-write: v2 plus a reply saved while it was still running, after each step it finished. Such a reply
-opens as cut off ("This reply was cut off. Ask again?") with the steps it finished on screen and in
-the assistant's history. It gets no Retry and is not asked for again by itself, since whoever saved it
-may still be running it. A head of any other version is left out, as before. Versions before this one
-leave a v3 head out of their list, which is why this reader ships before any v3 writer.
+write: v2 plus a reply saved while it was still running, after each step it finished, with the time of
+that save. A head of any other version is left out, as before. Versions before this one leave a v3
+head out of their list, which is why this reader ships before any v3 writer.
+
+### A reply that had not ended when the chat was saved
+
+A chat open in two tabs or windows, or opened while another one is still replying, can show a reply
+that had not ended when it was last saved: a v2 head is saved as a reply starts, and a v3 head after
+each step. Whether it is still running is read from that save's time: the turn's start for v2, the
+latest step's save for v3. The latest reply only:
+
+- **Saved under 5 minutes ago** (`LIVE_REPLY_MS`): "Still replying in another tab or window…". Nothing
+  is offered and nothing asks again (no Retry, no Continue, and `retryReply()` resolves `false`),
+  since a second run would be paid for twice. The chat reads itself again when the page comes into
+  view or gets focus, and once more when the save passes 5 minutes, so it settles by itself. Sends are
+  held for that read.
+- **Saved longer ago:** the reply is taken as gone. A v3 reply with finished steps whose every tool call
+  has its result shows "This reply stopped before it finished." with **Continue**. That is Retry's path
+  (it fires `reply-resume` with `trigger: 'retry'`, and `retryReply()` does the same): it carries on
+  from those steps, sent as they are, so no tool in them runs again. Any other says "This reply was cut
+  off. Ask again?", as before.
+
+A v2 save carries only the reply's start, so a v2 reply that runs longer than 5 minutes reads as cut
+off while it may still run. A tab that was itself running the reply and reloaded reads as "still
+replying" until its last save is 5 minutes old.
 
 ## Where a reply runs (experimental)
 

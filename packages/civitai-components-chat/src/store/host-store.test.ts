@@ -49,7 +49,8 @@ describe('HostThreadStore', () => {
     const threads = new HostThreadStore({ store });
     const { conversation, jobs } = await threads.open('C1');
     expect(jobs).toEqual([]);
-    expect(conversation.turns[0]!.assistant).toEqual({ messages: [], status: 'error', error: 'cut-off' });
+    // `savedAt`: when that save was made, here the turn's start, which tells a reply still running elsewhere from a dead one.
+    expect(conversation.turns[0]!.assistant).toEqual({ messages: [], status: 'error', error: 'cut-off', savedAt: '2026-10-15T10:00:00Z' });
     expect((await threads.open('NOPE')).conversation).toMatchObject({ id: 'NOPE', title: 'New chat', turns: [] });
   });
 
@@ -67,7 +68,7 @@ describe('HostThreadStore', () => {
       },
     ]);
     const { conversation } = await new HostThreadStore({ store }).open('C2');
-    expect(conversation.turns[0]!.assistant).toEqual({ messages: steps, status: 'error', error: 'cut-off' });
+    expect(conversation.turns[0]!.assistant).toEqual({ messages: steps, status: 'error', error: 'cut-off', savedAt: '2026-10-15T10:00:00Z' });
   });
 
   it('pages the list with the cursor the store hands back, keeping each id once', async () => {

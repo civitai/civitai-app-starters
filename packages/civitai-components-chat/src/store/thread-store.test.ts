@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flush, workflow } from '../test-support/fakes.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationMetadata, SavedTurn, SavedTurnV3 } from '../types.js';
-import { CUT_OFF, ThreadStore, firstMessageTitle } from './thread-store.js';
+import { CUT_OFF, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
 
 function setup(stored: Workflow[] = [], scope?: string) {
   const submitted: WorkflowTemplate[] = [];
@@ -342,5 +342,57 @@ describe('conversation heads by version', () => {
       expect(metadata.turns[1]!.assistant).toEqual({ messages: partial, status: 'error', error: CUT_OFF });
     }
     expect(written.turns.map((t) => t.assistant?.status)).toEqual(['done', 'error', 'done']);
+  });
+});
+
+describe('a reply read back before it ended: still running elsewhere, or gone', () => {
+  // The fake "now" every case reads; fixtures sit well inside or well past LIVE_REPLY_MS (5 min), never on it.
+  const NOW = Date.parse('2026-10-19T15:00:00Z');
+  const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+  const v2Pending = (createdAt: string): SavedTurn => ({ seq: 2, createdAt, user: { content: 'build it', attachments: [] } });
+  const step: ModelMessage[] = [
+    { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_run', toolName: 'run_command', input: { cmd: 'npm test' } }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_run', toolName: 'run_command', output: { type: 'json', value: { exit: 0 } } }] },
+  ];
+  const v3Running = (savedAt: string | undefined, messages: ModelMessage[] = step): SavedTurnV3 => ({
+    seq: 2,
+    createdAt: ago(40),
+    user: { content: 'build it', attachments: [] },
+    assistant: { messages, status: 'running', ...(savedAt !== undefined ? { savedAt } : {}) },
+  });
+
+  it('dates a v2 reply saved as it started by the turn start: live under 5 minutes, gone after', () => {
+    expect(replyElsewhere(turnFrom(v2Pending(ago(1))), NOW)).toBe('live');
+    expect(replyElsewhere(turnFrom(v2Pending(ago(30))), NOW)).toBe('stale');
+    expect(liveUntil(turnFrom(v2Pending(ago(1))), NOW)).toBe(NOW - 60_000 + LIVE_REPLY_MS);
+    expect(liveUntil(turnFrom(v2Pending(ago(30))), NOW)).toBeUndefined();
+  });
+
+  it('dates a v3 running reply by its latest save, not by the turn start', () => {
+    // The turn began 40 minutes ago; its latest step was saved a minute ago.
+    expect(replyElsewhere(turnFrom(v3Running(ago(1))), NOW)).toBe('live');
+    expect(replyElsewhere(turnFrom(v3Running(ago(30))), NOW)).toBe('stale');
+    // No save time: the turn start stands in.
+    expect(replyElsewhere(turnFrom(v3Running(undefined)), NOW)).toBe('stale');
+  });
+
+  it('reads a time it cannot parse as gone, and says nothing of other replies', () => {
+    expect(replyElsewhere(turnFrom(v2Pending('not a date')), NOW)).toBe('stale');
+    expect(replyElsewhere(turnFrom(said(1, 'hi', 'hello')), NOW)).toBeUndefined();
+    // Saved again cut off (by a later save of the chat): no save time is kept, so it is not taken as running.
+    expect(replyElsewhere(turnFrom({ seq: 1, createdAt: ago(1), user: { content: 'x', attachments: [] }, assistant: { messages: [], status: 'error', error: CUT_OFF } }), NOW)).toBeUndefined();
+  });
+
+  it('lets a v3 running reply carry on from its finished steps only when every call in them has its result', () => {
+    expect(turnFrom(v3Running(ago(30))).assistant).toMatchObject({ errorKind: 'interrupted', resume: { messages: step, steps: 1, at: NOW - 30 * 60_000 } });
+    // A call with no result may have run: carrying on could run it again.
+    expect(turnFrom(v3Running(ago(30), [step[0]!])).assistant).not.toHaveProperty('resume');
+    // No save time, or no steps: nothing to carry on from.
+    expect(turnFrom(v3Running(undefined)).assistant).not.toHaveProperty('resume');
+    expect(turnFrom(v3Running(ago(30), [])).assistant).not.toHaveProperty('resume');
+  });
+
+  it('does not save the read-back time again', () => {
+    expect(saved(turnFrom(v2Pending(ago(1)))).assistant).toEqual({ messages: [], status: 'error', error: CUT_OFF });
   });
 });

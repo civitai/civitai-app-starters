@@ -349,10 +349,28 @@ export class ChatSession extends EventTarget {
     this.posts.clear();
     this.panels.clear();
     const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+    this.#restore(opened, catalog);
+    this.updateSettings({ lastConversationId: id });
+  }
+
+  /**
+   * Reads the open chat again from its store, e.g. while its latest reply may still be running in
+   * another tab or window. Read first: a read that fails (or that a later open or new chat supersedes)
+   * changes nothing. Nothing while a reply runs here.
+   */
+  async reloadConversation(id: string): Promise<void> {
+    if (this.agent.running || this.store.current?.id !== id) return;
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+    this.jobs.clear();
+    this.posts.clear();
+    this.panels.clear();
+    this.#restore(opened, catalog);
+  }
+
+  #restore(opened: OpenedConversation, catalog: ToolCatalog | null): void {
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
     this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
-    this.updateSettings({ lastConversationId: id });
   }
 
   newConversation(): void {

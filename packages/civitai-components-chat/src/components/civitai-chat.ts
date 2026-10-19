@@ -19,6 +19,7 @@ import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
 import type { ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
 import { applyTheme } from '../settings.js';
 import { isSuperseded } from '../store/conversation-store.js';
+import { replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolGate, ChatToolResult } from '../tools/gate.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
@@ -351,6 +352,7 @@ export class CivitaiChat extends LitElement {
     window.addEventListener('drop', this.#onStrayDrag);
     document.addEventListener('visibilitychange', this.#onVisible);
     window.addEventListener('online', this.#onOnline);
+    window.addEventListener('focus', this.#onFocus);
     // Back on the page, a waiting message gets its whole wait again.
     this.#armQueueTimer();
   }
@@ -362,14 +364,53 @@ export class CivitaiChat extends LitElement {
     window.removeEventListener('drop', this.#onStrayDrag);
     document.removeEventListener('visibilitychange', this.#onVisible);
     window.removeEventListener('online', this.#onOnline);
+    window.removeEventListener('focus', this.#onFocus);
     // Off the page nothing comes back by itself: the wait stops.
     if (this.#queued) clearTimeout(this.#queued.timer);
   }
 
   #onVisible = (): void => {
+    if (document.visibilityState !== 'visible') return;
     // Still offline, the `online` event comes later and asks then.
-    if (document.visibilityState === 'visible' && navigator.onLine !== false) this.#autoResume('visible');
+    if (navigator.onLine !== false) this.#autoResume('visible');
+    void this.#recheck(false);
   };
+
+  #onFocus = (): void => void this.#recheck(false);
+
+  /** Set while the open chat is read again (`#recheck`): a send then is held, so it cannot land on the chat being replaced. */
+  #rechecking = false;
+
+  /**
+   * Reads the open chat again while its latest reply may still be running in another tab or window
+   * (`replyElsewhere` says `live`), so the note settles by itself: as the page comes into view or gets
+   * focus, and once more when that reply stops counting as live (`force`: its turn's `cvt-recheck`).
+   * A reply already past it is only drawn again, so its turn sees that it went past. Not while a reply
+   * runs here, a send is on its way or anything holds the chat. The thread stays on screen; a read that
+   * fails changes nothing.
+   */
+  async #recheck(force: boolean): Promise<void> {
+    const session = this.#session;
+    const conversation = session?.store.current;
+    const turn = conversation?.turns.at(-1);
+    if (!session || !conversation || !turn || this.#rechecking || this.#busy(session) || this.#held(session) !== undefined) return;
+    const state = replyElsewhere(turn);
+    if (state === undefined) return;
+    if (state === 'stale' && !force) {
+      this.requestUpdate();
+      return;
+    }
+    this.#rechecking = true;
+    this.requestUpdate();
+    try {
+      await session.reloadConversation(conversation.id);
+    } catch (error) {
+      if (!isSuperseded(error)) console.warn('[chat-cvt] could not read the chat again', error);
+    } finally {
+      this.#rechecking = false;
+      this.requestUpdate();
+    }
+  }
 
   #onOnline = (): void => this.#autoResume('online');
 
@@ -402,6 +443,8 @@ export class CivitaiChat extends LitElement {
     // Only a failed reply has a resume point (asking again clears it), so it is not asked again while it runs or once it went.
     const { resume, errorKind } = turn?.assistant ?? {};
     if (!turn || !resume || !RETRYABLE_ERRORS.has(errorKind ?? '') || !this.canSend) return undefined;
+    // A reply that may still be running in another tab or window is not asked for again: it would be paid twice.
+    if (replyElsewhere(turn) === 'live') return undefined;
     return turn;
   }
 
@@ -1231,6 +1274,7 @@ export class CivitaiChat extends LitElement {
     // then A) and the session's source and the latest one both read A.
     if (session && this.#sessionStart !== this.#starts) return 'Starting…';
     if (this.loading) return 'Opening this chat…';
+    if (this.#rechecking) return 'Checking on the reply…';
     if (session && this.#sendingFor === session) return 'Sending…';
     const listing = session?.mcpServers.listing ?? [];
     return listing.length ? `Connecting to ${listing.map((server) => server.label?.trim() || server.id).join(', ')}…` : undefined;
@@ -1617,7 +1661,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>

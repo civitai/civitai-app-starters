@@ -55,6 +55,12 @@ export interface Turn {
     resume?: ResumePoint;
     ranOut?: boolean;
     stopped?: string;
+    /**
+     * On a reply read back from a save made before it ended (cut off): when that save was made (ISO).
+     * The turn's start for a v2 save, the latest step's save for a v3 one. While it is recent the reply
+     * may still be running in another tab or window (see `replyElsewhere`). Not saved again.
+     */
+    savedAt?: string;
   };
 }
 
@@ -133,9 +139,13 @@ export interface ConversationMetadata {
  */
 export type SavedTurnStatusV3 = TurnStatus | 'running';
 
-/** A turn in a v3 head; as {@link SavedTurn}, except that its reply may be saved `running`. */
+/**
+ * A turn in a v3 head; as {@link SavedTurn}, except that its reply may be saved `running`, with
+ * `savedAt` (ISO), when that save was made. A `running` reply's `messages` are whole finished steps
+ * only: every tool call in them comes with its result.
+ */
 export interface SavedTurnV3 extends Omit<SavedTurn, 'assistant'> {
-  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string };
+  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string; savedAt?: string };
 }
 
 /**

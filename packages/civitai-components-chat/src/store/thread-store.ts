@@ -1,11 +1,13 @@
 import type { OrchestrationClient, Workflow, WorkflowQuery, WorkflowTemplate } from '@civitai/sdk';
 import { ulid } from 'ulid';
 
-import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag } from '../config.js';
+import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag, stepLimit } from '../config.js';
 import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
-import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
+import type { ModelMessage } from 'ai';
+
+import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
@@ -355,7 +357,8 @@ export function saved(turn: Turn): SavedTurn {
   if (assistant.status === 'streaming') return rest;
   // The trace is for this session's diagnostics only: a response body may carry the reply's text. The
   // resume point is for this session too: a reopened chat's failed reply starts over when asked again.
-  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, ...kept } = assistant;
+  // `savedAt` is when the save this reply was read from was made: a reply saved again is no longer that one.
+  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, savedAt: _savedAt, ...kept } = assistant;
   return { ...rest, assistant: kept };
 }
 
@@ -397,10 +400,63 @@ export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
 }
 
 /**
- * A saved turn as the chat shows it. A reply saved before it ended reads as cut off, the note that
- * says the viewer can ask again: with no reply saved (v2, saved mid-reply), or saved `running` (v3)
- * with the steps it had finished, which stay on screen. A `running` reply gets no resume point, so it
- * is never asked for again by itself or with one press: whoever saved it may still be running it.
+ * How long after its latest save a reply read back cut off still counts as running elsewhere: another
+ * tab or window (or, later, a server) may be running it. A v2 save is made only as the reply starts and
+ * a v3 one after each step, so for v2 this is a guess at a whole reply and for v3 at one step. Past it,
+ * the reply is taken as gone: asking again is offered, and a v3 reply with finished steps can Continue.
+ * A dead reply read as live only waits; a live one read as dead invites a second run that is paid twice,
+ * so this errs long.
+ */
+export const LIVE_REPLY_MS = 5 * 60_000;
+
+/**
+ * For the latest turn read back cut off with the time of its save (`assistant.savedAt`): `live` while
+ * that save is under {@link LIVE_REPLY_MS} old, `stale` after (or when the time cannot be read).
+ * `undefined` for every other reply. The one rule for both the note shown and whether asking again is allowed.
+ */
+export function replyElsewhere(turn: Turn, now: number = Date.now()): 'live' | 'stale' | undefined {
+  const { status, error, savedAt } = turn.assistant;
+  if (status !== 'error' || error !== CUT_OFF || savedAt === undefined) return undefined;
+  const at = Date.parse(savedAt);
+  if (Number.isNaN(at)) return 'stale';
+  return now - at < LIVE_REPLY_MS ? 'live' : 'stale';
+}
+
+/** When a `live` reply (see {@link replyElsewhere}) turns `stale` (ms since the epoch); `undefined` otherwise. */
+export function liveUntil(turn: Turn, now: number = Date.now()): number | undefined {
+  return replyElsewhere(turn, now) === 'live' ? Date.parse(turn.assistant.savedAt!) + LIVE_REPLY_MS : undefined;
+}
+
+/**
+ * Where a v3 reply saved `running` can carry on from: its finished steps, sent as they are, so no tool
+ * in them runs again. None unless its save time reads, it has steps, every tool call in them comes with
+ * its result (a call without one may have run, and asking again could run it twice), and it has steps
+ * left to take. A step is one assistant message (with its tools' results after it).
+ */
+function continuePoint(messages: ModelMessage[], savedAt: unknown): ResumePoint | undefined {
+  const at = typeof savedAt === 'string' ? Date.parse(savedAt) : NaN;
+  if (Number.isNaN(at) || messages.length === 0) return undefined;
+  const calls = new Set<string>();
+  const results = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === 'tool-call') calls.add(part.toolCallId);
+      else if (part.type === 'tool-result') results.add(part.toolCallId);
+    }
+  }
+  if ([...calls].some((id) => !results.has(id))) return undefined;
+  const steps = messages.filter((message) => message.role === 'assistant').length;
+  if (steps === 0 || steps >= stepLimit()) return undefined;
+  return { messages, steps, at };
+}
+
+/**
+ * A saved turn as the chat shows it. A reply saved before it ended reads as cut off, with the time of
+ * that save (`savedAt`): with no reply saved (v2, saved as it started: the turn's start), or saved
+ * `running` (v3, after a step: its own `savedAt`) with the steps it had finished, which stay on screen.
+ * A v3 one also gets a resume point when it can carry on from them ({@link continuePoint}); whether it
+ * may, now, is {@link replyElsewhere}'s to say: not while whoever saved it may still be running it.
  */
 export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
   const assistant = turn.assistant;
@@ -408,10 +464,13 @@ export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
     seq: turn.seq,
     createdAt: turn.createdAt,
     user: { content: turn.user.content, attachments: turn.user.attachments ?? [], ...(turn.user.refs ? { refs: turn.user.refs } : {}) },
-    assistant: !assistant
-      ? { messages: [], status: 'error', error: CUT_OFF }
-      : assistant.status === 'running'
-        ? { messages: Array.isArray(assistant.messages) ? [...assistant.messages] : [], status: 'error', error: CUT_OFF }
-        : (assistant as Turn['assistant']),
+    assistant: !assistant ? { messages: [], status: 'error', error: CUT_OFF, savedAt: turn.createdAt } : assistant.status === 'running' ? interrupted(turn, assistant) : (assistant as Turn['assistant']),
   };
+}
+
+function interrupted(turn: SavedTurnV3, assistant: NonNullable<SavedTurnV3['assistant']>): Turn['assistant'] {
+  const messages = Array.isArray(assistant.messages) ? [...assistant.messages] : [];
+  const resume = continuePoint(messages, assistant.savedAt);
+  const savedAt = typeof assistant.savedAt === 'string' ? assistant.savedAt : turn.createdAt;
+  return { messages, status: 'error', error: CUT_OFF, savedAt, ...(resume ? { resume, errorKind: 'interrupted' } : {}) };
 }
