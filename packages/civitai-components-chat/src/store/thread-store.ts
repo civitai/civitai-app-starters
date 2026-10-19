@@ -352,8 +352,9 @@ function lastSeq(metadata: ConversationMetadata): number {
 export function saved(turn: Turn): SavedTurn {
   const { assistant, ...rest } = turn;
   if (assistant.status === 'streaming') return rest;
-  // The trace is for this session's diagnostics only: a response body may carry the reply's text.
-  const { errorTrace: _trace, networkRetries: _retries, ...kept } = assistant;
+  // The trace is for this session's diagnostics only: a response body may carry the reply's text. The
+  // resume point is for this session too: a reopened chat's failed reply starts over when asked again.
+  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, ...kept } = assistant;
   return { ...rest, assistant: kept };
 }
 

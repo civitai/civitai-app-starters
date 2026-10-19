@@ -69,15 +69,24 @@ describe('ThreadStore', () => {
     });
   });
 
-  it("leaves an errored reply's trace out of the save, keeping what the viewer was told", async () => {
+  it("leaves an errored reply's trace and resume point out of the save, keeping what the viewer was told", async () => {
     const { store, deps } = setup();
     const turn = store.appendUserTurn('hello', []);
-    turn.assistant = { messages: [], status: 'error', error: 'Lost the connection.', errorKind: 'network', errorTrace: { stage: 'request', step: 1, msIntoStep: 5, message: 'Failed to fetch' } };
+    turn.assistant = {
+      messages: [],
+      status: 'error',
+      error: 'Lost the connection.',
+      errorKind: 'network',
+      errorTrace: { stage: 'request', step: 1, msIntoStep: 5, message: 'Failed to fetch' },
+      // Where asking again would carry on from, for this session only.
+      resume: { messages: [{ role: 'assistant', content: 'kept' }], steps: 1, at: 1 },
+    };
     await store.completeTurn(turn);
     expect(deps.api.updateWorkflow).toHaveBeenCalledWith('7-1', {
       metadata: expect.objectContaining({ turns: [expect.objectContaining({ assistant: { messages: [], status: 'error', error: 'Lost the connection.', errorKind: 'network' } })] }),
     });
     expect(turn.assistant.errorTrace).toBeDefined();
+    expect(turn.assistant.resume).toBeDefined();
   });
 
   it('carries every turn into the next save and retires the previous one as the head', async () => {

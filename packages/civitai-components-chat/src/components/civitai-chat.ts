@@ -62,6 +62,23 @@ export interface CanSendChangeDetail {
 }
 
 /**
+ * `reply-resume`'s detail: what asked for a failed reply again. `retry`: the viewer pressed Retry.
+ * `visible`: the page came back into view (a phone woke, the tab was shown again). `online`: the
+ * browser said it is online again.
+ */
+export interface ReplyResumeDetail {
+  trigger: 'retry' | 'visible' | 'online';
+}
+
+/**
+ * How long after a reply lost its connection the chat still asks for it again by itself when the page
+ * comes back into view or online (30 minutes). A phone put down mid-reply is picked up again within
+ * that; past it the viewer has likely moved on, and a reply starting by itself would surprise them.
+ * Retry still works after it.
+ */
+export const AUTO_RESUME_WINDOW_MS = 30 * 60_000;
+
+/**
  * The whole chat as one element, for a page of its own or a panel inside another app. The page
  * hands it a signed-in `app` and may add `tools` and `instructions` of its own; its own shadow
  * root carries the chat's styles, so the page's CSS and the chat's stay apart. Slot `welcome`
@@ -224,6 +241,8 @@ export class CivitaiChat extends LitElement {
   #sessionFor?: AppClient | ChatBackend;
   /** The session a send was taken for and not yet handed to its agent (it may be asking for the viewer's grant). */
   #sendingFor?: ChatSession;
+  /** Turns the chat already asked for again by itself: at most once each, so a failing network never loops. */
+  #autoResumed = new WeakSet<object>();
 
   constructor() {
     super();
@@ -254,6 +273,8 @@ export class CivitaiChat extends LitElement {
     document.addEventListener('keydown', this.#onShortcut);
     window.addEventListener('dragover', this.#onStrayDrag);
     window.addEventListener('drop', this.#onStrayDrag);
+    document.addEventListener('visibilitychange', this.#onVisible);
+    window.addEventListener('online', this.#onOnline);
   }
 
   override disconnectedCallback(): void {
@@ -261,6 +282,44 @@ export class CivitaiChat extends LitElement {
     document.removeEventListener('keydown', this.#onShortcut);
     window.removeEventListener('dragover', this.#onStrayDrag);
     window.removeEventListener('drop', this.#onStrayDrag);
+    document.removeEventListener('visibilitychange', this.#onVisible);
+    window.removeEventListener('online', this.#onOnline);
+  }
+
+  #onVisible = (): void => {
+    // Still offline, the `online` event comes later and asks then.
+    if (document.visibilityState === 'visible' && navigator.onLine !== false) this.#autoResume('visible');
+  };
+
+  #onOnline = (): void => this.#autoResume('online');
+
+  /**
+   * Asks again, once, for a reply that lost its connection, as the page wakes or comes back online:
+   * only the latest turn of the open chat (so nothing was sent after it), only while no reply runs,
+   * nothing is being sent and nothing holds the chat, only within {@link AUTO_RESUME_WINDOW_MS} of the
+   * failure, only where asking again cannot run a tool twice (`resume`), and only once per turn.
+   */
+  #autoResume(trigger: 'visible' | 'online'): void {
+    const session = this.#session;
+    const turn = session?.store.current?.turns.at(-1);
+    const resume = turn?.assistant.resume;
+    if (!session || !turn || !resume || turn.assistant.status !== 'error' || turn.assistant.errorKind !== 'network') return;
+    if (this.#autoResumed.has(turn) || Date.now() - resume.at > AUTO_RESUME_WINDOW_MS) return;
+    if (!this.canSend) return;
+    this.#autoResumed.add(turn);
+    this.#resumeReply(session, trigger);
+  }
+
+  /** The viewer pressed Retry on the latest reply's error. */
+  #retryReply(): void {
+    const session = this.#session;
+    if (session && this.canSend) this.#resumeReply(session, 'retry');
+  }
+
+  /** Asks for the latest reply again (`agent.retry()`), unless the page cancels `reply-resume`. */
+  #resumeReply(session: ChatSession, trigger: ReplyResumeDetail['trigger']): void {
+    if (!this.dispatchEvent(new CustomEvent<ReplyResumeDetail>('reply-resume', { detail: { trigger }, bubbles: true, composed: true, cancelable: true }))) return;
+    void session.agent.retry();
   }
 
   // A file dropped outside the chat panel would otherwise replace the app with the file.
@@ -1235,7 +1294,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

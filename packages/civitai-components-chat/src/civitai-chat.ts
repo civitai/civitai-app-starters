@@ -1,6 +1,6 @@
 import { defineChatShell } from './components/define-shell.js';
 
-export { CivitaiChat, type BeforeSendDetail, type CanSendChangeDetail, type ChatChangeDetail, type ChatLayout } from './components/civitai-chat.js';
+export { AUTO_RESUME_WINDOW_MS, CivitaiChat, type BeforeSendDetail, type CanSendChangeDetail, type ChatChangeDetail, type ChatLayout, type ReplyResumeDetail } from './components/civitai-chat.js';
 export type { Example as ChatExample } from './components/civitai-chat-welcome.js';
 export { configureChat, type ChatConfig, type ChatModelOption } from './config.js';
 export type { ChatBackend } from './backend.js';
