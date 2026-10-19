@@ -846,17 +846,22 @@ A conversation is saved as a v2 head, and as a v3 head while a reply runs. v3 is
 saved `running`, with the steps it finished and the time of that save. A head of any other version is
 left out, as before.
 
-While a reply runs, the chat saves it after each step that ran a tool: the head becomes v3, with every
-step that finished so far. A step that ran no tool is a reply's last, and its end is saved as before,
-as v2 again. A page that sleeps, closes or is unloaded mid-reply so loses at most the step it was on,
-and another tab, or this one reloaded, can carry on from there. Each save is an update of the turn's
+While a reply runs, the chat saves it as each tool call starts, as each call's result comes in, and as
+each step that ran a tool finishes: the head becomes v3, with every step so far and the step now
+running as far as its calls go. A step that ran no tool is a reply's last, and its end is saved as
+before, as v2 again. A page that sleeps, closes or is unloaded mid-reply loses at most the words of the
+step it was on, and another tab, or this one reloaded, can carry on from there with Continue: a call
+that finished goes with its own result, and one that started and did not finish goes with the result
+"interrupted: this call did not finish and was not re-run", so the assistant decides what to do. Neither
+runs again. The one gap: a call that started in the moment before the page died, before its start was
+saved (one save's round trip). Each save is an update of the turn's
 own `echo` workflow's metadata, which the orchestrator does not charge for. At most one such save
 waits at a time: steps that finish while it waits go with it. Every save of the chat (a title, the
 model, a post, a panel, a step) is built from everything this tab holds when it goes, one at a time,
 so none of them drops another's change.
 
-Versions before 0.17.0 leave a v3 head out of their list, so a chat whose reply is running, or died
-mid-reply, is missing from their list until a later save makes it v2 again. Update every page that
+Versions before 0.17.0 leave a v3 head out of their list and open it as an empty chat, so a chat whose
+reply is running, or died mid-reply, is missing there until a later save makes it v2 again. Update every page that
 shows these chats to 0.17.0 or later before shipping this version.
 
 ### A reply that had not ended when the chat was saved
@@ -886,8 +891,12 @@ as its steps keep finishing, however long it runs. One saved only as it started 
 this one, or whose steps ran no tool for 5 minutes) reads as cut off 5 minutes after its last save,
 while it may still run.
 
-The tab that runs a reply notes it in its own `sessionStorage`, with the time of its latest save of
-it. That tab reloaded (or unloaded by the browser to save memory, and opened again) finds its own
-reply unfinished and nothing running it, so it reads as gone at once, with Continue where it can.
-A save newer than the note was made elsewhere, and the 5-minute rule decides. A tab duplicated while
-its reply runs copies the note, so for it that reply reads as gone until that reply's next save.
+A tab running a reply holds a Web Lock for it (`navigator.locks`) until the reply ends; the browser lets
+go of it when the tab closes, crashes or is unloaded. Another tab of the same browser that opens the
+chat asks for it: held, the reply reads as still replying, however old its last save, and the chat
+asks again each minute and when the page comes into view or gets focus. The tab also notes the reply in
+its own `sessionStorage`, with the time of its latest save of it. That tab reloaded (or unloaded by the
+browser to save memory, and opened again), or a copy of it once the original is gone, finds the note,
+the reply unfinished and its lock free, so it reads as gone at once, with Continue where it can. A save
+newer than the note was made elsewhere, and the 5-minute rule decides. Without Web Locks a note alone
+never marks a reply gone. Tabs in other browsers or on other devices see only the 5-minute rule.
