@@ -29,7 +29,10 @@ export class CivitaiChatWelcome extends LightElement {
   };
 
   declare userName: string;
-  /** Only a greeting: no examples of making things, no word of Buzz. For a chat on a host's own backend. */
+  /**
+   * Only a greeting: none of the built-in examples of making things, no word of Buzz. For a chat on a
+   * host's own backend. The page's own `examples` still show.
+   */
   declare plain: boolean;
   /** The page's own examples in place of {@link EXAMPLES}; an empty list shows none. */
   declare examples?: readonly Example[];
@@ -40,28 +43,33 @@ export class CivitaiChatWelcome extends LightElement {
     this.plain = false;
   }
 
+  #examples(examples: readonly Example[]): TemplateResult | typeof nothing {
+    return examples.length
+      ? html`<div class="cvt-examples">
+          ${examples.map(
+            (example) => html`<button class="cvt-example" type="button" @click=${() => emit(this, 'cvt-example', example)}>
+              <strong>${example.title}</strong>
+              <span>${example.prompt}</span>
+            </button>`,
+          )}
+        </div>`
+      : nothing;
+  }
+
   override render(): TemplateResult {
     // Inside <civitai-chat>'s shadow root, so the page embedding the chat can fill this slot.
     if (this.plain) {
+      // The built-in examples are about making things on Civitai, so a plain greeting shows only the page's.
       return html`<slot name="welcome"><div class="cvt-welcome-inner">
         <h1>${this.userName ? `Hi ${this.userName}, how can I help?` : 'How can I help?'}</h1>
         <p>Ask in your own words.</p>
+        ${this.#examples(this.examples ?? [])}
       </div></slot>`;
     }
-    const examples = this.examples ?? EXAMPLES;
     return html`<slot name="welcome"><div class="cvt-welcome-inner">
       <h1>${this.userName ? `Hi ${this.userName}, what shall we make?` : 'What shall we make?'}</h1>
       <p>Describe what you want in your own words. Add your own photos, videos or audio with the + button, or drop them here.</p>
-      ${examples.length
-        ? html`<div class="cvt-examples">
-            ${examples.map(
-              (example) => html`<button class="cvt-example" type="button" @click=${() => emit(this, 'cvt-example', example)}>
-                <strong>${example.title}</strong>
-                <span>${example.prompt}</span>
-              </button>`,
-            )}
-          </div>`
-        : nothing}
+      ${this.#examples(this.examples ?? EXAMPLES)}
       <p class="cvt-fineprint">Making things spends Buzz from your Civitai account; you'll see the price first. Chats are kept for ${RETENTION_DAYS} days.</p>
     </div></slot>`;
   }
