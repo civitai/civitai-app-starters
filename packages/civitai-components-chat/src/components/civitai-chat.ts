@@ -1256,7 +1256,8 @@ export class CivitaiChat extends LitElement {
       // whether its session has started yet or not, or the chat was signed out): nothing goes to the
       // old session. Another viewer (any other app or backend object), or none: the message is
       // dropped, never shown to them. The same viewer, whose chat started again: back in their box.
-      if (this.#starts !== takenFor.start || this.#session !== session || !this.#source()) {
+      // (Every new session follows a start, so the count also says the session was replaced.)
+      if (this.#starts !== takenFor.start || !this.#source()) {
         if (this.#source() && this.#source() === takenFor.source) this.giveBack(text);
         return;
       }
