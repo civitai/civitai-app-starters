@@ -1,4 +1,4 @@
-import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
@@ -16,7 +16,7 @@ import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
 import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
-import { hasModelCards, modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
+import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
 function failureOf(part: ToolPart): string | undefined {
   if (part.state === 'error') return part.error || 'It failed.';
@@ -108,32 +108,54 @@ export class CivitaiChatTurn extends LightElement {
     return [...uploads, ...refs];
   }
 
-  #tool(part: ToolPart): unknown {
+  /**
+   * What a call shows of its own, or `undefined` when nothing would show it: the page's or the built-in
+   * `render` (returning `undefined` keeps the default), else model cards. A failed call shows its
+   * "didn't work" note instead; `failedNote` says whether it does so without a `render` (`activity`).
+   */
+  #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
     if (failure) {
+      if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
     const rendered = view?.render?.(part, this.#context());
-    if (rendered !== undefined) return rendered;
-    return modelCards(part, this.models) ?? (part.state === 'calling' ? html`<div class="cvt-activity">${view?.activity ?? 'Working on it…'}</div>` : nothing);
+    return rendered !== undefined ? rendered : modelCards(part, this.models);
+  }
+
+  #tool(part: ToolPart): unknown {
+    const own = this.#own(part, true);
+    if (own !== undefined) return own;
+    return part.state === 'calling' ? html`<div class="cvt-activity">${viewFor(part.toolName, this.views)?.activity ?? 'Working on it…'}</div>` : nothing;
   }
 
   /**
-   * With `details`, a call shows as a row when nothing else would show it once it finished: no view
-   * of its own (the page's `render`, or a built-in card such as a generation, panel, post or choice)
-   * and no model cards. Those keep rendering exactly as before and end a run of rows.
+   * With `details`, a call shows as a row when it shows nothing of its own (`#own` is `undefined`).
+   * Each call is rendered once, and that one result both decides the grouping and is what shows.
    */
-  #listed = (part: ToolPart): boolean => !viewFor(part.toolName, this.views)?.render && !hasModelCards(part);
+  #detailed(md: (text: string) => unknown): unknown {
+    const own = new Map<ToolPart, unknown>();
+    for (const part of this.parts) if (part.kind === 'tool') own.set(part, this.#own(part, false));
+    return groupToolCalls(this.parts, (part) => own.get(part) === undefined).map((segment) => {
+      if (segment.kind === 'part') return segment.part.kind === 'text' ? md(segment.part.text) : own.get(segment.part);
+      const first = segment.calls[0]!;
+      if (segment.calls.length === 1) return renderCall(first, this.#rows);
+      // A lone row the viewer opened, now the first of a group as the reply streams: the group opens with it.
+      const group = `group:${first.toolCallId}`;
+      if (!this.#opened.has(group) && this.#open.has(`call:${first.toolCallId}`)) {
+        this.#open.add(group);
+        this.#opened.add(group);
+      }
+      return renderCallGroup(segment.calls, this.#rows);
+    });
+  }
 
   #assistantParts(): unknown {
     const md = (text: string) => html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`;
-    if (this.toolCalls !== 'details') return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
-    return groupToolCalls(this.parts, this.#listed).map((segment) => {
-      if (segment.kind === 'calls') return segment.calls.length === 1 ? renderCall(segment.calls[0]!, this.#rows) : renderCallGroup(segment.calls, this.#rows);
-      return segment.part.kind === 'text' ? md(segment.part.text) : this.#tool(segment.part);
-    });
+    if (this.toolCalls === 'details') return this.#detailed(md);
+    return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }
 
   #context(): ToolViewContext {
@@ -199,6 +221,18 @@ export class CivitaiChatTurn extends LightElement {
       </civitai-alert>`;
     }
     return nothing;
+  }
+
+  // A row that becomes part of a group as the reply streams is drawn anew inside it: a viewer on its
+  // button stays on the same call's button rather than falling to the page.
+  protected override update(changed: PropertyValues): void {
+    const root = this.getRootNode() as Document | ShadowRoot;
+    const focused = root.activeElement;
+    const call = focused instanceof HTMLElement && this.contains(focused) && focused.classList.contains('cvt-call-head') ? focused.dataset.call : undefined;
+    super.update(changed);
+    if (call === undefined || focused!.isConnected) return;
+    const again = [...this.querySelectorAll<HTMLElement>('.cvt-call-head')].find((head) => head.dataset.call === call);
+    again?.focus();
   }
 
   override render(): TemplateResult {

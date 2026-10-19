@@ -291,13 +291,17 @@ row: the tool's name (and its server's id, for a tool of a server now in
 result or error, pretty-printed in a box that scrolls rather than widening the thread; past 50,000
 characters a value is cut, with a note of how many more there were. Calls in a row, with no words
 between them, fold into one row, "Used 3 tools" ("Using 3 tools…" while any still runs, and how
-many failed), which opens to the calls. A single call is not wrapped in a group. The rows are
+many failed), which opens to the calls. A single call is not wrapped in a group; one the viewer
+opened that becomes the first of a group as the reply streams opens the group with it, and focus on
+its button moves to the same row in the group. The rows are
 buttons with `aria-expanded`, so the keyboard opens them too, and opening animates only without
 `prefers-reduced-motion`.
 
 A call that has a view keeps it, exactly as with `activity`, and ends a run: a `render` in
 `toolViews` or `tools`, the built-in generation, panel, post and choice cards, and a call that
-answered with model cards. A failed call with a `render` also keeps its "didn't work" note. A chat
+answered with model cards. A `render` that returns `undefined` for a call (the built-in cards do
+when their generation, panel or post is not there) shows nothing of its own, so that call is a row.
+A failed call with a `render` also keeps its "didn't work" note. A chat
 reopened from storage groups the same as it did live.
 
 | Property | What it does |

@@ -179,3 +179,52 @@ describe('tool calls with tool-calls="details"', () => {
     expect(reloaded).toEqual(['cvt-md', 'group:list_files,read_file,search_models', 'cvt-md', 'host-pin']);
   });
 });
+
+describe('tool calls with tool-calls="details": what counts as a view', () => {
+  const call = (id: string, toolName: string, output: unknown = { ok: true }): TurnPart => ({ kind: 'tool', toolCallId: id, toolName, input: {}, state: 'done', output });
+  const shape = (el: Element) =>
+    [...el.querySelectorAll('.cvt-assistant > *')].map((c) =>
+      c.classList.contains('cvt-tool-group') ? `group:${[...c.querySelectorAll('.cvt-call-name')].map((n) => n.textContent).join(',')}` : c.classList.contains('cvt-call') ? `row:${c.querySelector('.cvt-call-name')?.textContent}` : c.className,
+    );
+
+  it('makes a call whose page view returns undefined a row, which joins the run', async () => {
+    const views: Record<string, ChatToolView> = { maybe: { render: (c) => ((c.output as { ok?: boolean }).ok ? html`<div class="host-maybe">Yes</div>` : undefined) } };
+    const el = await turnWith([call('u1', 'maybe', { ok: false }), call('u2', 'plain')], { toolCalls: 'details', views });
+    expect(shape(el)).toEqual(['group:maybe,plain']);
+  });
+
+  it('keeps a call whose page view returns a template as that template, with no row, and lets it break the run', async () => {
+    const views: Record<string, ChatToolView> = { maybe: { render: (c) => ((c.output as { ok?: boolean }).ok ? html`<div class="host-maybe">Yes</div>` : undefined) } };
+    const el = await turnWith([call('v1', 'plain'), call('v2', 'maybe', { ok: true }), call('v3', 'other')], { toolCalls: 'details', views });
+    expect(shape(el)).toEqual(['row:plain', 'host-maybe', 'row:other']);
+  });
+
+  it('makes a generation call with no job to show a row', async () => {
+    const jobs = { byToolCall: () => undefined, get: () => undefined };
+    const el = await turnWith([call('j1', 'run_step', { job: 'missing' })], { toolCalls: 'details', jobs });
+    expect(shape(el)).toEqual(['row:run_step']);
+  });
+});
+
+describe('tool calls with tool-calls="details": a lone row that becomes a group while the reply streams', () => {
+  it('opens the new group, keeps the row open in it, and keeps focus on that row\'s button', async () => {
+    const first: TurnPart = { kind: 'tool', toolCallId: 'g1', toolName: 'sandbox__list_files', input: { path: '/' }, state: 'done', output: { files: [] } };
+    const el = await turnWith([first], { toolCalls: 'details', live: true });
+    const head = el.querySelector<HTMLButtonElement>('.cvt-assistant > .cvt-call .cvt-call-head')!;
+    head.click();
+    head.focus();
+    await el.updateComplete;
+    expect(head.getAttribute('aria-expanded')).toBe('true');
+
+    el.parts = [first, { kind: 'tool', toolCallId: 'g2', toolName: 'sandbox__read_file', input: { path: '/a' }, state: 'calling' }];
+    await el.updateComplete;
+
+    const group = el.querySelector('.cvt-tool-group')!;
+    expect(group.querySelector('.cvt-tool-group-head')!.getAttribute('aria-expanded')).toBe('true');
+    const row = group.querySelector('.cvt-call')!;
+    const rowHead = row.querySelector('.cvt-call-head')!;
+    expect(rowHead.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(rowHead);
+  });
+});

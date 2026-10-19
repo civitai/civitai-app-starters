@@ -121,11 +121,6 @@ function recommended(part: ToolPart): ModelRecommendation[] | undefined {
   return found?.length ? found : undefined;
 }
 
-/** Whether `modelCards` shows anything for this call. */
-export function hasModelCards(part: ToolPart): boolean {
-  return recommended(part) !== undefined;
-}
-
 /** A tool without a view of its own that answered with model recommendations shows them as cards. */
 export function modelCards(part: ToolPart, models: ModelDirectory): TemplateResult | undefined {
   const found = recommended(part);

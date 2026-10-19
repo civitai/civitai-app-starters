@@ -52,7 +52,7 @@ export function renderCall(part: ToolPart, rows: CallRowState): TemplateResult {
   const failure = rows.failure(part);
   const summary = summarizeInput(part.input);
   return html`<div class="cvt-call" data-state=${state}>
-    <button type="button" class="cvt-call-head" aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows.toggle(key)}>
+    <button type="button" class="cvt-call-head" data-call=${part.toolCallId} aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows.toggle(key)}>
       <span class="cvt-call-chevron" aria-hidden="true"></span>
       <span class="cvt-call-name">${tool}</span>
       ${server ? html`<span class="cvt-call-server">${server}</span>` : nothing}
