@@ -20,8 +20,6 @@ export interface QueuedView {
   /** What it waits for, e.g. "Waiting for your app…". */
   status: string;
   files: Attachment[];
-  /** On its way: it can no longer be edited or cancelled. */
-  going: boolean;
 }
 
 export class CivitaiChatThread extends LightElement {
@@ -70,6 +68,7 @@ export class CivitaiChatThread extends LightElement {
   });
   #gliding = false;
   #wasLive = false;
+  #queuedStatus?: string;
 
   constructor() {
     super();
@@ -118,6 +117,10 @@ export class CivitaiChatThread extends LightElement {
   // Setting state here rather than in updated() folds it into this update instead of scheduling another.
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('live')) this.#announce();
+    // A message that starts waiting, and each change of what it waits for, is said once (the polite announcer).
+    const status = this.queued?.status;
+    if (status !== undefined && status !== this.#queuedStatus) this.announcement = status;
+    this.#queuedStatus = status;
   }
 
   protected override updated(changed: PropertyValues): void {
@@ -162,11 +165,8 @@ export class CivitaiChatThread extends LightElement {
       ${files.length ? html`<civitai-chat-attachment-strip size="sm" .items=${files}></civitai-chat-attachment-strip>` : nothing}
       ${queued.text ? html`<div class="cvt-bubble">${queued.text}</div>` : nothing}
       <div class="cvt-queued-status">
-        <span role="status">${queued.status}</span>
-        ${queued.going
-          ? nothing
-          : html`<civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-edit')}>Edit</civitai-button>
-              <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-cancel')}>Cancel</civitai-button>`}
+        <span>${queued.status}</span>
+        <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-edit')}>Edit</civitai-button>
       </div>
     </div>`;
   }
