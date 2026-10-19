@@ -914,7 +914,6 @@ civitai-chat-panel {
 
 .cvt-call-head:focus-visible,
 .cvt-tool-group-head:focus-visible,
-.cvt-call-more:focus-visible,
 .cvt-call-pre:focus-visible {
   outline: 2px solid var(--civitai-color-primary);
   outline-offset: 1px;
@@ -1040,24 +1039,6 @@ civitai-chat-panel {
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.cvt-call-more {
-  margin-top: 4px;
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  color: var(--civitai-color-primary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cvt-call-body,
-  .cvt-call-chevron {
-    transition: none;
-  }
 }
 
 .cvt-panel-chip {

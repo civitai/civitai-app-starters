@@ -67,7 +67,7 @@ function head() {
   };
 }
 
-async function mount(width: number, toolCalls?: string): Promise<ShadowRoot> {
+async function mount(width: number, toolCalls?: string, mcpServers?: unknown[]): Promise<ShadowRoot> {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   localStorage.setItem('cvt:settings', JSON.stringify({ lastConversationId: 'CONV1' }));
@@ -86,6 +86,7 @@ async function mount(width: number, toolCalls?: string): Promise<ShadowRoot> {
   const chat = document.createElement('civitai-chat');
   if (toolCalls) chat.setAttribute('tool-calls', toolCalls);
   chat.app = app as never;
+  if (mcpServers) chat.mcpServers = mcpServers as never;
   frame.append(chat);
   document.body.append(frame);
   const root = chat.shadowRoot!;
@@ -147,6 +148,18 @@ describe('tool-calls="details" at phone width', () => {
     const scroller = root.querySelector<HTMLElement>('.cvt-thread-scroll')!;
     expect(scroller.scrollWidth, report()).toBeLessThanOrEqual(scroller.clientWidth);
     await shoot('tool-calls-360-expanded');
+  });
+
+  it("shows each call's server when the chat added that server", async () => {
+    await page.viewport(360, 740);
+    const root = await mount(360, 'details', [{ id: 'sandbox', url: 'https://example.com/mcp', token: async () => 'token' }]);
+    await userEvent.click(root.querySelector<HTMLButtonElement>('.cvt-tool-group-head')!);
+    const rows = [...root.querySelectorAll('.cvt-call')].map((row) => [row.querySelector('.cvt-call-name')?.textContent, row.querySelector('.cvt-call-server')?.textContent ?? null]);
+    expect(rows).toEqual([
+      ['list_files', 'sandbox'],
+      ['read_file', 'sandbox'],
+      ['run_command', 'sandbox'],
+    ]);
   });
 
   it('opens a group from the keyboard', async () => {

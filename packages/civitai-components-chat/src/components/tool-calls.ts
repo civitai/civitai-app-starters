@@ -1,12 +1,12 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import { FULL_CHARS, PREVIEW_CHARS, capText, prettyValue, splitToolName, summarizeInput } from '../agent/tool-groups.js';
+import { FULL_CHARS, capText, prettyValue, splitToolName, summarizeInput } from '../agent/tool-groups.js';
 import type { ToolPart } from './tool-views.js';
 
 /** How the thread shows tool calls: `activity` (a line while one runs, the default) or `details` (a row per call). */
 export type ToolCallsMode = 'activity' | 'details';
 
-/** What the call rows need from the turn: which rows are open, and a way to flip one. */
+/** What the call rows need from the turn: which rows are open, a way to flip one, and the added servers. */
 export interface CallRowState {
   isOpen(key: string): boolean;
   /** Opened at least once: its body stays rendered, so closing it can animate. */
@@ -14,6 +14,8 @@ export interface CallRowState {
   toggle(key: string): void;
   /** Why the call failed, when it did: an error, or a finished call whose result carries one. */
   failure(part: ToolPart): string | undefined;
+  /** The added MCP servers' ids, so a call of one of their tools shows its server. */
+  servers(): ReadonlySet<string>;
 }
 
 type Shown = 'calling' | 'done' | 'error';
@@ -33,19 +35,16 @@ function domId(part: ToolPart, prefix: string): string {
   return `${id}-${prefix}`;
 }
 
-function valueBlock(label: string, value: unknown, key: string, rows: CallRowState): TemplateResult {
-  const full = rows.isOpen(key);
-  const { text, cut } = capText(prettyValue(value), full ? FULL_CHARS : PREVIEW_CHARS);
+function valueBlock(label: string, value: unknown): TemplateResult {
   return html`<div class="cvt-call-value">
     <div class="cvt-call-label">${label}</div>
-    <pre class="cvt-call-pre" tabindex="0">${text}</pre>
-    ${cut && !full ? html`<button type="button" class="cvt-call-more" @click=${() => rows.toggle(key)}>Show more</button>` : nothing}
+    <pre class="cvt-call-pre" tabindex="0">${capText(prettyValue(value), FULL_CHARS).text}</pre>
   </div>`;
 }
 
 /** One call: its name (and server), what it was asked, and how it went; opened, the whole input and result. */
 export function renderCall(part: ToolPart, rows: CallRowState): TemplateResult {
-  const { server, tool } = splitToolName(part.toolName);
+  const { server, tool } = splitToolName(part.toolName, rows.servers());
   const state = stateOf(part, rows);
   const key = `call:${part.toolCallId}`;
   const open = rows.isOpen(key);
@@ -63,12 +62,12 @@ export function renderCall(part: ToolPart, rows: CallRowState): TemplateResult {
     <div class="cvt-call-body" id=${body} ?inert=${!open} data-open=${open ? 'true' : 'false'}>
       <div class="cvt-call-inner">
         ${rows.wasOpened(key)
-          ? html`${valueBlock('Input', part.input, `${key}:in`, rows)}
+          ? html`${valueBlock('Input', part.input)}
             ${failure !== undefined
-              ? valueBlock('Error', failure, `${key}:out`, rows)
+              ? valueBlock('Error', failure)
               : state === 'calling'
                 ? html`<div class="cvt-call-label">Still running…</div>`
-                : valueBlock('Result', part.output, `${key}:out`, rows)}`
+                : valueBlock('Result', part.output)}`
           : nothing}
       </div>
     </div>

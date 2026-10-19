@@ -2,6 +2,7 @@ import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
 
 import { partsFromMessages, type TurnPart } from './parts.js';
+import { namespacedToolName } from '../mcp/servers.js';
 import { capText, groupToolCalls, prettyValue, splitToolName, summarizeInput, type Segment } from './tool-groups.js';
 
 type ToolPart = Extract<TurnPart, { kind: 'tool' }>;
@@ -103,9 +104,18 @@ describe('groupToolCalls', () => {
 
 describe('call row helpers', () => {
   it('splits an added server tool name, and leaves others whole', () => {
-    expect(splitToolName('sandbox__run_command')).toEqual({ server: 'sandbox', tool: 'run_command' });
-    expect(splitToolName('search_models')).toEqual({ tool: 'search_models' });
-    expect(splitToolName('__x')).toEqual({ tool: '__x' });
+    const servers = new Set(['sandbox', 'my-files']);
+    expect(splitToolName(namespacedToolName('sandbox', 'run_command'), servers)).toEqual({ server: 'sandbox', tool: 'run_command' });
+    expect(splitToolName(namespacedToolName('my-files', 'read__raw'), servers)).toEqual({ server: 'my-files', tool: 'read__raw' });
+    expect(splitToolName('search_models', servers)).toEqual({ tool: 'search_models' });
+    expect(splitToolName('__x', servers)).toEqual({ tool: '__x' });
+    expect(splitToolName('sandbox__', servers)).toEqual({ tool: 'sandbox__' });
+  });
+
+  it('gives no server to a tool whose name only contains the separator', () => {
+    // A page or built-in tool may be named with `__`; only an added server's id before it makes a server.
+    expect(splitToolName('pin__board', new Set(['sandbox']))).toEqual({ tool: 'pin__board' });
+    expect(splitToolName('pin__board', new Set())).toEqual({ tool: 'pin__board' });
   });
 
   it('summarizes an input on one line, cut to fit', () => {

@@ -44,6 +44,7 @@ export class CivitaiChatTurn extends LightElement {
     resolve: { attribute: false },
     views: { attribute: false },
     toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
   };
 
   declare turn: Turn;
@@ -66,6 +67,8 @@ export class CivitaiChatTurn extends LightElement {
   declare views: Record<string, ChatToolView>;
   /** `details`: calls with no view of their own show as rows to open, and calls in a row as one group. */
   declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids: a call row shows the server of one of their tools. */
+  declare mcpServerIds: ReadonlySet<string>;
 
   /** Call rows and groups the viewer opened, by key; kept while the turn is on the page. */
   #open = new Set<string>();
@@ -81,6 +84,7 @@ export class CivitaiChatTurn extends LightElement {
       this.requestUpdate();
     },
     failure: (part) => failureOf(part),
+    servers: () => this.mcpServerIds,
   };
 
   constructor() {
@@ -92,6 +96,7 @@ export class CivitaiChatTurn extends LightElement {
     this.files = () => [];
     this.views = {};
     this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
   }
 
   #userFiles(): StripItem[] {

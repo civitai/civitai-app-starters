@@ -30,6 +30,7 @@ async function turnWith(parts: TurnPart[], props: Record<string, unknown> = {}):
   el.turn = { seq: 1, createdAt: '', user: { content: 'hi', attachments: [] }, assistant: { messages: [], status: 'done' } };
   el.parts = parts;
   el.views = VIEWS;
+  el.mcpServerIds = new Set(['sandbox']);
   el.resolve = () => undefined;
   Object.assign(el, props);
   document.body.append(el);
@@ -115,15 +116,25 @@ describe('tool calls with tool-calls="details"', () => {
     expect(first!.querySelector('.cvt-call-head')!.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('caps a long result with Show more', async () => {
-    const big = { kind: 'tool' as const, toolCallId: 'b1', toolName: 'dump', input: {}, state: 'done' as const, output: 'x'.repeat(5_000) };
-    const el = await turnWith([big], { toolCalls: 'details' });
-    await click(el, el.querySelector('.cvt-call-head'));
-    const result = () => el.querySelectorAll('.cvt-call-pre')[1]!.textContent!;
-    expect(result().length).toBeLessThan(1_600);
-    await click(el, el.querySelector('.cvt-call-more'));
-    expect(result()).toBe('x'.repeat(5_000));
-    expect(el.querySelector('.cvt-call-more')).toBeNull();
+  it('shows a value whole up to 50,000 characters, and cuts a longer one with a marker', async () => {
+    const call = (id: string, output: string) => ({ kind: 'tool' as const, toolCallId: id, toolName: 'dump', input: {}, state: 'done' as const, output });
+    const el = await turnWith([call('b1', 'x'.repeat(50_000)), { kind: 'text', text: 'And more.' }, call('b2', 'y'.repeat(50_007))], { toolCalls: 'details' });
+    const [whole, cut] = el.querySelectorAll('.cvt-assistant > .cvt-call');
+    for (const row of [whole!, cut!]) await click(el, row.querySelector('.cvt-call-head'));
+    expect(whole!.querySelectorAll('.cvt-call-pre')[1]!.textContent).toBe('x'.repeat(50_000));
+    expect(cut!.querySelectorAll('.cvt-call-pre')[1]!.textContent).toBe(`${'y'.repeat(50_000)}\n…(7 more characters)`);
+    // One cap, no second step to ask for more.
+    expect(el.querySelector('.cvt-call-value button')).toBeNull();
+  });
+
+  it('shows a server only for an added server\'s tool, not for a name that merely contains the separator', async () => {
+    const call = (id: string, toolName: string) => ({ kind: 'tool' as const, toolCallId: id, toolName, input: {}, state: 'done' as const, output: 'ok' });
+    const el = await turnWith([call('s1', 'sandbox__list_files'), { kind: 'text', text: 'Then.' }, call('s2', 'pin__board')], { toolCalls: 'details' });
+    const rows = [...el.querySelectorAll('.cvt-call')].map((row) => [row.querySelector('.cvt-call-name')?.textContent, row.querySelector('.cvt-call-server')?.textContent ?? null]);
+    expect(rows).toEqual([
+      ['list_files', 'sandbox'],
+      ['pin__board', null],
+    ]);
   });
 
   it('shows a run still going as working', async () => {

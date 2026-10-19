@@ -1,3 +1,4 @@
+import { MCP_SERVER_ID, TOOL_SEPARATOR } from '../mcp/servers.js';
 import type { TurnPart } from './parts.js';
 
 type ToolPart = Extract<TurnPart, { kind: 'tool' }>;
@@ -28,10 +29,16 @@ export function groupToolCalls(parts: readonly TurnPart[], listed: (part: ToolPa
   return segments;
 }
 
-/** An added MCP server's tool is offered as `${server}__${tool}`; built-in and page tools have no server. */
-export function splitToolName(name: string): { server?: string; tool: string } {
-  const at = name.indexOf('__');
-  return at > 0 && at < name.length - 2 ? { server: name.slice(0, at), tool: name.slice(at + 2) } : { tool: name };
+/**
+ * An added MCP server's tool is offered as `namespacedToolName(id, tool)`. A name has a server only
+ * when it is one of those for a server in `servers` (the added servers' ids): a built-in or page tool
+ * whose own name contains the separator has none.
+ */
+export function splitToolName(name: string, servers: ReadonlySet<string>): { server?: string; tool: string } {
+  const at = name.indexOf(TOOL_SEPARATOR);
+  const server = name.slice(0, at);
+  const tool = name.slice(at + TOOL_SEPARATOR.length);
+  return at > 0 && tool && MCP_SERVER_ID.test(server) && servers.has(server) ? { server, tool } : { tool: name };
 }
 
 const SUMMARY_MAX = 80;
@@ -61,9 +68,7 @@ export function prettyValue(value: unknown): string {
   }
 }
 
-/** Shown until the viewer asks for more. */
-export const PREVIEW_CHARS = 1_500;
-/** The most a call row ever shows of one value, so a huge reply cannot freeze the page. */
+/** The most a call row shows of one value, so a huge reply cannot freeze the page. */
 export const FULL_CHARS = 50_000;
 
 /** `text` cut to `max`, and whether anything was cut. */

@@ -286,13 +286,13 @@ behaviour above.
 ```
 
 With `details`, every call that would otherwise show nothing once finished stays in the thread as a
-row: the tool's name (and its server's id, for an [added server](#more-mcp-servers)'s tool), a short
-line of its input, and Running, Done or Failed. Clicking or tapping it opens the whole input and the
-result or error, pretty-printed in a box that scrolls rather than widening the thread; past 1,500
-characters a value is cut, with Show more (up to 50,000). Calls in a row, with no words between
-them, fold into one row, "Used 3 tools" ("Using 3 tools…" while any still runs, and how many
-failed), which opens to the calls. A single call is not wrapped in a group. The rows are buttons
-with `aria-expanded`, so the keyboard opens them too, and opening animates only without
+row: the tool's name (and its server's id, for a tool of a server now in
+[`mcpServers`](#more-mcp-servers); any other name, `__` or not, shows whole), a short line of its input, and Running, Done or Failed. Clicking or tapping it opens the whole input and the
+result or error, pretty-printed in a box that scrolls rather than widening the thread; past 50,000
+characters a value is cut, with a note of how many more there were. Calls in a row, with no words
+between them, fold into one row, "Used 3 tools" ("Using 3 tools…" while any still runs, and how
+many failed), which opens to the calls. A single call is not wrapped in a group. The rows are
+buttons with `aria-expanded`, so the keyboard opens them too, and opening animates only without
 `prefers-reduced-motion`.
 
 A call that has a view keeps it, exactly as with `activity`, and ends a run: a `render` in

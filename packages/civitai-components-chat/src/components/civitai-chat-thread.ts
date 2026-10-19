@@ -40,6 +40,7 @@ export class CivitaiChatThread extends LightElement {
     resolve: { attribute: false },
     views: { attribute: false },
     toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -59,6 +60,8 @@ export class CivitaiChatThread extends LightElement {
   declare resolve: (id: string) => Attachment | undefined;
   declare views: Record<string, ChatToolView>;
   declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids, so a call row can show which one a tool is from. */
+  declare mcpServerIds: ReadonlySet<string>;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
   declare queued: QueuedView | null;
@@ -79,6 +82,7 @@ export class CivitaiChatThread extends LightElement {
     super();
     this.views = {};
     this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
     this.canRetry = false;
     this.queued = null;
     this.turns = [];
@@ -206,6 +210,7 @@ export class CivitaiChatThread extends LightElement {
                 .resolve=${this.resolve}
                 .views=${this.views}
                 .toolCalls=${this.toolCalls}
+                .mcpServerIds=${this.mcpServerIds}
               ></civitai-chat-turn>`,
           )}
           ${this.#queuedMessage()}
