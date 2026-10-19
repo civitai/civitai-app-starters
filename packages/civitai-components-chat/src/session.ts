@@ -97,6 +97,11 @@ function assertRunner(runner: unknown): void {
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
+export interface LiveSession {
+  workflowId: string;
+  socketUrl: string;
+}
+
 export class ChatSession extends EventTarget {
   /** The viewer's Civitai client; with a `backend`, a stand-in that refuses every call. */
   readonly app: AppClient;
@@ -116,6 +121,8 @@ export class ChatSession extends EventTarget {
   /** The models the picker offers, loaded once when it is first opened. */
   readonly modelCatalog: Pick<ModelCatalog, 'load'>;
   settings: Settings;
+  /** On while a spoken conversation runs: replies are written to be read aloud. */
+  spokenReplies = false;
 
   #orchestrationTools: Promise<McpTool[]> | null = null;
   #siteTools: Promise<McpTool[] | null> | null = null;
@@ -193,6 +200,7 @@ export class ChatSession extends EventTarget {
       attachments: () => this.attachments(),
       customInstructions: () => this.settings.customInstructions,
       hostInstructions: () => this.#options.hostInstructions?.(),
+      spokenReplies: () => this.spokenReplies,
       isHostTool: (name) => this.#hostToolNames.has(name),
       panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
@@ -418,6 +426,34 @@ export class ChatSession extends EventTarget {
       },
       onChange,
     );
+  }
+
+  /** A spoken conversation's ears: billed per second of speech sent, with end-of-turn events. */
+  openLiveTranscription(): Promise<LiveSession> {
+    return this.#openLive({
+      $type: 'liveTranscription',
+      input: { language: voiceLanguage(this.settings.voiceLanguage), maxDurationSeconds: 600, idleTimeoutSeconds: 60 },
+    });
+  }
+
+  /** A spoken conversation's voice: billed per character spoken; an idle session costs nothing. */
+  openLiveSpeech(): Promise<LiveSession> {
+    const { speaker, instruct } = chatConfig.conversationVoice;
+    return this.#openLive({
+      $type: 'liveTextToSpeech',
+      input: { engine: 'vllm-omni', ecosystem: 'qwen3', operation: 'customVoice', speaker, instruct, format: 'pcm', maxCharacters: 5000, idleTimeoutSeconds: 300 },
+    });
+  }
+
+  async #openLive(step: { $type: string; input: object }): Promise<LiveSession> {
+    const workflow = await this.app.orchestration.submitWorkflow({ steps: [step] } as never);
+    const socketUrl = (workflow.steps?.[0] as { output?: { socketUrl?: string } } | undefined)?.output?.socketUrl;
+    if (!workflow.id || !socketUrl) throw new Error(`${step.$type} did not start.`);
+    return { workflowId: workflow.id, socketUrl };
+  }
+
+  cancelWorkflow(workflowId: string): void {
+    void this.app.orchestration.cancelWorkflow(workflowId).catch(() => undefined);
   }
 
   /** About 1 Buzz per call, whatever the length. */

@@ -28,6 +28,7 @@ import type { Attachment, Settings, Turn } from '../types.js';
 import { voiceLanguage } from '../voice/languages.js';
 import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
+import type { ConversationView } from '../voice/conversation/index.js';
 import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatThread, QueuedView } from './civitai-chat-thread.js';
@@ -163,6 +164,7 @@ export class CivitaiChat extends LitElement {
     canSignOut: { type: Boolean, attribute: 'can-sign-out' },
     examples: { attribute: false },
     placeholder: {},
+    voiceConversation: { type: Boolean, attribute: 'voice-conversation' },
     userName: { state: true },
     uploads: { state: true },
     refs: { state: true },
@@ -173,6 +175,7 @@ export class CivitaiChat extends LitElement {
     signingIn: { state: true },
     transcribing: { state: true },
     heard: { state: true },
+    conversation: { state: true },
     modelList: { state: true },
     modelsLoading: { state: true },
   };
@@ -264,6 +267,11 @@ export class CivitaiChat extends LitElement {
   declare examples?: readonly ChatExample[];
   /** The message box's hint while it is empty, in place of the built-in one. */
   declare placeholder?: string;
+  /**
+   * Offers a hands-free spoken conversation: the viewer talks, and each reply is read aloud. Nothing
+   * for it loads until the viewer starts one. Not offered with a host backend.
+   */
+  declare voiceConversation: boolean;
   declare userName: string;
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
@@ -274,6 +282,7 @@ export class CivitaiChat extends LitElement {
   declare signingIn: boolean;
   declare transcribing: boolean;
   declare heard: string;
+  declare conversation?: ConversationView;
   /** What the model picker offers; the default and the page's models until the full list loads. */
   declare modelList: ChatModelEntry[] | null;
   declare modelsLoading: boolean;
@@ -288,6 +297,7 @@ export class CivitaiChat extends LitElement {
   #focusedPanel?: Panel;
   #activePanel?: Panel;
   #voice?: VoiceTranscript;
+  #talk?: Promise<{ end(): void } | undefined>;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
   /** What the signed-out message box held when sign-in finished, for the signed-in one to start with. */
   #carriedDraft?: string;
@@ -330,6 +340,7 @@ export class CivitaiChat extends LitElement {
     this.dockPanels = false;
     this.layout = 'auto';
     this.canSignOut = false;
+    this.voiceConversation = false;
     this.userName = '';
     this.uploads = [];
     this.refs = [];
@@ -367,6 +378,7 @@ export class CivitaiChat extends LitElement {
     window.removeEventListener('focus', this.#onFocus);
     // Off the page nothing comes back by itself: the wait stops.
     if (this.#queued) clearTimeout(this.#queued.timer);
+    this.#conversationEnd();
   }
 
   #onVisible = (): void => {
@@ -867,6 +879,7 @@ export class CivitaiChat extends LitElement {
   async #start(source: AppClient | ChatBackend): Promise<void> {
     // Called right after `#starts` counts this start.
     const start = this.#starts;
+    this.#conversationEnd();
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
     // An open still loading in the old session is moot: the new session is not held behind it.
@@ -1121,6 +1134,46 @@ export class CivitaiChat extends LitElement {
     const voice: VoiceTranscript = live ? session.liveTranscript(changed) : new LiveTranscript((recording, signal) => session.transcribe(recording, signal), changed);
     this.#voice = voice;
     this.heard = '';
+  }
+
+  #conversationStart(): void {
+    const session = this.#session;
+    if (!session || this.#talk) return;
+    this.#voiceCancel();
+    this.conversation = { state: 'starting', heard: '', level: 0 };
+    let talk: Promise<{ end(): void } | undefined> | undefined;
+    talk = (async () => {
+      try {
+        // Only a viewer who starts talking loads the conversation, and with it the end-of-turn model.
+        const { startConversation } = await import('../voice/conversation/index.js');
+        const started = await startConversation(session, {
+          send: (text) => this.#send(text),
+          changed: (view) => {
+            if (this.#talk === talk) this.conversation = view;
+          },
+          failed: (error) => {
+            this.#toast('The conversation stopped. Try again, or type instead.', error);
+            this.#conversationEnd();
+          },
+        });
+        if (this.#talk !== talk) started.end();
+        return started;
+      } catch (error) {
+        if (this.#talk === talk) {
+          this.#toast(microphoneProblem(error), error);
+          this.#conversationEnd();
+        }
+        return undefined;
+      }
+    })();
+    this.#talk = talk;
+  }
+
+  #conversationEnd(): void {
+    const talk = this.#talk;
+    this.#talk = undefined;
+    this.conversation = undefined;
+    void talk?.then((started) => started?.end());
   }
 
   #voiceCancel(): void {
@@ -1722,6 +1775,8 @@ export class CivitaiChat extends LitElement {
             .uploads=${this.uploads}
             .refs=${this.refs}
             ?voice=${!hosted}
+            ?talk=${this.voiceConversation && !hosted}
+            .conversation=${this.conversation}
             .placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : DEFAULT_PLACEHOLDER)}
             ?no-files=${hosted}
             ?transcribing=${this.transcribing}
@@ -1734,6 +1789,8 @@ export class CivitaiChat extends LitElement {
             @cvt-voice-audio=${(e: CustomEvent<{ pcm: Int16Array }>) => (this.#voice as StreamingTranscript | undefined)?.add(e.detail.pcm)}
             @cvt-voice-done=${(e: CustomEvent<{ send: boolean }>) => void this.#voiceDone(e.detail.send)}
             @cvt-voice-cancel=${() => this.#voiceCancel()}
+            @cvt-conversation-start=${() => this.#conversationStart()}
+            @cvt-conversation-end=${() => this.#conversationEnd()}
             @cvt-voice-error=${(e: CustomEvent<{ error: unknown }>) => this.#toast(microphoneProblem(e.detail.error), e.detail.error)}
             @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
             @cvt-stop=${() => session.agent.abort()}
