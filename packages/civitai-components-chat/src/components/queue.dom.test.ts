@@ -350,7 +350,7 @@ describe('a message sent while the chat holds until it is ready', () => {
   });
 
   it('NEGATIVE CONTROL: while a saved chat opens, a message is kept in the box (where it would go is changing)', async () => {
-    const { chat } = await mount();
+    const { chat, changes } = await mount();
     // Opening a chat that never answers keeps the chat "Opening this chat…".
     const app = fakeApp() as { orchestration: { queryWorkflows: unknown } };
     app.orchestration.queryWorkflows = () => new Promise(() => undefined);
@@ -364,5 +364,7 @@ describe('a message sent while the chat holds until it is ready', () => {
     await chat.updateComplete;
     expect(bubble(chat)).toBeNull();
     expect(chat.draft).toBe('build me a timer');
+    // It never waited (and so never came back): kept in the box as before.
+    expect(changes).toEqual([]);
   });
 });
