@@ -531,6 +531,36 @@ civitai-chat-turn {
   overflow-wrap: anywhere;
 }
 
+/* A message that waits to go: the viewer's bubble, faded, with what it waits for under it. */
+.cvt-queued .cvt-bubble {
+  opacity: 0.7;
+}
+
+.cvt-queued-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-unsent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  /* Lined up with the message box: 16px gutters, centred at 800px. */
+  margin: 0 max(16px, calc((100% - 800px) / 2)) 8px;
+}
+
+.cvt-unsent-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .cvt-assistant {
   display: grid;
   gap: 12px;

@@ -638,7 +638,7 @@ describe('<civitai-chat> canSend when an open never answers, and across a new ap
     expect(hold(chat)).toBeNull();
   });
 
-  it('🔴 a Buzz permission given only after the chat has a new app sends nothing for the old one, and the message goes back in the box', async () => {
+  it('🔴 a Buzz permission given only after the chat has a new app sends nothing for the old one, and the message is dropped: the new viewer never sees it', async () => {
     let grant!: (ok: boolean) => void;
     const granted = new Promise<boolean>((resolve) => (grant = resolve));
     const replies = heldReplies();
@@ -655,7 +655,65 @@ describe('<civitai-chat> canSend when an open never answers, and across a new ap
     grant(true);
     await settle(200);
     expect(replies.asked).toHaveLength(0);
-    expect(chat.draft).toBe('first');
+    expect(chat.draft).toBe('');
+  });
+
+  it('🟡 a Buzz permission refused only after the chat has a new app: the message is dropped too, not put in the new viewer’s box', async () => {
+    let grant!: (ok: boolean) => void;
+    const granted = new Promise<boolean>((resolve) => (grant = resolve));
+    const replies = heldReplies();
+    vi.stubGlobal('fetch', replies.fetch);
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = { ...(fakeApp() as object), requestGrants: () => granted } as never;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    void chat.send('first');
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    grant(false);
+    await settle(200);
+    expect(replies.asked).toHaveLength(0);
+    expect(chat.draft).toBe('');
+  });
+
+  it('🟡 a Buzz permission request that runs out (two minutes) after the chat has a new app: the message is dropped too', async () => {
+    const replies = heldReplies();
+    vi.stubGlobal('fetch', replies.fetch);
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      // Never answered: the chat stops waiting after two minutes.
+      c.app = { ...(fakeApp() as object), requestGrants: () => new Promise<boolean>(() => undefined) } as never;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    void chat.send('first');
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    vi.advanceTimersByTime(2 * 60_000 + 1_000);
+    await settle(200);
+    vi.useRealTimers();
+    expect(replies.asked).toHaveLength(0);
+    expect(chat.draft).toBe('');
+  });
+
+  it('🟢 handed the same app again (A, then B, then A), it holds as "Starting…" until A’s chat has started again', async () => {
+    vi.stubGlobal('fetch', heldReplies().fetch);
+    const appA = fakeApp();
+    const { chat } = await mountWith((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = appA;
+    });
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    chat.app = fakeApp();
+    await chat.updateComplete;
+    chat.app = appA;
+    await chat.updateComplete;
+    expect(chat.canSend).toBe(false);
+    expect(chat.shadowRoot!.querySelector('civitai-chat-composer .cvt-composer-hold')?.textContent).toBe('Starting…');
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
   });
 });
 

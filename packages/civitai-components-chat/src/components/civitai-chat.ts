@@ -29,7 +29,7 @@ import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.j
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
-import type { CivitaiChatThread } from './civitai-chat-thread.js';
+import type { CivitaiChatThread, QueuedView } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
 import { mediaActions } from './media-actions.js';
 import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
@@ -51,9 +51,60 @@ export interface ChatChangeDetail {
   chatId: string | null;
 }
 
-/** `before-send`'s detail: the message about to go as the viewer's (`''` when it is only files). */
+/**
+ * `before-send`'s detail: the message about to go as the viewer's (`''` when it is only files). Call
+ * `queue(waiting)` from the listener itself to keep the message back without losing it: the chat shows
+ * it at once as the viewer's, marked `waiting`, and holds, and sends it once the page calls `release()`
+ * on what `queue()` returns. Calling it again returns the same message; calling it once the listener
+ * has returned throws.
+ */
 export interface BeforeSendDetail {
   text: string;
+  queue(waiting?: string): QueuedMessage;
+}
+
+/**
+ * A message the page keeps waiting with `before-send`'s `queue()`. `release()`: the page is done
+ * holding it, and it goes as soon as the chat can send. `cancel()`: the page gives up on it, and it
+ * comes back to the viewer. Both do nothing once the message went or came back.
+ */
+export interface QueuedMessage {
+  readonly text: string;
+  release(): void;
+  cancel(): void;
+}
+
+/** How long a message waits to go before it comes back to the viewer (3 minutes). */
+export const QUEUE_TIMEOUT_MS = 3 * 60_000;
+
+/** The files and earlier results added to a message. */
+interface MessageFiles {
+  uploads: PendingUpload[];
+  refs: Attachment[];
+}
+
+/** A message the page keeps back (`queue()`), shown waiting until it goes or comes back. */
+interface Queued extends MessageFiles {
+  text: string;
+  /** The session (by its start), viewer and chat it was written in: it goes nowhere else. */
+  start: number;
+  source: AppClient | ChatBackend | undefined;
+  chatId: string | null;
+  /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
+  held?: string;
+  timer?: ReturnType<typeof setTimeout>;
+  handle: QueuedMessage;
+}
+
+/** A message that could not go and could not go back into the message box. */
+interface Unsent extends MessageFiles {
+  id: number;
+  text: string;
+}
+
+/** What Put it back leaves in the message box: the message, ahead of anything typed there since. */
+function putBack(message: string, box: string): string {
+  return box.trim() ? `${message}\n\n${box}` : message;
 }
 
 /** `can-send-change`'s detail: `canSend` as it now reads. */
@@ -239,12 +290,24 @@ export class CivitaiChat extends LitElement {
   #announcedCanSend = false;
   /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
   #sessionFor?: AppClient | ChatBackend;
+  /**
+   * Counts the sessions started, and which start the open one is: a send or a waiting message knows
+   * exactly whether the session it was taken for is still the live one, even when the same app or
+   * backend is handed over again (A, then B, then A) and a new session starts for it.
+   */
+  #starts = 0;
+  #sessionStart = 0;
   /** The session a send was taken for and not yet handed to its agent (it may be asking for the viewer's grant). */
   #sendingFor?: ChatSession;
   /** Turns the chat already asked for again by itself: at most once each, so a failing network never loops. */
   #autoResumed = new WeakSet<object>();
   /** Turns whose ask by itself the page cancelled (`reply-resume`): the page's own `retryReply()` then counts as that one ask. */
   #autoCancelled = new WeakSet<object>();
+  /** The message the page keeps back, if any: one at a time. */
+  #queued?: Queued;
+  /** Messages that could not go and could not go back into the box, oldest first. */
+  #unsent: Unsent[] = [];
+  #unsentIds = 0;
 
   constructor() {
     super();
@@ -277,6 +340,8 @@ export class CivitaiChat extends LitElement {
     window.addEventListener('drop', this.#onStrayDrag);
     document.addEventListener('visibilitychange', this.#onVisible);
     window.addEventListener('online', this.#onOnline);
+    // Back on the page, a waiting message gets its whole wait again.
+    this.#armQueueTimer();
   }
 
   override disconnectedCallback(): void {
@@ -286,6 +351,8 @@ export class CivitaiChat extends LitElement {
     window.removeEventListener('drop', this.#onStrayDrag);
     document.removeEventListener('visibilitychange', this.#onVisible);
     window.removeEventListener('online', this.#onOnline);
+    // Off the page nothing comes back by itself: the wait stops.
+    if (this.#queued) clearTimeout(this.#queued.timer);
   }
 
   #onVisible = (): void => {
@@ -366,8 +433,11 @@ export class CivitaiChat extends LitElement {
   protected override willUpdate(changed: PropertyValues): void {
     // A backend wins over an app: with one, the chat never signs in to Civitai.
     const source = this.#source();
+    // Signed out, or someone else signed in: what the last viewer wrote and did not send is not shown.
+    if ((changed.has('app') || changed.has('backend')) && source !== this.#startedWith) this.#forgetMessages();
     if ((changed.has('app') || changed.has('backend')) && source && source !== this.#startedWith) {
       this.#startedWith = source;
+      this.#starts++;
       void this.#start(source);
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
@@ -380,6 +450,9 @@ export class CivitaiChat extends LitElement {
   // `backend` while its session starts), so this sees every change.
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    // First: a message that waited and can go now holds the chat again ("Sending…") before
+    // `can-send-change` would say it can send.
+    this.#checkQueued();
     const canSend = this.canSend;
     if (canSend === this.#announcedCanSend) return;
     this.#announcedCanSend = canSend;
@@ -494,6 +567,179 @@ export class CivitaiChat extends LitElement {
     return session !== undefined && !this.#busy(session) && this.#held(session) === undefined;
   }
 
+  /** The finished files and the earlier results added to the message box, taken for the message being sent. */
+  #takeFiles(): MessageFiles {
+    const files = { uploads: this.uploads.filter((upload) => upload.attachment), refs: this.refs };
+    this.uploads = [];
+    this.refs = [];
+    return files;
+  }
+
+  /** Files of a message coming back, beside any the box holds now (none twice). */
+  #restoreFiles(files: MessageFiles): void {
+    this.uploads = [...this.uploads, ...files.uploads.filter((upload) => !this.uploads.some((u) => u.key === upload.key))];
+    this.refs = [...this.refs, ...files.refs.filter((ref) => !this.refs.some((r) => r.id === ref.id))];
+  }
+
+  /** Keeps `text` back for the page, shown at once and waiting until it is released or comes back. */
+  #enqueue(session: ChatSession, text: string, files: MessageFiles, held: string): Queued {
+    const queued: Queued = {
+      text,
+      ...files,
+      start: this.#sessionStart,
+      source: this.#sessionFor,
+      chatId: session.store.current?.id ?? null,
+      held,
+      handle: {
+        text,
+        release: () => {
+          if (this.#queued !== queued || queued.held === undefined) return;
+          queued.held = undefined;
+          this.requestUpdate();
+        },
+        cancel: () => this.#giveBackQueued(queued),
+      },
+    };
+    this.#queued = queued;
+    this.#armQueueTimer();
+    this.requestUpdate();
+    return queued;
+  }
+
+  /** Starts the waiting message's deadline ({@link QUEUE_TIMEOUT_MS}) afresh; none while the chat is off the page. */
+  #armQueueTimer(): void {
+    const queued = this.#queued;
+    if (!queued) return;
+    clearTimeout(queued.timer);
+    queued.timer = this.isConnected ? setTimeout(() => this.#giveBackQueued(queued), QUEUE_TIMEOUT_MS) : undefined;
+  }
+
+  /** Ends a waiting message without sending it; false when it is not the one waiting (it went, or came back). */
+  #unqueue(queued: Queued): boolean {
+    if (this.#queued !== queued) return false;
+    clearTimeout(queued.timer);
+    this.#queued = undefined;
+    this.requestUpdate();
+    return true;
+  }
+
+  #giveBackQueued(queued: Queued): void {
+    if (this.#unqueue(queued)) this.#returnToViewer(queued.text, queued);
+  }
+
+  /**
+   * Gives `text` back to the viewer the way a message that waited and will not go comes back: into the
+   * message box when it is empty and they are not dictating, else as a "This message was not sent"
+   * notice with Put it back, never over what they have there. For a message the page tried to send
+   * and could not (the chat was replying, or holding), such as a button's. Nothing when the box already
+   * holds exactly these words, and one notice for the same words given back twice. Returns `false`, and
+   * does nothing, before the chat has started or while it is signed out.
+   */
+  giveBack(text: string): boolean {
+    // Signed out (or not started) there is no viewer to give it to, and a notice would outlive their sign-in.
+    if (!this.#session || !this.#source()) return false;
+    this.#returnToViewer(text, { uploads: [], refs: [] });
+    return true;
+  }
+
+  #returnToViewer(text: string, files: MessageFiles): void {
+    const composer = this.#composerNow();
+    if (composer?.draft === text) return this.#restoreFiles(files);
+    if (composer && !composer.draft.trim() && !this.dictating) {
+      composer.draft = text;
+      this.#restoreFiles(files);
+      return;
+    }
+    // The same words already offered back: one notice, with the files of both.
+    const same = this.#unsent.find((u) => u.text === text);
+    if (same) {
+      same.uploads = [...same.uploads, ...files.uploads.filter((upload) => !same.uploads.some((u) => u.key === upload.key))];
+      same.refs = [...same.refs, ...files.refs.filter((ref) => !same.refs.some((r) => r.id === ref.id))];
+    } else this.#unsent = [...this.#unsent, { id: ++this.#unsentIds, text, ...files }];
+    this.requestUpdate();
+  }
+
+  /** Edit: the waiting message goes back into the box, ahead of anything typed there, and does not go. */
+  #editQueued(): void {
+    const queued = this.#queued;
+    const composer = this.#composerNow();
+    if (!queued || !composer || !this.#unqueue(queued)) return;
+    composer.draft = putBack(queued.text, composer.draft);
+    this.#restoreFiles(queued);
+    composer.focus();
+  }
+
+  #putBackUnsent(unsent: Unsent): void {
+    const composer = this.#composerNow();
+    if (!composer) return;
+    this.#unsent = this.#unsent.filter((u) => u !== unsent);
+    this.requestUpdate();
+    composer.draft = putBack(unsent.text, composer.draft);
+    this.#restoreFiles(unsent);
+    composer.focus();
+  }
+
+  #dismissUnsent(unsent: Unsent): void {
+    this.#unsent = this.#unsent.filter((u) => u !== unsent);
+    this.requestUpdate();
+    // The button pressed is gone: the message box is where the viewer goes on.
+    this.#composerNow()?.focus();
+  }
+
+  /**
+   * Forgets every message waiting or not sent, with their files, without showing them: the chat was
+   * signed out or someone else signed in, who must never see or send another viewer's words.
+   */
+  #forgetMessages(): void {
+    if (this.#queued) this.#unqueue(this.#queued);
+    if (this.#unsent.length) {
+      this.#unsent = [];
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * Sends the waiting message once the page released it and the chat can send, or gives it back once it
+   * can no longer go where it was written: another chat, or a chat being opened. It goes as it is, with
+   * no second `before-send` and no Buzz grant: both were asked as the viewer sent it, from their click.
+   */
+  #checkQueued(): void {
+    const queued = this.#queued;
+    const session = this.#session;
+    if (!queued || !session) return;
+    // Its session ended. The same viewer, whose chat started again: back to them. Anyone else, or
+    // signed out: dropped unseen (`willUpdate` has usually done so already).
+    if (queued.start !== this.#sessionStart || !this.#source()) {
+      if (this.#source() && this.#source() === queued.source) this.#giveBackQueued(queued);
+      else this.#forgetMessages();
+      return;
+    }
+    if (this.loading || (session.store.current?.id ?? null) !== queued.chatId) {
+      // Not inside this update: the box it may go back into is part of what is being rendered.
+      queueMicrotask(() => this.#giveBackQueued(queued));
+      return;
+    }
+    if (queued.held !== undefined || this.#busy(session) || this.#held(session, true) !== undefined) return;
+    this.#unqueue(queued);
+    this.#dropUnsent(queued.text);
+    // The reply starts inside this call, so from here the running reply keeps sends out.
+    session.send(queued.text, queued.uploads, queued.refs.map((ref) => ref.id)).catch((error: unknown) => this.#toast('That message did not go through.', error));
+  }
+
+  /** A "not sent" notice for words that have now gone is not news any more. */
+  #dropUnsent(text: string): void {
+    if (this.#unsent.some((u) => u.text === text)) this.#unsent = this.#unsent.filter((u) => u.text !== text);
+  }
+
+  /** The waiting message as the thread shows it: its words, files, and what it waits for. */
+  #queuedView(session: ChatSession): QueuedView | null {
+    const queued = this.#queued;
+    if (!queued) return null;
+    const status = queued.held || this.#held(session, true) || 'Waiting to send…';
+    const files = [...queued.uploads.flatMap((u) => (u.attachment ? [u.attachment] : [])), ...queued.refs];
+    return { text: queued.text, status, files };
+  }
+
   #announceChat(): void {
     const chatId = this.chatId;
     if (chatId === this.#announcedChat) return;
@@ -522,6 +768,8 @@ export class CivitaiChat extends LitElement {
   }
 
   async #start(source: AppClient | ChatBackend): Promise<void> {
+    // Called right after `#starts` counts this start.
+    const start = this.#starts;
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
     // An open still loading in the old session is moot: the new session is not held behind it.
@@ -550,6 +798,7 @@ export class CivitaiChat extends LitElement {
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
     this.#sessionFor = source;
+    this.#sessionStart = start;
     this.modelList = null;
     this.#models = new ModelDirectory(session.app.site, () => session.settings.allowMature);
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
@@ -957,10 +1206,19 @@ export class CivitaiChat extends LitElement {
    * then the chat being left may be the open one), a message still on its way to the agent, or an added
    * server still listing its tools.
    */
-  #held(session: ChatSession | undefined): string | undefined {
+  #held(session: ChatSession | undefined, ignoreQueued = false): string | undefined {
+    const reason = this.#holdNow(session);
+    // A waiting message holds the chat until it went, so one message waits at a time.
+    if (ignoreQueued || !this.#queued) return reason;
+    return this.#queued.held || reason || 'Waiting to send…';
+  }
+
+  #holdNow(session: ChatSession | undefined): string | undefined {
     const reason = this.holdReason?.trim();
     if (reason) return reason;
-    if (session && this.#sessionFor !== this.#startedWith) return 'Starting…';
+    // A newer start than the open session's, also when the same app is handed over again (A, then B,
+    // then A) and the session's source and the latest one both read A.
+    if (session && this.#sessionStart !== this.#starts) return 'Starting…';
     if (this.loading) return 'Opening this chat…';
     if (session && this.#sendingFor === session) return 'Sending…';
     const listing = session?.mcpServers.listing ?? [];
@@ -972,6 +1230,11 @@ export class CivitaiChat extends LitElement {
     return session.agent.running || (!session.backend && !this.app);
   }
 
+  /**
+   * Sends `text` as the viewer's. While the chat holds (`holdReason`, a chat opening, a new session
+   * starting, a server listing its tools, another message on its way or waiting) it is kept in an
+   * empty message box. A page whose `before-send` calls `queue()` keeps it back, shown waiting.
+   */
   async #send(text: string): Promise<void> {
     const session = this.#session;
     if (!session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
@@ -986,15 +1249,18 @@ export class CivitaiChat extends LitElement {
     }
     // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
     // another message waits in the box and `canSend` says no.
+    const takenFor = { start: this.#sessionStart, source: this.#sessionFor };
     this.#sendingFor = session;
     this.requestUpdate();
     try {
       const granted = !app || (await this.#ensureAiGrant(app));
-      // Replaced by a new app or backend meanwhile: nothing goes to the old session, and the message
-      // waits in the box for the new one.
-      if (this.#session !== session) {
-        const composer = await this.#composer();
-        if (composer && !composer.draft) composer.draft = text;
+      // The session it was taken for is no longer the live one (a new app or backend was handed over,
+      // whether its session has started yet or not, or the chat was signed out): nothing goes to the
+      // old session. Another viewer (any other app or backend object), or none: the message is
+      // dropped, never shown to them. The same viewer, whose chat started again: back in their box.
+      // (Every new session follows a start, so the count also says the session was replaced.)
+      if (this.#starts !== takenFor.start || !this.#source()) {
+        if (this.#source() && this.#source() === takenFor.source) this.giveBack(text);
         return;
       }
       if (!granted) {
@@ -1004,14 +1270,27 @@ export class CivitaiChat extends LitElement {
         return;
       }
       // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
-      // the files and earlier results added to it stay for the next message.
-      if (!this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail: { text }, bubbles: true, composed: true, cancelable: true }))) return;
-      const uploads = this.uploads.filter((upload) => upload.attachment);
-      const refs = this.refs.map((ref) => ref.id);
-      this.uploads = [];
-      this.refs = [];
+      // the files and earlier results added to it stay for the next message. A page that queues it
+      // keeps it back, shown waiting with its files, until it releases it. `queue()` works only while
+      // the listener runs (a later call would send the message twice), and once per message.
+      let open = true;
+      let queued: Queued | undefined;
+      const detail: BeforeSendDetail = {
+        text,
+        queue: (waiting?: string) => {
+          if (queued) return queued.handle;
+          if (!open) throw new Error('queue() is called from the before-send listener itself, before it returns');
+          queued = this.#enqueue(session, text, this.#takeFiles(), waiting ?? '');
+          return queued.handle;
+        },
+      };
+      const go = this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail, bubbles: true, composed: true, cancelable: true }));
+      open = false;
+      if (queued || !go) return;
+      const { uploads, refs } = this.#takeFiles();
+      this.#dropUnsent(text);
       // The reply starts inside this call, so from here the running reply keeps sends out, not the hold.
-      const sent = session.send(text, uploads, refs);
+      const sent = session.send(text, uploads, refs.map((ref) => ref.id));
       this.#sendingFor = undefined;
       this.requestUpdate();
       try {
@@ -1314,7 +1593,7 @@ export class CivitaiChat extends LitElement {
           </header>
           ${this.loading
             ? html`<div class="cvt-loading"><civitai-loader></civitai-loader></div>`
-            : turns.length === 0
+            : turns.length === 0 && !this.#queued
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
@@ -1327,7 +1606,17 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+          ${this.#unsent.map(
+            (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
+              <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>
+              ${unsent.uploads.length + unsent.refs.length
+                ? html`<span class="cvt-unsent-files">${unsent.uploads.length + unsent.refs.length === 1 ? '1 file attached' : `${unsent.uploads.length + unsent.refs.length} files attached`}</span>`
+                : nothing}
+              <civitai-button size="sm" variant="light" @click=${() => this.#putBackUnsent(unsent)}>Put it back</civitai-button>
+              <civitai-button size="sm" variant="subtle" @click=${() => this.#dismissUnsent(unsent)}>Dismiss</civitai-button>
+            </civitai-alert>`,
+          )}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

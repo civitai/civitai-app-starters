@@ -295,8 +295,8 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `examples` | What an empty chat offers to start from, in place of the built-in ones (property only); see [The empty chat](#the-empty-chat). |
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
-Methods: `send(text)`, `compose(text)` (fills the message box), `newChat()`, `addFiles(files)`,
-`focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
+[A message that waits](#a-message-that-waits)), `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
@@ -306,12 +306,12 @@ changes: see [When a message can go](#when-a-message-can-go).
 
 ### Before a message goes
 
-`before-send` fires with `{ text }` (type `BeforeSendDetail`; it bubbles, is composed and is
+`before-send` fires with `{ text, queue }` (type `BeforeSendDetail`; it bubbles, is composed and is
 cancelable) at the last moment before a new message goes as the viewer's, once per message. Call
-`preventDefault()` and the message is not sent, not shown in the chat and not saved. Use it to get
-something ready first, say wake the app the reply will work on, then send the text yourself with
-`send(text)`, which fires `before-send` again: let that one through (a flag set before you call it
-will do).
+`preventDefault()` and the message is not sent, not shown in the chat and not saved. To get something
+ready first, say wake the app the reply will work on, call `queue(waiting)` instead: the message shows
+at once as the viewer's, marked with `waiting`, and goes when you call `release()` on what `queue()`
+returns, with no second `before-send` (see [A message that waits](#a-message-that-waits)).
 
 - **It fires for** a typed message (Enter or Send), the voice recorder's "Send what you said",
   `send(text)`, a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
@@ -319,7 +319,7 @@ will do).
   viewer, and a page command's `send`.
 - **It does not fire for** a slash command the chat handles itself (`/clear`, `/model`, `/help`),
   a reply asked for again ("Continue with Buzz", "Allow paid replies and try again", and the
-  automatic retries after a dropped connection: none of them sends a new message), or a message the chat does not send anyway: one held by `holdReason` (it waits in the
+  automatic retries after a dropped connection: none of them sends a new message), a message the page kept back with `queue()` as it goes on `release()`, or a message the chat does not send anyway: one held by `holdReason` (it waits in the
   message box), one sent while a reply is running, and one sent before sign-in finishes (it fires once
   the viewer is signed in and the message goes).
 - **Files only:** a message with files and no words fires with `text: ''`.
@@ -329,14 +329,12 @@ will do).
   back for the viewer with `compose(text)` if you decide not to.
 
 ```ts
-let resuming = false;
+import type { BeforeSendDetail } from '@civitai/components-chat';
+
 chat.addEventListener('before-send', (e) => {
-  if (resuming || appIsAwake()) return;
-  e.preventDefault();
-  void wakeApp().then(() => {
-    resuming = true;
-    return chat.send(e.detail.text).finally(() => (resuming = false));
-  });
+  if (appIsAwake()) return;
+  const waiting = (e as CustomEvent<BeforeSendDetail>).detail.queue('Waiting for your app…');
+  wakeApp().then(() => waiting.release(), () => waiting.cancel());
 });
 ```
 
@@ -388,7 +386,9 @@ box, which keeps whatever is sent meanwhile (the Send button is off):
   asking the viewer to let the chat use their Buzz. A viewer who closes that request without answering
   counts as not having agreed after two minutes: the message goes back in the box;
 - a new `app` or `backend`, while the chat starts again for it;
-- an added server still listing its tools (at most 15 s; see [More MCP servers](#more-mcp-servers)).
+- an added server still listing its tools (at most 15 s; see [More MCP servers](#more-mcp-servers));
+- a message the page keeps back with `queue()`, until it went or came back (see
+  [A message that waits](#a-message-that-waits)).
 
 It is `false` before the chat has started and while the viewer is signed out.
 
@@ -411,6 +411,37 @@ function sendWhenReady(text: string): void {
   chat.addEventListener('can-send-change', go);
 }
 ```
+
+### A message that waits
+
+A page that must get something ready before a message can go keeps it back from its `before-send`
+listener with `queue(waiting)`. The chat shows it at once as the viewer's bubble, marked with `waiting`
+(say "Waiting for your app…", also said once to screen readers), takes its files and earlier results
+with it, and holds (`canSend` is `false`; a message sent meanwhile stays in the message box). It goes
+once the page calls `release()` on the `QueuedMessage` that `queue()` returned, and the chat can send:
+after a `holdReason` it set meanwhile lifts, or a reply ends. It goes as it is: `before-send` and the
+Buzz grant were asked as the viewer sent it, from their click, and are not asked again. Call `queue()`
+from the listener itself; once the listener has returned it throws, and a second call returns the same
+message. One message waits at a time.
+
+The waiting bubble has **Edit**: the message goes back in the box, ahead of anything typed there since,
+with its files, and does not go. It also comes back to the viewer, without going, when the page calls
+`cancel()`, after `QUEUE_TIMEOUT_MS` (3 minutes; a chat taken off the page stops the wait, and put
+back starts all 3 minutes again), or when another chat is opened. It comes back into the message box when that is empty and the viewer is not
+dictating (their words would be joined to it); otherwise it shows above the box as an alert, "This
+message was not sent", saying how many files it has, with **Put it back** (ahead of what they typed,
+its files beside the box's) and **Dismiss**. Sending the same words again clears that notice. Signed
+out, or handed any other `app` or `backend` object (the chat cannot tell whether it is the same person,
+so it treats it as someone else), a waiting message and every such notice are dropped unseen: a viewer
+never sees another's words. A message sent just before that, while the viewer was being asked to let
+the chat use their Buzz, does not go, wait or come back either; handed the same object again (A, then
+B, then A), the message comes back into A's box rather than going on the session A had before.
+
+`giveBack(text)` brings back a message the page tried to send and could not (the chat was replying or
+holding, so `send(text)` went nowhere) the same way: into an empty box, else as that notice (one notice
+for the same words given back twice). Nothing happens when the box already holds exactly these words.
+It returns `false` and does nothing before the chat has started or while it is signed out, and `true`
+otherwise.
 
 ### The empty chat
 
