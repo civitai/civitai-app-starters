@@ -86,7 +86,8 @@ interface MessageFiles {
 /** A message the page keeps back (`queue()`), shown waiting until it goes or comes back. */
 interface Queued extends MessageFiles {
   text: string;
-  /** The chat it was written in: it goes nowhere else. */
+  /** The session and chat it was written in: it goes nowhere else. */
+  session: ChatSession;
   chatId: string | null;
   /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
   held?: string;
@@ -576,6 +577,7 @@ export class CivitaiChat extends LitElement {
     const queued: Queued = {
       text,
       ...files,
+      session,
       chatId: session.store.current?.id ?? null,
       held,
       handle: {
@@ -685,8 +687,8 @@ export class CivitaiChat extends LitElement {
   #checkQueued(): void {
     const queued = this.#queued;
     const session = this.#session;
-    // A new app, backend or sign-out has already dropped it (`willUpdate`), so this is the session it was written in.
     if (!queued || !session) return;
+    if (queued.session !== session || !this.#source()) return this.#forgetMessages();
     if (this.loading || (session.store.current?.id ?? null) !== queued.chatId) {
       // Not inside this update: the box it may go back into is part of what is being rendered.
       queueMicrotask(() => this.#giveBackQueued(queued));
