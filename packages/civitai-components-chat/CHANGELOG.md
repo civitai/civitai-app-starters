@@ -1,5 +1,11 @@
 # @civitai/components-chat
 
+## 0.14.0
+
+### Minor Changes
+
+- 4c29aec: **`<civitai-chat>` offers Retry on a reply that lost its connection, and asks for it again once by itself when the page wakes.** A reply that still failed because the connection was lost, or the service was busy or could not run the model for a moment, shows Retry on its error (latest reply only). Retry asks for the same reply again: the viewer's message is not sent twice, and it carries on from the last step that finished, so a tool that already ran is not called again and stays on screen. `agent.retry()`, which "Continue with Buzz" also uses, now carries on from there too instead of starting the reply over. Retry is offered only where that holds: not when the step that failed had already called a tool, and not on a failed reply in a chat opened again later (where to carry on from is kept for the session only, `assistant.resume`, and never saved). A reply that lost its connection (a phone that slept stops the page and its retries) is asked again once, by itself, when the page becomes visible again or the browser fires `online`: only for the latest reply of the open chat, while `canSend` is true, within 30 minutes of the failure, and at most once per reply. Retry is off while the chat holds. Retry and each automatic ask do not fire `before-send`; they fire a cancelable `reply-resume` with `{ trigger }` (type `ReplyResumeDetail`: `'retry'`, `'visible'` or `'online'`). A page that cancels it (its reply's tools are not there now) calls the new `retryReply()` once they are, which asks the same way Retry does and only where Retry would be offered. See "Retry, and asking again when the page wakes" in the README.
+
 ## 0.13.0
 
 ### Minor Changes
