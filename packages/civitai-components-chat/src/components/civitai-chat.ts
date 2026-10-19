@@ -1216,9 +1216,9 @@ export class CivitaiChat extends LitElement {
   #holdNow(session: ChatSession | undefined): string | undefined {
     const reason = this.holdReason?.trim();
     if (reason) return reason;
-    // A newer start than the open session's: also the same app handed over again (A, then B, then A),
-    // where both read A while A's chat starts again.
-    if (session && (this.#sessionFor !== this.#startedWith || this.#sessionStart !== this.#starts)) return 'Starting…';
+    // A newer start than the open session's, also when the same app is handed over again (A, then B,
+    // then A) and the session's source and the latest one both read A.
+    if (session && this.#sessionStart !== this.#starts) return 'Starting…';
     if (this.loading) return 'Opening this chat…';
     if (session && this.#sendingFor === session) return 'Sending…';
     const listing = session?.mcpServers.listing ?? [];
