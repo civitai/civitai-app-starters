@@ -364,8 +364,12 @@ export class AgentCore {
   }
 }
 
+/**
+ * A failed reply's outcome. The resume point is copied as it is now: the reply's messages may still
+ * take the cut step's words, which are not a finished step and must not be sent again as one.
+ */
 function failure(error: unknown, where: TraceContext, resume?: ResumePoint): Omit<AgentCoreOutcome, 'messages'> {
-  return { status: 'error', error, where, ...(resume ? { resume } : {}) };
+  return { status: 'error', error, where, ...(resume ? { resume: { ...resume, messages: [...resume.messages] } } : {}) };
 }
 
 /** The reply's last assistant message with tool-call syntax taken out of its text, and dropped if nothing is left. */
