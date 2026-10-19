@@ -7,7 +7,7 @@ import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { ModelMessage } from 'ai';
 
-import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
+import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
@@ -18,6 +18,24 @@ export interface ThreadStoreDeps {
   scope?: string;
   now?(): Date;
   newId?(): string;
+  /**
+   * Where this tab notes the reply it started (`replyStarted`), so a reload of the tab knows a reply it
+   * finds unfinished died here. The tab's `sessionStorage` unless set; `null` keeps no note.
+   */
+  ownReplies?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+  /**
+   * The browser's Web Locks (`navigator.locks`), shared by every tab of the origin, unless set; `null`
+   * for none. A reply running in a tab holds a lock named for it; the browser drops a tab's locks when the
+   * tab closes, crashes or is unloaded. With none, a reply is never taken as dead by its note alone.
+   */
+  locks?: Pick<LockManager, 'request' | 'query'> | null;
+}
+
+/** The reply this tab started and has not seen end, and the time of the latest save this tab made of it. */
+interface OwnReply {
+  conversationId: string;
+  seq: number;
+  savedAt: string;
 }
 
 export interface OpenedConversation {
@@ -53,10 +71,59 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #heads = new Map<string, Head>();
   /** Bumped by every open and new chat, so an open that lands after a later one cannot take its place. */
   #generation = 0;
+  /** A running reply's finished steps so far (`checkpoint`): every save of the chat carries them, as `running`. */
+  #progress = new WeakMap<Turn, ModelMessage[]>();
+  /** Heads with a progress save queued and not yet built: another waits for that one, which is built from the latest state. */
+  #checkpointQueued = new Set<string>();
+  /** Replies running in this tab: the chat each is in, and how to let go of its lock once it ended. */
+  #running = new Map<Turn, { conversationId: string; release: () => void }>();
 
   constructor(deps: ThreadStoreDeps) {
     super();
     this.#deps = deps;
+  }
+
+  /**
+   * A reply starts in this tab: noted (in the tab's `sessionStorage`) with the latest save of it this tab
+   * made, so a reload of the tab that finds it unfinished, and saved by no one since, knows it died here.
+   */
+  replyStarted(turn: Turn): void {
+    const conversation = this.current;
+    if (!conversation?.turns.includes(turn)) return;
+    // Now: no save this tab made of it is later (a new message was saved as it was sent, a reply carried on was read before).
+    this.#setOwnReply({ conversationId: conversation.id, seq: turn.seq, savedAt: this.#now().toISOString() });
+    // Held while it runs here: another tab (a copy of this one included) asks whether it is held.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    try {
+      this.#locks()?.request(this.#lockName(conversation.id, turn.seq), () => held).catch(() => undefined);
+    } catch {
+      // No lock: a note alone never marks this reply dead elsewhere.
+    }
+    this.#running.get(turn)?.release();
+    this.#running.set(turn, { conversationId: conversation.id, release });
+  }
+
+  /**
+   * Saves a running reply's progress: the head is written as v3 with the reply `running`, its finished
+   * steps and the step now running as far as its tool calls go. The write is free (a metadata update of
+   * the turn's own `echo` workflow) and goes through the same one-at-a-time queue as every other, built from the latest state
+   * when it goes, so nothing another change set meanwhile (title, model, posts, panels) is lost, and a
+   * reply that ended meanwhile is written as it ended. One such write waits at most: more steps finishing
+   * while it waits ride on it. Nothing until the turn's first save went through: its end saves it then.
+   */
+  async checkpoint(turn: Turn, { messages }: { messages: ModelMessage[] }): Promise<void> {
+    const conversation = this.current;
+    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    this.#progress.set(turn, [...messages]);
+    await this.#submits.get(submitKey(conversation.id, turn.seq));
+    const head = this.#heads.get(conversation.id);
+    if (head?.seq !== turn.seq || this.#checkpointQueued.has(head.workflowId)) return;
+    this.#checkpointQueued.add(head.workflowId);
+    await this.#writeHead(head.workflowId, () => {
+      this.#checkpointQueued.delete(head.workflowId);
+      return this.#metadata(conversation);
+    });
   }
 
   get hasMore(): boolean {
@@ -108,6 +175,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     const head = newestHead(heads.items);
     const now = this.#now().toISOString();
     const turns = (head?.metadata.turns ?? []).map(turnFrom).sort((a, b) => a.seq - b.seq);
+    await this.#markLiveness(id, turns.at(-1));
+    if (generation !== this.#generation) throw supersededError();
     if (head) this.#heads.set(id, { workflowId: head.workflowId, seq: turns.at(-1)?.seq ?? 0 });
     this.current = {
       id,
@@ -157,21 +226,37 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   async completeTurn(turn: Turn): Promise<void> {
-    const conversation = this.current;
-    if (!conversation) return;
-    await this.#submits.get(submitKey(conversation.id, turn.seq));
-    const head = this.#heads.get(conversation.id);
-    if (head?.seq === turn.seq) {
-      await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
-    } else {
-      const submit = this.#submitHead(conversation, turn.seq);
-      this.#submits.set(submitKey(conversation.id, turn.seq), submit);
-      // A submit that timed out may have landed: the externalId hands back that workflow as it was.
-      const workflowId = await submit;
-      if (workflowId) await this.#writeHead(workflowId, () => this.#metadata(conversation));
+    try {
+      const conversation = this.current;
+      if (!conversation) return;
+      await this.#submits.get(submitKey(conversation.id, turn.seq));
+      const head = this.#heads.get(conversation.id);
+      if (head?.seq === turn.seq) {
+        await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
+      } else {
+        const submit = this.#submitHead(conversation, turn.seq);
+        this.#submits.set(submitKey(conversation.id, turn.seq), submit);
+        // A submit that timed out may have landed: the externalId hands back that workflow as it was.
+        const workflowId = await submit;
+        if (workflowId) await this.#writeHead(workflowId, () => this.#metadata(conversation));
+      }
+      this.#touchSummary(conversation);
+      this.#emit('conversation-change');
+    } finally {
+      // How it ended is saved, or could not be: either way no reply of this tab's runs any more.
+      if (turn.assistant.status !== 'streaming') this.#ended(turn);
     }
-    this.#touchSummary(conversation);
-    this.#emit('conversation-change');
+  }
+
+  /** A reply of this tab's ended: its lock is let go, its progress dropped, and its note (when it is the one noted) cleared. */
+  #ended(turn: Turn): void {
+    this.#progress.delete(turn);
+    const running = this.#running.get(turn);
+    this.#running.delete(turn);
+    running?.release();
+    const own = this.#ownReply();
+    const conversationId = running?.conversationId ?? this.current?.id;
+    if (own && own.conversationId === conversationId && own.seq === turn.seq) this.#setOwnReply(null);
   }
 
   async savePost(id: string, post: SavedPost): Promise<void> {
@@ -214,7 +299,11 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #writeHead(workflowId: string, metadata: () => StoredConversationMetadata): Promise<void> {
     const write = (this.#writes.get(workflowId) ?? Promise.resolve())
       .catch(() => undefined)
-      .then(() => this.#deps.api.updateWorkflow(workflowId, { metadata: metadata() }));
+      .then(() => {
+        const built = metadata();
+        this.#noteOwnSave(built);
+        return this.#deps.api.updateWorkflow(workflowId, { metadata: built });
+      });
     this.#writes.set(workflowId, write);
     return write;
   }
@@ -293,22 +382,122 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     return workflowId;
   }
 
-  #metadata(conversation: Conversation): ConversationMetadata {
-    return {
-      v: 2,
-      app: 'chat-cvt',
+  /**
+   * The whole conversation as saved, from what this tab holds now. v2, unless a reply running here has
+   * progress (`checkpoint`): then v3, with that reply `running`, its finished steps and this save's time.
+   * A chat goes back to v2 once its reply ended, so a reader of v2 only lists it again.
+   */
+  #metadata(conversation: Conversation): StoredConversationMetadata {
+    const savedAt = this.#now().toISOString();
+    let running = false;
+    const turns: SavedTurnV3[] = conversation.turns.map((turn) => {
+      const progress = turn.assistant.status === 'streaming' ? this.#progress.get(turn) : undefined;
+      if (!progress) return saved(turn);
+      running = true;
+      return { ...saved(turn), assistant: { messages: progress, status: 'running', savedAt } };
+    });
+    const shared = {
+      app: 'chat-cvt' as const,
       conversationId: conversation.id,
       title: conversation.title,
       titleSource: conversation.titleSource,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
-      turns: conversation.turns.map(saved),
       ...(conversation.posts ? { posts: conversation.posts } : {}),
       ...(conversation.panels ? { panels: conversation.panels } : {}),
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
       ...(conversation.model ? { model: conversation.model } : {}),
     };
+    return running ? { v: 3, ...shared, turns } : { v: 2, ...shared, turns: turns as SavedTurn[] };
   }
+
+  #locks(): Pick<LockManager, 'request' | 'query'> | null {
+    if (this.#deps.locks !== undefined) return this.#deps.locks;
+    try {
+      return (globalThis.navigator as Navigator | undefined)?.locks ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  #lockName(conversationId: string, seq: number): string {
+    return `cvt-reply:${this.#deps.scope ?? ''}:${conversationId}:${seq}`;
+  }
+
+  #ownStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+    if (this.#deps.ownReplies !== undefined) return this.#deps.ownReplies;
+    try {
+      return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  #ownKey(): string {
+    return `cvt:own-reply${this.#deps.scope ? `:${this.#deps.scope}` : ''}`;
+  }
+
+  #ownReply(): OwnReply | null {
+    try {
+      const raw = this.#ownStorage()?.getItem(this.#ownKey());
+      const own = raw ? (JSON.parse(raw) as Partial<OwnReply>) : null;
+      return own && typeof own.conversationId === 'string' && typeof own.seq === 'number' && typeof own.savedAt === 'string' ? (own as OwnReply) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  #setOwnReply(own: OwnReply | null): void {
+    try {
+      const storage = this.#ownStorage();
+      if (own) storage?.setItem(this.#ownKey(), JSON.stringify(own));
+      else storage?.removeItem(this.#ownKey());
+    } catch {
+      // No note can be kept (storage off or full): a reload then reads its own reply by the time rule.
+    }
+  }
+
+  /** A save this tab makes of the reply it started moves the note's time to that save's. */
+  #noteOwnSave(metadata: StoredConversationMetadata): void {
+    if (metadata.v !== 3) return;
+    const own = this.#ownReply();
+    if (own?.conversationId !== metadata.conversationId) return;
+    const turn = metadata.turns.find((t) => t.seq === own.seq);
+    const savedAt = turn?.assistant?.status === 'running' ? turn.assistant.savedAt : undefined;
+    if (savedAt) this.#setOwnReply({ ...own, savedAt });
+  }
+
+  /**
+   * Whether the latest turn read back unfinished is still running, as far as this browser can tell. A
+   * tab running it holds its lock (`replyStarted`): held, it runs, whatever the save times say
+   * (`heldElsewhere`). Not held, and it is the reply this tab noted (a reload, or a copy of this tab once
+   * the original let go) with no save newer than the note's: nothing runs it, so it is gone at once
+   * (`orphaned`). With no locks to ask, the note alone proves nothing (a copy of a tab carries it while
+   * the original still runs the reply), and the time rule decides.
+   */
+  async #markLiveness(conversationId: string, turn: Turn | undefined): Promise<void> {
+    if (!turn || turn.assistant.status !== 'error' || turn.assistant.error !== CUT_OFF || turn.assistant.savedAt === undefined) return;
+    const locks = this.#locks();
+    if (!locks) return;
+    let held: boolean;
+    try {
+      const state = await locks.query();
+      const name = this.#lockName(conversationId, turn.seq);
+      held = [...(state.held ?? []), ...(state.pending ?? [])].some((lock) => lock.name === name);
+    } catch {
+      return;
+    }
+    if (held) {
+      turn.assistant.heldElsewhere = true;
+      return;
+    }
+    const own = this.#ownReply();
+    if (own?.conversationId !== conversationId || own.seq !== turn.seq) return;
+    const theirs = Date.parse(turn.assistant.savedAt);
+    const mine = Date.parse(own.savedAt);
+    if (!Number.isNaN(theirs) && !Number.isNaN(mine) && theirs <= mine) turn.assistant.orphaned = true;
+  }
+
 
   #scopeTags(): string[] {
     return this.#deps.scope ? [scopeTag(this.#deps.scope)] : [];
@@ -358,7 +547,7 @@ export function saved(turn: Turn): SavedTurn {
   // The trace is for this session's diagnostics only: a response body may carry the reply's text. The
   // resume point is for this session too: a reopened chat's failed reply starts over when asked again.
   // `savedAt` is when the save this reply was read from was made: a reply saved again is no longer that one.
-  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, savedAt: _savedAt, ...kept } = assistant;
+  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, savedAt: _savedAt, orphaned: _orphaned, heldElsewhere: _held, ...kept } = assistant;
   return { ...rest, assistant: kept };
 }
 
@@ -438,6 +627,10 @@ function savedTime(turn: Turn, now: number): number | undefined {
 export function replyElsewhere(turn: Turn, now: number = Date.now()): 'live' | 'stale' | undefined {
   const at = savedTime(turn, now);
   if (at === undefined) return undefined;
+  // A tab of this browser holds its lock: it runs there, whatever the time.
+  if (turn.assistant.heldElsewhere) return 'live';
+  // This tab's own reply, which nothing runs any more (see `ThreadStore`'s note): gone, whatever the time.
+  if (turn.assistant.orphaned) return 'stale';
   return !Number.isNaN(at) && now - at < LIVE_REPLY_MS ? 'live' : 'stale';
 }
 
@@ -451,29 +644,52 @@ export function liveUntil(turn: Turn, now: number = Date.now()): number | undefi
  * {@link liveUntil}, at most {@link LIVE_REDRAW_MAX_MS} (then it is waited again). `undefined` otherwise.
  */
 export function liveRedrawIn(turn: Turn, now: number = Date.now()): number | undefined {
+  // Live while a tab holds its lock, past any save time: asked again each wait (the chat reads itself again).
+  if (turn.assistant.heldElsewhere && replyElsewhere(turn, now) === 'live') return LIVE_REDRAW_MAX_MS;
   const until = liveUntil(turn, now);
   return until === undefined ? undefined : Math.min(LIVE_REDRAW_MAX_MS, Math.max(0, until - now) + 250);
 }
 
+/** The result a call that started and did not finish is given on Continue: it is not run again, and the model decides what to do. */
+export const INTERRUPTED_CALL = 'interrupted: this call did not finish and was not re-run';
+
 /**
- * Where a v3 reply saved `running` can carry on from: its finished steps, sent as they are, so no tool
- * in them runs again. None unless its save time reads, it has steps, every tool call in them comes with
- * its result (a call without one may have run, and asking again could run it twice), and it has steps
- * left to take. A step is one assistant message (with its tools' results after it).
+ * `messages` with a result for every tool call: a call that started and has none (its page died before
+ * it finished) gets {@link INTERRUPTED_CALL} as an error, right after the message that made it, beside
+ * the results that did come in.
+ */
+function withInterruptedCalls(messages: ModelMessage[]): ModelMessage[] {
+  const out: ModelMessage[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
+    out.push(message);
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    const next = messages[index + 1];
+    const answered = new Set(next?.role === 'tool' ? next.content.flatMap((part) => (part.type === 'tool-result' ? [part.toolCallId] : [])) : []);
+    const missing = message.content.flatMap((part) =>
+      part.type === 'tool-call' && !answered.has(part.toolCallId)
+        ? [{ type: 'tool-result' as const, toolCallId: part.toolCallId, toolName: part.toolName, output: { type: 'error-text' as const, value: INTERRUPTED_CALL } }]
+        : [],
+    );
+    if (missing.length === 0) continue;
+    if (next?.role === 'tool') {
+      out.push({ ...next, content: [...next.content, ...missing] });
+      index++;
+    } else out.push({ role: 'tool', content: missing });
+  }
+  return out;
+}
+
+/**
+ * Where a v3 reply saved `running` can carry on from: its saved steps, sent as they are, so no tool in
+ * them runs again: a call that finished goes with its result, and one that started and did not finish
+ * with {@link INTERRUPTED_CALL} (`messages` already carries those, see `interrupted`). None unless its
+ * save time reads, it has steps, and it has steps left to take. A step is one assistant message (with
+ * its tools' results after it).
  */
 function continuePoint(messages: ModelMessage[], savedAt: unknown): ResumePoint | undefined {
   const at = typeof savedAt === 'string' ? Date.parse(savedAt) : NaN;
   if (Number.isNaN(at) || messages.length === 0) return undefined;
-  const calls = new Set<string>();
-  const results = new Set<string>();
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (part.type === 'tool-call') calls.add(part.toolCallId);
-      else if (part.type === 'tool-result') results.add(part.toolCallId);
-    }
-  }
-  if ([...calls].some((id) => !results.has(id))) return undefined;
   const steps = messages.filter((message) => message.role === 'assistant').length;
   if (steps === 0 || steps >= stepLimit()) return undefined;
   return { messages, steps, at };
@@ -497,7 +713,8 @@ export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
 }
 
 function interrupted(turn: SavedTurnV3, assistant: NonNullable<SavedTurnV3['assistant']>): Turn['assistant'] {
-  const messages = Array.isArray(assistant.messages) ? [...assistant.messages] : [];
+  // Shown and carried on from alike: a call that never finished reads as interrupted, not as still running.
+  const messages = withInterruptedCalls(Array.isArray(assistant.messages) ? assistant.messages : []);
   const resume = continuePoint(messages, assistant.savedAt);
   const savedAt = typeof assistant.savedAt === 'string' ? assistant.savedAt : turn.createdAt;
   return { messages, status: 'error', error: CUT_OFF, savedAt, ...(resume ? { resume, errorKind: 'interrupted' } : {}) };

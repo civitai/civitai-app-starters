@@ -61,6 +61,16 @@ export interface Turn {
      * may still be running in another tab or window (see `replyElsewhere`). Not saved again.
      */
     savedAt?: string;
+    /**
+     * Read back unfinished, it is the reply this tab started, and no one saved it since this tab last
+     * did: nothing runs it now (the tab reloaded), so it reads as gone at once. Not saved.
+     */
+    orphaned?: boolean;
+    /**
+     * Read back unfinished while a tab of this browser holds its lock: it runs there, so it reads as still
+     * replying whatever the save times say. Not saved.
+     */
+    heldElsewhere?: boolean;
   };
 }
 

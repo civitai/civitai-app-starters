@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, type AssistantModelMessage, type LanguageModel, type ModelMessage, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
+import { stepCountIs, streamText, type AssistantModelMessage, type JSONValue, type LanguageModel, type ToolResultPart, type ModelMessage, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
 
 import { stepLimit } from '../config.js';
 import type { ResumePoint } from '../types.js';
@@ -62,8 +62,28 @@ export interface AgentCoreRun {
   request(tools: ToolSet): AgentCoreRequest;
   /** A cut the reply recovers from by itself: which retry of the reply this is (from 1), and where it was cut. */
   retrying?(attempt: number, trace: ErrorTrace): void;
+  /**
+   * A step finished with no error in it: the reply's finished messages so far (every step that finished,
+   * each with its tool calls and their results, from `from` on), how many steps that is, and whether this
+   * step called a tool. For saving progress as the reply goes; a step closed after an error is not one.
+   */
+  stepFinished?(step: AgentCoreStep): void;
+  /**
+   * In the step now running, a tool call started or its result (or error) came in: the reply's finished
+   * messages so far, then this step as it stands: its words and every call it made so far, and the
+   * results that came in. A call with no result after it started and has not finished. For saving each
+   * call as it starts and as it lands, so a reply that dies mid-step never runs a call again on Continue.
+   */
+  toolProgress?(progress: { messages: ModelMessage[] }): void;
   /** Called once with how the reply ended, while `live` still shows it and `running` is still true. */
   settled?(outcome: AgentCoreOutcome): void;
+}
+
+/** What `stepFinished` carries. */
+export interface AgentCoreStep {
+  messages: ModelMessage[];
+  steps: number;
+  calledTools: boolean;
 }
 
 /** How one reply ended. */
@@ -188,6 +208,28 @@ export class AgentCore {
           atCut = { shown: shownBeforeStep, finished, completed, calls: callsInStep };
           callsAfterCut = 0;
         };
+        // Each step of this pass, as the SDK recorded it (`onStepFinish`) and as this loop read it (whether an
+        // error came in it, at its `finish-step`). The SDK hands `finish-step` on before it records the step,
+        // so a step is reported once both happened, in order.
+        const recorded: { messages: ModelMessage[]; calledTools: boolean }[] = [];
+        const clean: boolean[] = [];
+        let reported = 0;
+        // The step now running, as far as its tool calls go: each call as it started, each result as it came in.
+        let stepCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
+        let stepResults: { toolCallId: string; toolName: string; output: ToolResultPart['output'] }[] = [];
+        const reportTools = () => {
+          if (controller.signal.aborted || !run.toolProgress) return;
+          const said = stepText.trim() ? [{ type: 'text' as const, text: stepText }] : [];
+          const step: ModelMessage[] = [{ role: 'assistant', content: [...said, ...stepCalls.map((call) => ({ type: 'tool-call' as const, ...call }))] }];
+          if (stepResults.length) step.push({ role: 'tool', content: stepResults.map((result) => ({ type: 'tool-result' as const, ...result })) });
+          run.toolProgress({ messages: [...completed, ...step] });
+        };
+        const report = () => {
+          while (reported < recorded.length && reported < clean.length) {
+            const index = reported++;
+            if (clean[index] && !controller.signal.aborted) run.stepFinished?.({ ...recorded[index]!, steps: before + index + 1 });
+          }
+        };
         streamError = undefined;
         failedAt = undefined;
         stepText = '';
@@ -207,11 +249,15 @@ export class AgentCore {
             prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
+              recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
+              report();
             },
           });
           for await (const part of result.fullStream) {
             if (part.type === 'start-step') {
               stepText = '';
+              stepCalls = [];
+              stepResults = [];
               stepOpen = true;
               steps++;
               streaming = true;
@@ -220,6 +266,8 @@ export class AgentCore {
               errorInStep = false;
               if (steps >= maxSteps && this.#live) forcedAt = this.#live.parts.length;
             } else if (part.type === 'finish-step') {
+              clean.push(!errorInStep);
+              report();
               finished++;
               streaming = false;
               stepOpen = false;
@@ -233,6 +281,17 @@ export class AgentCore {
             if (part.type === 'tool-call' || part.type === 'tool-result' || part.type === 'tool-error') {
               callsInStep++;
               callsAfterCut++;
+            }
+            // As the SDK's own step messages carry them (no tool here has its own toModelOutput).
+            if (part.type === 'tool-call') {
+              stepCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+              reportTools();
+            } else if (part.type === 'tool-result' && !part.preliminary) {
+              stepResults.push({ toolCallId: part.toolCallId, toolName: part.toolName, output: typeof part.output === 'string' ? { type: 'text', value: part.output } : { type: 'json', value: (part.output ?? null) as JSONValue } });
+              reportTools();
+            } else if (part.type === 'tool-error') {
+              stepResults.push({ toolCallId: part.toolCallId, toolName: part.toolName, output: { type: 'error-text', value: errorText(part.error) } });
+              reportTools();
             }
             if (part.type === 'text-delta') stepText += part.text;
             // Each error moves the cut there, with the trace's context: the stream may still close its
@@ -362,6 +421,14 @@ export class AgentCore {
   #emit(): void {
     this.#deps.change?.();
   }
+}
+
+/** An error as the SDK words it for the model (`error-text`). */
+function errorText(error: unknown): string {
+  if (error == null) return 'unknown error';
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  return JSON.stringify(error);
 }
 
 /**
