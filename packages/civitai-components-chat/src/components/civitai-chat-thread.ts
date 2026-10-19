@@ -28,6 +28,7 @@ export class CivitaiChatThread extends LightElement {
     models: { attribute: false },
     resolve: { attribute: false },
     views: { attribute: false },
+    canRetry: { type: Boolean, attribute: 'can-retry' },
     atBottom: { state: true },
     announcement: { state: true },
   };
@@ -44,6 +45,8 @@ export class CivitaiChatThread extends LightElement {
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
   declare views: Record<string, ChatToolView>;
+  /** Whether the chat can send now, so the latest reply's Retry is on. */
+  declare canRetry: boolean;
   declare atBottom: boolean;
   declare announcement: string;
 
@@ -59,6 +62,7 @@ export class CivitaiChatThread extends LightElement {
   constructor() {
     super();
     this.views = {};
+    this.canRetry = false;
     this.turns = [];
     this.live = null;
     this.atBottom = true;
@@ -148,6 +152,7 @@ export class CivitaiChatThread extends LightElement {
                 .parts=${this.#partsOf(turn)}
                 ?live=${this.live?.seq === turn.seq}
                 ?latest=${turn.seq === last}
+                ?can-retry=${turn.seq === last && this.canRetry}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
                 .panels=${this.panels}

@@ -31,6 +31,7 @@ export class CivitaiChatTurn extends LightElement {
     parts: { attribute: false, hasChanged: () => true },
     live: { type: Boolean },
     latest: { type: Boolean },
+    canRetry: { type: Boolean, attribute: 'can-retry' },
     jobs: { attribute: false },
     posts: { attribute: false },
     panels: { attribute: false },
@@ -47,6 +48,8 @@ export class CivitaiChatTurn extends LightElement {
   declare live: boolean;
   /** Only the newest turn's choices can still be picked. */
   declare latest: boolean;
+  /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
+  declare canRetry: boolean;
   declare jobs: JobManager;
   declare posts: PostManager;
   declare panels?: PanelManager;
@@ -64,6 +67,7 @@ export class CivitaiChatTurn extends LightElement {
     this.parts = [];
     this.live = false;
     this.latest = false;
+    this.canRetry = false;
     this.files = () => [];
     this.views = {};
   }
@@ -145,7 +149,7 @@ export class CivitaiChatTurn extends LightElement {
       const retry = this.latest && this.turn.assistant.resume !== undefined && RETRYABLE_ERRORS.has(this.turn.assistant.errorKind ?? '');
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}
-        ${retry ? html`<civitai-button class="cvt-retry" size="sm" variant="light" @click=${() => emit(this, 'cvt-retry')}>Retry</civitai-button>` : nothing}
+        ${retry ? html`<civitai-button class="cvt-retry" size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-retry')}>Retry</civitai-button>` : nothing}
         ${shown || where
           ? html`<details class="cvt-error-details"><summary>Details</summary>${shown ? html`<code>${shown}</code>` : nothing}${where ? html`<code class="cvt-error-trace">${where}</code>` : nothing}</details>`
           : nothing}

@@ -311,9 +311,10 @@ export class Agent extends EventTarget {
       }
     } catch (error) {
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      // Failed outside a step (the tools could not be built, say): only a reply that had not started a
-      // step can be asked for again from where it began.
-      else this.#failed(turn, error, where(), steps === finished && !this.live?.parts.some((part) => part.kind === 'tool' && part.state === 'calling') ? { messages: completed, steps: finished, at: Date.now() } : undefined);
+      // Failed outside a step: only the tools or the prompt failed to build, before any request (every
+      // stream is read inside the loop's own try), so nothing ran and the reply carries on from where it
+      // began, or from the steps a resumed reply had kept.
+      else this.#failed(turn, error, where(), { messages: completed, steps: finished, at: Date.now() });
     }
 
     if (steps >= maxSteps) {

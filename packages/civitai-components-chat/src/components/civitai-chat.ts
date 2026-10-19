@@ -12,7 +12,7 @@ import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from 
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommand, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
-import { humanize } from '../ux/humanize.js';
+import { humanize, RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
@@ -23,7 +23,7 @@ import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolGate, ChatToolResult } from '../tools/gate.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
-import type { Attachment, Settings } from '../types.js';
+import type { Attachment, Settings, Turn } from '../types.js';
 import { voiceLanguage } from '../voice/languages.js';
 import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
@@ -243,6 +243,8 @@ export class CivitaiChat extends LitElement {
   #sendingFor?: ChatSession;
   /** Turns the chat already asked for again by itself: at most once each, so a failing network never loops. */
   #autoResumed = new WeakSet<object>();
+  /** Turns whose ask by itself the page cancelled (`reply-resume`): the page's own `retryReply()` then counts as that one ask. */
+  #autoCancelled = new WeakSet<object>();
 
   constructor() {
     super();
@@ -297,30 +299,59 @@ export class CivitaiChat extends LitElement {
    * Asks again, once, for a reply that lost its connection, as the page wakes or comes back online:
    * only the latest turn of the open chat (so nothing was sent after it), only while no reply runs,
    * nothing is being sent and nothing holds the chat, only within {@link AUTO_RESUME_WINDOW_MS} of the
-   * failure, only where asking again cannot run a tool twice (`resume`), and only once per turn.
+   * failure, only where asking again cannot run a tool twice (`resume`), and only once per turn. An ask
+   * the page cancels (`reply-resume`) does not count: the next wake asks again, or the page calls
+   * `retryReply()` once it is ready, which then counts as that one ask.
    */
   #autoResume(trigger: 'visible' | 'online'): void {
     const session = this.#session;
-    const turn = session?.store.current?.turns.at(-1);
-    const resume = turn?.assistant.resume;
-    // A reply asked again is no longer an error and has no `errorKind`, so it is not asked again while it runs.
-    if (!session || !turn || !resume || turn.assistant.errorKind !== 'network') return;
-    if (this.#autoResumed.has(turn) || Date.now() - resume.at > AUTO_RESUME_WINDOW_MS) return;
-    if (!this.canSend) return;
+    const turn = this.#retryable();
+    if (!session || !turn || turn.assistant.errorKind !== 'network') return;
+    if (this.#autoResumed.has(turn) || Date.now() - turn.assistant.resume!.at > AUTO_RESUME_WINDOW_MS) return;
+    if (!this.#resumeReply(session, trigger)) {
+      this.#autoCancelled.add(turn);
+      return;
+    }
     this.#autoResumed.add(turn);
-    this.#resumeReply(session, trigger);
+  }
+
+  /**
+   * The latest turn when asking for it again is allowed now: it failed for a reason Retry is offered
+   * for, it has a resume point (asking again cannot run a tool twice), and the chat can send.
+   */
+  #retryable(): Turn | undefined {
+    const turn = this.#session?.store.current?.turns.at(-1);
+    const { status, resume, errorKind } = turn?.assistant ?? {};
+    if (!turn || status !== 'error' || !resume || !RETRYABLE_ERRORS.has(errorKind ?? '') || !this.canSend) return undefined;
+    return turn;
   }
 
   /** The viewer pressed Retry on the latest reply's error. */
   #retryReply(): void {
     const session = this.#session;
-    if (session && this.canSend) this.#resumeReply(session, 'retry');
+    if (session && this.#retryable()) this.#resumeReply(session, 'retry');
   }
 
-  /** Asks for the latest reply again (`agent.retry()`), unless the page cancels `reply-resume`. */
-  #resumeReply(session: ChatSession, trigger: ReplyResumeDetail['trigger']): void {
-    if (!this.dispatchEvent(new CustomEvent<ReplyResumeDetail>('reply-resume', { detail: { trigger }, bubbles: true, composed: true, cancelable: true }))) return;
+  /**
+   * Asks for the latest reply again, as Retry does, without `reply-resume` (the page asks itself), e.g.
+   * once a page that cancelled `reply-resume` has what the reply's tools need again. Only when Retry
+   * would be offered and the chat can send (`canSend`): resolves `false`, asking nothing, otherwise.
+   */
+  async retryReply(): Promise<boolean> {
+    const session = this.#session;
+    const turn = this.#retryable();
+    if (!session || !turn) return false;
+    // In place of the ask by itself the page cancelled: the reply is not asked again by itself after this.
+    if (this.#autoCancelled.has(turn)) this.#autoResumed.add(turn);
     void session.agent.retry();
+    return true;
+  }
+
+  /** Asks for the latest reply again (`agent.retry()`), unless the page cancels `reply-resume`; whether it did. */
+  #resumeReply(session: ChatSession, trigger: ReplyResumeDetail['trigger']): boolean {
+    if (!this.dispatchEvent(new CustomEvent<ReplyResumeDetail>('reply-resume', { detail: { trigger }, bubbles: true, composed: true, cancelable: true }))) return false;
+    void session.agent.retry();
+    return true;
   }
 
   // A file dropped outside the chat panel would otherwise replace the app with the file.
@@ -1295,7 +1326,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

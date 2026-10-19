@@ -188,12 +188,92 @@ describe('Retry on a reply that lost its connection', () => {
     expect(resumes).toEqual([]);
   });
 
+  it('shows Retry off while the page holds the chat, the hold saying why, and on again once it lifts', async () => {
+    const { chat } = await failedReply();
+    expect(retryButton(chat)!.hasAttribute('disabled')).toBe(false);
+    chat.holdReason = 'Your app is starting…';
+    await vi.waitFor(() => expect(retryButton(chat)!.hasAttribute('disabled')).toBe(true));
+    expect(root(chat).querySelector('civitai-chat-composer .cvt-composer-hold')?.textContent).toBe('Your app is starting…');
+    chat.holdReason = undefined;
+    await vi.waitFor(() => expect(retryButton(chat)!.hasAttribute('disabled')).toBe(false));
+  });
+
   it('lets the page cancel reply-resume, and then asks for nothing', async () => {
     const { chat, asked, resumes } = await failedReply();
     chat.addEventListener('reply-resume', (event) => event.preventDefault());
     retryButton(chat)!.click();
     await settle();
     expect(resumes).toEqual([{ trigger: 'retry' }]);
+    expect(asked).toHaveLength(1);
+  });
+});
+
+describe('a page that cancels reply-resume and asks again itself (retryReply)', () => {
+  it('asks again once the page calls retryReply(): the same reply, the message not sent twice', async () => {
+    const { chat, asked, resumes } = await failedReply();
+    // The page's app is paused: what the reply's tools act on is gone until it wakes.
+    chat.addEventListener('reply-resume', (event) => event.preventDefault(), { once: true });
+    wake();
+    await settle();
+    expect(resumes).toEqual([{ trigger: 'visible' }]);
+    expect(asked).toHaveLength(1);
+    // The app is back.
+    expect(await chat.retryReply()).toBe(true);
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    await vi.waitFor(() => expect(errorShown(chat)).toBeNull());
+    expect(userCopies(asked[1]!, 'build me a timer')).toBe(1);
+    expect(turns(chat)).toHaveLength(1);
+    // The page asked: no reply-resume for it.
+    expect(resumes).toEqual([{ trigger: 'visible' }]);
+  });
+
+  it('a cancelled ask by itself does not count: the next wake asks again', async () => {
+    const { asked, resumes, chat } = await failedReply();
+    chat.addEventListener('reply-resume', (event) => event.preventDefault(), { once: true });
+    wake();
+    await settle();
+    expect(asked).toHaveLength(1);
+    window.dispatchEvent(new Event('online'));
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    expect(resumes).toEqual([{ trigger: 'visible' }, { trigger: 'online' }]);
+  });
+
+  it('retryReply() after a cancelled ask is that one ask: a reply that fails again is not asked again by itself', async () => {
+    const { chat, asked } = await failedReply([lost(), lost()]);
+    chat.addEventListener('reply-resume', (event) => event.preventDefault(), { once: true });
+    wake();
+    await settle();
+    await chat.retryReply();
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    await vi.waitFor(() => expect(errorShown(chat)).not.toBeNull());
+    wake();
+    window.dispatchEvent(new Event('online'));
+    await settle();
+    expect(asked).toHaveLength(2);
+  });
+
+  it('NEGATIVE CONTROL: retryReply() asks nothing where Retry is not offered, or while the chat holds', async () => {
+    const held = await failedReply();
+    held.chat.holdReason = 'Your app is starting…';
+    await held.chat.updateComplete;
+    expect(await held.chat.retryReply()).toBe(false);
+    await settle();
+    expect(held.asked).toHaveLength(1);
+    document.body.replaceChildren();
+
+    const refused = await failedReply([new Response(JSON.stringify({ error: { message: 'bad request' } }), { status: 422, headers: { 'content-type': 'application/json' } })]);
+    expect(await refused.chat.retryReply()).toBe(false);
+    await settle();
+    expect(refused.asked).toHaveLength(1);
+  });
+
+  it('NEGATIVE CONTROL: retryReply() asks nothing after a reply that went', async () => {
+    const asked = model([]);
+    const { chat } = await mount();
+    await chat.send('hello');
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-chat-turn .cvt-md')?.textContent).toContain('Done.'));
+    expect(await chat.retryReply()).toBe(false);
+    await settle();
     expect(asked).toHaveLength(1);
   });
 });
