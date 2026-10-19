@@ -52,6 +52,23 @@ function perMillion(completion: unknown): number | undefined {
   return Math.round(perToken * 1e12) / 1e6;
 }
 
+/** What marks the default model's name where it is shown: "GPT-6 Luna · default". */
+export const DEFAULT_MARKER = ' · default';
+
+/** A name with the default marker. */
+export function defaultLabel(name: string): string {
+  return `${name}${DEFAULT_MARKER}`;
+}
+
+/**
+ * A readable name from a bare model id, for a model no list names: its last part, without the
+ * version or file after `@` ("urn:air:…:org/Qwen3.8-27B@main.tar" → "Qwen3.8-27B"). Never empty.
+ */
+export function prettyModelId(id: string): string {
+  const last = id.split(/[/:]/).filter(Boolean).at(-1) ?? id;
+  return last.replace(/@.*$/, '') || last || id;
+}
+
 function dataOf(body: unknown): unknown[] {
   const data = (body as { data?: unknown } | null)?.data;
   return Array.isArray(data) ? data : [];
@@ -79,7 +96,10 @@ export function buildModelList({
   const add = (entry: ChatModelEntry) => {
     if (!entries.has(entry.id)) entries.set(entry.id, entry);
   };
-  add({ id: defaultModel, label: 'Default', source: 'default' });
+  // The default is named like any other model: a page label for it, else OpenRouter's name, else its
+  // id made readable. Its name is settled once both lists are read, below; `source` marks it the default.
+  let defaultName = listed.find((model) => model.id === defaultModel)?.label;
+  add({ id: defaultModel, label: '', source: 'default' });
   for (const model of listed) add({ id: model.id, label: model.label, source: 'listed', ...(model.note ? { note: model.note } : {}) });
 
   const routable = new Map<string, OrchestrationModel>();
@@ -111,9 +131,11 @@ export function buildModelList({
     if (known) {
       known.pricePerMillion ??= entry.pricePerMillion;
       known.contextLength ??= entry.contextLength;
+      if (known.source === 'default' && entry.label !== entry.id) defaultName ??= entry.label;
     }
     else add(entry);
   }
+  entries.get(defaultModel)!.label = defaultName ?? prettyModelId(defaultModel);
   return [...entries.values()];
 }
 

@@ -1,7 +1,8 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 
-import { CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap, type ChatModelOption } from '../config.js';
+import { defaultLabel, prettyModelId } from '../agent/model-list.js';
+import { chatConfig, CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap, type ChatModelOption } from '../config.js';
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
@@ -39,6 +40,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     canTheme: { type: Boolean },
     hosted: { type: Boolean },
     models: { attribute: false },
+    defaultModelName: { attribute: false },
     customModel: { state: true },
   };
 
@@ -57,6 +59,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
    */
   declare hosted: boolean;
   declare models: ChatModelOption[];
+  /** The default model's name, from the model list; the page default's id made readable when unset. */
+  declare defaultModelName: string | undefined;
   declare customModel: boolean;
 
   constructor() {
@@ -100,7 +104,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     const value = custom ? CUSTOM : current || (stuck ? FREE : !free ? DEFAULT : tier === 'free' ? FREE : tier === 'paid' ? DEFAULT : AUTO);
     const data = [
       ...(free ? [{ value: AUTO, label: 'Auto' }, { value: FREE, label: 'Free' }] : stuck ? [{ value: FREE, label: 'Free (unavailable)' }] : []),
-      { value: DEFAULT, label: 'Default' },
+      { value: DEFAULT, label: defaultLabel(this.defaultModelName ?? prettyModelId(chatConfig.model)) },
       ...this.models.map((model) => ({ value: model.id, label: model.label })),
       { value: CUSTOM, label: 'Custom…' },
     ];
@@ -182,7 +186,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
         : `Free replies are used up${back}; about 1 Buzz a reply meanwhile.`;
     }
     if (value === FREE) {
-      if (!free) return "Free replies aren't available right now, so replies are refused. Pick Default to pay for them with Buzz.";
+      if (!free) return "Free replies aren't available right now, so replies are refused. Pick the default model to pay for them with Buzz.";
       return free.left > 0 ? `Only free replies: ${free.left} left.` : `Free replies are used up${back}.`;
     }
     if (value === DEFAULT) return 'About 1 Buzz a reply.';

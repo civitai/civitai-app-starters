@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { chatConfig, CONTEXT_BUDGET_TOKENS, REQUEST_OVERHEAD_TOKENS } from '../config.js';
-import { buildModelList, ModelCatalog, OPENROUTER_MODELS_URL, priceLabel, usableModels, type ChatModelEntry } from './model-list.js';
+import { buildModelList, ModelCatalog, OPENROUTER_MODELS_URL, prettyModelId, priceLabel, usableModels, type ChatModelEntry } from './model-list.js';
 
-const DEFAULT = 'urn:air:qwen3:repository:huggingface:example/default@main';
+const DEFAULT = 'urn:air:qwen3:repository:huggingface:example/basil-3@main';
 const LISTED = [{ id: 'g/listed', label: 'Listed G', note: 'Picked by the page.' }];
 
 // Each price, id and name differs from every other, and from the $8 limit except the one entry that sits on it.
@@ -31,13 +31,35 @@ describe('buildModelList', () => {
     const list = buildModelList({ openRouter, orchestration, defaultModel: DEFAULT, listed: LISTED });
     expect(list.map((entry) => entry.id)).toEqual([DEFAULT, 'g/listed', 'urn:air:hosted:repository:example/own-model@main', 'a/at-limit', 'd/cheap', 'h/free']);
     expect(list).toEqual([
-      { id: DEFAULT, label: 'Default', source: 'default' },
+      { id: DEFAULT, label: 'basil-3', source: 'default' },
       { id: 'g/listed', label: 'Listed G', source: 'listed', note: 'Picked by the page.', pricePerMillion: 4.2 },
       { id: 'urn:air:hosted:repository:example/own-model@main', label: 'urn:air:hosted:repository:example/own-model@main', source: 'hosted' },
       { id: 'a/at-limit', label: 'At Limit', source: 'openrouter', pricePerMillion: 8 },
       { id: 'd/cheap', label: 'Cheap D', source: 'openrouter', pricePerMillion: 0.37 },
       { id: 'h/free', label: 'Free H', source: 'openrouter', pricePerMillion: 0 },
     ]);
+  });
+
+  it("labels the default with its model's name, never the word Default (the marker is added where it is shown)", () => {
+    // Every name here differs from every other and from "default": the label can only come from the name.
+    const named = buildModelList({
+      openRouter: { data: [{ id: 'n/nebula-4', name: 'Nebula Four', pricing: { completion: '0.000001' }, supported_parameters: ['tools'] }] },
+      orchestration: { data: [{ id: 'n/nebula-4', owned_by: 'openrouter' }] },
+      defaultModel: 'n/nebula-4',
+      listed: [],
+    });
+    expect(named[0]).toEqual({ id: 'n/nebula-4', label: 'Nebula Four', source: 'default', pricePerMillion: 1 });
+    // A page label for the default model wins over OpenRouter's name.
+    const paged = buildModelList({ openRouter: null, orchestration: null, defaultModel: 'p/pine-2', listed: [{ id: 'p/pine-2', label: 'Pine Two' }] });
+    expect(paged[0]!.label).toBe('Pine Two');
+    // No list names it: its id, made readable.
+    const bare = buildModelList({ openRouter: null, orchestration: null, defaultModel: 'urn:air:x:repository:hub/Quartz-9B@main.tar', listed: [] });
+    expect(bare[0]!.label).toBe('Quartz-9B');
+    for (const list of [named, paged, bare]) expect(list[0]!.label).not.toMatch(/default/i);
+  });
+
+  it('makes a bare id readable: its last part, without the version or file after @', () => {
+    expect(['urn:air:x:repository:hub/Quartz-9B@main.tar', 'vendor/model-name', 'plain', 'a/b@'].map(prettyModelId)).toEqual(['Quartz-9B', 'model-name', 'plain', 'b']);
   });
 
   it('keeps the default and the page models when neither list loaded', () => {

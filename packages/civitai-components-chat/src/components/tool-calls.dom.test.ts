@@ -21,6 +21,20 @@ const PARTS: TurnPart[] = [
   { kind: 'tool', toolCallId: 'c5', toolName: 'sandbox__run_command', input: { command: 'ls' }, state: 'calling' },
 ];
 
+describe('a text part that is only whitespace so far', () => {
+  it.each(['activity', 'details'] as const)('renders no empty bubble (tool calls as %s)', async (toolCalls) => {
+    const el = await turnWith(
+      [
+        { kind: 'text', text: 'Looking around.' },
+        { kind: 'tool', toolCallId: 'w1', toolName: 'search_models', input: { query: 'cats' }, state: 'done', output: { items: [] } },
+        { kind: 'text', text: ' \n\t ' },
+      ],
+      { toolCalls },
+    );
+    expect([...el.querySelectorAll('.cvt-assistant > .cvt-md')].map((md) => md.textContent!.trim())).toEqual(['Looking around.']);
+  });
+});
+
 const VIEWS: Record<string, ChatToolView> = {
   pin_it: { render: () => html`<div class="host-pin">Pinned</div>` },
 };

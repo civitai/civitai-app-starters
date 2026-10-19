@@ -1668,6 +1668,7 @@ export class CivitaiChat extends LitElement {
         .canTheme=${this.fullPage}
         .hosted=${hosted}
         .models=${chatConfig.models}
+        .defaultModelName=${(this.modelList ?? session.modelChoices()).find((model) => model.source === 'default')?.label}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
         @cvt-export=${() => this.#export()}
@@ -1694,12 +1695,10 @@ export class CivitaiChat extends LitElement {
   }
 }
 
+/** The Buzz badge: a button that opens the breakdown (`civitai-chat-spend`); nothing at 0. */
 function spendBadge(spend: Spend): TemplateResult | typeof nothing {
   if (spend.total === 0) return nothing;
-  const detail = `About ${spend.total} Buzz so far in this chat: ${spend.generations} for what was made, ${spend.assistant} for the assistant.`;
-  return html`<span class="cvt-spend" title=${detail} aria-label=${detail}>
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>≈ ${spend.total.toLocaleString()}
-  </span>`;
+  return html`<civitai-chat-spend .spend=${spend}></civitai-chat-spend>`;
 }
 
 declare global {
