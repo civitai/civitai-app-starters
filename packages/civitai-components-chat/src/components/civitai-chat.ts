@@ -321,8 +321,9 @@ export class CivitaiChat extends LitElement {
    */
   #retryable(): Turn | undefined {
     const turn = this.#session?.store.current?.turns.at(-1);
-    const { status, resume, errorKind } = turn?.assistant ?? {};
-    if (!turn || status !== 'error' || !resume || !RETRYABLE_ERRORS.has(errorKind ?? '') || !this.canSend) return undefined;
+    // Only a failed reply has a resume point (asking again clears it), so it is not asked again while it runs or once it went.
+    const { resume, errorKind } = turn?.assistant ?? {};
+    if (!turn || !resume || !RETRYABLE_ERRORS.has(errorKind ?? '') || !this.canSend) return undefined;
     return turn;
   }
 

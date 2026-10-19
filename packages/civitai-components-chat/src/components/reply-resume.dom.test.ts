@@ -455,6 +455,7 @@ describe('asking again by itself when the page wakes', () => {
     expect(retryButton(chat)).toBeNull();
     wake();
     window.dispatchEvent(new Event('online'));
+    expect(await chat.retryReply()).toBe(false);
     await settle();
     expect(asked).toHaveLength(0);
   });
