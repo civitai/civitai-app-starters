@@ -90,6 +90,68 @@ describe('<civitai-chat> welcome examples', () => {
   });
 });
 
+describe("<civitai-chat> examples on a host's own backend", () => {
+  /** A chat on a host backend, showing its empty-chat welcome. */
+  async function hosted(setup: (chat: CivitaiChat) => void = () => undefined): Promise<CivitaiChat> {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const chat = document.createElement('civitai-chat');
+    chat.backend = { url: '/api/llm', model: 'host/default-model', store: memoryStore() };
+    setup(chat);
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-welcome')).not.toBeNull(), { timeout: 10_000 });
+    for (let i = 0; i < 3; i++) await flush();
+    await chat.updateComplete;
+    return chat;
+  }
+  const BUILT_IN_TITLES = ['Make a picture', 'Change my photo', 'Make a short video', 'Write a song', 'Find a model', 'Say it out loud'];
+  const buttons = (chat: CivitaiChat) => chat.shadowRoot!.querySelectorAll<HTMLButtonElement>('civitai-chat-welcome .cvt-example');
+
+  it("shows the page's examples, and a click puts its prompt in the message box", async () => {
+    const chat = await hosted((el) => (el.examples = APP_EXAMPLES));
+    expect(titles(chat)).toEqual(['Tip calculator', 'Memory game']);
+    buttons(chat)[1]!.click();
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('Make a memory card game with images from my collections'));
+  });
+
+  it('shows no examples, and none of the built-in ones, when the page sets none', async () => {
+    const chat = await hosted();
+    expect(buttons(chat)).toHaveLength(0);
+    const text = chat.shadowRoot!.querySelector('civitai-chat-welcome')!.textContent ?? '';
+    for (const title of BUILT_IN_TITLES) expect(text).not.toContain(title);
+  });
+
+  it('shows no examples for an empty list', async () => {
+    const chat = await hosted((el) => (el.examples = []));
+    expect(buttons(chat)).toHaveLength(0);
+    expect(chat.shadowRoot!.querySelector('civitai-chat-welcome .cvt-examples')).toBeNull();
+  });
+
+  it('keeps the greeting plain with examples set: the same heading as without them', async () => {
+    const bare = (await hosted()).shadowRoot!.querySelector('civitai-chat-welcome h1')!.textContent;
+    document.body.replaceChildren();
+    const withExamples = await hosted((el) => (el.examples = APP_EXAMPLES));
+    expect(withExamples.shadowRoot!.querySelector('civitai-chat-welcome h1')!.textContent).toBe(bare);
+    expect(withExamples.shadowRoot!.querySelector('civitai-chat-welcome .cvt-fineprint')).toBeNull();
+  });
+
+  it('a file-wanting example fills the message box but opens no picker: the chat takes no files', async () => {
+    const picker = vi.spyOn(HTMLInputElement.prototype, 'click');
+    const chat = await hosted((el) => (el.examples = [{ title: 'Restyle my photo', prompt: 'Turn my photo into a watercolor', wantsFile: true }]));
+    buttons(chat)[0]!.click();
+    await vi.waitFor(() => expect(composer(chat).draft).toBe('Turn my photo into a watercolor'));
+    expect(picker).not.toHaveBeenCalled();
+  });
+
+  it("INVARIANT GUARD: the page's hint still shows beside its examples", async () => {
+    const chat = await hosted((el) => {
+      el.examples = APP_EXAMPLES;
+      el.placeholder = 'Ask the docs';
+    });
+    expect(composer(chat).placeholder).toBe('Ask the docs');
+  });
+});
+
 describe('<civitai-chat> examples that want a file', () => {
   const PHOTO_EXAMPLE = [{ title: 'Restyle my photo', prompt: 'Turn my photo into a watercolor', wantsFile: true }];
 
@@ -217,6 +279,7 @@ describe('<civitai-chat> placeholder', () => {
     expect(composer(chat).placeholder).toBe(BUILT_IN_HINT);
   });
 
+  // INVARIANT GUARD (existing behaviour): the page's hint on a host backend, with no examples set.
   it("puts the page's hint ahead of a host backend's own, and falls back to it", async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
     const chat = document.createElement('civitai-chat');

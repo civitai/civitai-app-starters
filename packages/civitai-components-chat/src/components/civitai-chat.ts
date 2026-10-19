@@ -259,7 +259,7 @@ export class CivitaiChat extends LitElement {
   /**
    * What an empty chat offers to start from, in place of the built-in ones (making a picture, a video, a
    * song…). Clicking one puts its `prompt` in the message box; `wantsFile` also opens the file picker.
-   * An empty list shows none. A host backend's chat shows none either way.
+   * An empty list shows none. A host backend's chat shows only these: unset, it shows none.
    */
   declare examples?: readonly ChatExample[];
   /** The message box's hint while it is empty, in place of the built-in one. */
