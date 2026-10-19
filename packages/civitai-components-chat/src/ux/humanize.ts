@@ -2,6 +2,13 @@ import { isNetworkDrop } from '../agent/network-retry.js';
 
 export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
 
+/**
+ * The failures a Retry is offered for: the connection was lost, or the service was busy or down for a
+ * moment. Not a refusal (sign-in, Buzz, the safety filter), which asking again would only repeat, nor
+ * a failure of unknown cause.
+ */
+export const RETRYABLE_ERRORS: ReadonlySet<string> = new Set(['network', 'rate_limit', 'unavailable', 'assistant_unavailable']);
+
 export interface HumanError {
   kind: ErrorKind;
   message: string;

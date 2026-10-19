@@ -690,6 +690,38 @@ when the retries run out does the reply fail with `reply-error`. A recovered rep
 these are how a page, its telemetry or an eval harness can tell that a cut happened and was retried,
 rather than that none happened.
 
+### Retry, and asking again when the page wakes
+
+A reply that still failed, because the connection was lost or the service was busy or could not run
+the model for a moment (`kind` `network`, `rate_limit`, `unavailable` or `assistant_unavailable`),
+shows **Retry** on its error, on the latest reply only. Retry asks for the same reply again: the
+viewer's message is not sent a second time, and it carries on from the last step that finished, as
+the automatic retries do, so a tool that already ran is not called again and stays on screen. Retry is
+offered only where that holds: not when the step that failed had already called a tool (it may have
+run, and is in no finished step to send as it is), and not on a failed reply in a chat opened again
+later (where to carry on from is kept for the session only, not saved). A refusal (sign-in, Buzz,
+the safety filter) and a failure of unknown cause get no Retry; asking again would only repeat it.
+
+A phone that sleeps stops the page, and with it the reply and its retries; a reply that lost its
+connection that way is asked for again **once, by itself**, when the page comes back into view
+(`visibilitychange`, while the browser says it is online) or the browser says it is `online` again.
+Only when it is the latest reply of the chat that is open (nothing was sent after it), the connection
+was what failed (`kind` `network`; the other kinds get Retry only), no reply is running and nothing
+holds the chat (`canSend`), Retry would be offered for it, and it failed less than 30 minutes ago: past
+that the viewer has likely moved on, and Retry is still there. A desktop tab shown again counts as
+waking too. Each reply is asked again by itself at most once, so a reply that fails again waits for
+Retry instead of looping. While the chat holds, Retry shows but is off, and the hold's words in the
+message box say why.
+
+Retry and asking again by itself do **not** fire `before-send`: no new message goes. They fire
+`reply-resume` first, with `{ trigger }` (type `ReplyResumeDetail`; `'retry'`, `'visible'` or
+`'online'`; it bubbles and is composed), which is the page's hook. It is cancelable: a page whose
+reply's tools are not there now (say, its app is paused) calls `preventDefault()`, gets them back, and
+then calls `chat.retryReply()`. A cancelled ask by itself does not count as the one ask: the next wake
+asks again, unless the page's `retryReply()` came first. `retryReply()` asks for the latest reply again
+the way Retry does, without `reply-resume`, and only where Retry would be offered and the chat can send;
+it resolves `true` when it asked and `false` when it asked nothing.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)

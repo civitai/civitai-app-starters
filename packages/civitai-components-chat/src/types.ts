@@ -40,7 +40,9 @@ export interface Turn {
    * failed, kept for this session only. `ranOut`: the reply used every step it may take. `stopped`:
    * the page ended the reply (`beforeToolCall` answered `stop: true`), and these are the words shown.
    * `networkRetries`: where the browser's network cut the reply off each time it then retried by
-   * itself, oldest first; kept for this session only, like `errorTrace`.
+   * itself, oldest first; kept for this session only, like `errorTrace`. `resume`: on a failed reply,
+   * where asking for it again can carry on from without running a tool twice; also kept for this
+   * session only (see {@link ResumePoint}).
    */
   assistant: {
     messages: ModelMessage[];
@@ -50,9 +52,23 @@ export interface Turn {
     errorKind?: string;
     errorTrace?: ErrorTrace;
     networkRetries?: ErrorTrace[];
+    resume?: ResumePoint;
     ranOut?: boolean;
     stopped?: string;
   };
+}
+
+/**
+ * Where a failed reply can be asked for again from: the steps that finished before the failure (their
+ * messages, with every tool call and its result) and how many there were. A failed reply has one only
+ * when the step that failed had called no tool, so asking again never runs a tool a second time: a
+ * call in the failed step may have run and is in no finished step to send as it is. `at` is when the
+ * reply failed (ms since the epoch).
+ */
+export interface ResumePoint {
+  messages: ModelMessage[];
+  steps: number;
+  at: number;
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */

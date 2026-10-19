@@ -4,13 +4,13 @@ import { outputTokenCap, stepLimit } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
-import type { Attachment, Turn } from '../types.js';
+import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
 import { isNetworkDrop, MAX_NETWORK_RETRIES_PER_REPLY, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './network-retry.js';
-import type { TurnPart } from './parts.js';
+import { partsFromMessages, type TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
 import { stripToolMarkup } from './tool-markup.js';
@@ -107,23 +107,34 @@ export class Agent extends EventTarget {
     this.#abort?.abort();
   }
 
-  /** Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it. */
+  /**
+   * Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it, or asked
+   * again after the connection was lost. The user's message is not sent again as a new one: the same
+   * turn is asked for again.
+   *
+   * When the failed reply has a resume point (`assistant.resume`, see {@link ResumePoint}) it carries
+   * on from there: the steps that finished, with every tool they ran and its result, are sent as they
+   * are and kept on screen, and only the step that failed is asked for again, as the automatic retry
+   * of a dropped connection does. Without one (a reply whose failed step had already called a tool,
+   * or a chat opened from storage), the reply starts over.
+   */
   async retry(): Promise<void> {
     const turn = this.#deps.store.current?.turns.at(-1);
     if (this.running || turn?.assistant.status !== 'error') return;
+    const from = turn.assistant.resume;
     turn.assistant = { messages: [], status: 'streaming' };
-    await this.#run(turn);
+    await this.#run(turn, from);
   }
 
-  async #run(turn: Turn): Promise<void> {
+  async #run(turn: Turn, from?: ResumePoint): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
     const controller = new AbortController();
     this.#abort = controller;
-    this.live = { seq: turn.seq, parts: [] };
+    this.live = { seq: turn.seq, parts: from ? partsFromMessages(from.messages) : [] };
     this.#emit();
 
-    let completed: ModelMessage[] = [];
+    let completed: ModelMessage[] = from ? [...from.messages] : [];
     let stepText = '';
     // Whether `stepText`'s step is still open: a step that finished is in `completed` already.
     let stepOpen = false;
@@ -131,13 +142,16 @@ export class Agent extends EventTarget {
     // Read once per reply, so a change applies from the next one.
     const maxSteps = stepLimit();
     // Steps whose answer started streaming; between one step's end and the next one's start its request is out.
-    let steps = 0;
+    let steps = from?.steps ?? 0;
     let streaming = false;
-    let finished = 0;
+    let finished = from?.steps ?? 0;
     let since = Date.now();
     let toolsBuilt = false;
     let failedAt: TraceContext | undefined;
     let stopped: string | undefined;
+    // Where asking again could carry on from if the reply fails, set as each pass ends; none when the
+    // failed step had called a tool (it may have run, and is in no finished step to send as it is).
+    let resumable: ResumePoint | undefined;
     const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
     try {
       const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
@@ -254,6 +268,7 @@ export class Agent extends EventTarget {
           }
         }
         if (controller.signal.aborted || streamError === undefined || !atCut) break;
+        resumable = atCut.calls + callsAfterCut === 0 && atCut.finished < maxSteps ? { messages: atCut.completed, steps: atCut.finished, at: Date.now() } : undefined;
         // Asked again only when the cut step had called no tool and no call came after the cut to the end
         // of the stream, so a tool can never run twice. The stream is read to its end rather than dropped
         // at the error: an abort cannot take back a tool the SDK already started, and only the whole
@@ -288,7 +303,7 @@ export class Agent extends EventTarget {
         since = Date.now();
       }
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where());
+      else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where(), resumable);
       else {
         turn.assistant.status = 'done';
         if (stopped !== undefined) turn.assistant.stopped = stopped;
@@ -296,7 +311,10 @@ export class Agent extends EventTarget {
       }
     } catch (error) {
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else this.#failed(turn, error, where());
+      // Failed outside a step: only the tools or the prompt failed to build, before any request (every
+      // stream is read inside the loop's own try), so nothing ran and the reply carries on from where it
+      // began, or from the steps a resumed reply had kept.
+      else this.#failed(turn, error, where(), { messages: completed, steps: finished, at: Date.now() });
     }
 
     if (steps >= maxSteps) {
@@ -321,8 +339,9 @@ export class Agent extends EventTarget {
     }
   }
 
-  #failed(turn: Turn, error: unknown, where: TraceContext): void {
+  #failed(turn: Turn, error: unknown, where: TraceContext, resume?: ResumePoint): void {
     turn.assistant.status = 'error';
+    if (resume) turn.assistant.resume = { ...resume, messages: [...resume.messages] };
     const human = (this.#deps.describeError ?? humanize)(error);
     const trace = errorTrace(error, where);
     turn.assistant.error = human.message;
