@@ -10,9 +10,19 @@ import type { PostManager } from '../posting/post.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
-import { LightElement } from './light.js';
+import { LightElement, emit } from './light.js';
 
 const NEAR_BOTTOM_PX = 48;
+
+/** A message the viewer sent that waits to go, as the thread shows it after the turns. */
+export interface QueuedView {
+  text: string;
+  /** What it waits for, e.g. "Waiting for your app…". */
+  status: string;
+  files: Attachment[];
+  /** On its way: it can no longer be edited or cancelled. */
+  going: boolean;
+}
 
 export class CivitaiChatThread extends LightElement {
   // The agent and store update turns in place, so the same object can carry new content.
@@ -29,6 +39,7 @@ export class CivitaiChatThread extends LightElement {
     resolve: { attribute: false },
     views: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    queued: { attribute: false },
     atBottom: { state: true },
     announcement: { state: true },
   };
@@ -47,6 +58,7 @@ export class CivitaiChatThread extends LightElement {
   declare views: Record<string, ChatToolView>;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  declare queued: QueuedView | null;
   declare atBottom: boolean;
   declare announcement: string;
 
@@ -63,6 +75,7 @@ export class CivitaiChatThread extends LightElement {
     super();
     this.views = {};
     this.canRetry = false;
+    this.queued = null;
     this.turns = [];
     this.live = null;
     this.atBottom = true;
@@ -107,7 +120,9 @@ export class CivitaiChatThread extends LightElement {
     if (changed.has('live')) this.#announce();
   }
 
-  protected override updated(): void {
+  protected override updated(changed: PropertyValues): void {
+    // A message that starts waiting is the newest thing in the chat: it is brought into view.
+    if (changed.has('queued') && this.queued && !changed.get('queued')) this.#jumpToEnd();
     const scroller = this.querySelector<HTMLElement>('.cvt-thread-scroll');
     if (scroller && scroller !== this.#scroller) {
       this.#scroller = scroller;
@@ -139,6 +154,23 @@ export class CivitaiChatThread extends LightElement {
     return parts;
   }
 
+  #queuedMessage(): TemplateResult | typeof nothing {
+    const queued = this.queued;
+    if (!queued) return nothing;
+    const files = queued.files.map((a) => ({ key: a.id, kind: a.kind, src: a.url, label: a.name, blocked: a.blocked }));
+    return html`<div class="cvt-user cvt-queued">
+      ${files.length ? html`<civitai-chat-attachment-strip size="sm" .items=${files}></civitai-chat-attachment-strip>` : nothing}
+      ${queued.text ? html`<div class="cvt-bubble">${queued.text}</div>` : nothing}
+      <div class="cvt-queued-status">
+        <span role="status">${queued.status}</span>
+        ${queued.going
+          ? nothing
+          : html`<civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-edit')}>Edit</civitai-button>
+              <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-cancel')}>Cancel</civitai-button>`}
+      </div>
+    </div>`;
+  }
+
   override render(): TemplateResult {
     const last = this.turns.at(-1)?.seq;
     return html`<div class="cvt-thread-scroll" @scroll=${this.#onScroll}>
@@ -164,6 +196,7 @@ export class CivitaiChatThread extends LightElement {
                 .views=${this.views}
               ></civitai-chat-turn>`,
           )}
+          ${this.#queuedMessage()}
         </div>
       </div>
       ${this.atBottom

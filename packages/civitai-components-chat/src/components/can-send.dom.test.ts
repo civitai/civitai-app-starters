@@ -102,15 +102,18 @@ describe('<civitai-chat> canSend', () => {
     await settle();
     expect(chat.canSend).toBe(false);
     expect(changes).toEqual([]);
-    // What canSend says is what send() does: held, it goes nowhere.
+    // What canSend says is what send() does: held, it does not go now. It waits, and goes once the hold lifts.
     await chat.send('build me a timer');
     await settle();
     expect(replies.asked).toHaveLength(0);
+    expect(chat.queuedMessage).toBe('build me a timer');
 
     chat.holdReason = undefined;
-    await vi.waitFor(() => expect(changes).toEqual([{ detail: true, read: true }]));
-    void chat.send('build me a timer');
     await vi.waitFor(() => expect(replies.asked).toHaveLength(1));
+    // It went before the chat could say it can send: no other message slips in ahead of it.
+    expect(changes).toEqual([]);
+    replies.answer();
+    await vi.waitFor(() => expect(changes).toEqual([{ detail: true, read: true }]));
   });
 
   it('is false while an added server lists its tools, and the event fires as the listing ends', async () => {
@@ -139,13 +142,16 @@ describe('<civitai-chat> canSend', () => {
     await chat.send('run the tests');
     await settle();
     expect(replies.asked).toHaveLength(0);
+    expect(chat.queuedMessage).toBe('run the tests');
 
+    // The listing ends: the waiting message goes, and the chat can send again once its reply is done.
     open();
+    await vi.waitFor(() => expect(replies.asked).toHaveLength(1));
+    expect(changes).toHaveLength(2);
+    replies.answer();
     await vi.waitFor(() => expect(changes).toHaveLength(3));
     expect(changes[2]).toEqual({ detail: true, read: true });
     expect(chat.shadowRoot!.querySelector('civitai-chat-composer .cvt-composer-hold')).toBeNull();
-    void chat.send('run the tests');
-    await vi.waitFor(() => expect(replies.asked).toHaveLength(1));
   });
 
   it('is false while a reply runs, and the event fires as it ends', async () => {

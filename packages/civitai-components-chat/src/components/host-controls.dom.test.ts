@@ -55,7 +55,7 @@ async function mount(setup: (chat: HTMLElementTagNameMap['civitai-chat']) => voi
 const completions = (fetch: ReturnType<typeof vi.fn>) => fetch.mock.calls.filter(([url]) => String(url).includes('chat/completions'));
 
 describe('civitai-chat holdReason', () => {
-  it('sends nothing while held, keeps the message in the box and says why; sends once the hold lifts', async () => {
+  it('sends nothing while held and says why; a message sent meanwhile waits, shown, and goes once the hold lifts', async () => {
     const fetch = vi.fn(async (url: unknown) => (String(url).includes('chat/completions') ? text('Hi!') : new Response('{}')));
     vi.stubGlobal('fetch', fetch);
     const { chat, composer } = await mount((el) => (el.holdReason = 'The sandbox is starting…'));
@@ -65,22 +65,26 @@ describe('civitai-chat holdReason', () => {
     expect(composer.querySelector('.cvt-composer-hold')?.textContent).toBe('The sandbox is starting…');
     composer.draft = 'build me a timer';
     await composer.updateComplete;
-    expect(composer.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(true);
-
-    // The composer's own event (Enter with the button off can still reach it) and the page's send().
-    composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: 'build me a timer' } }));
+    // Send stays on: what is sent now waits for the hold to lift.
+    expect(composer.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(false);
+    composer.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click();
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-queued .cvt-bubble')?.textContent).toBe('build me a timer'));
+    expect(chat.shadowRoot!.querySelector('.cvt-queued-status [role="status"]')?.textContent).toBe('The sandbox is starting…');
+    expect(chat.queuedMessage).toBe('build me a timer');
+    // One message waits at a time: the page's send() meanwhile stays in the (now empty) box.
     await chat.send('and a clock');
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(completions(fetch)).toHaveLength(0);
-    expect(composer.draft).toBe('build me a timer');
+    expect(composer.draft).toBe('and a clock');
 
     chat.holdReason = undefined;
-    await chat.updateComplete;
-    await composer.updateComplete;
-    expect(composer.querySelector('.cvt-composer-hold')).toBeNull();
-    expect(composer.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(false);
-    await chat.send('build me a timer');
-    await vi.waitFor(() => expect(completions(fetch)).toHaveLength(1));
+    // Replies only: once the reply is done the chat also asks for a title.
+    const replies = () => completions(fetch).filter(([, init]) => String((init as RequestInit | undefined)?.body ?? '').includes('"stream":true'));
+    await vi.waitFor(() => expect(replies()).toHaveLength(1));
+    expect(String((replies()[0]![1] as RequestInit).body)).toContain('build me a timer');
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-queued')).toBeNull());
+    expect(chat.queuedMessage).toBeNull();
+    expect(composer.draft).toBe('and a clock');
   });
 
   it('holds on its own while an added server is still listing its tools', async () => {

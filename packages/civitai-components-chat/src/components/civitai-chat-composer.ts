@@ -21,6 +21,7 @@ export class CivitaiChatComposer extends LightElement {
     running: { type: Boolean },
     disabled: { type: Boolean },
     holdReason: { attribute: false },
+    queues: { type: Boolean },
     uploads: { attribute: false },
     refs: { attribute: false },
     placeholder: {},
@@ -40,6 +41,8 @@ export class CivitaiChatComposer extends LightElement {
   declare disabled: boolean;
   /** While set, Send is off and this shows above the box; typing, files and Stop still work. */
   declare holdReason?: string;
+  /** A send now waits until the hold lifts instead of being refused: Send stays on through `holdReason`. */
+  declare queues: boolean;
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
   declare placeholder: string;
@@ -63,6 +66,7 @@ export class CivitaiChatComposer extends LightElement {
   constructor() {
     super();
     this.running = false;
+    this.queues = false;
     this.disabled = false;
     this.uploads = [];
     this.refs = [];
@@ -106,7 +110,7 @@ export class CivitaiChatComposer extends LightElement {
 
   get #canSend(): boolean {
     const hasContent = this.text.trim() !== '' || this.uploads.some((u) => u.attachment) || this.refs.length > 0;
-    return hasContent && !this.running && !this.disabled && !this.holdReason && !this.#uploading && !this.transcribing;
+    return hasContent && !this.running && !this.disabled && (!this.holdReason || this.queues) && !this.#uploading && !this.transcribing;
   }
 
   async #record(): Promise<void> {
