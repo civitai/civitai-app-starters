@@ -52,6 +52,9 @@ export interface PendingUpload {
 }
 
 /**
+ * Unreachable for now: `ChatSession` is not exported and the element passes no `runner`, so nothing
+ * outside this package can set it until the element exposes it (then document it).
+ *
  * Experimental: where a reply's loop runs. `'browser'` (the default) runs it on the page, as every
  * chat does today. `'remote'` is reserved for a server-side runner that keeps a reply going when the
  * page sleeps or closes; it is not implemented yet.

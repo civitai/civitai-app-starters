@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flush, workflow } from '../test-support/fakes.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationMetadata, SavedTurn, SavedTurnV3 } from '../types.js';
-import { CUT_OFF, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
+import { CUT_OFF, LIVE_REDRAW_MAX_MS, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveRedrawIn, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
 
 function setup(stored: Workflow[] = [], scope?: string) {
   const submitted: WorkflowTemplate[] = [];
@@ -394,5 +394,34 @@ describe('a reply read back before it ended: still running elsewhere, or gone', 
 
   it('does not save the read-back time again', () => {
     expect(saved(turnFrom(v2Pending(ago(1)))).assistant).toEqual({ messages: [], status: 'error', error: CUT_OFF });
+  });
+});
+
+describe('a save time from a clock that is ahead', () => {
+  const NOW = Date.parse('2026-10-19T15:00:00Z');
+  const at = (ms: number) => turnFrom({ seq: 2, createdAt: new Date(ms).toISOString(), user: { content: 'build it', attachments: [] } });
+  const DAY = 86_400_000;
+
+  it('does not believe a save 40 days ahead: it reads as gone at once, with nothing to wait for', () => {
+    const turn = at(NOW + 40 * DAY);
+    expect(replyElsewhere(turn, NOW)).toBe('stale');
+    expect(liveUntil(turn, NOW)).toBeUndefined();
+    expect(liveRedrawIn(turn, NOW)).toBeUndefined();
+  });
+
+  it('counts a save a little ahead (30 s) from now: live, and gone well within 5 minutes plus that', () => {
+    const turn = at(NOW + 30_000);
+    expect(replyElsewhere(turn, NOW)).toBe('live');
+    expect(replyElsewhere(turn, NOW + 2 * 60_000)).toBe('live');
+    expect(replyElsewhere(turn, NOW + 7 * 60_000)).toBe('stale');
+    expect(liveUntil(turn, NOW)).toBe(NOW + LIVE_REPLY_MS);
+  });
+
+  it('never waits longer than the cap for a live reply to go past, and waits just past it when that is sooner', () => {
+    // Saved a minute ago: it goes past in 4 minutes, so the wait is cut to the cap and waited again.
+    expect(liveRedrawIn(at(NOW - 60_000), NOW)).toBe(LIVE_REDRAW_MAX_MS);
+    // Saved 4.5 minutes ago: it goes past in 30 s.
+    expect(liveRedrawIn(at(NOW - 270_000), NOW)).toBe(30_250);
+    expect(liveRedrawIn(at(NOW - 30 * 60_000), NOW)).toBeUndefined();
   });
 });

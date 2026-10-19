@@ -410,21 +410,49 @@ export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
 export const LIVE_REPLY_MS = 5 * 60_000;
 
 /**
- * For the latest turn read back cut off with the time of its save (`assistant.savedAt`): `live` while
- * that save is under {@link LIVE_REPLY_MS} old, `stale` after (or when the time cannot be read).
- * `undefined` for every other reply. The one rule for both the note shown and whether asking again is allowed.
+ * How far ahead of this page's clock a save time may be and still be believed: the clocks of two
+ * devices differ by a little. A save further ahead was made by a clock that is wrong, so when it was
+ * made is unknown, and it reads as gone. One that is ahead by less counts from now, so it reads live
+ * for at most this plus {@link LIVE_REPLY_MS}.
  */
-export function replyElsewhere(turn: Turn, now: number = Date.now()): 'live' | 'stale' | undefined {
+export const SAVE_CLOCK_SKEW_MS = 60_000;
+
+/** The longest one wait for a live reply to go past may be: a longer one is cut and waited again. */
+export const LIVE_REDRAW_MAX_MS = 60_000;
+
+/** When the reply's latest save was made (ms since the epoch), as far as it can be believed; `undefined` when it cannot. */
+function savedTime(turn: Turn, now: number): number | undefined {
   const { status, error, savedAt } = turn.assistant;
   if (status !== 'error' || error !== CUT_OFF || savedAt === undefined) return undefined;
   const at = Date.parse(savedAt);
-  if (Number.isNaN(at)) return 'stale';
-  return now - at < LIVE_REPLY_MS ? 'live' : 'stale';
+  if (Number.isNaN(at) || at > now + SAVE_CLOCK_SKEW_MS) return Number.NaN;
+  return Math.min(at, now);
+}
+
+/**
+ * For the latest turn read back cut off with the time of its save (`assistant.savedAt`): `live` while
+ * that save is under {@link LIVE_REPLY_MS} old, `stale` after, or when its time cannot be read or is
+ * further ahead than {@link SAVE_CLOCK_SKEW_MS}. `undefined` for every other reply. The one rule for
+ * both the note shown and whether asking again is allowed.
+ */
+export function replyElsewhere(turn: Turn, now: number = Date.now()): 'live' | 'stale' | undefined {
+  const at = savedTime(turn, now);
+  if (at === undefined) return undefined;
+  return !Number.isNaN(at) && now - at < LIVE_REPLY_MS ? 'live' : 'stale';
 }
 
 /** When a `live` reply (see {@link replyElsewhere}) turns `stale` (ms since the epoch); `undefined` otherwise. */
 export function liveUntil(turn: Turn, now: number = Date.now()): number | undefined {
-  return replyElsewhere(turn, now) === 'live' ? Date.parse(turn.assistant.savedAt!) + LIVE_REPLY_MS : undefined;
+  return replyElsewhere(turn, now) === 'live' ? savedTime(turn, now)! + LIVE_REPLY_MS : undefined;
+}
+
+/**
+ * How long to wait before drawing a `live` reply again to see whether it went past: just past its
+ * {@link liveUntil}, at most {@link LIVE_REDRAW_MAX_MS} (then it is waited again). `undefined` otherwise.
+ */
+export function liveRedrawIn(turn: Turn, now: number = Date.now()): number | undefined {
+  const until = liveUntil(turn, now);
+  return until === undefined ? undefined : Math.min(LIVE_REDRAW_MAX_MS, Math.max(0, until - now) + 250);
 }
 
 /**

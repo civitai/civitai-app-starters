@@ -860,16 +860,13 @@ latest step's save for v3. The latest reply only:
 - **Saved longer ago:** the reply is taken as gone. A v3 reply with finished steps whose every tool call
   has its result shows "This reply stopped before it finished." with **Continue**. That is Retry's path
   (it fires `reply-resume` with `trigger: 'retry'`, and `retryReply()` does the same): it carries on
-  from those steps, sent as they are, so no tool in them runs again. Any other says "This reply was cut
-  off. Ask again?", as before.
+  from those steps, sent as they are, so no tool in them runs again. It reads the chat again first:
+  if the reply has ended meanwhile, or saved a newer step, that shows instead and nothing is asked.
+  Any other says "This reply was cut off. Ask again?", as before.
+
+A save time more than a minute ahead of the page's clock (`SAVE_CLOCK_SKEW_MS`) was made by a clock
+that is wrong, so it reads as gone. One ahead by less counts from now.
 
 A v2 save carries only the reply's start, so a v2 reply that runs longer than 5 minutes reads as cut
 off while it may still run. A tab that was itself running the reply and reloaded reads as "still
 replying" until its last save is 5 minutes old.
-
-## Where a reply runs (experimental)
-
-Every reply's loop runs on the page. The chat's internal session has a `runner` option, `'browser'`
-(the default) or `'remote'`, reserved for a server-side runner that keeps a reply going while the
-page sleeps or is closed. `'remote'` is not implemented yet and throws. The element does not expose
-the option yet. Its name and shape may change before it does.

@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { CivitaiChatTurn } from './civitai-chat-turn.js';
 import type { CivitaiChat, ReplyResumeDetail } from './civitai-chat.js';
 import { defineElements } from './define.js';
 
@@ -180,5 +181,67 @@ describe('a reply still running elsewhere, or gone', () => {
     await vi.waitFor(() => expect(note(chat)).toBe('This reply was cut off. Ask again?'));
     // Read once more as it went past, in case it ended meanwhile.
     await vi.waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
+describe('a reply read back before it ended: guards', () => {
+  it('a save 40 days ahead (a device with a wrong clock) reads as cut off and does not redraw in a loop', async () => {
+    const draws = vi.spyOn(CivitaiChatTurn.prototype as unknown as { updated(changed: unknown): void }, 'updated');
+    const { chat } = await openOn(headOf(2, v2Pending(new Date(NOW + 40 * 86_400_000).toISOString())));
+    await vi.waitFor(() => expect(latest(chat).querySelector('.cvt-note')).not.toBeNull());
+    const before = draws.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // A wait past 2^31-1 ms fires at once, and each draw arms it again: hundreds of draws in 300 ms.
+    expect(draws.mock.calls.length - before).toBeLessThan(5);
+    expect(note(chat)).toBe('This reply was cut off. Ask again?');
+  });
+
+  it('a read asked for while the chat held is made once the hold lifts: the reply that ended meanwhile shows', async () => {
+    const { chat, asked, reads, setHead } = await openOn(headOf(3, v3Running(ago(1))));
+    await vi.waitFor(() => expect(note(chat)).toBe('Still replying in another tab or window…'));
+    chat.holdReason = 'One moment';
+    await vi.waitFor(() => expect(chat.canSend).toBe(false));
+    // The other tab finishes the reply; here, the save goes past 5 minutes while the chat holds.
+    setHead(headOf(2, v2Done));
+    vi.setSystemTime(NOW + 30 * 60_000);
+    chat.requestUpdate();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const whileHeld = reads.mock.calls.length;
+    chat.holdReason = '';
+    await vi.waitFor(() => expect(latest(chat).textContent).toContain('Your timer is ready.'));
+    expect(reads.mock.calls.length).toBeGreaterThan(whileHeld);
+    expect(continueButton(chat)).toBeNull();
+    expect(asked).toHaveLength(0);
+  });
+
+  it('Continue reads the chat again first: a reply that ended meanwhile shows, and nothing is asked', async () => {
+    const { chat, asked, ran, resumes, setHead } = await openOn(headOf(3, v3Running(ago(30))));
+    await vi.waitFor(() => expect(continueButton(chat)).not.toBeNull());
+    setHead(headOf(2, v2Done));
+    continueButton(chat)!.click();
+    await vi.waitFor(() => expect(latest(chat).textContent).toContain('Your timer is ready.'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(asked).toHaveLength(0);
+    expect(resumes).toEqual([]);
+    expect(ran).toEqual([]);
+  });
+
+  it('Continue reads the chat again first: a reply that saved a newer step is live again, and nothing is asked', async () => {
+    const { chat, asked, setHead } = await openOn(headOf(3, v3Running(ago(30))));
+    await vi.waitFor(() => expect(continueButton(chat)).not.toBeNull());
+    setHead(headOf(3, v3Running(ago(1))));
+    continueButton(chat)!.click();
+    await vi.waitFor(() => expect(note(chat)).toBe('Still replying in another tab or window…'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(asked).toHaveLength(0);
+  });
+
+  it('retryReply() reads the chat again first too, and asks nothing for a reply that ended', async () => {
+    const { chat, asked, setHead } = await openOn(headOf(3, v3Running(ago(30))));
+    await vi.waitFor(() => expect(continueButton(chat)).not.toBeNull());
+    setHead(headOf(2, v2Done));
+    expect(await chat.retryReply()).toBe(false);
+    await vi.waitFor(() => expect(latest(chat).textContent).toContain('Your timer is ready.'));
+    expect(asked).toHaveLength(0);
   });
 });

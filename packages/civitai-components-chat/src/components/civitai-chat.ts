@@ -380,22 +380,28 @@ export class CivitaiChat extends LitElement {
 
   /** Set while the open chat is read again (`#recheck`): a send then is held, so it cannot land on the chat being replaced. */
   #rechecking = false;
+  /** A read again asked for while the chat held or was busy (`true`: one that must happen); made once it no longer does. */
+  #recheckPending: boolean | undefined;
 
   /**
    * Reads the open chat again while its latest reply may still be running in another tab or window
    * (`replyElsewhere` says `live`), so the note settles by itself: as the page comes into view or gets
    * focus, and once more when that reply stops counting as live (`force`: its turn's `cvt-recheck`).
    * A reply already past it is only drawn again, so its turn sees that it went past. Not while a reply
-   * runs here, a send is on its way or anything holds the chat. The thread stays on screen; a read that
-   * fails changes nothing.
+   * runs here, a send is on its way or anything holds the chat: then it is kept, and made as soon as
+   * none does (`#recheckPending`). The thread stays on screen; a read that fails changes nothing.
    */
   async #recheck(force: boolean): Promise<void> {
     const session = this.#session;
     const conversation = session?.store.current;
     const turn = conversation?.turns.at(-1);
-    if (!session || !conversation || !turn || this.#rechecking || this.#busy(session) || this.#held(session) !== undefined) return;
+    if (!session || !conversation || !turn) return;
     const state = replyElsewhere(turn);
     if (state === undefined) return;
+    if (this.#rechecking || this.#busy(session) || this.#held(session) !== undefined) {
+      if (force || state === 'live') this.#recheckPending = (this.#recheckPending ?? false) || force;
+      return;
+    }
     if (state === 'stale' && !force) {
       this.requestUpdate();
       return;
@@ -451,7 +457,36 @@ export class CivitaiChat extends LitElement {
   /** The viewer pressed Retry on the latest reply's error. */
   #retryReply(): void {
     const session = this.#session;
-    if (session && this.#retryable()) this.#resumeReply(session, 'retry');
+    const turn = this.#retryable();
+    if (!session || !turn) return;
+    // Every other reply goes at once, as it always has; one read back from a save made while it ran is made sure of first.
+    if (turn.assistant.errorKind !== 'interrupted') this.#resumeReply(session, 'retry');
+    else void this.#retryableNow().then((now) => now && this.#session && this.#resumeReply(this.#session, 'retry'));
+  }
+
+  /**
+   * `#retryable()`, made sure of first for a reply read back from a save made while it ran
+   * (`interrupted`): that save may be old news, as the reply may have ended or saved a newer step
+   * since. So the chat is read again (sends held) and asked again: the reply asked for is the one
+   * stored now, or none. A read that fails asks nothing, since it could be paid twice.
+   */
+  async #retryableNow(): Promise<Turn | undefined> {
+    const session = this.#session;
+    const turn = this.#retryable();
+    const id = session?.store.current?.id;
+    if (!session || !turn || !id || turn.assistant.errorKind !== 'interrupted') return turn;
+    this.#rechecking = true;
+    this.requestUpdate();
+    try {
+      await session.reloadConversation(id);
+    } catch (error) {
+      if (!isSuperseded(error)) this.#toast('Could not check on that reply. Try again.', error);
+      return undefined;
+    } finally {
+      this.#rechecking = false;
+      this.requestUpdate();
+    }
+    return this.#session === session ? this.#retryable() : undefined;
   }
 
   /**
@@ -460,8 +495,9 @@ export class CivitaiChat extends LitElement {
    * would be offered and the chat can send (`canSend`): resolves `false`, asking nothing, otherwise.
    */
   async retryReply(): Promise<boolean> {
+    const first = this.#retryable();
+    const turn = first?.assistant.errorKind === 'interrupted' ? await this.#retryableNow() : first;
     const session = this.#session;
-    const turn = this.#retryable();
     if (!session || !turn) return false;
     // In place of the ask by itself the page cancelled: the reply is not asked again by itself after this.
     if (this.#autoCancelled.has(turn)) this.#autoResumed.add(turn);
@@ -507,6 +543,13 @@ export class CivitaiChat extends LitElement {
     // First: a message that waited and can go now holds the chat again ("Sending…") before
     // `can-send-change` would say it can send.
     this.#checkQueued();
+    // A read again kept while the chat held: made now that nothing does.
+    const session = this.#session;
+    if (this.#recheckPending !== undefined && session && !this.#rechecking && !this.#busy(session) && this.#held(session) === undefined) {
+      const force = this.#recheckPending;
+      this.#recheckPending = undefined;
+      void this.#recheck(force);
+    }
     const canSend = this.canSend;
     if (canSend === this.#announcedCanSend) return;
     this.#announcedCanSend = canSend;

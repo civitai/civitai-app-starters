@@ -7,7 +7,7 @@ import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
-import { CUT_OFF, liveUntil, replyElsewhere } from '../store/thread-store.js';
+import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
@@ -211,8 +211,8 @@ export class CivitaiChatTurn extends LightElement {
     // saved a newer step meanwhile. Whichever comes first draws it again: the timer, or the chat on wake.
     if (this.#shownLive && state === 'stale') emit(this, 'cvt-recheck');
     this.#shownLive = state === 'live';
-    const until = this.#shownLive ? liveUntil(this.turn) : undefined;
-    if (until !== undefined) this.#liveTimer = setTimeout(() => this.requestUpdate(), Math.max(0, until - Date.now()) + 250);
+    const wait = this.#shownLive ? liveRedrawIn(this.turn) : undefined;
+    if (wait !== undefined) this.#liveTimer = setTimeout(() => this.requestUpdate(), wait);
   }
 
   override disconnectedCallback(): void {
