@@ -1,3 +1,5 @@
+import type { ModelMessage } from 'ai';
+
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, SavedTurn, TitleSource, Turn } from '../types.js';
@@ -49,6 +51,18 @@ export interface ConversationStore extends EventTarget {
   startNew(): Conversation;
   appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
   completeTurn(turn: Turn): Promise<void>;
+  /**
+   * A reply to `turn` starts in this tab (`send`, or Retry/Continue): a store that saves progress marks it
+   * as this tab's, so a reload of this tab knows a reply it finds unfinished died here.
+   */
+  replyStarted?(turn: Turn): void;
+  /**
+   * The reply to `turn` has got this far: `messages` is every step that finished so far. A store that
+   * saves progress (`ThreadStore`, as a v3 head with the reply `running`) may save it now or with a later
+   * save, and saves it now when `force` (a step that ran a tool, or a reply carrying on from saved steps);
+   * `completeTurn` saves how it ended.
+   */
+  checkpoint?(turn: Turn, progress: { messages: ModelMessage[]; force: boolean }): Promise<void>;
   savePost(id: string, post: SavedPost): Promise<void>;
   setModel(model: string | undefined): Promise<void>;
   savePanel(panel: SavedPanel): Promise<void>;

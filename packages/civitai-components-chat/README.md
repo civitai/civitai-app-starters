@@ -842,10 +842,22 @@ workflow, so a viewer's chats follow them to any device and expire with the orch
 retention. Panels are saved on the conversation, and their runs are tagged workflows like any other.
 Nothing is kept on the page beyond preferences.
 
-A conversation is saved as a v2 head. This version also reads v3 heads, which a later version will
-write: v2 plus a reply saved while it was still running, after each step it finished, with the time of
-that save. A head of any other version is left out, as before. Versions before this one leave a v3
-head out of their list, which is why this reader ships before any v3 writer.
+A conversation is saved as a v2 head, and as a v3 head while a reply runs. v3 is v2 plus that reply
+saved `running`, with the steps it finished and the time of that save. A head of any other version is
+left out, as before.
+
+While a reply runs, the chat saves it after each step that ran a tool: the head becomes v3, with every
+step that finished so far. A step that ran no tool is a reply's last, and its end is saved as before,
+as v2 again. A page that sleeps, closes or is unloaded mid-reply so loses at most the step it was on,
+and another tab, or this one reloaded, can carry on from there. Each save is an update of the turn's
+own `echo` workflow's metadata, which the orchestrator does not charge for. At most one such save
+waits at a time: steps that finish while it waits go with it. Every save of the chat (a title, the
+model, a post, a panel, a step) is built from everything this tab holds when it goes, one at a time,
+so none of them drops another's change.
+
+Versions before 0.17.0 leave a v3 head out of their list, so a chat whose reply is running, or died
+mid-reply, is missing from their list until a later save makes it v2 again. Update every page that
+shows these chats to 0.17.0 or later before shipping this version.
 
 ### A reply that had not ended when the chat was saved
 
@@ -869,6 +881,13 @@ latest step's save for v3. The latest reply only:
 A save time more than a minute ahead of the page's clock (`SAVE_CLOCK_SKEW_MS`) was made by a clock
 that is wrong, so it reads as gone. One ahead by less counts from now.
 
-A v2 save carries only the reply's start, so a v2 reply that runs longer than 5 minutes reads as cut
-off while it may still run. A tab that was itself running the reply and reloaded reads as "still
-replying" until its last save is 5 minutes old.
+A reply saved by this version is dated by its latest step, so it reads as still replying for as long
+as its steps keep finishing, however long it runs. One saved only as it started (by a version before
+this one, or whose steps ran no tool for 5 minutes) reads as cut off 5 minutes after its last save,
+while it may still run.
+
+The tab that runs a reply notes it in its own `sessionStorage`, with the time of its latest save of
+it. That tab reloaded (or unloaded by the browser to save memory, and opened again) finds its own
+reply unfinished and nothing running it, so it reads as gone at once, with Continue where it can.
+A save newer than the note was made elsewhere, and the 5-minute rule decides. A tab duplicated while
+its reply runs copies the note, so for it that reply reads as gone until that reply's next save.

@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel, type ToolSet } from 'ai';
+import { generateText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
 import { outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
@@ -108,6 +108,11 @@ export class Agent extends EventTarget {
   async #run(turn: Turn, from?: ResumePoint): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
+    if (!this.running) {
+      this.#deps.store.replyStarted?.(turn);
+      // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
+      if (from) this.#checkpoint(turn, from.messages, true);
+    }
     const outcome = await this.#core.run({
       seq: turn.seq,
       ...(from ? { from } : {}),
@@ -134,6 +139,9 @@ export class Agent extends EventTarget {
         };
       },
       retrying: (attempt, trace) => this.#retrying(turn, attempt, trace),
+      // Progress saved as the reply goes, so a page that sleeps or closes loses at most the step it was on.
+      // A step that ran a tool is always saved: that is the work asking again would repeat (and may pay for).
+      stepFinished: ({ messages, calledTools }) => this.#checkpoint(turn, messages, calledTools),
       // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
       settled: (ended) => this.#settle(turn, ended),
     });
@@ -147,6 +155,10 @@ export class Agent extends EventTarget {
     if (turn.seq === 1 && conversation.titleSource === 'first-message' && turn.assistant.status === 'done') {
       void this.#nameConversation(turn);
     }
+  }
+
+  #checkpoint(turn: Turn, messages: ModelMessage[], force: boolean): void {
+    this.#deps.store.checkpoint?.(turn, { messages, force }).catch((error: unknown) => console.warn('[chat-cvt] could not save the reply so far', error));
   }
 
   #settle(turn: Turn, ended: AgentCoreOutcome): void {

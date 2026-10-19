@@ -62,8 +62,21 @@ export interface AgentCoreRun {
   request(tools: ToolSet): AgentCoreRequest;
   /** A cut the reply recovers from by itself: which retry of the reply this is (from 1), and where it was cut. */
   retrying?(attempt: number, trace: ErrorTrace): void;
+  /**
+   * A step finished with no error in it: the reply's finished messages so far (every step that finished,
+   * each with its tool calls and their results, from `from` on), how many steps that is, and whether this
+   * step called a tool. For saving progress as the reply goes; a step closed after an error is not one.
+   */
+  stepFinished?(step: AgentCoreStep): void;
   /** Called once with how the reply ended, while `live` still shows it and `running` is still true. */
   settled?(outcome: AgentCoreOutcome): void;
+}
+
+/** What `stepFinished` carries. */
+export interface AgentCoreStep {
+  messages: ModelMessage[];
+  steps: number;
+  calledTools: boolean;
 }
 
 /** How one reply ended. */
@@ -188,6 +201,18 @@ export class AgentCore {
           atCut = { shown: shownBeforeStep, finished, completed, calls: callsInStep };
           callsAfterCut = 0;
         };
+        // Each step of this pass, as the SDK recorded it (`onStepFinish`) and as this loop read it (whether an
+        // error came in it, at its `finish-step`). The SDK hands `finish-step` on before it records the step,
+        // so a step is reported once both happened, in order.
+        const recorded: { messages: ModelMessage[]; calledTools: boolean }[] = [];
+        const clean: boolean[] = [];
+        let reported = 0;
+        const report = () => {
+          while (reported < recorded.length && reported < clean.length) {
+            const index = reported++;
+            if (clean[index] && !controller.signal.aborted) run.stepFinished?.({ ...recorded[index]!, steps: before + index + 1 });
+          }
+        };
         streamError = undefined;
         failedAt = undefined;
         stepText = '';
@@ -207,6 +232,8 @@ export class AgentCore {
             prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
+              recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
+              report();
             },
           });
           for await (const part of result.fullStream) {
@@ -220,6 +247,8 @@ export class AgentCore {
               errorInStep = false;
               if (steps >= maxSteps && this.#live) forcedAt = this.#live.parts.length;
             } else if (part.type === 'finish-step') {
+              clean.push(!errorInStep);
+              report();
               finished++;
               streaming = false;
               stepOpen = false;
