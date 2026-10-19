@@ -38,6 +38,8 @@ export interface ChatConfig {
    * estimate; {@link CONTEXT_BUDGET_TOKENS} when unset. Raise it for a model with a large window.
    */
   contextBudgetTokens?: number;
+  /** The voice a spoken conversation replies in: a Qwen3 TTS speaker, and how it should speak. */
+  conversationVoice: { speaker: string; instruct?: string };
 }
 
 /** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
@@ -53,6 +55,7 @@ export const chatConfig: ChatConfig = {
   autoRunLimit: 100,
   maxOutputTokens: DEFAULT_OUTPUT_TOKENS,
   models: [],
+  conversationVoice: { speaker: 'vivian', instruct: 'Speak quickly, at a brisk and energetic pace.' },
 };
 
 /**
