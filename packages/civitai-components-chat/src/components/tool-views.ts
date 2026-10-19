@@ -116,10 +116,20 @@ function callOf(part: ToolPart): ChatToolCall {
   return { name: part.toolName, input: part.input, state: part.state, output: part.output, error: part.error };
 }
 
+function recommended(part: ToolPart): ModelRecommendation[] | undefined {
+  const found = (part.output as { models?: ModelRecommendation[] } | undefined)?.models;
+  return found?.length ? found : undefined;
+}
+
+/** Whether `modelCards` shows anything for this call. */
+export function hasModelCards(part: ToolPart): boolean {
+  return recommended(part) !== undefined;
+}
+
 /** A tool without a view of its own that answered with model recommendations shows them as cards. */
 export function modelCards(part: ToolPart, models: ModelDirectory): TemplateResult | undefined {
-  const found = (part.output as { models?: ModelRecommendation[] } | undefined)?.models;
-  if (!found?.length) return undefined;
+  const found = recommended(part);
+  if (!found) return undefined;
   return html`<div class="cvt-models">
     ${found.slice(0, 8).map(
       (model) =>

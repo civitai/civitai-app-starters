@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
 import type { TurnPart } from '../agent/parts.js';
+import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
@@ -14,7 +15,8 @@ import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
-import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
+import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
+import { hasModelCards, modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
 function failureOf(part: ToolPart): string | undefined {
   if (part.state === 'error') return part.error || 'It failed.';
@@ -41,6 +43,7 @@ export class CivitaiChatTurn extends LightElement {
     models: { attribute: false },
     resolve: { attribute: false },
     views: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
   };
 
   declare turn: Turn;
@@ -61,6 +64,24 @@ export class CivitaiChatTurn extends LightElement {
   declare resolve: (id: string) => Attachment | undefined;
   /** The embedding page's views, by tool name. */
   declare views: Record<string, ChatToolView>;
+  /** `details`: calls with no view of their own show as rows to open, and calls in a row as one group. */
+  declare toolCalls: ToolCallsMode;
+
+  /** Call rows and groups the viewer opened, by key; kept while the turn is on the page. */
+  #open = new Set<string>();
+  #opened = new Set<string>();
+  #rows: CallRowState = {
+    isOpen: (key) => this.#open.has(key),
+    wasOpened: (key) => this.#opened.has(key),
+    toggle: (key) => {
+      if (!this.#open.delete(key)) {
+        this.#open.add(key);
+        this.#opened.add(key);
+      }
+      this.requestUpdate();
+    },
+    failure: (part) => failureOf(part),
+  };
 
   constructor() {
     super();
@@ -70,6 +91,7 @@ export class CivitaiChatTurn extends LightElement {
     this.canRetry = false;
     this.files = () => [];
     this.views = {};
+    this.toolCalls = 'activity';
   }
 
   #userFiles(): StripItem[] {
@@ -91,6 +113,22 @@ export class CivitaiChatTurn extends LightElement {
     const rendered = view?.render?.(part, this.#context());
     if (rendered !== undefined) return rendered;
     return modelCards(part, this.models) ?? (part.state === 'calling' ? html`<div class="cvt-activity">${view?.activity ?? 'Working on it…'}</div>` : nothing);
+  }
+
+  /**
+   * With `details`, a call shows as a row when nothing else would show it once it finished: no view
+   * of its own (the page's `render`, or a built-in card such as a generation, panel, post or choice)
+   * and no model cards. Those keep rendering exactly as before and end a run of rows.
+   */
+  #listed = (part: ToolPart): boolean => !viewFor(part.toolName, this.views)?.render && !hasModelCards(part);
+
+  #assistantParts(): unknown {
+    const md = (text: string) => html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`;
+    if (this.toolCalls !== 'details') return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
+    return groupToolCalls(this.parts, this.#listed).map((segment) => {
+      if (segment.kind === 'calls') return segment.calls.length === 1 ? renderCall(segment.calls[0]!, this.#rows) : renderCallGroup(segment.calls, this.#rows);
+      return segment.part.kind === 'text' ? md(segment.part.text) : this.#tool(segment.part);
+    });
   }
 
   #context(): ToolViewContext {
@@ -165,7 +203,7 @@ export class CivitaiChatTurn extends LightElement {
         ${this.turn.user.content ? html`<div class="cvt-bubble">${this.turn.user.content}</div>` : nothing}
       </div>
       <div class="cvt-assistant">
-        ${this.parts.map((part) => (part.kind === 'text' ? html`<div class="cvt-md">${unsafeHTML(renderMarkdown(part.text))}</div>` : this.#tool(part)))}
+        ${this.#assistantParts()}
         ${this.#footer()}
       </div>`;
   }

@@ -36,6 +36,7 @@ import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
 import type { MediaKind } from './lib/media.js';
 
 import { panelStyles } from './panel.styles.js';
+import type { ToolCallsMode } from './tool-calls.js';
 import type { Example as ChatExample } from './civitai-chat-welcome.js';
 
 /** How long a send waits for the viewer to answer the Buzz permission request before it counts as not given. */
@@ -145,6 +146,7 @@ export class CivitaiChat extends LitElement {
     tools: { attribute: false },
     commands: { attribute: false },
     toolViews: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
     mcp: { attribute: false },
@@ -197,6 +199,14 @@ export class CivitaiChat extends LitElement {
   declare commands?: ChatCommandsOption;
   /** How calls of any tool show in the chat, by tool name: an `activity` line, or a `render` that replaces the card. */
   declare toolViews: Record<string, ChatToolView>;
+  /**
+   * How the thread shows tool calls. `activity` (the default): a line while a call runs, then nothing
+   * unless a view renders it. `details`: every call with no view of its own stays as a row the viewer
+   * can open to see its full input and result, and calls in a row fold into one "Used 3 tools" group.
+   * Calls with a view (`toolViews`, `tools`, the built-in generation, panel, post and choice cards)
+   * show exactly as with `activity`.
+   */
+  declare toolCalls: ToolCallsMode;
   /** What the assistant should know about the page, read at the start of every reply. */
   declare instructions?: string | (() => string | undefined);
   /** Replaces the built-in persona and rules, or edits them (a function gets the defaults); read at every reply. */
@@ -313,6 +323,7 @@ export class CivitaiChat extends LitElement {
     super();
     this.tools = {};
     this.toolViews = {};
+    this.toolCalls = 'activity';
     this.mcp = {};
     this.fullPage = false;
     this.dockPanels = false;
@@ -1606,7 +1617,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>
