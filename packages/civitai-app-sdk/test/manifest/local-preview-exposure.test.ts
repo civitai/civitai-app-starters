@@ -47,7 +47,7 @@ afterAll(() => {
 function runInlineScripts(html: string): Record<string, unknown> {
   const sandbox: Record<string, unknown> = {};
   sandbox.globalThis = sandbox;
-  const bodies = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+  const bodies = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map((m) => m[1]!);
   for (const body of bodies) runInNewContext(body, sandbox);
   return sandbox;
 }
