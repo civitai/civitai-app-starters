@@ -129,6 +129,21 @@ describe('a message the page keeps back with queue()', () => {
     expect(asked).toHaveLength(0);
   });
 
+  it('🟢 in an empty chat the polite live region is on the page, empty, before the waiting status lands in it', async () => {
+    const { chat } = await mount();
+    queueNext(chat);
+    const atInsert: string[] = [];
+    const watch = new MutationObserver(() => {
+      const region = root(chat).querySelector('civitai-chat-thread .cvt-visually-hidden[aria-live="polite"]');
+      if (region && atInsert.length === 0) atInsert.push(region.textContent ?? '');
+    });
+    watch.observe(root(chat), { childList: true, subtree: true });
+    await chat.send('build me a timer');
+    await vi.waitFor(() => expect(announced(chat)).toContain('Waiting for your app…'));
+    watch.disconnect();
+    expect(atInsert).toEqual(['']);
+  });
+
   it('goes once released: once, without before-send again, and its bubble becomes the sent one', async () => {
     const { chat, asked } = await mount();
     const page = queueNext(chat);
@@ -411,6 +426,68 @@ describe('a waiting message that will not go comes back to the viewer', () => {
   });
 });
 
+describe('🟡 the viewer changes while their Buzz permission is being asked', () => {
+  const SECRET = 'SECRET OF VIEWER A';
+
+  /** Viewer A sends while the permission request is open; the page keeps every message back. */
+  async function askingA() {
+    let grant!: (ok: boolean) => void;
+    const granted = new Promise<boolean>((resolve) => (grant = resolve));
+    const mounted = await mount({ app: fakeApp(() => granted) });
+    const page = queueNext(mounted.chat);
+    void mounted.chat.send(SECRET);
+    await vi.waitFor(() => expect(mounted.chat.canSend).toBe(false));
+    return { ...mounted, page, grant };
+  }
+
+  /** Nothing of A's message is sent, waits or is offered back to the next viewer. */
+  async function nothingOfA(chat: CivitaiChat, asked: string[]) {
+    await settle(200);
+    expect(asked).toHaveLength(0);
+    expect(bubble(chat)).toBeNull();
+    expect(unsent(chat)).toEqual([]);
+    expect(root(chat).textContent ?? '').not.toContain(SECRET);
+  }
+
+  it('B signs in, then A answers while B’s chat starts: A’s message never reaches before-send, nor B’s box', async () => {
+    const { chat, asked, page, grant } = await askingA();
+    chat.app = fakeApp();
+    grant(true);
+    await nothingOfA(chat, asked);
+    expect(page.seen).toEqual([]);
+    expect(chat.draft).not.toBe(SECRET);
+  });
+
+  it('A answers, then B signs in at once: kept back under A, then dropped unseen', async () => {
+    const { chat, asked, grant } = await askingA();
+    grant(true);
+    await Promise.resolve();
+    chat.app = fakeApp();
+    await nothingOfA(chat, asked);
+    expect(chat.draft).not.toBe(SECRET);
+  });
+
+  it('B signs in and their chat is ready, then A answers: A’s message never reaches before-send or waits', async () => {
+    const { chat, asked, page, grant } = await askingA();
+    chat.app = fakeApp();
+    await vi.waitFor(() => expect(chat.canSend).toBe(true));
+    grant(true);
+    await nothingOfA(chat, asked);
+    expect(page.seen).toEqual([]);
+    // (A message the page did not keep back is put back in the box here, as 0.13.0 does: see the
+    // can-send test "a Buzz permission given only after the chat has a new app".)
+  });
+
+  it('A signs out, then answers: nothing of the message shows in the signed-out chat', async () => {
+    const { chat, asked, page, grant } = await askingA();
+    chat.app = undefined;
+    grant(true);
+    await nothingOfA(chat, asked);
+    expect(page.seen).toEqual([]);
+    expect(chat.draft).not.toBe(SECRET);
+  });
+});
+
 describe('the viewer’s Edit on a waiting message', () => {
   it('puts it back in the box, ahead of what they typed, with its files, focuses the box, and it does not go', async () => {
     const { chat, composer, asked } = await mount();
@@ -441,6 +518,27 @@ describe('giveBack(): a message the page could not send comes back the same way'
     composer.draft = 'typed';
     chat.giveBack('Build it');
     await vi.waitFor(() => expect(unsent(chat)).toEqual(['This message was not sent: “Build it”']));
+    expect(chat.draft).toBe('typed');
+  });
+
+  it('🟢 the same words twice, with other text in the box, are one notice', async () => {
+    const { chat, composer } = await mount();
+    composer.draft = 'typed';
+    expect(chat.giveBack('Build it')).toBe(true);
+    expect(chat.giveBack('Build it')).toBe(true);
+    await vi.waitFor(() => expect(unsent(chat)).toEqual(['This message was not sent: “Build it”']));
+  });
+
+  it('🟢 before the chat has started (signed out) it does nothing and says so', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const chat = document.createElement('civitai-chat');
+    chat.signIn = () => new Promise(() => undefined);
+    document.body.append(chat);
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-chat-composer')).not.toBeNull(), { timeout: 10_000 });
+    await chat.compose('typed');
+    expect(chat.giveBack('Build it')).toBe(false);
+    await settle();
+    expect(unsent(chat)).toEqual([]);
     expect(chat.draft).toBe('typed');
   });
 

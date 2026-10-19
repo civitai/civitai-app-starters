@@ -13,6 +13,8 @@ import type { Attachment, Turn } from '../types.js';
 import { LightElement, emit } from './light.js';
 
 const NEAR_BOTTOM_PX = 48;
+/** How long a new live region is on the page, empty, before its first words go in. */
+const ANNOUNCE_AFTER_MS = 100;
 
 /** A message the viewer sent that waits to go, as the thread shows it after the turns. */
 export interface QueuedView {
@@ -117,9 +119,14 @@ export class CivitaiChatThread extends LightElement {
   // Setting state here rather than in updated() folds it into this update instead of scheduling another.
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('live')) this.#announce();
-    // A message that starts waiting, and each change of what it waits for, is said once (the polite announcer).
+    // A message that starts waiting, and each change of what it waits for, is said once (the polite
+    // announcer). A thread just made for it (an empty chat's first message) puts its live region on the
+    // page first, empty, and the words a moment later: text present as the region appears is not read.
     const status = this.queued?.status;
-    if (status !== undefined && status !== this.#queuedStatus) this.announcement = status;
+    if (status !== undefined && status !== this.#queuedStatus) {
+      if (this.hasUpdated) this.announcement = status;
+      else setTimeout(() => this.queued?.status === status && (this.announcement = status), ANNOUNCE_AFTER_MS);
+    }
     this.#queuedStatus = status;
   }
 

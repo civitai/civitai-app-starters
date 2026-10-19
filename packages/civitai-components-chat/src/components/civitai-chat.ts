@@ -622,10 +622,14 @@ export class CivitaiChat extends LitElement {
    * message box when it is empty and they are not dictating, else as a "This message was not sent"
    * notice with Put it back, never over what they have there. For a message the page tried to send
    * and could not (the chat was replying, or holding), such as a button's. Nothing when the box already
-   * holds exactly these words.
+   * holds exactly these words, and one notice for the same words given back twice. Returns `false`, and
+   * does nothing, before the chat has started or while it is signed out.
    */
-  giveBack(text: string): void {
+  giveBack(text: string): boolean {
+    // Signed out (or not started) there is no viewer to give it to, and a notice would outlive their sign-in.
+    if (!this.#session || !this.#source()) return false;
     this.#returnToViewer(text, { uploads: [], refs: [] });
+    return true;
   }
 
   #returnToViewer(text: string, files: MessageFiles): void {
@@ -636,7 +640,12 @@ export class CivitaiChat extends LitElement {
       this.#restoreFiles(files);
       return;
     }
-    this.#unsent = [...this.#unsent, { id: ++this.#unsentIds, text, ...files }];
+    // The same words already offered back: one notice, with the files of both.
+    const same = this.#unsent.find((u) => u.text === text);
+    if (same) {
+      same.uploads = [...same.uploads, ...files.uploads.filter((upload) => !same.uploads.some((u) => u.key === upload.key))];
+      same.refs = [...same.refs, ...files.refs.filter((ref) => !same.refs.some((r) => r.id === ref.id))];
+    } else this.#unsent = [...this.#unsent, { id: ++this.#unsentIds, text, ...files }];
     this.requestUpdate();
   }
 
@@ -1230,6 +1239,9 @@ export class CivitaiChat extends LitElement {
         if (composer && !composer.draft) composer.draft = text;
         return;
       }
+      // Signed out, or a new app or backend whose session is still starting: the message was the last
+      // viewer's, so it does not go, wait or come back where the next one would see it.
+      if (this.#sessionFor !== this.#startedWith || !this.#source()) return;
       if (!granted) {
         const composer = await this.#composer();
         if (composer && !composer.draft) composer.draft = text;

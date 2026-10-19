@@ -426,17 +426,20 @@ message. One message waits at a time.
 
 The waiting bubble has **Edit**: the message goes back in the box, ahead of anything typed there since,
 with its files, and does not go. It also comes back to the viewer, without going, when the page calls
-`cancel()`, after `QUEUE_TIMEOUT_MS` (3 minutes, counted while the chat is on the page), or when
-another chat is opened. It comes back into the message box when that is empty and the viewer is not
+`cancel()`, after `QUEUE_TIMEOUT_MS` (3 minutes; a chat taken off the page stops the wait, and put
+back starts all 3 minutes again), or when another chat is opened. It comes back into the message box when that is empty and the viewer is not
 dictating (their words would be joined to it); otherwise it shows above the box as an alert, "This
 message was not sent", saying how many files it has, with **Put it back** (ahead of what they typed,
 its files beside the box's) and **Dismiss**. Sending the same words again clears that notice. Signed
 out, or with someone else's `app`, a waiting message and every such notice are dropped unseen: a viewer
-never sees another's words.
+never sees another's words. A message sent just before that, while the viewer was being asked to let
+the chat use their Buzz, does not go, wait or come back either.
 
 `giveBack(text)` brings back a message the page tried to send and could not (the chat was replying or
-holding, so `send(text)` went nowhere) the same way: into an empty box, else as that notice. Nothing
-happens when the box already holds exactly these words.
+holding, so `send(text)` went nowhere) the same way: into an empty box, else as that notice (one notice
+for the same words given back twice). Nothing happens when the box already holds exactly these words.
+It returns `false` and does nothing before the chat has started or while it is signed out, and `true`
+otherwise.
 
 ### The empty chat
 
