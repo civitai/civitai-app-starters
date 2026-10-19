@@ -303,7 +303,8 @@ export class CivitaiChat extends LitElement {
     const session = this.#session;
     const turn = session?.store.current?.turns.at(-1);
     const resume = turn?.assistant.resume;
-    if (!session || !turn || !resume || turn.assistant.status !== 'error' || turn.assistant.errorKind !== 'network') return;
+    // A reply asked again is no longer an error and has no `errorKind`, so it is not asked again while it runs.
+    if (!session || !turn || !resume || turn.assistant.errorKind !== 'network') return;
     if (this.#autoResumed.has(turn) || Date.now() - resume.at > AUTO_RESUME_WINDOW_MS) return;
     if (!this.canSend) return;
     this.#autoResumed.add(turn);

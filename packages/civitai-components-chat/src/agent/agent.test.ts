@@ -962,6 +962,25 @@ describe('asking again for a reply that failed (retry)', () => {
     expect(store.current!.turns[0]!.assistant.status).toBe('done');
   });
 
+  it('carries on from before the cut, not from a step the stream closed after it', async () => {
+    const { agent, store, prompts } = failed([
+      [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 't' },
+        { type: 'text-delta', id: 't', delta: 'Working' },
+        { type: 'error', error: new TypeError('network error') },
+        { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage },
+      ],
+      text('Done.'),
+    ]);
+    await agent.send('build it');
+    expect(store.current!.turns[0]!.assistant.resume).toMatchObject({ messages: [], steps: 0 });
+    await agent.retry();
+    // The cut step's words are replaced by its new answer, as when the reply retries by itself.
+    expect(JSON.stringify(prompts[1])).not.toContain('Working');
+    expect(store.current!.turns[0]!.assistant.messages).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }]);
+  });
+
   it('has a resume point from the start when the very first request failed', async () => {
     const { agent, store, prompts } = failed([failedToFetch(), text('Hello!')]);
     await agent.send('hi');
