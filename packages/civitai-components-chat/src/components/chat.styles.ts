@@ -1542,6 +1542,10 @@ civitai-chat-model-picker {
   background: var(--civitai-color-text-dimmed);
 }
 
+.cvt-conversation-state {
+  color: var(--civitai-color-text);
+}
+
 .cvt-heard {
   margin: 0;
   max-height: 120px;

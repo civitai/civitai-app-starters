@@ -4,6 +4,7 @@ import type { PendingUpload } from '../session.js';
 import type { Attachment } from '../types.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
 import { suggestCommands, type ChatCommands } from '../ux/commands.js';
+import type { ConversationView } from '../voice/conversation/index.js';
 import { VOICE_LANGUAGES } from '../voice/languages.js';
 import { canStreamPcm, PcmRecorder } from '../voice/pcm-recorder.js';
 import { canRecord, VoiceRecorder } from '../voice/recorder.js';
@@ -12,6 +13,13 @@ import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
 
 const LEVEL_BARS = 48;
+
+const CONVERSATION_LABELS = {
+  starting: 'Connecting…',
+  listening: 'Listening',
+  thinking: 'Thinking…',
+  speaking: 'Speaking…',
+} as const;
 
 /** The message box's hint when the page sets none. */
 export const DEFAULT_PLACEHOLDER = 'Ask for a picture, a video, a song… or anything about Civitai';
@@ -30,6 +38,8 @@ export class CivitaiChatComposer extends LightElement {
     transcribing: { type: Boolean },
     heard: {},
     voiceLanguage: { attribute: 'voice-language' },
+    talk: { type: Boolean },
+    conversation: { attribute: false },
     modelPicker: { attribute: false },
     text: { state: true },
     recording: { state: true },
@@ -52,6 +62,10 @@ export class CivitaiChatComposer extends LightElement {
   declare transcribing: boolean;
   declare heard: string;
   declare voiceLanguage: string;
+  /** Offers a spoken conversation: the chat starts it on `cvt-conversation-start`. */
+  declare talk: boolean;
+  /** The conversation under way, shown in place of the message box. */
+  declare conversation?: ConversationView;
   /** Shown beside the add-file button, e.g. the chat's model picker; nothing while signed out. */
   declare modelPicker: unknown;
   declare text: string;
@@ -59,6 +73,7 @@ export class CivitaiChatComposer extends LightElement {
   declare levels: number[];
 
   #recorder?: VoiceRecorder | PcmRecorder;
+  #barAt = 0;
 
   constructor() {
     super();
@@ -74,6 +89,7 @@ export class CivitaiChatComposer extends LightElement {
     this.transcribing = false;
     this.heard = '';
     this.voiceLanguage = 'en';
+    this.talk = false;
     this.recording = false;
     this.levels = [];
   }
@@ -109,17 +125,23 @@ export class CivitaiChatComposer extends LightElement {
     return hasContent && !this.running && !this.disabled && !this.holdReason && !this.#uploading && !this.transcribing;
   }
 
+  override willUpdate(changed: Map<PropertyKey, unknown>): void {
+    const level = this.conversation?.level;
+    if (changed.has('conversation') && level !== undefined) this.#pushLevel(level);
+  }
+
+  // A bar about every 70 ms keeps the meter moving at reading speed.
+  #pushLevel(level: number): void {
+    const now = performance.now();
+    if (now - this.#barAt < 70) return;
+    this.#barAt = now;
+    this.levels = [...this.levels.slice(-(LEVEL_BARS - 1)), level];
+  }
+
   async #record(): Promise<void> {
     if (this.recording) return;
     this.levels = [];
-    let barAt = 0;
-    const onLevel = (level: number) => {
-      // A bar about every 70 ms keeps the meter moving at reading speed.
-      const now = performance.now();
-      if (now - barAt < 70) return;
-      barAt = now;
-      this.levels = [...this.levels.slice(-(LEVEL_BARS - 1)), level];
-    };
+    const onLevel = (level: number) => this.#pushLevel(level);
     const onLimit = () => void this.#finish(false);
     try {
       let live = false;
@@ -243,13 +265,29 @@ export class CivitaiChatComposer extends LightElement {
     </ul>`;
   }
 
-  #recordingBar(): TemplateResult {
+  #levelBars(): TemplateResult {
     const bars = [...Array.from({ length: LEVEL_BARS - this.levels.length }, () => 0), ...this.levels];
+    return html`<div class="cvt-levels" aria-hidden="true">${bars.map((level) => html`<span style="height:${Math.max(2, Math.round(level * 24))}px"></span>`)}</div>`;
+  }
+
+  #conversationBar(conversation: ConversationView): TemplateResult {
+    const busy = conversation.state === 'starting' || conversation.state === 'thinking';
+    return html`${conversation.heard ? html`<p class="cvt-heard" aria-live="polite">${conversation.heard}</p>` : nothing}
+      <div class="cvt-recording" role="group" aria-label="Talking with the assistant">
+        <span class=${busy ? 'cvt-transcribing-label' : 'cvt-conversation-state'} role="status">${CONVERSATION_LABELS[conversation.state]}</span>
+        ${this.#levelBars()}
+        <button class="cvt-send" type="button" aria-label="End the conversation" @click=${() => emit(this, 'cvt-conversation-end')}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>`;
+  }
+
+  #recordingBar(): TemplateResult {
     return html`${this.#heard()}<div class="cvt-recording" role="group" aria-label="Recording your voice" @keydown=${this.#onKeyDown}>
       <button class="cvt-icon-button" type="button" aria-label="Cancel recording" @click=${() => this.#cancelRecording()}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
       </button>
-      <div class="cvt-levels" aria-hidden="true">${bars.map((level) => html`<span style="height:${Math.max(2, Math.round(level * 24))}px"></span>`)}</div>
+      ${this.#levelBars()}
       <button class="cvt-icon-button" type="button" aria-label="Stop and edit the text" @click=${() => void this.#finish(false)}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
       </button>
@@ -312,6 +350,11 @@ export class CivitaiChatComposer extends LightElement {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
               </button>`
             : nothing}
+          ${this.talk && canStreamPcm()
+            ? html`<button class="cvt-icon-button" type="button" aria-label="Talk with the assistant" title="Talk with the assistant, hands free (Buzz per minute of speech and per reply read aloud)" ?disabled=${this.disabled} @click=${() => emit(this, 'cvt-conversation-start')}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
+              </button>`
+            : nothing}
           ${this.running
             ? html`<button class="cvt-send" type="button" aria-label="Stop" aria-keyshortcuts="Escape" @click=${() => emit(this, 'cvt-stop')}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
@@ -337,7 +380,13 @@ export class CivitaiChatComposer extends LightElement {
       <div class="cvt-composer-box">
         ${this.#suggestions()}
         ${items.length ? html`<civitai-chat-attachment-strip removable size="sm" .items=${items} @remove=${this.#onRemove}></civitai-chat-attachment-strip>` : nothing}
-        ${this.recording ? this.#recordingBar() : this.transcribing ? this.#transcribingBar() : this.#typing()}
+        ${this.conversation
+          ? this.#conversationBar(this.conversation)
+          : this.recording
+            ? this.#recordingBar()
+            : this.transcribing
+              ? this.#transcribingBar()
+              : this.#typing()}
       </div>
     </civitai-chat-dropzone>`;
   }

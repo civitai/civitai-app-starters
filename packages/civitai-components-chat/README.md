@@ -323,6 +323,7 @@ reopened from storage groups the same as it did live.
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
 | `can-sign-out` | Shows Sign out in settings (with `full-page`); the chat then emits `cvt-sign-out`. |
 | `examples` | What an empty chat offers to start from, in place of the built-in ones (property only). On a host `backend` only these show, never the built-in ones. See [The empty chat](#the-empty-chat). |
+| `voice-conversation` | Offers a hands-free spoken conversation (also `voiceConversation`); see [Talking with the assistant](#talking-with-the-assistant). Off by default, and never offered with a host `backend`. |
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
@@ -803,6 +804,26 @@ whatever it is told); it defaults to the first of the browser's languages the mo
 Browsers without audio worklets cut the recording into phrases at pauses and transcribe each with
 `transcribe_audio` (about 1 Buzz a phrase). Stop puts the text in the message box to edit; the arrow
 sends it once the last words are back. Recordings stop by themselves after two minutes.
+
+### Talking with the assistant
+
+With `voice-conversation` set, a second button next to the microphone starts a spoken conversation:
+the viewer talks, each reply is read aloud as it streams, and talking over a reply stops it. Their
+words go out as their message, through `before-send` and every hold like a typed one, and the
+assistant is told to answer the way people speak. A typed message sent meanwhile is read aloud too.
+
+The reply goes out when the viewer has finished their turn, not after a fixed pause: an end-of-turn
+model judges each pause, answering after a quarter of a second when they sound done and waiting up
+to six seconds when they sound mid-thought. The server's verdicts are used from the start; the
+in-browser model (about 8 MB, plus 11 MB of ONNX runtime, from Hugging Face and jsDelivr) is
+fetched only once a conversation starts, and decides from then on because it answers sooner.
+Nothing for the conversation loads, and nothing is billed, until the viewer starts one.
+
+It is billed as it is used: speech heard at the `liveTranscription` rate (about 1 Buzz per 15 s;
+silence is not sent) and replies read aloud at about 1 Buzz per 100 characters. The voice is
+`configureChat({ conversationVoice: { speaker, instruct } })`, a Qwen3 TTS speaker (`vivian` by
+default) and how it should speak. Without headphones the microphone hears the reply too, so while
+it plays only sustained speech counts as talking over it.
 
 ## When a reply fails
 

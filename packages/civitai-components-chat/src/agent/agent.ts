@@ -29,6 +29,8 @@ export interface AgentDeps {
   customInstructions?(): string | undefined;
   /** Read at the start of every reply, so the embedding page can change them at any time. */
   hostInstructions?(): string | undefined;
+  /** Whether the user hears replies read aloud, read at the start of every reply. */
+  spokenReplies?(): boolean;
   isHostTool?(name: string): boolean;
   /** What the assistant is told about the panels on screen, read at the start of every reply. */
   panels?(): string | undefined;
@@ -127,7 +129,7 @@ export class Agent extends EventTarget {
           host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructs: Boolean(hostInstructions?.trim()) },
           rules: this.#deps.systemPrompt?.(),
         });
-        const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions });
+        const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions, spoken: this.#deps.spokenReplies?.() ?? false });
         const history = buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context });
         return {
           model: this.#deps.model(),

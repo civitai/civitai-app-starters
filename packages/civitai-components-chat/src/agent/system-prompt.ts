@@ -55,16 +55,22 @@ export interface TurnContext {
   /** The panels on screen, their values and latest runs. */
   panels?: string;
   hostInstructions?: string;
+  /** The user is talking, and hears the reply read aloud. */
+  spoken?: boolean;
 }
 
+const SPOKEN_REPLY =
+  'The user is talking to you and hears your reply read aloud. Answer the way people speak: one to three short sentences, plain words, no lists, headings, markdown, emoji or links, and numbers, dates and units as they are said.';
+
 /** What the assistant needs to know as of this reply, sent with the user's latest message. */
-export function buildTurnContext({ attachments, panels, hostInstructions }: TurnContext): string {
+export function buildTurnContext({ attachments, panels, hostInstructions, spoken }: TurnContext): string {
   const hostSays = hostInstructions?.trim().slice(0, HOST_INSTRUCTIONS_MAX);
   return [
     `<${CONTEXT_TAG}>`,
     `Files in this conversation:\n${roster(attachments)}`,
     ...(panels ? ['', 'Panels in this conversation (the user may have changed values or run them since you last spoke):', panels] : []),
     ...(hostSays ? ['', '<app_instructions>', hostSays, '</app_instructions>'] : []),
+    ...(spoken ? ['', SPOKEN_REPLY] : []),
     `</${CONTEXT_TAG}>`,
   ].join('\n');
 }
