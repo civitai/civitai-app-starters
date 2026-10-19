@@ -150,12 +150,20 @@ describe('how often it saves', () => {
     const step = (n: number) => Array.from({ length: n }, (_, i) => [{ role: 'assistant' as const, content: `step ${i + 1}` }]).flat();
     const first = store.checkpoint(turn, { messages: step(1), force: true });
     await vi.waitFor(() => expect(heads.started.count).toBe(1));
-    // The first write is out (built, held); three more steps finish meanwhile.
-    const more = [store.checkpoint(turn, { messages: step(2), force: true }), store.checkpoint(turn, { messages: step(3), force: true }), store.checkpoint(turn, { messages: step(4), force: true })];
+    // The first write is out (built, held). A second step finishes and its save waits; then the viewer
+    // renames the chat and two more steps finish, all before that save goes.
+    const second = store.checkpoint(turn, { messages: step(2), force: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await store.setTitle('Renamed while it waited', 'user');
+    const more = [store.checkpoint(turn, { messages: step(3), force: true }), store.checkpoint(turn, { messages: step(4), force: true })];
     release();
-    await Promise.all([first, ...more]);
+    await Promise.all([first, second, ...more]);
     const written = heads.writes.map((w) => w.metadata as unknown as Head);
-    expect(written.map((h) => h.turns[0]!.assistant?.messages.length)).toEqual([1, 4]);
+    // Two writes, the second built as it went: every step, and the new title.
+    expect(written.map((h) => [h.turns[0]!.assistant?.messages.length, h.title])).toEqual([
+      [1, 'take notes'],
+      [4, 'Renamed while it waited'],
+    ]);
   });
 
   it('keeps progress that is not saved at once for the next save', async () => {
