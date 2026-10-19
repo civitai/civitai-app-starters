@@ -808,3 +808,17 @@ With a [backend](#your-own-backend), in its store. Otherwise every turn is a fre
 workflow, so a viewer's chats follow them to any device and expire with the orchestrator's 30-day
 retention. Panels are saved on the conversation, and their runs are tagged workflows like any other.
 Nothing is kept on the page beyond preferences.
+
+A conversation is saved as a v2 head. This version also reads v3 heads, which a later version will
+write: v2 plus a reply saved while it was still running, after each step it finished. Such a reply
+opens as cut off ("This reply was cut off. Ask again?") with the steps it finished on screen and in
+the assistant's history. It gets no Retry and is not asked for again by itself, since whoever saved it
+may still be running it. A head of any other version is left out, as before. Versions before this one
+leave a v3 head out of their list, which is why this reader ships before any v3 writer.
+
+## Where a reply runs (experimental)
+
+Every reply's loop runs on the page. The chat's internal session has a `runner` option, `'browser'`
+(the default) or `'remote'`, reserved for a server-side runner that keeps a reply going while the
+page sleeps or is closed. `'remote'` is not implemented yet and throws. The element does not expose
+the option yet. Its name and shape may change before it does.

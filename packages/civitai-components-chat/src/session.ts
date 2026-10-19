@@ -51,7 +51,16 @@ export interface PendingUpload {
   error?: string;
 }
 
+/**
+ * Experimental: where a reply's loop runs. `'browser'` (the default) runs it on the page, as every
+ * chat does today. `'remote'` is reserved for a server-side runner that keeps a reply going when the
+ * page sleeps or closes; it is not implemented yet.
+ */
+export type ChatRunner = 'browser' | 'remote';
+
 export interface SessionOptions {
+  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` throws, not implemented yet. */
+  runner?: ChatRunner;
   /** Keeps an embedding app's conversations and preferences apart from the rest. */
   scope?: string;
   /** Tools the embedding page offers; read at the start of every reply. */
@@ -75,6 +84,13 @@ export interface SessionOptions {
    * posting or free tier.
    */
   backend?: ChatBackend;
+}
+
+/** Only the browser runner exists yet: `'remote'` (and anything else) is refused before anything is wired. */
+function assertRunner(runner: unknown): void {
+  if (runner === undefined || runner === 'browser') return;
+  if (runner === 'remote') throw new Error("The 'remote' chat runner is not implemented yet (experimental): leave runner unset or 'browser'.");
+  throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser'.`);
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
@@ -110,6 +126,7 @@ export class ChatSession extends EventTarget {
   constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
     const backend = options.backend;
+    assertRunner(options.runner);
     if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
     const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
