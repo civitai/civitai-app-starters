@@ -63,7 +63,7 @@ function setup(responses: Response[]) {
   };
   const changes: { running: boolean; parts: TurnPart[] | null }[] = [];
   const core: AgentCore = new AgentCore({
-    describeError: (error) => ({ kind: 'test', message: `shown: ${(error as Error).message}` }),
+    describeError: (error) => ({ kind: 'unknown', message: `shown: ${(error as Error).message}` }),
     change: () => changes.push({ running: core.running, parts: core.live ? structuredClone(core.live.parts) : null }),
   });
   const history: ModelMessage[] = [{ role: 'user', content: 'draw a lighthouse' }];
@@ -203,8 +203,8 @@ describe('AgentCore', () => {
     const { run, changes } = setup([toolCall('sketch', { subject: 'x' }), text('Sorry.')]);
     const failing: ToolSet = {
       sketch: tool({
-        inputSchema: jsonSchema({ type: 'object', properties: {} }),
-        execute: async () => {
+        inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+        execute: async (): Promise<{ sketched: string }> => {
           throw new Error('pen broke');
         },
       }),
