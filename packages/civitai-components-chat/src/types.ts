@@ -100,7 +100,7 @@ export interface ConversationSummary {
   title: string;
   titleSource: TitleSource;
   updatedAt: string;
-  head: { workflowId: string; metadata: ConversationMetadata };
+  head: { workflowId: string; metadata: StoredConversationMetadata };
 }
 
 /** A turn still streaming is saved without its reply, so a reload shows it as cut off. */
@@ -125,6 +125,31 @@ export interface ConversationMetadata {
   scope?: string;
   model?: string;
 }
+
+/**
+ * A saved reply's status in a v3 head: v2's, plus `running`, a reply that had not ended when it was
+ * saved. Its `messages` are the steps it had finished by then (each with every tool call and its
+ * result), so a reader shows the progress made instead of losing the whole reply.
+ */
+export type SavedTurnStatusV3 = TurnStatus | 'running';
+
+/** A turn in a v3 head; as {@link SavedTurn}, except that its reply may be saved `running`. */
+export interface SavedTurnV3 extends Omit<SavedTurn, 'assistant'> {
+  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string };
+}
+
+/**
+ * The v3 conversation head: v2 with replies that may be saved while they run (one save after each
+ * step that finished). This version reads v3 and still writes v2: a v2 reader leaves a v3 head out
+ * of its list, so readers ship before any writer does.
+ */
+export interface ConversationMetadataV3 extends Omit<ConversationMetadata, 'v' | 'turns'> {
+  v: 3;
+  turns: SavedTurnV3[];
+}
+
+/** Every head this version reads. */
+export type StoredConversationMetadata = ConversationMetadata | ConversationMetadataV3;
 
 export interface JobMetadata {
   v: 1;

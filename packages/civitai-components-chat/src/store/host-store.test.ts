@@ -53,6 +53,23 @@ describe('HostThreadStore', () => {
     expect((await threads.open('NOPE')).conversation).toMatchObject({ id: 'NOPE', title: 'New chat', turns: [] });
   });
 
+  it('opens a reply saved while it ran as cut off, keeping the steps it finished', async () => {
+    const steps = [{ role: 'assistant', content: 'Drafted Monday and Tuesday so far.' }];
+    const store = memoryStore([
+      {
+        id: 'C2',
+        title: 'Week',
+        titleSource: 'first-message',
+        createdAt: '2026-10-15T10:00:00Z',
+        updatedAt: '2026-10-15T10:00:00Z',
+        // As a v3 writer saves it; a host's store hands back whatever was saved.
+        turns: [{ seq: 1, createdAt: '2026-10-15T10:00:00Z', user: { content: 'plan my week', attachments: [] }, assistant: { messages: steps, status: 'running' } }] as never,
+      },
+    ]);
+    const { conversation } = await new HostThreadStore({ store }).open('C2');
+    expect(conversation.turns[0]!.assistant).toEqual({ messages: steps, status: 'error', error: 'cut-off' });
+  });
+
   it('pages the list with the cursor the store hands back, keeping each id once', async () => {
     const pages = [
       { items: [{ id: 'B', title: 'Two', updatedAt: '2026-10-14T00:00:00Z' }], next: 'p2' },

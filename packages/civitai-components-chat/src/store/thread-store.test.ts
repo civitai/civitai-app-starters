@@ -1,9 +1,10 @@
 import type { Workflow, WorkflowTemplate } from '@civitai/sdk';
+import type { ModelMessage } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flush, workflow } from '../test-support/fakes.js';
 import type { SavedPanel } from '../panels/panel.js';
-import type { ConversationMetadata, SavedTurn } from '../types.js';
+import type { ConversationMetadata, SavedTurn, SavedTurnV3 } from '../types.js';
 import { CUT_OFF, ThreadStore, firstMessageTitle } from './thread-store.js';
 
 function setup(stored: Workflow[] = [], scope?: string) {
@@ -280,4 +281,66 @@ describe('firstMessageTitle', () => {
     expect(standalone.store.summaries.map((s) => s.id)).toEqual(['PLAIN']);
   });
 
+});
+
+describe('conversation heads by version', () => {
+  // A reply saved while it ran (v3): the step it finished (a tool call, its result, and the words it
+  // said), and nothing of the step that was still going.
+  const partial: ModelMessage[] = [
+    { role: 'assistant', content: [{ type: 'text', text: 'Checking the bakery menu first.' }, { type: 'tool-call', toolCallId: 'call_menu', toolName: 'read_menu', input: { shop: 'Crumbs' } }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_menu', toolName: 'read_menu', output: { type: 'json', value: { items: 7 } } }] },
+  ];
+  const running: SavedTurnV3 = { seq: 2, createdAt: '2026-09-21T00:00:00Z', user: { content: 'now the logo', attachments: [] }, assistant: { messages: partial, status: 'running' } };
+  const versioned = (id: string, v: number, conversationId: string, turns: SavedTurnV3[] = [said(1, 'hi', 'hello'), running]): Workflow => {
+    const wf = head(id, { conversationId, title: `v${v} chat` });
+    return { ...wf, metadata: { ...(wf.metadata as object), v, turns } } as Workflow;
+  };
+
+  it('lists a v3 head and opens its running reply as cut off, with the steps it finished on screen', async () => {
+    const { store } = setup([versioned('3-1', 3, 'V3')]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => [s.id, s.title, s.head.workflowId])).toEqual([['V3', 'v3 chat', '3-1']]);
+    const { conversation } = await store.open('V3');
+    expect(conversation.title).toBe('v3 chat');
+    expect(conversation.turns.map((t) => [t.seq, t.assistant.status, t.assistant.error])).toEqual([
+      [1, 'done', undefined],
+      [2, 'error', CUT_OFF],
+    ]);
+    expect(conversation.turns[1]!.assistant.messages).toEqual(partial);
+    // Never asked for again by itself or with one press: whoever saved it may still be running it.
+    expect(conversation.turns[1]!.assistant).not.toHaveProperty('resume');
+  });
+
+  it('still lists and opens a v2 head', async () => {
+    const { store } = setup([versioned('2-1', 2, 'V2', [said(1, 'cats', 'meow')])]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => s.id)).toEqual(['V2']);
+    const { conversation } = await store.open('V2');
+    expect(conversation.turns.map((t) => [t.seq, t.assistant.status, t.assistant.messages])).toEqual([[1, 'done', [{ role: 'assistant', content: 'meow' }]]]);
+  });
+
+  it('leaves out a head of a version it does not know, in the list and when opened', async () => {
+    const { store } = setup([versioned('4-1', 4, 'V4'), versioned('1-1', 1, 'V1'), versioned('2-1', 2, 'V2', [said(1, 'cats', 'meow')])]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => s.id)).toEqual(['V2']);
+    const { conversation } = await store.open('V4');
+    expect(conversation).toMatchObject({ id: 'V4', title: 'New chat', turns: [] });
+  });
+
+  // Invariant guard (not a regression test): this version reads v3 and must still write v2.
+  it('writes v2 after a v3 head was opened, with the running reply saved as cut off', async () => {
+    const { store, deps, submitted } = setup([versioned('3-1', 3, 'V3')]);
+    await store.open('V3');
+    const turn = store.appendUserTurn('try again', []);
+    await flush();
+    turn.assistant = { messages: [{ role: 'assistant', content: 'Here it is.' }], status: 'done' };
+    await store.completeTurn(turn);
+    const sent = submitted[0]!.metadata as unknown as ConversationMetadata;
+    const written = (deps.api.updateWorkflow.mock.calls.at(-1) as unknown as [string, { metadata: ConversationMetadata }])[1].metadata;
+    for (const metadata of [sent, written]) {
+      expect(metadata.v).toBe(2);
+      expect(metadata.turns[1]!.assistant).toEqual({ messages: partial, status: 'error', error: CUT_OFF });
+    }
+    expect(written.turns.map((t) => t.assistant?.status)).toEqual(['done', 'error', 'done']);
+  });
 });

@@ -5,7 +5,7 @@ import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag } from 
 import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
-import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
+import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
@@ -208,7 +208,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   // Each write replaces the whole metadata, so they go one at a time per workflow, each built from the latest state.
-  #writeHead(workflowId: string, metadata: () => ConversationMetadata): Promise<void> {
+  // Only a rename of a chat that is not open writes back a head as it was read, which may be a v3 one.
+  #writeHead(workflowId: string, metadata: () => StoredConversationMetadata): Promise<void> {
     const write = (this.#writes.get(workflowId) ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => this.#deps.api.updateWorkflow(workflowId, { metadata: metadata() }));
@@ -231,7 +232,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (this.current?.id === id) return this.setTitle(title, 'user');
     const summary = this.summaries.find((s) => s.id === id);
     if (!summary) return;
-    const metadata: ConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
+    const metadata: StoredConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
     await this.#writeHead(summary.head.workflowId, () => metadata);
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
@@ -331,12 +332,12 @@ function submitKey(conversationId: string, seq: number): string {
   return `${conversationId}:${seq}`;
 }
 
-function summaryOf(workflowId: string, metadata: ConversationMetadata): ConversationSummary {
+function summaryOf(workflowId: string, metadata: StoredConversationMetadata): ConversationSummary {
   return { id: metadata.conversationId, title: metadata.title, titleSource: metadata.titleSource, updatedAt: metadata.updatedAt, head: { workflowId, metadata } };
 }
 
-function newestHead(workflows: Workflow[]): { workflowId: string; metadata: ConversationMetadata } | undefined {
-  let best: { workflowId: string; metadata: ConversationMetadata } | undefined;
+function newestHead(workflows: Workflow[]): { workflowId: string; metadata: StoredConversationMetadata } | undefined {
+  let best: { workflowId: string; metadata: StoredConversationMetadata } | undefined;
   for (const workflow of workflows) {
     const metadata = conversationMetadataOf(workflow);
     if (!metadata || !workflow.id) continue;
@@ -345,7 +346,7 @@ function newestHead(workflows: Workflow[]): { workflowId: string; metadata: Conv
   return best;
 }
 
-function lastSeq(metadata: ConversationMetadata): number {
+function lastSeq(metadata: StoredConversationMetadata): number {
   return Math.max(0, ...metadata.turns.map((turn) => turn.seq));
 }
 
@@ -377,11 +378,15 @@ export function clampTitle(title: string): string {
   return (flat || 'New chat').slice(0, TITLE_MAX);
 }
 
-export function conversationMetadataOf(workflow: Workflow): ConversationMetadata | null {
-  const metadata = workflow.metadata as Partial<ConversationMetadata> | null | undefined;
-  if (!metadata || metadata.app !== 'chat-cvt' || metadata.v !== 2 || !workflow.tags?.includes(HEAD_TAG)) return null;
+/** The head versions this version reads; it writes v2 (see {@link ConversationMetadataV3}). */
+const READ_VERSIONS: ReadonlySet<unknown> = new Set([2, 3]);
+
+/** A conversation head's metadata, when the workflow is one this version can read: v2 or v3. */
+export function conversationMetadataOf(workflow: Workflow): StoredConversationMetadata | null {
+  const metadata = workflow.metadata as Partial<StoredConversationMetadata> | null | undefined;
+  if (!metadata || metadata.app !== 'chat-cvt' || !READ_VERSIONS.has(metadata.v) || !workflow.tags?.includes(HEAD_TAG)) return null;
   if (typeof metadata.conversationId !== 'string' || !Array.isArray(metadata.turns)) return null;
-  return metadata as ConversationMetadata;
+  return metadata as StoredConversationMetadata;
 }
 
 export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
@@ -391,11 +396,22 @@ export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
   return { ...(metadata as JobMetadata), seq: Number(metadata.seq) };
 }
 
-export function turnFrom(turn: SavedTurn): Turn {
+/**
+ * A saved turn as the chat shows it. A reply saved before it ended reads as cut off, the note that
+ * says the viewer can ask again: with no reply saved (v2, saved mid-reply), or saved `running` (v3)
+ * with the steps it had finished, which stay on screen. A `running` reply gets no resume point, so it
+ * is never asked for again by itself or with one press: whoever saved it may still be running it.
+ */
+export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
+  const assistant = turn.assistant;
   return {
     seq: turn.seq,
     createdAt: turn.createdAt,
     user: { content: turn.user.content, attachments: turn.user.attachments ?? [], ...(turn.user.refs ? { refs: turn.user.refs } : {}) },
-    assistant: turn.assistant ?? { messages: [], status: 'error', error: CUT_OFF },
+    assistant: !assistant
+      ? { messages: [], status: 'error', error: CUT_OFF }
+      : assistant.status === 'running'
+        ? { messages: Array.isArray(assistant.messages) ? [...assistant.messages] : [], status: 'error', error: CUT_OFF }
+        : (assistant as Turn['assistant']),
   };
 }
