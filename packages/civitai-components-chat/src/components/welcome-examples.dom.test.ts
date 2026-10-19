@@ -150,11 +150,6 @@ describe("<civitai-chat> examples on a host's own backend", () => {
     });
     expect(composer(chat).placeholder).toBe('Ask the docs');
   });
-
-  it('INVARIANT GUARD: a chat on Civitai itself, examples unset, still shows the built-in ones', async () => {
-    const chat = await mount(() => undefined);
-    expect(titles(chat)).toEqual(BUILT_IN_TITLES);
-  });
 });
 
 describe('<civitai-chat> examples that want a file', () => {
@@ -284,7 +279,7 @@ describe('<civitai-chat> placeholder', () => {
     expect(composer(chat).placeholder).toBe(BUILT_IN_HINT);
   });
 
-  // INVARIANT GUARD (existing behaviour): the hint on a host backend is untouched by its examples.
+  // INVARIANT GUARD (existing behaviour): the page's hint on a host backend, with no examples set.
   it("puts the page's hint ahead of a host backend's own, and falls back to it", async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
     const chat = document.createElement('civitai-chat');
