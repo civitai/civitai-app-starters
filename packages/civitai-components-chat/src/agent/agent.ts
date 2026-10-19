@@ -111,7 +111,7 @@ export class Agent extends EventTarget {
     if (!this.running) {
       this.#deps.store.replyStarted?.(turn);
       // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
-      if (from) this.#checkpoint(turn, from.messages, true);
+      if (from) this.#checkpoint(turn, from.messages);
     }
     const outcome = await this.#core.run({
       seq: turn.seq,
@@ -140,8 +140,13 @@ export class Agent extends EventTarget {
       },
       retrying: (attempt, trace) => this.#retrying(turn, attempt, trace),
       // Progress saved as the reply goes, so a page that sleeps or closes loses at most the step it was on.
-      // A step that ran a tool is always saved: that is the work asking again would repeat (and may pay for).
-      stepFinished: ({ messages, calledTools }) => this.#checkpoint(turn, messages, calledTools),
+      // Every tool call is saved as it starts and as its result comes in (`toolProgress`), and each step
+      // that ran a tool as it finishes. So Continue elsewhere sends a call that finished with its result
+      // and marks one that started and did not finish as interrupted: neither runs again. The one gap is a
+      // call whose start was not saved yet when the page died (one save's round trip). A step that ran no
+      // tool is the reply's last, and is saved as it ends.
+      toolProgress: ({ messages }) => this.#checkpoint(turn, messages),
+      stepFinished: ({ messages, calledTools }) => calledTools && this.#checkpoint(turn, messages),
       // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
       settled: (ended) => this.#settle(turn, ended),
     });
@@ -157,8 +162,8 @@ export class Agent extends EventTarget {
     }
   }
 
-  #checkpoint(turn: Turn, messages: ModelMessage[], force: boolean): void {
-    this.#deps.store.checkpoint?.(turn, { messages, force }).catch((error: unknown) => console.warn('[chat-cvt] could not save the reply so far', error));
+  #checkpoint(turn: Turn, messages: ModelMessage[]): void {
+    this.#deps.store.checkpoint?.(turn, { messages }).catch((error: unknown) => console.warn('[chat-cvt] could not save the reply so far', error));
   }
 
   #settle(turn: Turn, ended: AgentCoreOutcome): void {

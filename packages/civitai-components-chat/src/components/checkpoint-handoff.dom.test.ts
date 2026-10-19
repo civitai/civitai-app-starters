@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { ThreadStore } from '../store/thread-store.js';
-import { fakeHeads, tabStorage } from '../test-support/fake-heads.js';
+import { fakeHeads, fakeLocks, tabStorage } from '../test-support/fake-heads.js';
 import type { CivitaiChat } from './civitai-chat.js';
 import { defineElements } from './define.js';
 
@@ -21,6 +21,7 @@ const NOW = Date.parse('2026-10-19T15:00:00Z');
 
 beforeAll(() => defineElements());
 afterEach(() => {
+  delete (navigator as { locks?: unknown }).locks;
   document.body.replaceChildren();
   localStorage.clear();
   vi.useRealTimers();
@@ -36,8 +37,18 @@ const callsNote = (id: string, text: string): StreamPart[] => [
   { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
 ];
 
-/** Tab A: runs `build me a timer` over three steps on `heads` (two that call `note`, a third that never ends). */
-async function tabADiesOnStep3(heads: ReturnType<typeof fakeHeads>, own: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>) {
+/** This browser's Web Locks, as every tab sees them; tab B (the element) gets `tab('B')` as `navigator.locks`. */
+function browserLocks() {
+  const locks = fakeLocks();
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: locks.tab('B') });
+  return locks;
+}
+
+/**
+ * Tab A: runs `build me a timer` over three steps on `heads` (two that call `note`, a third that never
+ * ends), holding its lock in `locks` as tab `A` while it runs.
+ */
+async function tabADiesOnStep3(heads: ReturnType<typeof fakeHeads>, own: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>, locks: ReturnType<typeof fakeLocks>) {
   const ranInA: string[] = [];
   const answers: (StreamPart[] | 'hangs')[] = [callsNote('call_1', 'layout'), callsNote('call_2', 'buttons'), 'hangs'];
   let asked = 0;
@@ -45,13 +56,13 @@ async function tabADiesOnStep3(heads: ReturnType<typeof fakeHeads>, own: Pick<St
     doStream: async () => {
       asked++;
       const step = asked;
-      await vi.waitFor(() => expect(heads.writes.length).toBeGreaterThanOrEqual(step - 1));
+      await vi.waitFor(() => expect((JSON.stringify(heads.writes.at(-1)?.metadata ?? {}).match(/"type":"tool-result"/g) ?? []).length).toBeGreaterThanOrEqual(step - 1));
       const next = answers.shift()!;
       if (next === 'hangs') return { stream: new ReadableStream<StreamPart>({ start: (c) => c.enqueue({ type: 'stream-start', warnings: [] }) }) as never };
       return { stream: convertArrayToReadableStream(next) as never };
     },
   });
-  const store = new ThreadStore({ orchestration: heads.orchestration, api: heads.api, hideMatureContent: () => true, newId: () => 'CONV1', ownReplies: own });
+  const store = new ThreadStore({ orchestration: heads.orchestration, api: heads.api, hideMatureContent: () => true, newId: () => 'CONV1', ownReplies: own, locks: locks.tab('A') });
   const agent = new Agent({
     model: () => model,
     store,
@@ -68,8 +79,8 @@ async function tabADiesOnStep3(heads: ReturnType<typeof fakeHeads>, own: Pick<St
     attachments: () => [],
   });
   void agent.send('build me a timer');
-  // Two steps saved; the third is asked for and never ends: the tab is gone.
-  await vi.waitFor(() => expect(heads.writes).toHaveLength(2));
+  // Two steps saved; the third is asked for and never ends.
+  await vi.waitFor(() => expect(JSON.stringify(heads.writes.at(-1)?.metadata ?? {}).match(/"type":"tool-result"/g)).toHaveLength(2));
   await vi.waitFor(() => expect(asked).toBe(3));
   return { ranInA };
 }
@@ -126,7 +137,10 @@ describe('a reply that died in another tab, seen through its checkpoints', () =>
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     const heads = fakeHeads();
-    const { ranInA } = await tabADiesOnStep3(heads, tabStorage());
+    const locks = browserLocks();
+    const { ranInA } = await tabADiesOnStep3(heads, tabStorage(), locks);
+    // Tab A is gone: the browser let go of its lock.
+    locks.kill('A');
 
     vi.setSystemTime(NOW + 60_000);
     const { chat, asked, ranInB } = await tabB(heads);
@@ -155,11 +169,34 @@ describe('a reply that died in another tab, seen through its checkpoints', () =>
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     const heads = fakeHeads();
-    // Tab A keeps its note in this window's sessionStorage, which a reload of the same tab keeps.
-    await tabADiesOnStep3(heads, sessionStorage);
+    const locks = browserLocks();
+    // Tab A keeps its note in this window's sessionStorage, which a reload of the same tab keeps; reloading lets go of its lock.
+    await tabADiesOnStep3(heads, sessionStorage, locks);
+    locks.kill('A');
     vi.setSystemTime(NOW + 60_000);
     const { chat } = await tabB(heads);
     await vi.waitFor(() => expect(continueButton(chat)).not.toBeNull());
     expect(note(chat)).toBe('This reply stopped before it finished. Continue');
+  });
+
+  it('a copy of the tab made while the reply runs (same note, the lock held by the original): still replying, no Continue, until the original is gone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    const heads = fakeHeads();
+    const locks = browserLocks();
+    // The copy carries the original's sessionStorage: its note says the reply is this tab's.
+    await tabADiesOnStep3(heads, sessionStorage, locks);
+    // Long past the time rule: only the lock can say it still runs.
+    vi.setSystemTime(NOW + 30 * 60_000);
+    const { chat, asked, ranInB } = await tabB(heads);
+    await vi.waitFor(() => expect(note(chat)).toBe('Still replying in another tab or window…'));
+    expect(continueButton(chat)).toBeNull();
+    expect(await chat.retryReply()).toBe(false);
+    // The original goes (closed, or unloaded): its lock goes with it.
+    locks.kill('A');
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(continueButton(chat)).not.toBeNull());
+    expect(asked).toHaveLength(0);
+    expect(ranInB).toEqual([]);
   });
 });

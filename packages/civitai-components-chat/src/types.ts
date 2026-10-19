@@ -66,6 +66,11 @@ export interface Turn {
      * did: nothing runs it now (the tab reloaded), so it reads as gone at once. Not saved.
      */
     orphaned?: boolean;
+    /**
+     * Read back unfinished while a tab of this browser holds its lock: it runs there, so it reads as still
+     * replying whatever the save times say. Not saved.
+     */
+    heldElsewhere?: boolean;
   };
 }
 

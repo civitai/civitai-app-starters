@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flush, workflow } from '../test-support/fakes.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationMetadata, SavedTurn, SavedTurnV3 } from '../types.js';
-import { CUT_OFF, LIVE_REDRAW_MAX_MS, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveRedrawIn, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
+import { CUT_OFF, INTERRUPTED_CALL, LIVE_REDRAW_MAX_MS, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveRedrawIn, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
 
 function setup(stored: Workflow[] = [], scope?: string) {
   const submitted: WorkflowTemplate[] = [];
@@ -383,10 +383,16 @@ describe('a reply read back before it ended: still running elsewhere, or gone', 
     expect(replyElsewhere(turnFrom({ seq: 1, createdAt: ago(1), user: { content: 'x', attachments: [] }, assistant: { messages: [], status: 'error', error: CUT_OFF } }), NOW)).toBeUndefined();
   });
 
-  it('lets a v3 running reply carry on from its finished steps only when every call in them has its result', () => {
+  it('lets a v3 running reply carry on from its saved steps, a call with no result going as interrupted (not run again)', () => {
     expect(turnFrom(v3Running(ago(30))).assistant).toMatchObject({ errorKind: 'interrupted', resume: { messages: step, steps: 1, at: NOW - 30 * 60_000 } });
-    // A call with no result may have run: carrying on could run it again.
-    expect(turnFrom(v3Running(ago(30), [step[0]!])).assistant).not.toHaveProperty('resume');
+    // A call with no result started and did not finish (its page died): it is not run again, and the model
+    // is told so in its result. (Before #712 such a reply could not carry on at all.)
+    const unfinished = turnFrom(v3Running(ago(30), [step[0]!])).assistant;
+    expect(unfinished.resume?.messages).toEqual([
+      step[0],
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_run', toolName: 'run_command', output: { type: 'error-text', value: INTERRUPTED_CALL } }] },
+    ]);
+    expect(unfinished.messages).toEqual(unfinished.resume?.messages);
     // No save time, or no steps: nothing to carry on from.
     expect(turnFrom(v3Running(undefined)).assistant).not.toHaveProperty('resume');
     expect(turnFrom(v3Running(ago(30), [])).assistant).not.toHaveProperty('resume');

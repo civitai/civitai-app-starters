@@ -70,3 +70,30 @@ export function tabStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'
     removeItem: (key) => void entries.delete(key),
   };
 }
+
+/**
+ * Web Locks shared by every tab of one browser, in memory: `tab(id)` is that tab's `navigator.locks`, and
+ * `kill(id)` drops every lock the tab holds, as the browser does when a tab closes, crashes or is unloaded.
+ */
+export function fakeLocks() {
+  const held = new Map<string, string>();
+  return {
+    held,
+    tab(id: string): Pick<LockManager, 'request' | 'query'> {
+      return {
+        request: (async (name: string, callback: () => Promise<unknown>) => {
+          held.set(name, id);
+          try {
+            return await callback();
+          } finally {
+            if (held.get(name) === id) held.delete(name);
+          }
+        }) as unknown as LockManager['request'],
+        query: async () => ({ held: [...held.keys()].map((name) => ({ name, mode: 'exclusive' as const, clientId: '' })), pending: [] }),
+      };
+    },
+    kill(id: string): void {
+      for (const [name, holder] of held) if (holder === id) held.delete(name);
+    },
+  };
+}

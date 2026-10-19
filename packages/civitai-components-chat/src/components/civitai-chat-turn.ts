@@ -213,7 +213,13 @@ export class CivitaiChatTurn extends LightElement {
     if (this.#shownLive && state === 'stale') emit(this, 'cvt-recheck');
     this.#shownLive = state === 'live';
     const wait = this.#shownLive ? liveRedrawIn(this.turn) : undefined;
-    if (wait !== undefined) this.#liveTimer = setTimeout(() => this.requestUpdate(), wait);
+    if (wait !== undefined) {
+      this.#liveTimer = setTimeout(() => {
+        this.requestUpdate();
+        // Live because a tab holds its lock: only reading the chat again tells whether it still does.
+        if (this.turn.assistant.heldElsewhere) emit(this, 'cvt-recheck');
+      }, wait);
+    }
   }
 
   override disconnectedCallback(): void {
