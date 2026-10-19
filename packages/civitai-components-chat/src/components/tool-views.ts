@@ -2,6 +2,8 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { until } from 'lit/directives/until.js';
 
 import type { TurnPart } from '../agent/parts.js';
+import { DISPATCH_AGENT, subagentResultOf, type SubagentStatus } from '../agent/subagent-result.js';
+import type { SubagentTracker } from '../agent/subagents.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
@@ -13,6 +15,7 @@ import { normalizeChoice } from '../tools/choice.js';
 import type { ChatToolCall, ChatToolView } from '../tools/host.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { emit } from './light.js';
+import type { CallRowState } from './tool-calls.js';
 import { mediaActions } from './media-actions.js';
 
 export type ToolPart = Extract<TurnPart, { kind: 'tool' }>;
@@ -30,12 +33,18 @@ export interface ToolViewContext {
   live: boolean;
   models: ModelDirectory;
   resolve: (id: string) => Attachment | undefined;
+  /** The subagents running now: a running `dispatch_agent` card reads its progress here. */
+  subagents?: SubagentTracker;
+  /** Which disclosures in the turn are open. */
+  rows?: Pick<CallRowState, 'isOpen' | 'wasOpened' | 'toggle'>;
 }
 
 /** `render` returning `undefined` leaves the call to the default: its activity while it runs, nothing after. */
 export interface ToolView {
   activity?: string;
   render?(part: ToolPart, ctx: ToolViewContext): unknown;
+  /** `render` also draws a call that failed, instead of the "didn't work" note. Built-in views only. */
+  ownsFailure?: boolean;
 }
 
 const job: ToolView = {
@@ -83,7 +92,71 @@ const choice: ToolView = {
   },
 };
 
+const SUBAGENT_STATUS: Record<SubagentStatus | 'calling' | 'refused', string> = {
+  calling: 'Working…',
+  done: 'Done',
+  ran_out: 'Hit its limit',
+  stopped: 'Stopped',
+  error: 'Failed',
+  refused: 'Not started',
+};
+
+const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
+
+/**
+ * A subagent's card: its task, steps and tool calls, and how it went; opened, its summary and what it
+ * looked at. While it runs it reads its progress from the session; after, only from the saved result,
+ * so it shows the same after a reload.
+ */
+function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult {
+  const task = String((part.input as { task?: unknown } | undefined)?.task ?? '').trim();
+  const firstLine = task.split('\n').find((line) => line.trim() !== '')?.trim() ?? 'Research';
+  const result = part.state === 'done' ? subagentResultOf(part.output) : undefined;
+  const live = part.state === 'calling' ? ctx.subagents?.get(part.toolCallId) : undefined;
+  const refusal = part.state === 'done' && !result ? String((part.output as { error?: unknown } | undefined)?.error ?? '') : '';
+  const status: keyof typeof SUBAGENT_STATUS = result ? result.status : part.state === 'calling' ? 'calling' : part.state === 'error' ? 'error' : 'refused';
+  const steps = result?.steps ?? live?.steps ?? 0;
+  const calls = result?.toolCalls ?? live?.toolCalls ?? 0;
+  const key = `subagent:${part.toolCallId}`;
+  const rows = ctx.rows;
+  const open = rows?.isOpen(key) ?? false;
+  const body = `cvt-subagent-${part.toolCallId.replace(/[^A-Za-z0-9_-]/g, '')}`;
+  const problem = result?.error ?? (part.state === 'error' ? part.error : refusal) ?? '';
+  return html`<div class="cvt-subagent" data-status=${status} data-call=${part.toolCallId}>
+    <button type="button" class="cvt-subagent-head" aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows?.toggle(key)}>
+      <span class="cvt-call-chevron" aria-hidden="true"></span>
+      <span class="cvt-subagent-title">
+        <span class="cvt-subagent-kind">Subagent</span>
+        <span class="cvt-subagent-task">${firstLine}</span>
+      </span>
+      <span class="cvt-subagent-meta">
+        <span class="cvt-subagent-counts" data-subagent="counts">${plural(steps, 'step')} · ${plural(calls, 'tool call')}</span>
+        <span class="cvt-subagent-status" data-subagent="status">${SUBAGENT_STATUS[status]}</span>
+      </span>
+    </button>
+    <div class="cvt-call-body" id=${body} ?inert=${!open} data-open=${open ? 'true' : 'false'}>
+      <div class="cvt-call-inner">
+        ${rows?.wasOpened(key)
+          ? html`<div class="cvt-subagent-body">
+              ${task ? html`<div class="cvt-call-label">Task</div><p class="cvt-subagent-text">${task}</p>` : nothing}
+              ${live?.lastTool ? html`<div class="cvt-call-label">Now using</div><p class="cvt-subagent-text">${live.lastTool}</p>` : nothing}
+              ${problem ? html`<div class="cvt-call-label">Why it stopped</div><p class="cvt-subagent-text" data-subagent="error">${problem}</p>` : nothing}
+              ${result?.summary ? html`<div class="cvt-call-label">What it found</div><p class="cvt-subagent-text" data-subagent="summary">${result.summary}</p>` : nothing}
+              ${result?.activity.length
+                ? html`<div class="cvt-call-label">What it looked at</div>
+                    <ol class="cvt-subagent-activity">
+                      ${result.activity.map((entry) => html`<li><span class="cvt-call-name">${entry.tool}</span>${entry.arg ? html` <span class="cvt-subagent-arg">${entry.arg}</span>` : nothing}</li>`)}
+                    </ol>`
+                : nothing}
+            </div>`
+          : nothing}
+      </div>
+    </div>
+  </div>`;
+}
+
 export const BUILT_IN_VIEWS: Record<string, ToolView> = {
+  [DISPATCH_AGENT]: { activity: 'Starting a subagent…', render: renderSubagent, ownsFailure: true },
   ...Object.fromEntries([...JOB_TOOLS].map((name) => [name, job])),
   [OPEN_PANEL]: { activity: 'Setting up the controls…', render: renderPanel },
   [UPDATE_PANEL]: { activity: 'Changing the controls…', render: renderPanel },
@@ -109,6 +182,7 @@ export function viewFor(name: string, pageViews: Record<string, ChatToolView>): 
   return {
     activity: page.activity ?? builtIn?.activity,
     render: render ? (part) => render(callOf(part)) : builtIn?.render,
+    ...(!render && builtIn?.ownsFailure ? { ownsFailure: true } : {}),
   };
 }
 

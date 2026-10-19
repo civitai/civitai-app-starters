@@ -34,7 +34,8 @@ import { humanizeHost } from './ux/humanize.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { extraToolSet } from './tools/extra.js';
-import { gateToolSet, type ChatToolGate, type ChatToolResult } from './tools/gate.js';
+import { gateToolSet, nextReply, type ChatToolGate, type ChatToolResult, type GateDeps } from './tools/gate.js';
+import { DISPATCH_AGENT, dispatchAgentTool, resolveSubagents, subagentToolNames, SubagentTracker, type ChatSubagents } from './agent/subagents.js';
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { voiceLanguage } from './voice/languages.js';
@@ -78,6 +79,8 @@ export interface SessionOptions {
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   /** Asked before every tool call; read at the start of every reply. Each result is reported as a `tool-result` event. */
   beforeToolCall?(): ChatToolGate | undefined;
+  /** Read-only subagents (`dispatch_agent`); off unless set. Read at the start of every reply. */
+  subagents?(): ChatSubagents | undefined;
   /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
   ask?(message: string, refs: string[]): void;
   compose?(message: string, refs: string[]): void;
@@ -113,6 +116,8 @@ export class ChatSession extends EventTarget {
   readonly panels: PanelManager;
   readonly store: ConversationStore;
   readonly agent: Agent;
+  /** The subagents running now, for their cards' live progress. */
+  readonly subagents = new SubagentTracker();
   /** The models the picker offers, loaded once when it is first opened. */
   readonly modelCatalog: Pick<ModelCatalog, 'load'>;
   settings: Settings;
@@ -484,17 +489,35 @@ export class ChatSession extends EventTarget {
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
     const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai }) };
-    const host = hostToolSet(this.#options.hostTools?.() ?? {}, builtIn, {
+    const subagents = resolveSubagents(this.#options.subagents?.());
+    // With subagents on, `dispatch_agent` is the chat's: a page tool of that name is skipped like any other clash.
+    const host = hostToolSet(this.#options.hostTools?.() ?? {}, subagents ? { ...builtIn, [DISPATCH_AGENT]: {} as ToolSet[string] } : builtIn, {
       conversationId: turn.conversationId,
       findAttachment: (id) => this.findAttachment(id),
       resolveArgs: (args) => this.resolveArgs(args),
     });
     this.#hostToolNames = new Set(Object.keys(host));
-    return gateToolSet({ ...builtIn, ...host }, {
+    const tools: ToolSet = { ...builtIn, ...host };
+    // One reply number for the reply's calls and its subagents' calls alike.
+    const gate: GateDeps = {
       conversationId: turn.conversationId,
       gate: this.#options.beforeToolCall?.(),
       onResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
-    });
+      reply: nextReply(),
+    };
+    // Offered only when the page opted in and a tool it allowed is here; otherwise the reply's tools are as before.
+    if (subagents && subagentToolNames(subagents.tools, tools).length > 0) {
+      tools[DISPATCH_AGENT] = dispatchAgentTool({
+        options: subagents,
+        tools: { ...tools },
+        gate: (childTools, subagent) => gateToolSet(childTools, { ...gate, subagent }),
+        model: () => this.#model(subagents.model ?? this.assistantModel()),
+        maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
+        progress: this.subagents,
+        ...(this.backend ? { describeError: humanizeHost } : {}),
+      });
+    }
+    return gateToolSet(tools, gate);
   }
 
   async #builtInTools(turn: { conversationId: string; seq: number }): Promise<ToolSet> {

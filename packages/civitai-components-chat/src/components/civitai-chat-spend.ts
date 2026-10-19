@@ -61,7 +61,7 @@ export class CivitaiChatSpend extends LightElement {
   };
 
   override render(): TemplateResult | typeof nothing {
-    const { total, generations, assistant } = this.spend;
+    const { total, generations, assistant, subagentSteps } = this.spend;
     if (total === 0) return nothing;
     const n = (value: number) => value.toLocaleString();
     return html`<button
@@ -83,6 +83,7 @@ export class CivitaiChatSpend extends LightElement {
           <div class="cvt-spend-row"><dt>For what was made</dt><dd data-spend="generations">${n(generations)}</dd></div>
           <div class="cvt-spend-row"><dt>For the assistant</dt><dd data-spend="assistant">${n(assistant)}</dd></div>
         </dl>
+        ${subagentSteps ? html`<p class="cvt-spend-note" data-spend="subagents">Including ${n(subagentSteps)} subagent ${subagentSteps === 1 ? 'step' : 'steps'}.</p>` : nothing}
         <p class="cvt-spend-note">
           An estimate of the Buzz spent in this chat: what it made, plus the assistant's replies and saving the chat. Model searches and captions
           aren't counted.

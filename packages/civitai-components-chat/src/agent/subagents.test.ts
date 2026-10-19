@@ -1,0 +1,341 @@
+import { jsonSchema, tool, type LanguageModel, type ToolSet } from 'ai';
+import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
+import { describe, expect, it, vi } from 'vitest';
+
+import { gateToolSet, nextReply, type ChatToolResult } from '../tools/gate.js';
+import { AgentCore } from './core.js';
+import {
+  DISPATCH_AGENT,
+  SUBAGENT_PREAMBLE,
+  WRITE_UNAVAILABLE,
+  dispatchAgentTool,
+  resolveSubagents,
+  subagentToolNames,
+  type ChatSubagents,
+  type SubagentResult,
+} from './subagents.js';
+
+/**
+ * `dispatch_agent` driven by a real parent {@link AgentCore}: the parent and every subagent ask mock
+ * models, told apart by the subagent rules in the system prompt, so each test can count exactly which
+ * model requests a subagent made (none, for one that was refused).
+ */
+
+type StreamPart = Record<string, unknown>;
+const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
+const says = (words: string): StreamPart[] => [
+  { type: 'stream-start', warnings: [] },
+  { type: 'text-start', id: 't' },
+  { type: 'text-delta', id: 't', delta: words },
+  { type: 'text-end', id: 't' },
+  { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+];
+/** A step that makes each call (`[toolName, input]`), with ids `<prefix>-<n>`. */
+const calls = (prefix: string, ...list: [string, unknown][]): StreamPart[] => [
+  { type: 'stream-start', warnings: [] },
+  ...list.map(([toolName, input], index) => ({ type: 'tool-call', toolCallId: `${prefix}-${index + 1}`, toolName, input: JSON.stringify(input) })),
+  { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+];
+const dispatch = (...tasks: [string, string?][]) => calls('d', ...tasks.map(([task, mode = 'read']): [string, unknown] => [DISPATCH_AGENT, { task, mode }]));
+/** A stream that never ends until the request is aborted. */
+const hangs = (signal?: AbortSignal): ReadableStream<StreamPart> =>
+  new ReadableStream<StreamPart>({
+    start(controller) {
+      controller.enqueue({ type: 'stream-start', warnings: [] });
+      signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')), { once: true });
+    },
+  });
+
+type Step = StreamPart[] | Error | ((signal?: AbortSignal) => ReadableStream<StreamPart>);
+interface ChildRequest {
+  task: string;
+  tools: string[];
+  toolChoice: unknown;
+  system: string;
+}
+
+/**
+ * A parent reply whose model answers from `parent` in order, and subagents whose model answers by
+ * task: `child(task, n)` is the `n`th step (from 1) of the subagent given `task`.
+ */
+function setup(parent: Step[], child: (task: string, n: number) => Step, options: Partial<ChatSubagents> = {}) {
+  const childRequests: ChildRequest[] = [];
+  const parentRequests: unknown[] = [];
+  const results: ChatToolResult[] = [];
+  const ran: string[] = [];
+  const byTask = new Map<string, number>();
+  const answer = (next: Step | undefined, signal?: AbortSignal) => {
+    if (next instanceof Error) throw next;
+    if (typeof next === 'function') return { stream: next(signal) as never };
+    return { stream: convertArrayToReadableStream(next ?? says('…')) as never };
+  };
+  const childModel = new MockLanguageModelV3({
+    doStream: async (request) => {
+      const system = String((request.prompt[0] as { content?: unknown }).content);
+      const user = JSON.stringify(request.prompt[1]);
+      const task = /Your task:\\n\\n(.*?)"/.exec(user)?.[1] ?? '?';
+      childRequests.push({ task, tools: (request.tools ?? []).map((t) => t.name).sort(), toolChoice: request.toolChoice?.type, system });
+      const n = (byTask.get(task) ?? 0) + 1;
+      byTask.set(task, n);
+      let next = child(task, n);
+      // As a real provider does: a step asked with tool choice none answers in words.
+      if (request.toolChoice?.type === 'none' && Array.isArray(next) && next.some((part) => part.type === 'tool-call')) next = says('Out of steps: here is what I found.');
+      return answer(next, request.abortSignal);
+    },
+  });
+  const queue = [...parent];
+  const parentModel = new MockLanguageModelV3({
+    doStream: async (request) => {
+      parentRequests.push(request.prompt);
+      return answer(queue.shift(), request.abortSignal);
+    },
+  });
+  const read = (name: string) =>
+    tool({
+      inputSchema: jsonSchema<{ path?: string }>({ type: 'object', properties: { path: { type: 'string' } } }),
+      execute: async ({ path }) => (ran.push(`${name}:${path ?? ''}`), { text: `contents of ${path}` }),
+    });
+  const raw: ToolSet = {
+    read_file: read('read_file'),
+    list_dir: read('list_dir'),
+    write_file: read('write_file'),
+    ask_choice: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ shown: true, awaitsUser: true }) }),
+    // A page tool that hands the next move to the viewer, as an ask panel does.
+    confirm: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => (ran.push('confirm:'), { shown: true, awaitsUser: true }) }),
+  };
+  const resolved = resolveSubagents({ tools: ['read_file', 'list_dir'], ...options })!;
+  const reply = nextReply();
+  const gate = { conversationId: 'c1', reply, onResult: (result: ChatToolResult) => results.push(result) };
+  const tools: ToolSet = {
+    ...raw,
+    [DISPATCH_AGENT]: dispatchAgentTool({
+      options: resolved,
+      tools: raw,
+      gate: (childTools, subagent) => gateToolSet(childTools, { ...gate, subagent }),
+      model: () => childModel as LanguageModel,
+      maxOutputTokens: () => 1_000,
+      networkRetryDelaysMs: [0, 0, 0],
+    }),
+  };
+  const core = new AgentCore();
+  const run = () =>
+    core.run({
+      seq: 1,
+      tools: async () => gateToolSet(tools, gate),
+      request: () => ({ model: parentModel, system: 'You are the parent.', history: [{ role: 'user', content: 'go' }], maxOutputTokens: 1_000, networkRetryDelaysMs: [0, 0, 0] }),
+    });
+  /** What each `dispatch_agent` call gave back, by call id. */
+  const dispatched = () => new Map(results.filter((r) => r.name === DISPATCH_AGENT).map((r) => [(r.input as { task: string }).task, r.output as SubagentResult & { error?: string }]));
+  const requestsFor = (task: string) => childRequests.filter((r) => r.task === task).length;
+  return { core, run, childRequests, parentRequests, results, ran, dispatched, requestsFor };
+}
+
+describe('dispatch_agent: what it refuses, before any subagent runs', () => {
+  it('refuses mode "write" with a clear error, and asks no subagent model anything', async () => {
+    const t = setup([dispatch(['edit the readme', 'write']), says('ok')], () => says('should not run'));
+    await t.run();
+    expect(t.dispatched().get('edit the readme')).toEqual({ error: WRITE_UNAVAILABLE, note: expect.any(String) });
+    expect(WRITE_UNAVAILABLE).toBe('write subagents are not available yet');
+    expect(t.childRequests).toHaveLength(0);
+    // Positive control: the same call with mode "read" does ask a subagent model.
+    const control = setup([dispatch(['read the readme']), says('ok')], () => says('found it'));
+    await control.run();
+    expect(control.requestsFor('read the readme')).toBe(1);
+  });
+
+  it('refuses the 4th subagent running at once, and runs nothing for it', async () => {
+    // Each subagent waits until all four calls were decided, so three are running when the 4th comes.
+    let release!: () => void;
+    const decided = new Promise<void>((resolve) => (release = resolve));
+    const t = setup([dispatch(['t1'], ['t2'], ['t3'], ['t4']), says('ok')], () => () =>
+      new ReadableStream<StreamPart>({
+        async start(controller) {
+          await decided;
+          for (const part of says('done')) controller.enqueue(part);
+          controller.close();
+        },
+      }),
+    );
+    const running = t.run();
+    await vi.waitFor(() => expect(t.dispatched().has('t4')).toBe(true));
+    release();
+    await running;
+    const out = t.dispatched();
+    expect(out.get('t4')).toEqual({ error: '3 subagents are already running, the most at once. Dispatch this after one returns.', note: expect.any(String) });
+    expect(['t1', 't2', 't3'].map((task) => out.get(task)?.status)).toEqual(['done', 'done', 'done']);
+    expect(t.requestsFor('t4')).toBe(0);
+    expect(t.childRequests.map((r) => r.task).sort()).toEqual(['t1', 't2', 't3']);
+  });
+
+  it('refuses the 9th subagent of one reply, and runs nothing for it', async () => {
+    const t = setup([dispatch(['a1'], ['a2'], ['a3']), dispatch(['b1'], ['b2'], ['b3']), dispatch(['c1'], ['c2'], ['c3']), says('ok')], () => says('done'));
+    await t.run();
+    const out = t.dispatched();
+    expect(out.get('c3')).toEqual({ error: 'This reply already started 8 subagents, the most one reply may.', note: expect.any(String) });
+    expect(t.requestsFor('c3')).toBe(0);
+    expect(t.childRequests).toHaveLength(8);
+  });
+
+  it('takes the page’s caps over the defaults', async () => {
+    const t = setup([dispatch(['p1'], ['p2']), dispatch(['p3']), says('ok')], () => says('done'), { maxLive: 1, maxPerReply: 2 });
+    await t.run();
+    const out = t.dispatched();
+    expect(out.get('p1')?.status).toBe('done');
+    expect(out.get('p2')?.error).toBe('1 subagents are already running, the most at once. Dispatch this after one returns.');
+    expect(out.get('p3')?.status).toBe('done');
+    expect(t.childRequests.map((r) => r.task)).toEqual(['p1', 'p3']);
+    // The per-reply cap counts started subagents only: p2 was refused, so p3 is the 2nd.
+  });
+});
+
+describe('a subagent’s own caps', () => {
+  it('takes 30 steps at most: the 30th is asked for words (tool choice none), and it ends ran_out', async () => {
+    const t = setup([dispatch(['dig']), says('ok')], (_task, n) => calls(`s${n}`, ['read_file', { path: `/f${n}` }]));
+    await t.run();
+    const asked = t.childRequests.filter((r) => r.task === 'dig');
+    expect(asked).toHaveLength(30);
+    expect(asked.slice(0, 29).every((r) => r.toolChoice === 'auto')).toBe(true);
+    expect(asked[29]!.toolChoice).toBe('none');
+    expect(asked[29]!.system).toContain('This is your last step');
+    expect(t.dispatched().get('dig')).toMatchObject({ status: 'ran_out', steps: 30, toolCalls: 29, summary: 'Out of steps: here is what I found.' });
+  });
+
+  it('ends at its 41st tool call: that call and the ones after it do not run, and no further step is asked for', async () => {
+    // 10 calls a step: the 5th step holds calls 41 to 50.
+    const t = setup([dispatch(['many']), says('ok')], (_task, n) =>
+      calls(`m${n}`, ...Array.from({ length: 10 }, (_, i): [string, unknown] => ['read_file', { path: `/s${n}/f${i}` }])),
+    );
+    await t.run();
+    expect(t.ran).toHaveLength(40);
+    expect(t.ran.at(-1)).toBe('read_file:/s4/f9');
+    expect(t.requestsFor('many')).toBe(5);
+    expect(t.dispatched().get('many')).toMatchObject({ status: 'ran_out', toolCalls: 40, steps: 5 });
+    // The activity log is the calls' tools and paths only, capped at 50 (40 here).
+    expect(t.dispatched().get('many')!.activity).toHaveLength(40);
+    expect(t.dispatched().get('many')!.activity[0]).toEqual({ tool: 'read_file', arg: '/s1/f0' });
+  });
+
+  it('takes the page’s step and call caps over the defaults', async () => {
+    const t = setup([dispatch(['few']), says('ok')], (_task, n) => calls(`f${n}`, ['read_file', { path: `/f${n}` }], ['list_dir', { path: `/d${n}` }]), { maxSteps: 7, maxToolCalls: 11 });
+    await t.run();
+    // 2 calls a step: the 6th step holds calls 11 and 12, so 11 run and the 12th ends it.
+    expect(t.ran).toHaveLength(11);
+    expect(t.requestsFor('few')).toBe(6);
+    expect(t.dispatched().get('few')).toMatchObject({ status: 'ran_out', toolCalls: 11 });
+  });
+
+  it('keeps the activity log to 50 entries', async () => {
+    const t = setup([dispatch(['wide']), says('ok')], (_task, n) => (n <= 7 ? calls(`w${n}`, ...Array.from({ length: 9 }, (_, i): [string, unknown] => ['list_dir', { path: `/w${n}/${i}` }])) : says('found')), { maxToolCalls: 100 });
+    await t.run();
+    expect(t.dispatched().get('wide')).toMatchObject({ status: 'done', toolCalls: 63 });
+    expect(t.dispatched().get('wide')!.activity).toHaveLength(50);
+  });
+});
+
+describe('what a subagent gives back', () => {
+  it('returns its final words cut to 4,000 characters, its counts and activity, and never its transcript', async () => {
+    const words = Array.from({ length: 4_100 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('');
+    const t = setup([dispatch(['summarise']), says('ok')], (_task, n) => (n === 1 ? calls('r', ['read_file', { path: '/secret.txt' }]) : says(words)));
+    await t.run();
+    const out = t.dispatched().get('summarise')!;
+    expect(out.summary).toBe(words.slice(0, 4_000));
+    expect(out.summary).toHaveLength(4_000);
+    expect(out).toEqual({ status: 'done', summary: words.slice(0, 4_000), steps: 2, toolCalls: 1, activity: [{ tool: 'read_file', arg: '/secret.txt' }] });
+    // The tool's output stayed in the subagent: the parent never sees it.
+    expect(JSON.stringify(out)).not.toContain('contents of');
+  });
+
+  it('keeps final words of exactly 4,000 characters whole', async () => {
+    const words = 'x'.repeat(3_999) + 'y';
+    const t = setup([dispatch(['exact']), says('ok')], () => says(words));
+    await t.run();
+    expect(t.dispatched().get('exact')!.summary).toBe(words);
+  });
+
+  it('asks the subagent with only the task, the subagent rules in its system prompt, and its allowlisted tools', async () => {
+    const t = setup([dispatch(['look around']), says('ok')], () => says('done'), { instructions: 'Report paths relative to the app.' });
+    await t.run();
+    const [first] = t.childRequests;
+    expect(first!.tools).toEqual(['list_dir', 'read_file']);
+    expect(first!.system).toContain(SUBAGENT_PREAMBLE);
+    expect(first!.system).toContain('Report paths relative to the app.');
+  });
+});
+
+describe('a tool that waits for the viewer', () => {
+  it('comes back to a subagent as an error when the page allowed it, and does not end the subagent', async () => {
+    const t = setup([dispatch(['ask them']), says('ok')], (_task, n) => (n === 1 ? calls('c', ['confirm', {}]) : says('could not ask')), { tools: ['confirm'] });
+    await t.run();
+    expect(t.ran).toEqual(['confirm:']);
+    expect(t.requestsFor('ask them')).toBe(2);
+    expect(t.dispatched().get('ask them')).toMatchObject({ status: 'done', summary: 'could not ask', steps: 2 });
+  });
+});
+
+describe('stopping and retrying', () => {
+  it('stops every running subagent when the parent is stopped, and asks their models nothing more', async () => {
+    const t = setup([dispatch(['s1'], ['s2']), says('ok')], (_task, n) => (n === 1 ? calls('x', ['read_file', { path: '/a' }]) : hangs));
+    const running = t.run();
+    await vi.waitFor(() => expect(t.childRequests).toHaveLength(4));
+    t.core.abort();
+    const outcome = await running;
+    expect(outcome?.status).toBe('aborted');
+    await vi.waitFor(() => expect(t.dispatched().size).toBe(2));
+    expect([...t.dispatched().values()].map((out) => out.status)).toEqual(['stopped', 'stopped']);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(t.childRequests).toHaveLength(4);
+    expect(t.ran).toEqual(['read_file:/a', 'read_file:/a']);
+  });
+
+  it('asks a subagent’s step that the network cut, having called no tool, again once, and only once', async () => {
+    const drop = () => new TypeError('Failed to fetch');
+    const once = setup([dispatch(['flaky']), says('ok')], (_task, n) => (n === 1 ? drop() : says('found it')));
+    await once.run();
+    expect(once.requestsFor('flaky')).toBe(2);
+    expect(once.dispatched().get('flaky')).toMatchObject({ status: 'done', summary: 'found it' });
+
+    const twice = setup([dispatch(['flakier']), says('ok')], (_task, n) => (n <= 2 ? drop() : says('found it')));
+    await twice.run();
+    expect(twice.requestsFor('flakier')).toBe(2);
+    expect(twice.dispatched().get('flakier')).toMatchObject({ status: 'error', error: expect.any(String) });
+  });
+
+  // An invariant guard on the core's no-double-run rule, which already covers dispatch_agent as a tool.
+  // The SDK runs a step's tools only after its finish chunk, so the cut call never ran here; it is still
+  // not asked again, since a provider or SDK could run one sooner.
+  it('never asks again for a parent step that called dispatch_agent when the network cut it, so no subagent runs twice', async () => {
+    const cut = (): ReadableStream<StreamPart> => {
+      const queue = [...dispatch(['once']).slice(0, 2)];
+      return new ReadableStream<StreamPart>({ pull: (controller) => (queue.length ? controller.enqueue(queue.shift()!) : controller.error(new TypeError('Failed to fetch'))) }, { highWaterMark: 0 });
+    };
+    const t = setup([cut, says('should not be asked')], () => says('found'));
+    const outcome = await t.run();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(outcome?.status).toBe('error');
+    expect(t.parentRequests).toHaveLength(1);
+    expect(t.requestsFor('once')).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('which tools a subagent gets', () => {
+  const available = Object.fromEntries(['a', 'b', 'c', DISPATCH_AGENT, 'ask_choice', 'open_panel', 'update_panel'].map((name) => [name, {}])) as ToolSet;
+
+  it('gets exactly the allowlisted tools this reply has, never dispatch_agent or one that waits for the viewer', () => {
+    expect(subagentToolNames(['b', 'a', 'missing', DISPATCH_AGENT, 'ask_choice', 'open_panel', 'update_panel', 'a'], available)).toEqual(['b', 'a']);
+    expect(subagentToolNames([], available)).toEqual([]);
+  });
+
+  it('is off without the option or with an empty allowlist, and keeps caps in bounds', () => {
+    expect(resolveSubagents(undefined)).toBeUndefined();
+    expect(resolveSubagents({ tools: [] })).toBeUndefined();
+    expect(resolveSubagents({ tools: ['a'] })).toEqual({ tools: ['a'], maxLive: 3, maxPerReply: 8, maxSteps: 30, maxToolCalls: 40 });
+    expect(resolveSubagents({ tools: ['a'], maxLive: 99, maxPerReply: 0, maxSteps: 2.6, maxToolCalls: Number.NaN, model: ' m ' })).toEqual({
+      tools: ['a'],
+      model: 'm',
+      maxLive: 10,
+      maxPerReply: 1,
+      maxSteps: 3,
+      maxToolCalls: 40,
+    });
+  });
+});

@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
 import type { TurnPart } from '../agent/parts.js';
+import type { SubagentTracker } from '../agent/subagents.js';
 import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
@@ -45,6 +46,7 @@ export class CivitaiChatTurn extends LightElement {
     views: { attribute: false },
     toolCalls: { attribute: 'tool-calls' },
     mcpServerIds: { attribute: false },
+    subagents: { attribute: false },
   };
 
   declare turn: Turn;
@@ -69,6 +71,8 @@ export class CivitaiChatTurn extends LightElement {
   declare toolCalls: ToolCallsMode;
   /** The added MCP servers' ids: a call row shows the server of one of their tools. */
   declare mcpServerIds: ReadonlySet<string>;
+  /** The subagents running now, for their cards' live progress. */
+  declare subagents?: SubagentTracker;
 
   /** Call rows and groups the viewer opened, by key; kept while the turn is on the page. */
   #open = new Set<string>();
@@ -116,7 +120,7 @@ export class CivitaiChatTurn extends LightElement {
   #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
-    if (failure) {
+    if (failure && !view?.ownsFailure) {
       if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
@@ -172,6 +176,8 @@ export class CivitaiChatTurn extends LightElement {
       live: this.live,
       models: this.models,
       resolve: this.resolve,
+      ...(this.subagents ? { subagents: this.subagents } : {}),
+      rows: this.#rows,
     };
   }
 
