@@ -49,8 +49,26 @@ describe('HostThreadStore', () => {
     const threads = new HostThreadStore({ store });
     const { conversation, jobs } = await threads.open('C1');
     expect(jobs).toEqual([]);
-    expect(conversation.turns[0]!.assistant).toEqual({ messages: [], status: 'error', error: 'cut-off' });
+    // `savedAt`: when that save was made, here the turn's start, which tells a reply still running elsewhere from a dead one.
+    expect(conversation.turns[0]!.assistant).toEqual({ messages: [], status: 'error', error: 'cut-off', savedAt: '2026-10-15T10:00:00Z' });
     expect((await threads.open('NOPE')).conversation).toMatchObject({ id: 'NOPE', title: 'New chat', turns: [] });
+  });
+
+  it('opens a reply saved while it ran as cut off, keeping the steps it finished', async () => {
+    const steps = [{ role: 'assistant', content: 'Drafted Monday and Tuesday so far.' }];
+    const store = memoryStore([
+      {
+        id: 'C2',
+        title: 'Week',
+        titleSource: 'first-message',
+        createdAt: '2026-10-15T10:00:00Z',
+        updatedAt: '2026-10-15T10:00:00Z',
+        // As a v3 writer saves it; a host's store hands back whatever was saved.
+        turns: [{ seq: 1, createdAt: '2026-10-15T10:00:00Z', user: { content: 'plan my week', attachments: [] }, assistant: { messages: steps, status: 'running' } }] as never,
+      },
+    ]);
+    const { conversation } = await new HostThreadStore({ store }).open('C2');
+    expect(conversation.turns[0]!.assistant).toEqual({ messages: steps, status: 'error', error: 'cut-off', savedAt: '2026-10-15T10:00:00Z' });
   });
 
   it('pages the list with the cursor the store hands back, keeping each id once', async () => {

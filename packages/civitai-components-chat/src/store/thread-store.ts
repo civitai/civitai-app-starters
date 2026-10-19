@@ -1,11 +1,13 @@
 import type { OrchestrationClient, Workflow, WorkflowQuery, WorkflowTemplate } from '@civitai/sdk';
 import { ulid } from 'ulid';
 
-import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag } from '../config.js';
+import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag, stepLimit } from '../config.js';
 import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
-import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
+import type { ModelMessage } from 'ai';
+
+import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
@@ -208,7 +210,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   // Each write replaces the whole metadata, so they go one at a time per workflow, each built from the latest state.
-  #writeHead(workflowId: string, metadata: () => ConversationMetadata): Promise<void> {
+  // Only a rename of a chat that is not open writes back a head as it was read, which may be a v3 one.
+  #writeHead(workflowId: string, metadata: () => StoredConversationMetadata): Promise<void> {
     const write = (this.#writes.get(workflowId) ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => this.#deps.api.updateWorkflow(workflowId, { metadata: metadata() }));
@@ -231,7 +234,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (this.current?.id === id) return this.setTitle(title, 'user');
     const summary = this.summaries.find((s) => s.id === id);
     if (!summary) return;
-    const metadata: ConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
+    const metadata: StoredConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
     await this.#writeHead(summary.head.workflowId, () => metadata);
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
@@ -331,12 +334,12 @@ function submitKey(conversationId: string, seq: number): string {
   return `${conversationId}:${seq}`;
 }
 
-function summaryOf(workflowId: string, metadata: ConversationMetadata): ConversationSummary {
+function summaryOf(workflowId: string, metadata: StoredConversationMetadata): ConversationSummary {
   return { id: metadata.conversationId, title: metadata.title, titleSource: metadata.titleSource, updatedAt: metadata.updatedAt, head: { workflowId, metadata } };
 }
 
-function newestHead(workflows: Workflow[]): { workflowId: string; metadata: ConversationMetadata } | undefined {
-  let best: { workflowId: string; metadata: ConversationMetadata } | undefined;
+function newestHead(workflows: Workflow[]): { workflowId: string; metadata: StoredConversationMetadata } | undefined {
+  let best: { workflowId: string; metadata: StoredConversationMetadata } | undefined;
   for (const workflow of workflows) {
     const metadata = conversationMetadataOf(workflow);
     if (!metadata || !workflow.id) continue;
@@ -345,7 +348,7 @@ function newestHead(workflows: Workflow[]): { workflowId: string; metadata: Conv
   return best;
 }
 
-function lastSeq(metadata: ConversationMetadata): number {
+function lastSeq(metadata: StoredConversationMetadata): number {
   return Math.max(0, ...metadata.turns.map((turn) => turn.seq));
 }
 
@@ -354,7 +357,8 @@ export function saved(turn: Turn): SavedTurn {
   if (assistant.status === 'streaming') return rest;
   // The trace is for this session's diagnostics only: a response body may carry the reply's text. The
   // resume point is for this session too: a reopened chat's failed reply starts over when asked again.
-  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, ...kept } = assistant;
+  // `savedAt` is when the save this reply was read from was made: a reply saved again is no longer that one.
+  const { errorTrace: _trace, networkRetries: _retries, resume: _resume, savedAt: _savedAt, ...kept } = assistant;
   return { ...rest, assistant: kept };
 }
 
@@ -377,11 +381,15 @@ export function clampTitle(title: string): string {
   return (flat || 'New chat').slice(0, TITLE_MAX);
 }
 
-export function conversationMetadataOf(workflow: Workflow): ConversationMetadata | null {
-  const metadata = workflow.metadata as Partial<ConversationMetadata> | null | undefined;
-  if (!metadata || metadata.app !== 'chat-cvt' || metadata.v !== 2 || !workflow.tags?.includes(HEAD_TAG)) return null;
+/** The head versions this version reads; it writes v2 (see {@link ConversationMetadataV3}). */
+const READ_VERSIONS: ReadonlySet<unknown> = new Set([2, 3]);
+
+/** A conversation head's metadata, when the workflow is one this version can read: v2 or v3. */
+export function conversationMetadataOf(workflow: Workflow): StoredConversationMetadata | null {
+  const metadata = workflow.metadata as Partial<StoredConversationMetadata> | null | undefined;
+  if (!metadata || metadata.app !== 'chat-cvt' || !READ_VERSIONS.has(metadata.v) || !workflow.tags?.includes(HEAD_TAG)) return null;
   if (typeof metadata.conversationId !== 'string' || !Array.isArray(metadata.turns)) return null;
-  return metadata as ConversationMetadata;
+  return metadata as StoredConversationMetadata;
 }
 
 export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
@@ -391,11 +399,106 @@ export function jobMetadataOf(workflow: Workflow): JobMetadata | null {
   return { ...(metadata as JobMetadata), seq: Number(metadata.seq) };
 }
 
-export function turnFrom(turn: SavedTurn): Turn {
+/**
+ * How long after its latest save a reply read back cut off still counts as running elsewhere: another
+ * tab or window (or, later, a server) may be running it. A v2 save is made only as the reply starts and
+ * a v3 one after each step, so for v2 this is a guess at a whole reply and for v3 at one step. Past it,
+ * the reply is taken as gone: asking again is offered, and a v3 reply with finished steps can Continue.
+ * A dead reply read as live only waits; a live one read as dead invites a second run that is paid twice,
+ * so this errs long.
+ */
+export const LIVE_REPLY_MS = 5 * 60_000;
+
+/**
+ * How far ahead of this page's clock a save time may be and still be believed: the clocks of two
+ * devices differ by a little. A save further ahead was made by a clock that is wrong, so when it was
+ * made is unknown, and it reads as gone. One that is ahead by less counts from now, so it reads live
+ * for at most this plus {@link LIVE_REPLY_MS}.
+ */
+export const SAVE_CLOCK_SKEW_MS = 60_000;
+
+/** The longest one wait for a live reply to go past may be: a longer one is cut and waited again. */
+export const LIVE_REDRAW_MAX_MS = 60_000;
+
+/** When the reply's latest save was made (ms since the epoch), as far as it can be believed; `undefined` when it cannot. */
+function savedTime(turn: Turn, now: number): number | undefined {
+  const { status, error, savedAt } = turn.assistant;
+  if (status !== 'error' || error !== CUT_OFF || savedAt === undefined) return undefined;
+  const at = Date.parse(savedAt);
+  if (Number.isNaN(at) || at > now + SAVE_CLOCK_SKEW_MS) return Number.NaN;
+  return Math.min(at, now);
+}
+
+/**
+ * For the latest turn read back cut off with the time of its save (`assistant.savedAt`): `live` while
+ * that save is under {@link LIVE_REPLY_MS} old, `stale` after, or when its time cannot be read or is
+ * further ahead than {@link SAVE_CLOCK_SKEW_MS}. `undefined` for every other reply. The one rule for
+ * both the note shown and whether asking again is allowed.
+ */
+export function replyElsewhere(turn: Turn, now: number = Date.now()): 'live' | 'stale' | undefined {
+  const at = savedTime(turn, now);
+  if (at === undefined) return undefined;
+  return !Number.isNaN(at) && now - at < LIVE_REPLY_MS ? 'live' : 'stale';
+}
+
+/** When a `live` reply (see {@link replyElsewhere}) turns `stale` (ms since the epoch); `undefined` otherwise. */
+export function liveUntil(turn: Turn, now: number = Date.now()): number | undefined {
+  return replyElsewhere(turn, now) === 'live' ? savedTime(turn, now)! + LIVE_REPLY_MS : undefined;
+}
+
+/**
+ * How long to wait before drawing a `live` reply again to see whether it went past: just past its
+ * {@link liveUntil}, at most {@link LIVE_REDRAW_MAX_MS} (then it is waited again). `undefined` otherwise.
+ */
+export function liveRedrawIn(turn: Turn, now: number = Date.now()): number | undefined {
+  const until = liveUntil(turn, now);
+  return until === undefined ? undefined : Math.min(LIVE_REDRAW_MAX_MS, Math.max(0, until - now) + 250);
+}
+
+/**
+ * Where a v3 reply saved `running` can carry on from: its finished steps, sent as they are, so no tool
+ * in them runs again. None unless its save time reads, it has steps, every tool call in them comes with
+ * its result (a call without one may have run, and asking again could run it twice), and it has steps
+ * left to take. A step is one assistant message (with its tools' results after it).
+ */
+function continuePoint(messages: ModelMessage[], savedAt: unknown): ResumePoint | undefined {
+  const at = typeof savedAt === 'string' ? Date.parse(savedAt) : NaN;
+  if (Number.isNaN(at) || messages.length === 0) return undefined;
+  const calls = new Set<string>();
+  const results = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === 'tool-call') calls.add(part.toolCallId);
+      else if (part.type === 'tool-result') results.add(part.toolCallId);
+    }
+  }
+  if ([...calls].some((id) => !results.has(id))) return undefined;
+  const steps = messages.filter((message) => message.role === 'assistant').length;
+  if (steps === 0 || steps >= stepLimit()) return undefined;
+  return { messages, steps, at };
+}
+
+/**
+ * A saved turn as the chat shows it. A reply saved before it ended reads as cut off, with the time of
+ * that save (`savedAt`): with no reply saved (v2, saved as it started: the turn's start), or saved
+ * `running` (v3, after a step: its own `savedAt`) with the steps it had finished, which stay on screen.
+ * A v3 one also gets a resume point when it can carry on from them ({@link continuePoint}); whether it
+ * may, now, is {@link replyElsewhere}'s to say: not while whoever saved it may still be running it.
+ */
+export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
+  const assistant = turn.assistant;
   return {
     seq: turn.seq,
     createdAt: turn.createdAt,
     user: { content: turn.user.content, attachments: turn.user.attachments ?? [], ...(turn.user.refs ? { refs: turn.user.refs } : {}) },
-    assistant: turn.assistant ?? { messages: [], status: 'error', error: CUT_OFF },
+    assistant: !assistant ? { messages: [], status: 'error', error: CUT_OFF, savedAt: turn.createdAt } : assistant.status === 'running' ? interrupted(turn, assistant) : (assistant as Turn['assistant']),
   };
+}
+
+function interrupted(turn: SavedTurnV3, assistant: NonNullable<SavedTurnV3['assistant']>): Turn['assistant'] {
+  const messages = Array.isArray(assistant.messages) ? [...assistant.messages] : [];
+  const resume = continuePoint(messages, assistant.savedAt);
+  const savedAt = typeof assistant.savedAt === 'string' ? assistant.savedAt : turn.createdAt;
+  return { messages, status: 'error', error: CUT_OFF, savedAt, ...(resume ? { resume, errorKind: 'interrupted' } : {}) };
 }

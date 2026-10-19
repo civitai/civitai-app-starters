@@ -7,7 +7,7 @@ import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
-import { CUT_OFF } from '../store/thread-store.js';
+import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
@@ -181,6 +181,46 @@ export class CivitaiChatTurn extends LightElement {
     return !last || (last.kind === 'tool' && last.state !== 'calling');
   }
 
+  /** Draws the turn again once a reply that may still be running elsewhere stops counting as live. */
+  #liveTimer?: ReturnType<typeof setTimeout>;
+  /** This turn was last drawn as still running elsewhere. */
+  #shownLive = false;
+
+  /**
+   * A reply read back from a save made before it ended. While that save is recent (the latest turn
+   * only) whoever made it may still be running it, so nothing is offered: asking again would pay for
+   * it twice. After, it is gone: a v3 reply with finished steps it can carry on from offers Continue
+   * (Retry's path, from those steps), and any other says it was cut off.
+   */
+  #cutOff(): TemplateResult {
+    const state = this.latest ? replyElsewhere(this.turn) : undefined;
+    if (state === 'live') return html`<div class="cvt-note cvt-elsewhere" role="status">Still replying in another tab or window…</div>`;
+    if (state === 'stale' && this.turn.assistant.resume !== undefined && this.turn.assistant.errorKind === 'interrupted') {
+      return html`<div class="cvt-note cvt-interrupted">
+        This reply stopped before it finished.
+        <civitai-button class="cvt-continue-saved" size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-retry')}>Continue</civitai-button>
+      </div>`;
+    }
+    return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+  }
+
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    clearTimeout(this.#liveTimer);
+    const state = this.latest && !this.live ? replyElsewhere(this.turn) : undefined;
+    // Drawn live before and gone now: the chat reads itself once more, as the reply may have ended or
+    // saved a newer step meanwhile. Whichever comes first draws it again: the timer, or the chat on wake.
+    if (this.#shownLive && state === 'stale') emit(this, 'cvt-recheck');
+    this.#shownLive = state === 'live';
+    const wait = this.#shownLive ? liveRedrawIn(this.turn) : undefined;
+    if (wait !== undefined) this.#liveTimer = setTimeout(() => this.requestUpdate(), wait);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this.#liveTimer);
+  }
+
   #footer(): TemplateResult | typeof nothing {
     const { status, error, errorDetail, errorTrace } = this.turn.assistant;
     if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
@@ -193,7 +233,7 @@ export class CivitaiChatTurn extends LightElement {
         ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue')}>Continue</civitai-button>` : nothing}
       </div>`;
     }
-    if (status === 'error' && error === CUT_OFF) return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+    if (status === 'error' && error === CUT_OFF) return this.#cutOff();
     if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
       return html`<civitai-alert color="info">
         ${error} You can keep going on Buzz (about 1 per reply).

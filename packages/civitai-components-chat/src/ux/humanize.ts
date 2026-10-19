@@ -7,7 +7,8 @@ export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'insuffic
  * moment. Not a refusal (sign-in, Buzz, the safety filter), which asking again would only repeat, nor
  * a failure of unknown cause.
  */
-export const RETRYABLE_ERRORS: ReadonlySet<string> = new Set(['network', 'rate_limit', 'unavailable', 'assistant_unavailable']);
+/** `interrupted`: a reply read back from a save made while it ran, which can carry on from its finished steps (see `turnFrom`). */
+export const RETRYABLE_ERRORS: ReadonlySet<string> = new Set(['network', 'rate_limit', 'unavailable', 'assistant_unavailable', 'interrupted']);
 
 export interface HumanError {
   kind: ErrorKind;
