@@ -1,0 +1,5 @@
+---
+'@civitai/components-chat': minor
+---
+
+**A page can let the viewer see what the assistant called: `tool-calls="details"` (or `toolCalls = 'details'`).** Every tool call that would otherwise show nothing once finished stays in the thread as a row: the tool's name (and its server's id, for an added MCP server's tool), a short line of its input, and Running, Done or Failed. Clicking or tapping it opens the whole input and the result or error, pretty-printed in a box that scrolls instead of widening the thread, cut past 50,000 characters. Calls in a row, with no words between them, fold into one "Used 3 tools" row ("Using 3 tools…" while one still runs) that opens to the calls; a single call is not grouped. The rows are buttons with `aria-expanded`, and opening animates only without `prefers-reduced-motion`. A call with a view (`toolViews` or `tools` `render`, the generation, panel, post and choice cards, model cards) shows as before and ends a run, unless its `render` returns `undefined`, which leaves it a row; and a chat reopened from storage groups the same as live. The default, `activity`, leaves the thread exactly as it was. New type `ChatToolCallsMode`.

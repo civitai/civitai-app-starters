@@ -869,6 +869,178 @@ civitai-chat-panel {
   overflow-wrap: anywhere;
 }
 
+/* tool-calls="details": a row per call, and calls in a row as one group. Never wider than the thread. */
+.cvt-call,
+.cvt-tool-group {
+  justify-self: stretch;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cvt-tool-group {
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-call-head,
+.cvt-tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-tool-group-head {
+  min-height: 36px;
+}
+
+.cvt-call-head:hover,
+.cvt-tool-group-head:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-head:focus-visible,
+.cvt-tool-group-head:focus-visible,
+.cvt-call-pre:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-call-chevron {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+
+[aria-expanded='true'] > .cvt-call-chevron {
+  transform: rotate(45deg);
+}
+
+.cvt-call-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+}
+
+.cvt-call-server {
+  flex: none;
+  max-width: 25%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--civitai-color-surface-2);
+  font-size: 11px;
+}
+
+.cvt-call-summary,
+.cvt-tool-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-tool-group-label {
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-state {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.cvt-call[data-state='error'] > .cvt-call-head .cvt-call-state,
+.cvt-tool-group[data-state='error'] > .cvt-tool-group-head .cvt-call-state {
+  color: var(--civitai-color-error);
+}
+
+.cvt-call[data-state='calling'] > .cvt-call-head .cvt-call-state::before,
+.cvt-tool-group[data-state='calling'] > .cvt-tool-group-head .cvt-tool-group-label::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+/* Opens by animating the row track from 0 to its content's height. */
+.cvt-call-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.cvt-call-body[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.cvt-call-inner {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cvt-tool-group-list {
+  display: grid;
+  gap: 2px;
+  padding: 0 4px 4px;
+}
+
+.cvt-call-value {
+  min-width: 0;
+  padding: 4px 8px 4px 22px;
+}
+
+.cvt-call-label {
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-call-pre {
+  max-width: 100%;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cvt-panel-chip {
   display: inline-flex;
   align-items: center;

@@ -1,8 +1,9 @@
-import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
 import type { TurnPart } from '../agent/parts.js';
+import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
@@ -14,6 +15,7 @@ import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
+import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
 import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
 function failureOf(part: ToolPart): string | undefined {
@@ -41,6 +43,8 @@ export class CivitaiChatTurn extends LightElement {
     models: { attribute: false },
     resolve: { attribute: false },
     views: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
   };
 
   declare turn: Turn;
@@ -61,6 +65,27 @@ export class CivitaiChatTurn extends LightElement {
   declare resolve: (id: string) => Attachment | undefined;
   /** The embedding page's views, by tool name. */
   declare views: Record<string, ChatToolView>;
+  /** `details`: calls with no view of their own show as rows to open, and calls in a row as one group. */
+  declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids: a call row shows the server of one of their tools. */
+  declare mcpServerIds: ReadonlySet<string>;
+
+  /** Call rows and groups the viewer opened, by key; kept while the turn is on the page. */
+  #open = new Set<string>();
+  #opened = new Set<string>();
+  #rows: CallRowState = {
+    isOpen: (key) => this.#open.has(key),
+    wasOpened: (key) => this.#opened.has(key),
+    toggle: (key) => {
+      if (!this.#open.delete(key)) {
+        this.#open.add(key);
+        this.#opened.add(key);
+      }
+      this.requestUpdate();
+    },
+    failure: (part) => failureOf(part),
+    servers: () => this.mcpServerIds,
+  };
 
   constructor() {
     super();
@@ -70,6 +95,8 @@ export class CivitaiChatTurn extends LightElement {
     this.canRetry = false;
     this.files = () => [];
     this.views = {};
+    this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
   }
 
   #userFiles(): StripItem[] {
@@ -81,16 +108,54 @@ export class CivitaiChatTurn extends LightElement {
     return [...uploads, ...refs];
   }
 
-  #tool(part: ToolPart): unknown {
+  /**
+   * What a call shows of its own, or `undefined` when nothing would show it: the page's or the built-in
+   * `render` (returning `undefined` keeps the default), else model cards. A failed call shows its
+   * "didn't work" note instead; `failedNote` says whether it does so without a `render` (`activity`).
+   */
+  #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
     if (failure) {
+      if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
     const rendered = view?.render?.(part, this.#context());
-    if (rendered !== undefined) return rendered;
-    return modelCards(part, this.models) ?? (part.state === 'calling' ? html`<div class="cvt-activity">${view?.activity ?? 'Working on it…'}</div>` : nothing);
+    return rendered !== undefined ? rendered : modelCards(part, this.models);
+  }
+
+  #tool(part: ToolPart): unknown {
+    const own = this.#own(part, true);
+    if (own !== undefined) return own;
+    return part.state === 'calling' ? html`<div class="cvt-activity">${viewFor(part.toolName, this.views)?.activity ?? 'Working on it…'}</div>` : nothing;
+  }
+
+  /**
+   * With `details`, a call shows as a row when it shows nothing of its own (`#own` is `undefined`).
+   * Each call is rendered once, and that one result both decides the grouping and is what shows.
+   */
+  #detailed(md: (text: string) => unknown): unknown {
+    const own = new Map<ToolPart, unknown>();
+    for (const part of this.parts) if (part.kind === 'tool') own.set(part, this.#own(part, false));
+    return groupToolCalls(this.parts, (part) => own.get(part) === undefined).map((segment) => {
+      if (segment.kind === 'part') return segment.part.kind === 'text' ? md(segment.part.text) : own.get(segment.part);
+      const first = segment.calls[0]!;
+      if (segment.calls.length === 1) return renderCall(first, this.#rows);
+      // A lone row the viewer opened, now the first of a group as the reply streams: the group opens with it.
+      const group = `group:${first.toolCallId}`;
+      if (!this.#opened.has(group) && this.#open.has(`call:${first.toolCallId}`)) {
+        this.#open.add(group);
+        this.#opened.add(group);
+      }
+      return renderCallGroup(segment.calls, this.#rows);
+    });
+  }
+
+  #assistantParts(): unknown {
+    const md = (text: string) => html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`;
+    if (this.toolCalls === 'details') return this.#detailed(md);
+    return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }
 
   #context(): ToolViewContext {
@@ -158,6 +223,18 @@ export class CivitaiChatTurn extends LightElement {
     return nothing;
   }
 
+  // A row that becomes part of a group as the reply streams is drawn anew inside it: a viewer on its
+  // button stays on the same call's button rather than falling to the page.
+  protected override update(changed: PropertyValues): void {
+    const root = this.getRootNode() as Document | ShadowRoot;
+    const focused = root.activeElement;
+    const call = focused instanceof HTMLElement && this.contains(focused) && focused.classList.contains('cvt-call-head') ? focused.dataset.call : undefined;
+    super.update(changed);
+    if (call === undefined || focused!.isConnected) return;
+    const again = [...this.querySelectorAll<HTMLElement>('.cvt-call-head')].find((head) => head.dataset.call === call);
+    again?.focus();
+  }
+
   override render(): TemplateResult {
     const files = this.#userFiles();
     return html`<div class="cvt-user">
@@ -165,7 +242,7 @@ export class CivitaiChatTurn extends LightElement {
         ${this.turn.user.content ? html`<div class="cvt-bubble">${this.turn.user.content}</div>` : nothing}
       </div>
       <div class="cvt-assistant">
-        ${this.parts.map((part) => (part.kind === 'text' ? html`<div class="cvt-md">${unsafeHTML(renderMarkdown(part.text))}</div>` : this.#tool(part)))}
+        ${this.#assistantParts()}
         ${this.#footer()}
       </div>`;
   }

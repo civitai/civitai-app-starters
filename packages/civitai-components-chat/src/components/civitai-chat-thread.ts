@@ -11,6 +11,7 @@ import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
 import { LightElement, emit } from './light.js';
+import type { ToolCallsMode } from './tool-calls.js';
 
 const NEAR_BOTTOM_PX = 48;
 /** How long a new live region is on the page, empty, before its first words go in. */
@@ -38,6 +39,8 @@ export class CivitaiChatThread extends LightElement {
     models: { attribute: false },
     resolve: { attribute: false },
     views: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -56,6 +59,9 @@ export class CivitaiChatThread extends LightElement {
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
   declare views: Record<string, ChatToolView>;
+  declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids, so a call row can show which one a tool is from. */
+  declare mcpServerIds: ReadonlySet<string>;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
   declare queued: QueuedView | null;
@@ -75,6 +81,8 @@ export class CivitaiChatThread extends LightElement {
   constructor() {
     super();
     this.views = {};
+    this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
     this.canRetry = false;
     this.queued = null;
     this.turns = [];
@@ -201,6 +209,8 @@ export class CivitaiChatThread extends LightElement {
                 .models=${this.models}
                 .resolve=${this.resolve}
                 .views=${this.views}
+                .toolCalls=${this.toolCalls}
+                .mcpServerIds=${this.mcpServerIds}
               ></civitai-chat-turn>`,
           )}
           ${this.#queuedMessage()}
