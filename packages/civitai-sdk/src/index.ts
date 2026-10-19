@@ -23,7 +23,6 @@ export type {
   StorageMode,
   TokenInitializeOptions,
 } from './app/index.js';
-export type { LocalPreviewManifest } from './doc-store/local-preview.js';
 
 export { createSignIn, SignInError } from './sign-in/index.js';
 export type { SignIn, SignInOptions } from './sign-in/index.js';

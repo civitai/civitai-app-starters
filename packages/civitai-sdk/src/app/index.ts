@@ -22,11 +22,7 @@ import {
   type SharedStorageClient,
 } from '../shared-storage/index.js';
 import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
-import {
-  createLocalPreviewStorage,
-  readInjectedManifest,
-  type LocalPreviewManifest,
-} from '../doc-store/local-preview.js';
+import { createLocalPreviewStorage, readInjectedManifest } from '../doc-store/local-preview.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
 import { createSubListingsClient, type SubListingsClient } from '../sub-listings/index.js';
@@ -159,14 +155,6 @@ export interface BlockInitializeOptions extends ClientOptions {
   signal?: AbortSignal;
   /** Replaces the page's own bridge, e.g. with `createFakeTransport()` in a test. */
   transport?: BlockTransport;
-  /**
-   * Used ONLY when the host marks the frame `storageMode: 'local-preview'`.
-   * `manifest` is the app's own `scopes` and `storage` declarations, which the
-   * local store enforces. `blockManifestPlugin()` from `@civitai/app-sdk/vite`
-   * supplies it on the dev server, so a Vite app passes nothing; pass it
-   * yourself only without that plugin. Never read outside a local preview.
-   */
-  localPreview?: { manifest?: LocalPreviewManifest };
 }
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {}
@@ -195,10 +183,9 @@ export async function initialize(
   // real route's `insufficient_scope` rather than a silent local store.
   const local =
     snapshot().storageMode === 'local-preview'
-      ? await createLocalPreviewStorage(
-          options.localPreview?.manifest ?? readInjectedManifest(),
-          snapshot().viewer,
-        )
+      ? // The manifest arrives only from `blockManifestPlugin()`'s dev-server
+        // global: there is deliberately no option to pass one.
+        await createLocalPreviewStorage(readInjectedManifest(), snapshot().viewer)
       : undefined;
   return {
     ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow, holdsOAuthTokenNow, local),

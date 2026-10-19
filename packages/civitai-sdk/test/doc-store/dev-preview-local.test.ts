@@ -5,10 +5,11 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { build, type Rollup } from 'vite';
 
-import { initialize, StorageError } from '../../src/index.js';
+import { initialize, StorageError, type BlockInitializeOptions } from '../../src/index.js';
 import { snapshotFromInit, type BlockSnapshot } from '../../src/core/transport.js';
 import type { BlockInitPayload } from '../../src/core/handshake.js';
 import { INSUFFICIENT_SCOPE_HINT } from '../../src/doc-store/index.js';
+import { isTransient } from '../../src/http/retry.js';
 import { LOCAL_PREVIEW_MANIFEST_GLOBAL } from '../../src/doc-store/local-preview.js';
 import { createFakeTransport } from '../../src/testing.js';
 import { fakeFetch, json, type FetchCall } from '../support/fake-fetch.js';
@@ -67,18 +68,23 @@ function realRoutes() {
 
 const settle = <T>(p: Promise<T>) => p.then((value) => ({ value }), (error: unknown) => ({ error }));
 
+/**
+ * What `blockManifestPlugin()` does on the dev server — the ONLY way a manifest
+ * reaches the SDK (there is no `initialize()` option). Cleared after each test.
+ */
+function injectManifest(manifest: unknown) {
+  (globalThis as Record<string, unknown>)[LOCAL_PREVIEW_MANIFEST_GLOBAL] = manifest;
+}
+
 afterEach(() => {
   delete (globalThis as Record<string, unknown>)[LOCAL_PREVIEW_MANIFEST_GLOBAL];
 });
 
 describe('dev-tunnel preview: the document store is local', () => {
   it('reads its own writes through app.storage.collection(name) and sends nothing', async () => {
+    injectManifest(MANIFEST);
     const { fetch, calls } = realRoutes();
-    const app = await initialize({
-      transport: block({ storageMode: 'local-preview' }),
-      fetch,
-      localPreview: { manifest: MANIFEST },
-    });
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
 
     const notes = app.storage.collection<{ text: string }>('notes');
     const put = await settle(notes.put('first', { text: 'hello-7c1e' }));
@@ -92,23 +98,25 @@ describe('dev-tunnel preview: the document store is local', () => {
     expect(got).toMatchObject({ value: { key: 'first', version: 1, data: { text: 'hello-7c1e' } } });
   });
 
-  it('takes the manifest the Vite plugin injected when none is passed', async () => {
-    (globalThis as Record<string, unknown>)[LOCAL_PREVIEW_MANIFEST_GLOBAL] = MANIFEST;
+  it('offers no initialize() option for the manifest: only the injected global counts', async () => {
+    // @ts-expect-error the option was deleted before it was ever published
+    const typed: BlockInitializeOptions = { localPreview: { manifest: MANIFEST } };
+    void typed;
     const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    // An untyped object, so the runtime path is exercised as a JS caller would.
+    const options = { transport: block({ storageMode: 'local-preview' }), fetch, localPreview: { manifest: MANIFEST } };
+    const app = await initialize(options);
 
-    await app.storage.collection('notes').put('k', { n: 1 });
-    await expect(app.storage.collection('notes').get('k')).resolves.toMatchObject({ data: { n: 1 } });
+    await expect(app.storage.collection('notes').put('k', { n: 1 })).rejects.toMatchObject({
+      code: 'local_preview_no_manifest',
+    });
     expect(calls).toHaveLength(0);
   });
 
   it('enforces the LOCAL manifest: an undeclared collection is refused locally', async () => {
+    injectManifest(MANIFEST);
     const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({
-      transport: block({ storageMode: 'local-preview' }),
-      fetch,
-      localPreview: { manifest: MANIFEST },
-    });
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
 
     await expect(app.storage.collection('other').put('k', { n: 1 })).rejects.toMatchObject({
       name: 'StorageError',
@@ -118,12 +126,9 @@ describe('dev-tunnel preview: the document store is local', () => {
   });
 
   it('enforces the LOCAL manifest: no `apps:storage` declared is insufficient_scope, locally', async () => {
+    injectManifest({ ...MANIFEST, scopes: ['user:read:self'] });
     const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({
-      transport: block({ storageMode: 'local-preview' }),
-      fetch,
-      localPreview: { manifest: { ...MANIFEST, scopes: ['user:read:self'] } },
-    });
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
 
     await expect(app.storage.collection('notes').put('k', { n: 1 })).rejects.toMatchObject({
       code: 'insufficient_scope',
@@ -132,9 +137,10 @@ describe('dev-tunnel preview: the document store is local', () => {
   });
 
   it('is latched at init: the snapshot changing later does not move the store', async () => {
+    injectManifest(MANIFEST);
     const transport = block({ storageMode: 'local-preview' });
     const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({ transport, fetch, localPreview: { manifest: MANIFEST } });
+    const app = await initialize({ transport, fetch });
 
     transport.setSnapshot({ storageMode: undefined });
     await app.storage.collection('notes').put('k', { n: 2 });
@@ -144,12 +150,9 @@ describe('dev-tunnel preview: the document store is local', () => {
   });
 
   it('leaves the deprecated key/value store on its real route (out of scope)', async () => {
+    injectManifest(MANIFEST);
     const { fetch, calls } = fakeFetch([() => json(200, { value: null })]);
-    const app = await initialize({
-      transport: block({ storageMode: 'local-preview' }),
-      fetch,
-      localPreview: { manifest: MANIFEST },
-    });
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
 
     await app.storage.get('legacy');
     expect(calls).toHaveLength(1);
@@ -172,33 +175,31 @@ describe('dev-tunnel preview without a usable manifest', () => {
     ]) {
       const error = await attempt().catch((e: unknown) => e);
       expect(error).toBeInstanceOf(StorageError);
-      expect(error).toMatchObject({ code: 'local_preview_no_manifest' });
+      // 404, not a 5xx: a setup mistake no wait fixes must not read as retryable.
+      expect(error).toMatchObject({ code: 'local_preview_no_manifest', status: 404 });
+      expect(isTransient(error)).toBe(false);
       expect((error as Error).message).toContain('blockManifestPlugin()');
     }
     expect(calls).toHaveLength(0);
   });
 
   it('a declaration the local store cannot serve is its own local error, and init still succeeds', async () => {
+    injectManifest({ ...MANIFEST, storage: { collections: { board: { visibility: 'shared', write: 'anyone' } } } });
     const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({
-      transport: block({ storageMode: 'local-preview' }),
-      fetch,
-      localPreview: {
-        manifest: { ...MANIFEST, storage: { collections: { board: { visibility: 'shared', write: 'anyone' } } } },
-      },
-    });
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
 
-    await expect(app.storage.collection('board').list()).rejects.toMatchObject({
-      code: 'local_preview_invalid_manifest',
-    });
+    const error = await app.storage.collection('board').list().catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'local_preview_invalid_manifest', status: 404 });
+    expect(isTransient(error)).toBe(false);
     expect(calls).toHaveLength(0);
   });
 });
 
 describe('without the signal: the real route, exactly as before', () => {
   it('control: the same block calls the real route once and surfaces insufficient_scope', async () => {
+    injectManifest(MANIFEST);
     const { fetch, calls } = fakeFetch([insufficientScope]);
-    const app = await initialize({ transport: block(), fetch, localPreview: { manifest: MANIFEST } });
+    const app = await initialize({ transport: block(), fetch });
 
     expect(app.storage.mode).toBe('remote');
     const error = await app.storage
@@ -221,7 +222,7 @@ describe('without the signal: the real route, exactly as before', () => {
     // Everything the local store would need is present — the manifest via the
     // global the plugin writes — and the token lacks the scope. Only the signal is
     // missing, so nothing may switch.
-    (globalThis as Record<string, unknown>)[LOCAL_PREVIEW_MANIFEST_GLOBAL] = MANIFEST;
+    injectManifest(MANIFEST);
     const { fetch, calls } = fakeFetch([insufficientScope, insufficientScope]);
     const app = await initialize({ transport: block(), fetch });
 

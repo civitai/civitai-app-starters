@@ -43,7 +43,18 @@ const NO_MANIFEST =
   "local preview storage: the host marked this frame `storageMode: 'local-preview'` (a dev-tunnel preview, " +
   'which has no server-side storage), and no block.manifest.json reached @civitai/sdk to say which ' +
   'collections exist. Add `blockManifestPlugin()` from `@civitai/app-sdk/vite` to vite.config and run the ' +
-  'dev server, or pass `initialize({ localPreview: { manifest } })`. Nothing was sent to the server.';
+  'Vite dev server. Nothing was sent to the server.';
+
+/**
+ * The status of both local errors. A missing or unservable manifest is a SETUP
+ * mistake that no wait fixes, so it must not be a status `isTransient`
+ * (`src/http/retry.ts`) reads as retryable — that is every 5xx and 429. 404 is
+ * the status the server gives the nearest case it has, `collection_not_declared`:
+ * with no usable manifest, no collection is declared. `get` still rejects (it
+ * reads only the code `not_found` as "no document"), and the `code` tells the
+ * two apart.
+ */
+export const LOCAL_PREVIEW_ERROR_STATUS = 404;
 
 /**
  * Builds the preview's document store. Never throws: a missing or unusable
@@ -71,14 +82,12 @@ export async function createLocalPreviewStorage(
   }
 }
 
-/**
- * A store that refuses every call with one LOCAL error. 503 so an app that treats
- * a 5xx as "storage unavailable" degrades as it would for `storage_disabled`;
- * the `code` is what tells the two apart.
- */
+/** A store that refuses every call with one LOCAL, non-retryable error. */
 function refusingStorage(code: string, message: string): DocumentStorage {
   const refuse = (): Promise<never> =>
-    Promise.reject(new StorageError(503, code, message, { code, message, error: message }));
+    Promise.reject(
+      new StorageError(LOCAL_PREVIEW_ERROR_STATUS, code, message, { code, message, error: message }),
+    );
   // Every method of `StorageCollection`, so `satisfies` fails the build if one is added.
   const collection = {
     get: refuse,

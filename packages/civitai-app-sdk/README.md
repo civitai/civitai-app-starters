@@ -413,8 +413,8 @@ emits it). `@civitai/sdk` reads it in a dev-tunnel preview, where the host marks
 frame `storageMode: 'local-preview'` and `app.storage.collection(name)` is served by
 an in-memory store that enforces these declarations — see "In a dev-tunnel preview"
 in `@civitai/sdk`'s README. Nothing else of the manifest is exposed. Without the
-plugin, a preview's document store refuses every call `local_preview_no_manifest`
-unless the app passes `initialize({ localPreview: { manifest } })`.
+plugin, a preview's document store refuses every call `local_preview_no_manifest`:
+this plugin is the only way the manifest reaches `@civitai/sdk`.
 
 ### Web storage in a block (`@civitai/app-sdk/safe-storage`)
 

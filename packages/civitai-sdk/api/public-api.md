@@ -131,25 +131,9 @@ export interface BlockInitializeOptions extends ClientOptions {
     signal?: AbortSignal;
     /** Replaces the page's own bridge, e.g. with `createFakeTransport()` in a test. */
     transport?: BlockTransport;
-    /**
-     * Used ONLY when the host marks the frame `storageMode: 'local-preview'`.
-     * `manifest` is the app's own `scopes` and `storage` declarations, which the
-     * local store enforces. `blockManifestPlugin()` from `@civitai/app-sdk/vite`
-     * supplies it on the dev server, so a Vite app passes nothing; pass it
-     * yourself only without that plugin. Never read outside a local preview.
-     */
-    localPreview?: {
-        manifest?: LocalPreviewManifest;
-    };
 }
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {
-}
-
-/** What a local preview reads from the manifest: the scopes it declares and its `storage` block. */
-export interface LocalPreviewManifest {
-    scopes?: readonly string[];
-    storage?: unknown;
 }
 
 /**

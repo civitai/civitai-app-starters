@@ -302,11 +302,12 @@ if (app.storage.mode === 'local-preview') {
 
 - **Your LOCAL manifest decides the collections**, not the server's copy:
   `blockManifestPlugin()` from `@civitai/app-sdk/vite` hands its `scopes` and
-  `storage` to the page on the dev server (never in a build). Without that plugin,
-  pass them yourself: `initialize({ localPreview: { manifest } })`. With neither,
-  every document-store call rejects `local_preview_no_manifest` (a `StorageError`,
-  status 503, sent nowhere); a declaration the local store cannot serve rejects
-  `local_preview_invalid_manifest`. Neither falls back to the real routes.
+  `storage` to the page on the dev server (never in a build); that is the only way
+  the manifest reaches the SDK. Without it, every document-store call rejects
+  `local_preview_no_manifest` (a `StorageError`, status 404, sent nowhere); a
+  declaration the local store cannot serve rejects `local_preview_invalid_manifest`
+  (also 404). Both are setup mistakes, so neither is a status this SDK treats as
+  retryable, and neither falls back to the real routes.
 - **One viewer, one tab, gone on reload.** It cannot show other people's entries,
   real vote totals, ranking across users, the minimum-trust gate on shared writes,
   or moderation of real content.

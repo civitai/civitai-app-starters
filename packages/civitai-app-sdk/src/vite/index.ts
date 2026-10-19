@@ -60,11 +60,13 @@ export interface BlockManifestPluginOptions {
  * - a `define` substitution has to reach `@civitai/sdk` inside `node_modules`,
  *   where it depends on how the dependency optimizer pre-bundles it, and it would
  *   rewrite production builds too;
- * - an `initialize()` option needs every app to import its manifest and pass it.
+ * - an `initialize()` option needs every app to import its manifest and pass it,
+ *   and would be public API with no caller outside tests: both real preview
+ *   paths run this plugin on the Vite dev server.
  * The `<script>` is added on the DEV SERVER only (`vite build` never emits it),
  * needs no change in any app, and the SDK reads it only when the host marks the
- * frame a local preview. `initialize({ localPreview: { manifest } })` remains for
- * an app built without this plugin.
+ * frame a local preview. It is the ONLY way the manifest reaches the SDK: an app
+ * without this plugin gets the SDK's `local_preview_no_manifest` error.
  */
 export const LOCAL_PREVIEW_MANIFEST_GLOBAL = '__CIVITAI_LOCAL_PREVIEW_MANIFEST__';
 
