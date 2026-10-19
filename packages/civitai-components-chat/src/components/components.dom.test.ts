@@ -411,7 +411,7 @@ describe('civitai-chat-settings-dialog', () => {
 
   it('offers free replies first, free only, or always paid, with what is left', async () => {
     const { changes, select, pick } = await settingsDialog({ left: 198 });
-    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'Default', 'Smart', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'Qwen3.8-27B-NVFP4-RTX5090 · default', 'Smart', 'Custom…']);
     expect(select.value).toBe('auto');
     expect(select.getAttribute('description')).toBe('Free replies while they last (198 left), then about 1 Buzz a reply.');
 
@@ -423,9 +423,22 @@ describe('civitai-chat-settings-dialog', () => {
     ]);
   });
 
+  it("names the default option by the model list's name for the default model, never the bare word Default", async () => {
+    const dialog = await mount('civitai-chat-settings-dialog', {
+      open: true,
+      settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
+      models: [],
+      freeAllowance: null,
+      defaultModelName: 'Lumen Six',
+    });
+    const select = dialog.querySelector<HTMLInputElement & { data: { value: string; label: string }[] }>('civitai-select[label=Assistant]')!;
+    expect(select.data.map((option) => option.label)).toEqual(['Lumen Six · default', 'Custom…']);
+    expect(select.data[0]!.value).toBe('');
+  });
+
   it('lets the viewer pick a listed model or type any model id, and drops the free options when there are none', async () => {
     const { dialog, changes, select, pick } = await settingsDialog(null);
-    expect(select.data.map((option) => option.label)).toEqual(['Default', 'Smart', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['Qwen3.8-27B-NVFP4-RTX5090 · default', 'Smart', 'Custom…']);
 
     await pick('z-ai/glm-5.3-flash');
     expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash', assistantTier: 'auto' }]);
@@ -447,7 +460,7 @@ describe('civitai-chat-settings-dialog', () => {
     const changes: unknown[] = [];
     dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
     const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
-    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'Default', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'Qwen3.8-27B-NVFP4-RTX5090 · default', 'Custom…']);
     expect(select.value).toBe('free');
     expect(select.getAttribute('description')).toContain('replies are refused');
 
@@ -482,7 +495,7 @@ describe('civitai-chat-settings-dialog', () => {
 
 describe('civitai-chat-model-picker', () => {
   const models = [
-    { id: 'urn:air:page:default', label: 'Page Model · default', source: 'default' as const },
+    { id: 'urn:air:page:default', label: 'Page Model', source: 'default' as const },
     { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', source: 'openrouter' as const, pricePerMillion: 0.4 },
     { id: 'q/quill', label: 'Quill', source: 'openrouter' as const, pricePerMillion: 1.3 },
     // The longer name is listed first, so only an exact name match picks GPT-4o itself.
@@ -556,7 +569,7 @@ describe('civitai-chat-model-picker', () => {
 
 describe('civitai-chat-model-picker: the default by name', () => {
   const models = [
-    { id: 'urn:air:page:pm', label: 'Page Model · default', source: 'default' as const },
+    { id: 'urn:air:page:pm', label: 'Page Model', source: 'default' as const },
     { id: 'v/violet', label: 'Violet 7', source: 'openrouter' as const, pricePerMillion: 0.9 },
   ];
   // The chip's visible text: the name, then the marker in a span of its own that never truncates.
@@ -584,27 +597,26 @@ describe('civitai-chat-model-picker: the default by name', () => {
     expect(chipName(picker)).toBe('Orchid-12B · default');
   });
 
-  it("finds the default row by its model's name and takes it, on Enter, as following the default", async () => {
+  it('takes the default row\'s whole name on Enter as following the default, and part of it as a search', async () => {
     const picker = await mount('civitai-chat-model-picker', { models, value: 'v/violet', own: true });
     const picks: unknown[] = [];
     picker.addEventListener('cvt-model-pick', (e) => picks.push((e as CustomEvent<{ model?: string }>).detail.model));
-    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
-    await picker.updateComplete;
-    const search = picker.querySelector<HTMLInputElement>('.cvt-model-search')!;
-    search.value = 'page mod';
-    search.dispatchEvent(new Event('input'));
-    await picker.updateComplete;
-    expect(rowName(picker)).toBe('Page Model · default');
-    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    // Words of the marker alone do not find it: "fault" is not the model's name.
-    picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
-    await picker.updateComplete;
-    const again = picker.querySelector<HTMLInputElement>('.cvt-model-search')!;
-    again.value = 'fault';
-    again.dispatchEvent(new Event('input'));
-    await picker.updateComplete;
-    expect([...picker.querySelectorAll('.cvt-model-options .cvt-model-name')].map((name) => name.textContent)).toEqual(['Use “fault”']);
-    expect(picks).toEqual([undefined]);
+    const type = async (text: string) => {
+      picker.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+      await picker.updateComplete;
+      const search = picker.querySelector<HTMLInputElement>('.cvt-model-search')!;
+      search.value = text;
+      search.dispatchEvent(new Event('input'));
+      await picker.updateComplete;
+      const names = [...picker.querySelectorAll('.cvt-model-options .cvt-model-name')].map((name) => name.textContent);
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await picker.updateComplete;
+      return names;
+    };
+    expect(await type('Page Model · default')).toEqual(['Page Model · default']);
+    // Part of the name is a search like any other: no default row, and Enter does not pick it.
+    expect(await type('page mod')).toEqual(['Use “page mod”']);
+    expect(picks).toEqual([undefined, 'page mod']);
   });
 });
 

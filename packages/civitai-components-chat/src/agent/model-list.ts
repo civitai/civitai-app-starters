@@ -52,7 +52,7 @@ function perMillion(completion: unknown): number | undefined {
   return Math.round(perToken * 1e12) / 1e6;
 }
 
-/** What marks the default model's name in the picker: "GPT-6 Luna · default". */
+/** What marks the default model's name where it is shown: "GPT-6 Luna · default". */
 export const DEFAULT_MARKER = ' · default';
 
 /** A name with the default marker. */
@@ -96,8 +96,8 @@ export function buildModelList({
   const add = (entry: ChatModelEntry) => {
     if (!entries.has(entry.id)) entries.set(entry.id, entry);
   };
-  // The default is named like any other model (a page label for it, else OpenRouter's name, else its
-  // id made readable) and marked as the default; its name is settled once both lists are read, below.
+  // The default is named like any other model: a page label for it, else OpenRouter's name, else its
+  // id made readable. Its name is settled once both lists are read, below; `source` marks it the default.
   let defaultName = listed.find((model) => model.id === defaultModel)?.label;
   add({ id: defaultModel, label: '', source: 'default' });
   for (const model of listed) add({ id: model.id, label: model.label, source: 'listed', ...(model.note ? { note: model.note } : {}) });
@@ -135,7 +135,7 @@ export function buildModelList({
     }
     else add(entry);
   }
-  entries.get(defaultModel)!.label = defaultLabel(defaultName ?? prettyModelId(defaultModel));
+  entries.get(defaultModel)!.label = defaultName ?? prettyModelId(defaultModel);
   return [...entries.values()];
 }
 

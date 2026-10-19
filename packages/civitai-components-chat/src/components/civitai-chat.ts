@@ -1668,6 +1668,7 @@ export class CivitaiChat extends LitElement {
         .canTheme=${this.fullPage}
         .hosted=${hosted}
         .models=${chatConfig.models}
+        .defaultModelName=${(this.modelList ?? session.modelChoices()).find((model) => model.source === 'default')?.label}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
         @cvt-export=${() => this.#export()}

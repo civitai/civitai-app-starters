@@ -107,7 +107,7 @@ describe('a thread of wide content at phone width', () => {
     const scroller = root.querySelector<HTMLElement>('.cvt-thread-scroll')!;
     const list = root.querySelector<HTMLElement>('.cvt-thread-list')!;
     const pre = root.querySelector<HTMLElement>('civitai-chat-turn .cvt-md pre')!;
-    const link = [...root.querySelectorAll<HTMLElement>('civitai-chat-turn .cvt-md p')].find((p) => p.textContent?.includes('example.com'))!;
+    const link = [...root.querySelectorAll<HTMLElement>('civitai-chat-turn .cvt-md p')].find((p) => p.querySelector('a')?.getAttribute('href') === URL_TEXT)!;
     const failed = root.querySelector<HTMLElement>(`civitai-chat-turn ${TOOL_ROW[toolCalls]}`)!;
     const pieces = { pre, link, failed, bubble: root.querySelector<HTMLElement>('.cvt-user .cvt-bubble')! };
 

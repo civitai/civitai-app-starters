@@ -103,18 +103,13 @@ export class CivitaiChatModelPicker extends LightElement {
   /** The name of the model the default row follows, unmarked. */
   #defaultModelName(): string {
     const page = this.models.find((model) => model.source === 'default');
-    const id = this.defaultModel ?? page?.id ?? this.value;
-    const name = modelLabel(id, this.models);
-    return page && id === page.id && name.endsWith(DEFAULT_MARKER) ? name.slice(0, -DEFAULT_MARKER.length) : name;
+    return modelLabel(this.defaultModel ?? page?.id ?? this.value, this.models);
   }
 
-  /** The search matches the default row: "default" itself, or words of the model's name (not of the marker). */
+  /** The search means the default row: "default", or the row's whole name as shown. */
   #wantsDefault(typed: string): boolean {
     const wanted = typed.trim().toLowerCase();
-    if (wanted === 'default') return true;
-    const words = wanted.split(/\s+/).filter(Boolean);
-    const name = this.#defaultModelName().toLowerCase();
-    return words.length > 0 && words.every((word) => name.includes(word));
+    return wanted === 'default' || wanted === this.#defaultName().toLowerCase();
   }
 
   /** The models the search matches, the page's default left out: the default row stands for it. */
@@ -136,11 +131,9 @@ export class CivitaiChatModelPicker extends LightElement {
       // never swapped for a longer id it begins; anything else, like "OpenAI: GPT-4o", is a search.
       const wanted = typed.toLowerCase();
       // "default", or the default row's whole name, means what that row means: follow the viewer's default.
-      if (wanted === 'default' || wanted === this.#defaultName().toLowerCase()) return this.#pick(undefined);
+      if (this.#wantsDefault(typed)) return this.#pick(undefined);
       const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
-      // The default row is listed first, so it is the first match when the search names it.
-      if (this.#wantsDefault(typed) && !/^\S*[/:]\S*$/.test(typed)) return this.#pick(undefined);
       const [first] = this.#matches();
       if (this.noCustom) {
         if (first) this.#pick(first.id);
@@ -165,9 +158,9 @@ export class CivitaiChatModelPicker extends LightElement {
   #menu(): TemplateResult {
     const matches = this.#matches();
     const typed = this.query.trim();
-    // Typing "default" (or the default's name) shows the default row, never "default" as a model id nothing serves.
+    // Typing "default" (or the default row's whole name) shows that row, never "default" as a model id nothing serves.
     const wantsDefault = this.#wantsDefault(typed);
-    const custom = !this.noCustom && typed !== '' && typed.toLowerCase() !== 'default' && !this.models.some((model) => model.id === typed);
+    const custom = !this.noCustom && typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
     const fallback = this.defaultModel ? 'Your default, from Settings' : "The app's default model";
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input

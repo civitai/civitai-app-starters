@@ -31,7 +31,7 @@ describe('buildModelList', () => {
     const list = buildModelList({ openRouter, orchestration, defaultModel: DEFAULT, listed: LISTED });
     expect(list.map((entry) => entry.id)).toEqual([DEFAULT, 'g/listed', 'urn:air:hosted:repository:example/own-model@main', 'a/at-limit', 'd/cheap', 'h/free']);
     expect(list).toEqual([
-      { id: DEFAULT, label: 'basil-3 · default', source: 'default' },
+      { id: DEFAULT, label: 'basil-3', source: 'default' },
       { id: 'g/listed', label: 'Listed G', source: 'listed', note: 'Picked by the page.', pricePerMillion: 4.2 },
       { id: 'urn:air:hosted:repository:example/own-model@main', label: 'urn:air:hosted:repository:example/own-model@main', source: 'hosted' },
       { id: 'a/at-limit', label: 'At Limit', source: 'openrouter', pricePerMillion: 8 },
@@ -40,7 +40,7 @@ describe('buildModelList', () => {
     ]);
   });
 
-  it("labels the default with its model's name and the default marker, never the bare word", () => {
+  it("labels the default with its model's name, never the word Default (the marker is added where it is shown)", () => {
     // Every name here differs from every other and from "default": the label can only come from the name.
     const named = buildModelList({
       openRouter: { data: [{ id: 'n/nebula-4', name: 'Nebula Four', pricing: { completion: '0.000001' }, supported_parameters: ['tools'] }] },
@@ -48,14 +48,14 @@ describe('buildModelList', () => {
       defaultModel: 'n/nebula-4',
       listed: [],
     });
-    expect(named[0]).toEqual({ id: 'n/nebula-4', label: 'Nebula Four · default', source: 'default', pricePerMillion: 1 });
+    expect(named[0]).toEqual({ id: 'n/nebula-4', label: 'Nebula Four', source: 'default', pricePerMillion: 1 });
     // A page label for the default model wins over OpenRouter's name.
     const paged = buildModelList({ openRouter: null, orchestration: null, defaultModel: 'p/pine-2', listed: [{ id: 'p/pine-2', label: 'Pine Two' }] });
-    expect(paged[0]!.label).toBe('Pine Two · default');
+    expect(paged[0]!.label).toBe('Pine Two');
     // No list names it: its id, made readable.
     const bare = buildModelList({ openRouter: null, orchestration: null, defaultModel: 'urn:air:x:repository:hub/Quartz-9B@main.tar', listed: [] });
-    expect(bare[0]!.label).toBe('Quartz-9B · default');
-    for (const list of [named, paged, bare]) expect(list[0]!.label).not.toBe('Default');
+    expect(bare[0]!.label).toBe('Quartz-9B');
+    for (const list of [named, paged, bare]) expect(list[0]!.label).not.toMatch(/default/i);
   });
 
   it('makes a bare id readable: its last part, without the version or file after @', () => {

@@ -153,7 +153,8 @@ export class CivitaiChatTurn extends LightElement {
   }
 
   #assistantParts(): unknown {
-    const md = (text: string) => html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`;
+    // A reply can stream a text part that is only whitespace so far: no empty bubble for it.
+    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`);
     if (this.toolCalls === 'details') return this.#detailed(md);
     return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }

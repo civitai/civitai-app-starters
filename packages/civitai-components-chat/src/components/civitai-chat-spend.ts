@@ -8,8 +8,10 @@ let ids = 0;
 /**
  * The chat's Buzz so far, as a badge in the top bar ("≈ 12") that opens the breakdown: the total,
  * what was made, the assistant, and a line saying it is an estimate. A click (or Enter/Space) opens
- * it; Escape closes it and puts focus back on the badge, and so does a second click; a click
- * anywhere else closes it and leaves focus where that click put it. Shows nothing at 0.
+ * it; Escape, with focus on the badge or in the breakdown, closes it and puts focus back on the badge
+ * (Escape anywhere else is left to whatever has focus: the message box stops a reply with it); a
+ * second click closes it too; a click anywhere else closes it and leaves focus where that click put
+ * it. Shows nothing at 0.
  */
 export class CivitaiChatSpend extends LightElement {
   static override properties: PropertyDeclarations = {
@@ -32,30 +34,28 @@ export class CivitaiChatSpend extends LightElement {
     this.#listen(false);
   }
 
-  protected override updated(changed: PropertyValues): void {
-    if (changed.has('open')) this.#listen(this.open);
+  protected override willUpdate(): void {
     // A chat whose spend went back to 0 (a new chat) has no badge to keep open.
     if (this.open && this.spend.total === 0) this.open = false;
   }
 
+  protected override updated(changed: PropertyValues): void {
+    if (changed.has('open')) this.#listen(this.open);
+  }
+
   #listen(on: boolean): void {
-    if (on) {
-      document.addEventListener('pointerdown', this.#onOutside, true);
-      document.addEventListener('keydown', this.#onKey, true);
-    } else {
-      document.removeEventListener('pointerdown', this.#onOutside, true);
-      document.removeEventListener('keydown', this.#onKey, true);
-    }
+    if (on) document.addEventListener('pointerdown', this.#onOutside, true);
+    else document.removeEventListener('pointerdown', this.#onOutside, true);
   }
 
   #onOutside = (event: PointerEvent): void => {
     if (!event.composedPath().includes(this)) this.open = false;
   };
 
+  /** Bound on the element, so it hears Escape only from focus on the badge or in the breakdown. */
   #onKey = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || !this.open) return;
     event.preventDefault();
-    event.stopPropagation();
     this.open = false;
     this.querySelector<HTMLButtonElement>('.cvt-spend')?.focus();
   };
@@ -71,12 +71,13 @@ export class CivitaiChatSpend extends LightElement {
         aria-controls=${this.#panelId}
         aria-label=${`About ${n(total)} Buzz spent in this chat. Show the breakdown`}
         @click=${() => (this.open = !this.open)}
+        @keydown=${this.#onKey}
       >
         <span class="cvt-spend-pill" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>≈ ${n(total)}
         </span>
       </button>
-      <div class="cvt-spend-panel" id=${this.#panelId} role="region" aria-label="Buzz in this chat" ?hidden=${!this.open}>
+      <div class="cvt-spend-panel" id=${this.#panelId} role="region" aria-label="Buzz in this chat" tabindex="-1" ?hidden=${!this.open} @keydown=${this.#onKey}>
         <dl class="cvt-spend-rows">
           <div class="cvt-spend-row cvt-spend-total"><dt>Total so far</dt><dd data-spend="total">≈ ${n(total)}</dd></div>
           <div class="cvt-spend-row"><dt>For what was made</dt><dd data-spend="generations">${n(generations)}</dd></div>
