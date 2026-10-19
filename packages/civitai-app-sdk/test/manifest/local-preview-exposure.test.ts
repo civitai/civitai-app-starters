@@ -26,7 +26,9 @@ const STORAGE = {
   },
 };
 const SCOPES = ['apps:storage', 'apps:storage:publish', 'user:read:self'];
-const HTML = '<!doctype html><html><head><title>t</title></head><body><script type="module" src="/main.js"></script></body></html>';
+const HTML =
+  '<!doctype html><html><head><meta charset="UTF-8" /><title>t</title></head>' +
+  '<body><script type="module" src="/main.js"></script></body></html>';
 
 const dirs: string[] = [];
 function project(manifest: Record<string, unknown>): string {
@@ -67,6 +69,10 @@ describe('dev server: the manifest reaches the page', () => {
       expect(exposed).toEqual({ scopes: SCOPES, storage: STORAGE });
       // Ahead of the app's own entry, so it is set before `initialize()` runs.
       expect(html.indexOf(LOCAL_PREVIEW_MANIFEST_GLOBAL)).toBeLessThan(html.indexOf('/main.js'));
+      // AFTER <meta charset>: a large `storage` block prepended to <head> could push
+      // the charset past the 1024-byte prescan, and the page would decode wrongly.
+      expect(html.indexOf('<meta charset')).toBeGreaterThanOrEqual(0);
+      expect(html.indexOf(LOCAL_PREVIEW_MANIFEST_GLOBAL)).toBeGreaterThan(html.indexOf('<meta charset'));
       // Nothing else of the manifest — the `name` carries a `</script>` that
       // would otherwise also prove the escaping.
       expect(html).not.toContain('fixture-block');

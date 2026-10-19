@@ -408,7 +408,7 @@ const plugins = [blockManifestPlugin()];
 ```
 
 **On the dev server only**, the plugin also puts the manifest's `scopes` and
-`storage` on the page (a `<script>` prepended to `index.html`; `vite build` never
+`storage` on the page (a `<script>` at the end of `index.html`'s `<head>`; `vite build` never
 emits it). `@civitai/sdk` reads it in a dev-tunnel preview, where the host marks the
 frame `storageMode: 'local-preview'` and `app.storage.collection(name)` is served by
 an in-memory store that enforces these declarations — see "In a dev-tunnel preview"

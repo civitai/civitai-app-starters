@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { build, type Rollup } from 'vite';
 
 import { initialize, StorageError, type BlockInitializeOptions } from '../../src/index.js';
@@ -160,6 +160,34 @@ describe('dev-tunnel preview: the document store is local', () => {
   });
 });
 
+describe('dev-tunnel preview: what the local store does NOT check', () => {
+  it('model-version ownership: a write naming the developer\'s own version is accepted locally', async () => {
+    // The server checks ownership against real model versions; the local store has
+    // none, so it must not refuse what the server would accept. 4137 and 613 are
+    // arbitrary ids, distinct from any default.
+    injectManifest({
+      scopes: ['apps:storage', 'apps:storage:publish'],
+      storage: {
+        collections: {
+          picks: { visibility: 'shared', write: 'own', ownedModelVersions: ['/workflow/modelVersionId', '/baseVersionId'] },
+        },
+      },
+    });
+    const { fetch, calls } = fakeFetch([]);
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const picks = app.storage.collection('picks');
+
+    const first = await settle(picks.put('a', { workflow: { modelVersionId: 4137 }, baseVersionId: 613 }));
+    const second = await settle(picks.create({ workflow: { modelVersionId: 9001 } }));
+
+    expect(first).toMatchObject({ value: { key: 'a', data: { workflow: { modelVersionId: 4137 }, baseVersionId: 613 } } });
+    expect(second).toMatchObject({ value: { data: { workflow: { modelVersionId: 9001 } } } });
+    // Shape is still the server's rule: a non-id at a declared field is refused.
+    await expect(picks.put('b', { baseVersionId: 'not-an-id' })).rejects.toMatchObject({ code: 'resource_not_owned' });
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe('dev-tunnel preview without a usable manifest', () => {
   it('fails every document-store call with a distinct LOCAL error and sends nothing', async () => {
     const { fetch, calls } = fakeFetch([]);
@@ -179,6 +207,10 @@ describe('dev-tunnel preview without a usable manifest', () => {
       expect(error).toMatchObject({ code: 'local_preview_no_manifest', status: 404 });
       expect(isTransient(error)).toBe(false);
       expect((error as Error).message).toContain('blockManifestPlugin()');
+      // The plugin only injects from the release carrying this change, and a 0.x
+      // caret never reaches a newer minor — the message must say both.
+      expect((error as Error).message).toContain('the @civitai/app-sdk release that includes the local-preview manifest');
+      expect((error as Error).message).toContain('`^0.x` range');
     }
     expect(calls).toHaveLength(0);
   });
@@ -191,6 +223,35 @@ describe('dev-tunnel preview without a usable manifest', () => {
     const error = await app.storage.collection('board').list().catch((e: unknown) => e);
     expect(error).toMatchObject({ code: 'local_preview_invalid_manifest', status: 404 });
     expect(isTransient(error)).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('dev-tunnel preview when the local store cannot load', () => {
+  afterEach(() => {
+    vi.doUnmock('../../src/doc-store/fake.js');
+    vi.resetModules();
+  });
+
+  it('initialize() still resolves, and every document-store call fails locally', async () => {
+    // A chunk that fails to load (a stale dev-server chunk, a network blip) must
+    // not take the whole app down — the module's own promise is "never throws".
+    vi.resetModules();
+    vi.doMock('../../src/doc-store/fake.js', () => {
+      throw new Error('chunk load failed 5c2e');
+    });
+    const { initialize: fresh } = await import('../../src/index.js');
+    const { isTransient: transient } = await import('../../src/http/retry.js');
+    injectManifest(MANIFEST);
+    const { fetch, calls } = fakeFetch([]);
+
+    const app = await fresh({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const error = await app.storage.collection('notes').put('k', { n: 1 }).catch((e: unknown) => e);
+
+    expect(app.storage.mode).toBe('local-preview');
+    expect(error).toMatchObject({ name: 'StorageError', code: 'local_preview_unavailable', status: 404 });
+    expect(transient(error)).toBe(false);
+    expect((error as Error).message).toMatch(/could not be loaded.*Reload the preview/s);
     expect(calls).toHaveLength(0);
   });
 });

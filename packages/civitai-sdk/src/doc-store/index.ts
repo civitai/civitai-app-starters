@@ -223,6 +223,8 @@ export type StorageErrorCode =
   | 'local_preview_no_manifest'
   /** LOCAL, never sent by the server: the local preview's manifest declares storage the local store cannot serve. */
   | 'local_preview_invalid_manifest'
+  /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
+  | 'local_preview_unavailable'
   | (string & {});
 
 /**

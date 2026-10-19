@@ -61,12 +61,14 @@ export interface BlockManifestPluginOptions {
  *   where it depends on how the dependency optimizer pre-bundles it, and it would
  *   rewrite production builds too;
  * - an `initialize()` option needs every app to import its manifest and pass it,
- *   and would be public API with no caller outside tests: both real preview
- *   paths run this plugin on the Vite dev server.
+ *   and would be public API.
  * The `<script>` is added on the DEV SERVER only (`vite build` never emits it),
- * needs no change in any app, and the SDK reads it only when the host marks the
- * frame a local preview. It is the ONLY way the manifest reaches the SDK: an app
- * without this plugin gets the SDK's `local_preview_no_manifest` error.
+ * needs no change in an app that registers this plugin, and the SDK reads it only
+ * when the host marks the frame a local preview. It is the ONLY way the manifest
+ * reaches the SDK, so an app that does NOT register the plugin gets the SDK's
+ * `local_preview_no_manifest` error. Every scaffold in this repo that ships a
+ * manifest registers it; not every scaffold elsewhere does (the CLI's
+ * `page-money` template, for one, does not), and those apps must add it.
  */
 export const LOCAL_PREVIEW_MANIFEST_GLOBAL = '__CIVITAI_LOCAL_PREVIEW_MANIFEST__';
 
@@ -125,8 +127,11 @@ export function blockManifestPlugin(options: BlockManifestPluginOptions = {}): P
       return [
         {
           tag: 'script',
-          // First in <head>: a classic script runs before any module script.
-          injectTo: 'head-prepend',
+          // End of <head>, NOT `head-prepend`: prepended, a large `storage` block
+          // could push `<meta charset>` past the 1024-byte prescan. Nothing needs
+          // it earlier: the SDK reads the global inside `initialize()`, after
+          // BLOCK_INIT, and a classic script still runs before any module script.
+          injectTo: 'head',
           children: localPreviewManifestScript(manifest),
         },
       ];

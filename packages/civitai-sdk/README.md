@@ -284,7 +284,7 @@ owner-written documents yet.
 
 ### In a dev-tunnel preview: local to the tab
 
-A dev-tunnel preview (`civitai app dev` over a tunnel, the App Assistant's live
+A dev-tunnel preview (`civitai app dev-tunnel`, the App Assistant's live
 preview) has **no server-side storage**: an app that is not approved has no storage
 namespace, and unreviewed code must not write into a published app's data. So when
 the host marks the frame `storageMode: 'local-preview'` in `BLOCK_INIT`,
@@ -303,11 +303,20 @@ if (app.storage.mode === 'local-preview') {
 - **Your LOCAL manifest decides the collections**, not the server's copy:
   `blockManifestPlugin()` from `@civitai/app-sdk/vite` hands its `scopes` and
   `storage` to the page on the dev server (never in a build); that is the only way
-  the manifest reaches the SDK. Without it, every document-store call rejects
+  the manifest reaches the SDK. It does so from the `@civitai/app-sdk` release that
+  includes this change (the one whose CHANGELOG entry reads "`blockManifestPlugin()`
+  exposes the manifest's `scopes` and `storage` to `@civitai/sdk` on the dev server
+  only"); a `^0.x` range never moves to a newer minor, so raise that pin by hand.
+  Not every scaffold registers the plugin (the CLI's `page-money` template does
+  not); add it there. Without it, every document-store call rejects
   `local_preview_no_manifest` (a `StorageError`, status 404, sent nowhere); a
   declaration the local store cannot serve rejects `local_preview_invalid_manifest`
-  (also 404). Both are setup mistakes, so neither is a status this SDK treats as
-  retryable, and neither falls back to the real routes.
+  (also 404), and a local store that failed to load rejects
+  `local_preview_unavailable` (also 404; reload the preview). None is a status this
+  SDK treats as retryable, and none falls back to the real routes.
+- **Model-version ownership is not checked locally.** A collection's
+  `ownedModelVersions` fields accept any well-formed model version id in a preview;
+  the server checks that the writer owns it. A malformed value is still refused.
 - **One viewer, one tab, gone on reload.** It cannot show other people's entries,
   real vote totals, ranking across users, the minimum-trust gate on shared writes,
   or moderation of real content.
