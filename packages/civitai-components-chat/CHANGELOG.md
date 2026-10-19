@@ -1,5 +1,23 @@
 # @civitai/components-chat
 
+## 0.17.0
+
+### Minor Changes
+
+- d2734bb: Groundwork for replies that survive a sleeping or closed page, and a reply still running in another tab no longer reads as cut off.
+
+  - **A reply still running elsewhere says so.** A reply that had not ended when the chat was last saved used to read "This reply was cut off. Ask again?", even while another tab or window was still running it, inviting a second run paid twice. Its save time now decides (the turn's start for v2, the latest step's save for v3). Under 5 minutes (`LIVE_REPLY_MS`) it shows "Still replying in another tab or window…" with nothing offered, and the chat reads itself again on view, on focus and as it passes 5 minutes. Past that, it is cut off as before.
+  - **Reads v3 conversation heads.** v3 is v2 plus a reply saved while it was still running, with the steps it had finished and the save's time. Gone (past 5 minutes) with finished steps whose every tool call has its result, it offers **Continue**, which carries on from those steps through Retry's path, so no tool in them runs again. This version still writes v2. A v2 reader leaves v3 heads out of its list, so this reader ships before any v3 writer. Heads of any other version are still left out.
+  - **Headless `AgentCore`.** The reply loop (steps, stop conditions, automatic retries of a dropped connection, the parts shown so far) moves out of `Agent` into `AgentCore`, which has no store, page or element. `Agent` keeps its surface and delegates to it. `agent.live` is now a read-only getter.
+
+- 11de101: **A chat on a host's own `backend` shows the examples its page sets with `examples`.** Clicking one puts its `prompt` in the message box, as on any other chat; that chat takes no files, so `wantsFile` opens no picker there. With `examples` unset it still shows none, and never the built-in ones (making a picture, a song…), and an empty list shows none. The greeting stays plain: no Buzz fine print, the same heading and user name as before. A chat without a `backend` is unchanged.
+- 763b1ad: **The model button names the default model, the Buzz badge opens its breakdown, and the assistant's replies sit in a bubble that never widens the thread.**
+
+  - The model picker shows the default model by its name with a marker ("GPT-6 Luna · default"), never the bare word "Default": the page's label for that model, else OpenRouter's name, else its id made readable (`urn:air:…:org/Qwen3.8-27B@main.tar` → "Qwen3.8-27B"). A viewer who set their own default in Settings sees that model's name, marked the same way, and the Settings dialog's Assistant choice shows the default model's name with the marker too. Typing "default" or the default row's whole name picks that row, and `/model default` works as before. `buildModelList` now labels its `default` entry with the model's name (no longer `'Default'`); the marker is added where it is shown.
+  - The Buzz badge in the top bar ("≈ 12") is a button that opens the breakdown: the total, what was made, the assistant, and a line saying it is an estimate of the Buzz spent in this chat. It used to show this only in a hover tooltip, which a phone never shows. It opens on click, Enter or Space, has `aria-expanded` and `aria-controls`, closes on Escape with focus on the badge or in the breakdown (focus goes back to the badge; Escape elsewhere, such as in the message box, is left alone) or a click elsewhere, and is a 44px touch target. It still shows nothing at 0.
+  - The assistant's text sits in a left bubble on the surface colour; tool calls, cards and what it made stay outside it, and the viewer's bubble is unchanged.
+  - Fixed: a long reply (a code block, a long unbroken word or link) made the whole thread scroll sideways on a phone. A code block now scrolls inside itself and the rest wraps.
+
 ## 0.16.0
 
 ### Minor Changes
