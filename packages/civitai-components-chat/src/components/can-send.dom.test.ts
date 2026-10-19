@@ -638,7 +638,7 @@ describe('<civitai-chat> canSend when an open never answers, and across a new ap
     expect(hold(chat)).toBeNull();
   });
 
-  it('🔴 a Buzz permission given only after the chat has a new app sends nothing for the old one, and the message goes back in the box', async () => {
+  it('🔴 a Buzz permission given only after the chat has a new app sends nothing for the old one, and the message is dropped: the new viewer never sees it', async () => {
     let grant!: (ok: boolean) => void;
     const granted = new Promise<boolean>((resolve) => (grant = resolve));
     const replies = heldReplies();
@@ -655,7 +655,7 @@ describe('<civitai-chat> canSend when an open never answers, and across a new ap
     grant(true);
     await settle(200);
     expect(replies.asked).toHaveLength(0);
-    expect(chat.draft).toBe('first');
+    expect(chat.draft).toBe('');
   });
 });
 

@@ -86,8 +86,9 @@ interface MessageFiles {
 /** A message the page keeps back (`queue()`), shown waiting until it goes or comes back. */
 interface Queued extends MessageFiles {
   text: string;
-  /** The session and chat it was written in: it goes nowhere else. */
-  session: ChatSession;
+  /** The session (by its start), viewer and chat it was written in: it goes nowhere else. */
+  start: number;
+  source: AppClient | ChatBackend | undefined;
   chatId: string | null;
   /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
   held?: string;
@@ -289,6 +290,13 @@ export class CivitaiChat extends LitElement {
   #announcedCanSend = false;
   /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
   #sessionFor?: AppClient | ChatBackend;
+  /**
+   * Counts the sessions started, and which start the open one is: a send or a waiting message knows
+   * exactly whether the session it was taken for is still the live one, even when the same app or
+   * backend is handed over again (A, then B, then A) and a new session starts for it.
+   */
+  #starts = 0;
+  #sessionStart = 0;
   /** The session a send was taken for and not yet handed to its agent (it may be asking for the viewer's grant). */
   #sendingFor?: ChatSession;
   /** Turns the chat already asked for again by itself: at most once each, so a failing network never loops. */
@@ -429,6 +437,7 @@ export class CivitaiChat extends LitElement {
     if ((changed.has('app') || changed.has('backend')) && source !== this.#startedWith) this.#forgetMessages();
     if ((changed.has('app') || changed.has('backend')) && source && source !== this.#startedWith) {
       this.#startedWith = source;
+      this.#starts++;
       void this.#start(source);
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
@@ -577,7 +586,8 @@ export class CivitaiChat extends LitElement {
     const queued: Queued = {
       text,
       ...files,
-      session,
+      start: this.#sessionStart,
+      source: this.#sessionFor,
       chatId: session.store.current?.id ?? null,
       held,
       handle: {
@@ -697,7 +707,13 @@ export class CivitaiChat extends LitElement {
     const queued = this.#queued;
     const session = this.#session;
     if (!queued || !session) return;
-    if (queued.session !== session || !this.#source()) return this.#forgetMessages();
+    // Its session ended. The same viewer, whose chat started again: back to them. Anyone else, or
+    // signed out: dropped unseen (`willUpdate` has usually done so already).
+    if (queued.start !== this.#sessionStart || !this.#source()) {
+      if (this.#source() && this.#source() === queued.source) this.#giveBackQueued(queued);
+      else this.#forgetMessages();
+      return;
+    }
     if (this.loading || (session.store.current?.id ?? null) !== queued.chatId) {
       // Not inside this update: the box it may go back into is part of what is being rendered.
       queueMicrotask(() => this.#giveBackQueued(queued));
@@ -752,6 +768,8 @@ export class CivitaiChat extends LitElement {
   }
 
   async #start(source: AppClient | ChatBackend): Promise<void> {
+    // Called right after `#starts` counts this start.
+    const start = this.#starts;
     this.#session?.agent.abort();
     this.#session?.mcpServers.close();
     // An open still loading in the old session is moot: the new session is not held behind it.
@@ -780,6 +798,7 @@ export class CivitaiChat extends LitElement {
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
     this.#sessionFor = source;
+    this.#sessionStart = start;
     this.modelList = null;
     this.#models = new ModelDirectory(session.app.site, () => session.settings.allowMature);
     for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
@@ -1228,20 +1247,19 @@ export class CivitaiChat extends LitElement {
     }
     // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
     // another message waits in the box and `canSend` says no.
+    const takenFor = { start: this.#sessionStart, source: this.#sessionFor };
     this.#sendingFor = session;
     this.requestUpdate();
     try {
       const granted = !app || (await this.#ensureAiGrant(app));
-      // Replaced by a new app or backend meanwhile: nothing goes to the old session, and the message
-      // waits in the box for the new one.
-      if (this.#session !== session) {
-        const composer = await this.#composer();
-        if (composer && !composer.draft) composer.draft = text;
+      // The session it was taken for is no longer the live one (a new app or backend was handed over,
+      // whether its session has started yet or not, or the chat was signed out): nothing goes to the
+      // old session. Another viewer (any other app or backend object), or none: the message is
+      // dropped, never shown to them. The same viewer, whose chat started again: back in their box.
+      if (this.#starts !== takenFor.start || this.#session !== session || !this.#source()) {
+        if (this.#source() && this.#source() === takenFor.source) this.giveBack(text);
         return;
       }
-      // Signed out, or a new app or backend whose session is still starting: the message was the last
-      // viewer's, so it does not go, wait or come back where the next one would see it.
-      if (this.#sessionFor !== this.#startedWith || !this.#source()) return;
       if (!granted) {
         const composer = await this.#composer();
         if (composer && !composer.draft) composer.draft = text;

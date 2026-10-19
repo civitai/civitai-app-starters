@@ -144,6 +144,19 @@ describe('a message the page keeps back with queue()', () => {
     expect(atInsert).toEqual(['']);
   });
 
+  it('🟢 a first message that goes within that moment is never announced as waiting', async () => {
+    const { chat, asked } = await mount();
+    const page = queueNext(chat);
+    await chat.send('build me a timer');
+    await chat.updateComplete;
+    // Released at once: it goes, and the same thread shows the reply.
+    page.handle().release();
+    await vi.waitFor(() => expect(asked).toHaveLength(1));
+    await settle(250);
+    expect(root(chat).querySelector('civitai-chat-thread')).not.toBeNull();
+    expect(announced(chat)).not.toContain('Waiting for your app…');
+  });
+
   it('goes once released: once, without before-send again, and its bubble becomes the sent one', async () => {
     const { chat, asked } = await mount();
     const page = queueNext(chat);
@@ -474,8 +487,7 @@ describe('🟡 the viewer changes while their Buzz permission is being asked', (
     grant(true);
     await nothingOfA(chat, asked);
     expect(page.seen).toEqual([]);
-    // (A message the page did not keep back is put back in the box here, as 0.13.0 does: see the
-    // can-send test "a Buzz permission given only after the chat has a new app".)
+    expect(chat.draft).not.toBe(SECRET);
   });
 
   it('A signs out, then answers: nothing of the message shows in the signed-out chat', async () => {
@@ -486,6 +498,47 @@ describe('🟡 the viewer changes while their Buzz permission is being asked', (
     expect(page.seen).toEqual([]);
     expect(chat.draft).not.toBe(SECRET);
   });
+});
+
+describe('🟢 the same app handed over again (A, then B, then A) while A is asked for their Buzz permission', () => {
+  /** A sends while asked; the page hands over B, then A's own app object again. */
+  async function aThenBThenA(queue: boolean) {
+    let grant!: (ok: boolean) => void;
+    const granted = new Promise<boolean>((resolve) => (grant = resolve));
+    const appA = fakeApp(() => granted);
+    const mounted = await mount({ app: appA });
+    const page = queue ? queueNext(mounted.chat) : { seen: [] as string[] };
+    void mounted.chat.send('my own words');
+    await vi.waitFor(() => expect(mounted.chat.canSend).toBe(false));
+    mounted.chat.app = fakeApp();
+    await mounted.chat.updateComplete;
+    mounted.chat.app = appA;
+    await mounted.chat.updateComplete;
+    return { ...mounted, page, grant };
+  }
+
+  for (const queue of [false, true]) {
+    const kept = queue ? 'kept back by the page' : 'not kept back';
+    it(`A answers while A's chat starts again (${kept}): nothing goes on the old session, and the words are back in A's box`, async () => {
+      const { chat, asked, grant } = await aThenBThenA(queue);
+      grant(true);
+      await vi.waitFor(() => expect(chat.canSend).toBe(true));
+      await settle(200);
+      expect(asked).toHaveLength(0);
+      expect(bubble(chat)).toBeNull();
+      expect(chat.draft).toBe('my own words');
+    });
+
+    it(`A answers once A's chat has started again (${kept}): nothing goes on the old session, and the words are back in A's box`, async () => {
+      const { chat, asked, grant } = await aThenBThenA(queue);
+      await vi.waitFor(() => expect(chat.canSend).toBe(true));
+      grant(true);
+      await settle(200);
+      expect(asked).toHaveLength(0);
+      expect(bubble(chat)).toBeNull();
+      expect(chat.draft).toBe('my own words');
+    });
+  }
 });
 
 describe('the viewer’s Edit on a waiting message', () => {
@@ -540,6 +593,16 @@ describe('giveBack(): a message the page could not send comes back the same way'
     await settle();
     expect(unsent(chat)).toEqual([]);
     expect(chat.draft).toBe('typed');
+  });
+
+  it('🟢 signed out after the chat had started it does nothing and says so', async () => {
+    const { chat } = await mount();
+    chat.app = undefined;
+    await chat.updateComplete;
+    expect(chat.giveBack('Build it')).toBe(false);
+    await settle();
+    expect(unsent(chat)).toEqual([]);
+    expect(chat.draft).toBe('');
   });
 
   it('NEGATIVE CONTROL: not twice over the same words already in the box', async () => {

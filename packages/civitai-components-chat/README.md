@@ -431,9 +431,11 @@ back starts all 3 minutes again), or when another chat is opened. It comes back 
 dictating (their words would be joined to it); otherwise it shows above the box as an alert, "This
 message was not sent", saying how many files it has, with **Put it back** (ahead of what they typed,
 its files beside the box's) and **Dismiss**. Sending the same words again clears that notice. Signed
-out, or with someone else's `app`, a waiting message and every such notice are dropped unseen: a viewer
+out, or handed any other `app` or `backend` object (the chat cannot tell whether it is the same person,
+so it treats it as someone else), a waiting message and every such notice are dropped unseen: a viewer
 never sees another's words. A message sent just before that, while the viewer was being asked to let
-the chat use their Buzz, does not go, wait or come back either.
+the chat use their Buzz, does not go, wait or come back either; handed the same object again (A, then
+B, then A), the message comes back into A's box rather than going on the session A had before.
 
 `giveBack(text)` brings back a message the page tried to send and could not (the chat was replying or
 holding, so `send(text)` went nowhere) the same way: into an empty box, else as that notice (one notice
