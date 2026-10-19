@@ -47,7 +47,16 @@ afterAll(() => {
 function runInlineScripts(html: string): Record<string, unknown> {
   const sandbox: Record<string, unknown> = {};
   sandbox.globalThis = sandbox;
-  const bodies = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map((m) => m[1]!);
+  // Plain scanning, not a regex: this reads the dev server's own output, and an
+  // HTML-matching regex is what static analysis rightly distrusts.
+  const lower = html.toLowerCase();
+  const bodies: string[] = [];
+  for (let at = lower.indexOf('<script'); at !== -1; at = lower.indexOf('<script', at + 1)) {
+    const open = lower.indexOf('>', at);
+    const close = lower.indexOf('</script', open);
+    if (open === -1 || close === -1) break;
+    bodies.push(html.slice(open + 1, close));
+  }
   for (const body of bodies) runInNewContext(body, sandbox);
   return sandbox;
 }
