@@ -690,6 +690,32 @@ when the retries run out does the reply fail with `reply-error`. A recovered rep
 these are how a page, its telemetry or an eval harness can tell that a cut happened and was retried,
 rather than that none happened.
 
+### Retry, and asking again when the page wakes
+
+A reply that still failed, because the connection was lost or the service was busy or could not run
+the model for a moment (`kind` `network`, `rate_limit`, `unavailable` or `assistant_unavailable`),
+shows **Retry** on its error, on the latest reply only. Retry asks for the same reply again: the
+viewer's message is not sent a second time, and it carries on from the last step that finished, as
+the automatic retries do, so a tool that already ran is not called again and stays on screen. Retry is
+offered only where that holds: not when the step that failed had already called a tool (it may have
+run, and is in no finished step to send as it is), and not on a failed reply in a chat opened again
+later (where to carry on from is kept for the session only, not saved). A refusal (sign-in, Buzz,
+the safety filter) and a failure of unknown cause get no Retry; asking again would only repeat it.
+
+A phone that sleeps stops the page, and with it the reply and its retries; a reply that lost its
+connection that way is asked for again **once, by itself**, when the page comes back into view
+(`visibilitychange`, while the browser says it is online) or the browser says it is `online` again.
+Only when it is the latest reply of the chat that is open (nothing was sent after it), the connection
+was what failed (`kind` `network`), no reply is running and nothing holds the chat (`canSend`), Retry
+would be offered for it, and it failed less than `AUTO_RESUME_WINDOW_MS` (30 minutes) ago: past that
+the viewer has likely moved on, and Retry is still there. Each reply is asked again by itself at most
+once, so a reply that fails again waits for Retry instead of looping.
+
+Retry and each automatic ask fire `reply-resume` first, with `{ trigger }` (type `ReplyResumeDetail`;
+`'retry'`, `'visible'` or `'online'`; it bubbles and is composed). It is cancelable: a page that calls
+`preventDefault()`, for example because what the reply's tools act on is not ready again yet, keeps
+the reply as it failed, with Retry still on it.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)
