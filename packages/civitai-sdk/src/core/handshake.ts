@@ -113,7 +113,18 @@ export interface BlockInitPayload {
   maxBrowsingLevel?: number;
   /** The domain ceiling narrowed to this viewer. Always a subset of the above. */
   effectiveBrowsingLevel?: number;
+  /**
+   * `'local-preview'` when the host mounted this frame as a dev-tunnel preview,
+   * which has no server-side storage. The host sets it from the surface it
+   * mounted, never from the token or anything the block sent. Absent everywhere
+   * else, and from a host that predates it. Typed `unknown` on the wire: only
+   * the exact string switches anything — see {@link LOCAL_PREVIEW_STORAGE}.
+   */
+  storageMode?: unknown;
 }
+
+/** The one value of `BLOCK_INIT.storageMode` the SDK acts on. Compared exactly. */
+export const LOCAL_PREVIEW_STORAGE = 'local-preview';
 
 /**
  * Host messages the transport itself acts on. Domains own everything else.

@@ -1,3 +1,4 @@
+import { LOCAL_PREVIEW_STORAGE } from './handshake.js';
 import type {
   BlockContext,
   BlockInitPayload,
@@ -41,6 +42,12 @@ export interface BlockSnapshot {
   maxBrowsingLevel?: number;
   /** The domain ceiling narrowed to this viewer. Always a subset of `maxBrowsingLevel`. */
   effectiveBrowsingLevel?: number;
+  /**
+   * `'local-preview'` when the host said this frame is a dev-tunnel preview with
+   * no server-side storage; absent otherwise. `initialize()` reads it ONCE, so a
+   * later change cannot move an app's storage between stores mid-session.
+   */
+  storageMode?: 'local-preview';
 }
 
 
@@ -98,6 +105,9 @@ export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string):
     domain: payload.domain,
     maxBrowsingLevel: payload.maxBrowsingLevel,
     effectiveBrowsingLevel: payload.effectiveBrowsingLevel,
+    // The exact string or nothing: a value this SDK does not know must read as
+    // "not a local preview", which keeps today's behaviour (the real routes).
+    ...(payload.storageMode === LOCAL_PREVIEW_STORAGE ? { storageMode: LOCAL_PREVIEW_STORAGE } : {}),
   };
 }
 

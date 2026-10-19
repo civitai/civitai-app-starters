@@ -20,6 +20,7 @@ export type {
   AppClient,
   BlockAppClient,
   BlockInitializeOptions,
+  StorageMode,
   TokenInitializeOptions,
 } from './app/index.js';
 

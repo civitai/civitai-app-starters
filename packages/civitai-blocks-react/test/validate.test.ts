@@ -116,6 +116,16 @@ describe('isValidBlockInitPayload', () => {
     ).toBe(true);
   });
 
+  it('accepts storageMode, and a value it does not know, without rejecting the init', () => {
+    // civitai-app-starters#710: the host adds `storageMode: 'local-preview'` for a
+    // dev-tunnel frame. This validator is compiled into deployed bundles, and a
+    // rejected BLOCK_INIT never becomes ready — so the field, and any future value
+    // of it, must pass through. Only `@civitai/sdk` acts on it.
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'local-preview' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'some-later-mode' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 7 })).toBe(true);
+  });
+
   it.each([
     ['missing token', { ...validInit, token: undefined }],
     ['token.raw not a string', { ...validInit, token: { ...validInit.token, raw: 123 } }],

@@ -13,6 +13,22 @@ export declare function initialize(options?: BlockInitializeOptions): Promise<Bl
 
 export declare function initialize(options: TokenInitializeOptions): Promise<AppClient>;
 
+/**
+ * Which store serves `app.storage.collection(name)` and `app.storage.info()`.
+ *
+ * - `'remote'` — the server's document store, `/api/v1/blocks/storage/…`.
+ * - `'local-preview'` — an in-memory store in this tab, because the host marked
+ *   the frame a dev-tunnel preview (which has no server-side storage). It
+ *   enforces the server's rules against the LOCAL manifest, models ONE viewer,
+ *   and is gone on reload. Show the viewer a "preview data is local to this tab"
+ *   badge.
+ *
+ * Latched when `initialize()` resolves. Only the document store switches: the
+ * deprecated key/value methods on `app.storage`, `app.sharedStorage` and the
+ * `@civitai/blocks-react` storage hooks keep calling the real routes.
+ */
+export type StorageMode = 'remote' | 'local-preview';
+
 export interface AppClient {
     /**
      * The public Civitai REST API (`/api/v1`), as the viewer.
@@ -40,7 +56,9 @@ export interface AppClient {
      * with an OAuth access token is refused. The legacy store refuses an anonymous
      * viewer outright; the document store lets one read SHARED collections only.
      */
-    readonly storage: StorageClient & DocumentStorage;
+    readonly storage: StorageClient & DocumentStorage & {
+        readonly mode: StorageMode;
+    };
     /**
      * @deprecated Declare a `shared` collection under `storage.collections` and use
      * `app.storage.collection(name)`. This store keeps working, unchanged, until the
@@ -808,7 +826,16 @@ export interface DocumentStorage {
  * Every code the server documents for these routes. The type stays open
  * (`string & {}`) so a code a later server adds still reaches the caller.
  */
-export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable' | (string & {});
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
+/**
+ * LOCAL, never sent by the server: the host marked this frame a dev-tunnel
+ * local preview, and no manifest reached the SDK to say which collections exist.
+ */
+ | 'local_preview_no_manifest'
+/** LOCAL, never sent by the server: the local preview's manifest declares storage the local store cannot serve. */
+ | 'local_preview_invalid_manifest'
+/** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
+ | 'local_preview_unavailable' | (string & {});
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -3004,6 +3031,12 @@ export interface BlockSnapshot {
     maxBrowsingLevel?: number;
     /** The domain ceiling narrowed to this viewer. Always a subset of `maxBrowsingLevel`. */
     effectiveBrowsingLevel?: number;
+    /**
+     * `'local-preview'` when the host said this frame is a dev-tunnel preview with
+     * no server-side storage; absent otherwise. `initialize()` reads it ONCE, so a
+     * later change cannot move an app's storage between stores mid-session.
+     */
+    storageMode?: 'local-preview';
 }
 
 export interface BlockTransport {
