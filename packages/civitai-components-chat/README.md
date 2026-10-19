@@ -322,7 +322,7 @@ reopened from storage groups the same as it did live.
 | `layout` | Where the chat list goes: `auto` (a column, or a dropdown at 900px or less of the chat's own width), `compact` or `wide`. |
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
 | `can-sign-out` | Shows Sign out in settings (with `full-page`); the chat then emits `cvt-sign-out`. |
-| `examples` | What an empty chat offers to start from, in place of the built-in ones (property only); see [The empty chat](#the-empty-chat). |
+| `examples` | What an empty chat offers to start from, in place of the built-in ones (property only). On a host `backend` only these show, never the built-in ones. See [The empty chat](#the-empty-chat). |
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
@@ -492,7 +492,9 @@ chat.placeholder = 'Describe the app you want to build';
 Clicking an example puts its `prompt` in the message box for the viewer to edit or send; with
 `wantsFile: true` it also opens the file picker. The examples show signed in and signed out, and a
 change applies at once. Leave `examples` unset for the built-in ones; an empty list shows none. A chat
-on a host's own `backend` shows no examples either way. Slot `welcome` replaces the whole greeting
+on a host's own `backend` greets the viewer plainly and shows only the page's `examples`: unset, it
+shows none, since the built-in ones are about making things on Civitai. It takes no files, so
+`wantsFile` opens no picker there. Slot `welcome` replaces the whole greeting
 instead, examples included, and then clicking does nothing the page does not wire itself.
 
 ### Gating tool calls
