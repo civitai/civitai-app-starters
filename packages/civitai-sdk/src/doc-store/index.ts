@@ -216,6 +216,13 @@ export type StorageErrorCode =
   | 'moderation_unavailable'
   | 'consent_unavailable'
   | 'service_unavailable'
+  /**
+   * LOCAL, never sent by the server: the host marked this frame a dev-tunnel
+   * local preview, and no manifest reached the SDK to say which collections exist.
+   */
+  | 'local_preview_no_manifest'
+  /** LOCAL, never sent by the server: the local preview's manifest declares storage the local store cannot serve. */
+  | 'local_preview_invalid_manifest'
   | (string & {});
 
 /**
@@ -249,17 +256,37 @@ export class StorageError extends ApiError {
   }
 }
 
+/**
+ * Appended to a REAL route's `insufficient_scope`, after the server's own sentence.
+ * The server cannot tell a published app whose manifest forgot the scope from a
+ * dev-tunnel preview (which is never granted it), so the message covers both —
+ * and says that, in a preview, this SDK keeps the data locally once the host
+ * marks the frame, so seeing this refusal there means the host did not.
+ */
+export const INSUFFICIENT_SCOPE_HINT =
+  'Declare `apps:storage` under `scopes` in block.manifest.json; it is granted once the app is approved. ' +
+  'In a dev-tunnel preview, this version of @civitai/sdk keeps preview data in a local in-memory store ' +
+  "instead, when the host marks the frame `storageMode: 'local-preview'` — this refusal came from the real " +
+  'route, so this frame was not marked.';
+
+export interface DocumentStorageOptions {
+  /** Append {@link INSUFFICIENT_SCOPE_HINT} to an `insufficient_scope` refusal. The server's `code` is unchanged. */
+  explainInsufficientScope?: boolean;
+}
+
 /** An {@link ApiError} whose body is the store's envelope becomes a {@link StorageError}; anything else passes through. */
-function toStorageError(error: unknown): unknown {
+function toStorageError(error: unknown, options: DocumentStorageOptions = {}): unknown {
   if (!(error instanceof ApiError) || error instanceof StorageError) return error;
   const body = error.body;
   if (body == null || typeof body !== 'object' || Array.isArray(body)) return error;
   const { code, message, details } = body as Record<string, unknown>;
   if (typeof code !== 'string') return error;
+  const said = typeof message === 'string' ? message : error.message;
   return new StorageError(
     error.status,
     code,
-    typeof message === 'string' ? message : error.message,
+    // `body` stays as the server sent it; only the human-readable sentence grows.
+    options.explainInsufficientScope && code === 'insufficient_scope' ? `${said} — ${INSUFFICIENT_SCOPE_HINT}` : said,
     body,
     details != null && typeof details === 'object' && !Array.isArray(details)
       ? (details as Record<string, unknown>)
@@ -308,7 +335,7 @@ function segment(what: string, value: string): string {
   return encodeURIComponent(value);
 }
 
-export function createDocumentStorage(http: Http): DocumentStorage {
+export function createDocumentStorage(http: Http, options: DocumentStorageOptions = {}): DocumentStorage {
   const call = async <R>(
     method: string,
     path: string,
@@ -317,7 +344,7 @@ export function createDocumentStorage(http: Http): DocumentStorage {
     try {
       return await http<R>(method, path, opts);
     } catch (error) {
-      throw toStorageError(error);
+      throw toStorageError(error, options);
     }
   };
 

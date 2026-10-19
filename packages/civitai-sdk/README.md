@@ -282,6 +282,45 @@ before moderation and before any write budget. An absent field is allowed;
 ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
 owner-written documents yet.
 
+### In a dev-tunnel preview: local to the tab
+
+A dev-tunnel preview (`civitai app dev` over a tunnel, the App Assistant's live
+preview) has **no server-side storage**: an app that is not approved has no storage
+namespace, and unreviewed code must not write into a published app's data. So when
+the host marks the frame `storageMode: 'local-preview'` in `BLOCK_INIT`,
+`initialize()` serves `app.storage.collection(name)` and `app.storage.info()` from an
+**in-memory store in this tab** — [`createFakeStorage`](#a-fake-document-store), the
+real client over a seam that enforces the server's rules — and sends **no request**
+to `blocks/storage/*`. Your code does not change; show a badge so nobody mistakes the
+data for real:
+
+```ts
+if (app.storage.mode === 'local-preview') {
+  showBadge('Preview data is local to this tab');
+}
+```
+
+- **Your LOCAL manifest decides the collections**, not the server's copy:
+  `blockManifestPlugin()` from `@civitai/app-sdk/vite` hands its `scopes` and
+  `storage` to the page on the dev server (never in a build). Without that plugin,
+  pass them yourself: `initialize({ localPreview: { manifest } })`. With neither,
+  every document-store call rejects `local_preview_no_manifest` (a `StorageError`,
+  status 503, sent nowhere); a declaration the local store cannot serve rejects
+  `local_preview_invalid_manifest`. Neither falls back to the real routes.
+- **One viewer, one tab, gone on reload.** It cannot show other people's entries,
+  real vote totals, ranking across users, the minimum-trust gate on shared writes,
+  or moderation of real content.
+- **Only the document store.** The deprecated `app.storage.get/set/…`,
+  `app.sharedStorage` and `@civitai/blocks-react`'s `useAppStorage` /
+  `useSharedStorage` keep calling the real routes, which refuse a preview.
+- **Only on the host's signal.** `app.storage.mode` is latched when `initialize()`
+  resolves, and never inferred from the token: a published app whose manifest forgot
+  `apps:storage` holds a token that looks the same, and keeps getting the real
+  route's `insufficient_scope`. That refusal's message says what to do —
+  declare `apps:storage` under `scopes`; it is granted once the app is approved — and
+  that in a preview this SDK would have kept the data locally had the host marked the
+  frame.
+
 The legacy stores below keep working, unchanged, while apps move; their methods are
 `@deprecated`. Nothing is copied from them into collections.
 

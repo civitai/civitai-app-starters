@@ -279,6 +279,21 @@ export interface BlockInitPayload {
    * them — ship without React.
    */
   effectiveBrowsingLevel?: number;
+  /**
+   * `'local-preview'` when the host mounted this frame as a DEV-TUNNEL preview,
+   * which has no server-side storage namespace. The host sets it from the
+   * surface it mounted — never from the token's scopes, and never from anything
+   * the block sent. Absent on every other surface.
+   *
+   * `@civitai/sdk`'s `initialize()` reads it once and serves
+   * `app.storage.collection(name)` from an in-memory store in the tab
+   * (`app.storage.mode === 'local-preview'`). Nothing in this package or in
+   * `@civitai/blocks-react` acts on it: their storage hooks keep the real routes.
+   *
+   * ADDITIVE + OPTIONAL. A host that predates it omits the field; a value other
+   * than the exact string must be treated as absent.
+   */
+  storageMode?: 'local-preview';
 }
 
 // ============================================================

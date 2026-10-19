@@ -32,7 +32,7 @@ pnpm add @civitai/app-sdk
 | `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` | **Type-only** subpath (0 runtime bytes) keying the orchestrator's generated workflow-step shapes from `@civitai/client` by wire `$type`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
 | `blocks/*` — `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic and **zero runtime dependencies** — no React, no DOM types, nothing in your install graph. Hooks and the iframe transport live in a separate package. |
 | `manifest/*` — `defineBlock`, `SCHEMA_DIVERGENCES`, `KNOWN_GAPS` (**Node only**) | Build-time manifest validation. `defineBlock(config)` compiles the vendored canonical schema with [Ajv](https://ajv.js.org) and validates a `BlockManifestV1` against it, so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. It is **derived from the schema, not a hand-written mirror of it** — that mirror is what produced [#330](https://github.com/civitai/civitai-app-starters/issues/330). Needs `node:fs` and the optional peer `ajv`, which is why it is not on the browser-facing `./blocks` surface. |
-| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. Optional peers: `ajv` (runtime) and `vite` (types only). |
+| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. On the dev server only, it also exposes the manifest's `scopes` + `storage` to `@civitai/sdk` for a dev-tunnel local preview. Optional peers: `ajv` (runtime) and `vite` (types only). |
 
 ## Entry points, and what the root barrel is
 
@@ -406,6 +406,15 @@ import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
 const plugins = [blockManifestPlugin()];
 ```
+
+**On the dev server only**, the plugin also puts the manifest's `scopes` and
+`storage` on the page (a `<script>` prepended to `index.html`; `vite build` never
+emits it). `@civitai/sdk` reads it in a dev-tunnel preview, where the host marks the
+frame `storageMode: 'local-preview'` and `app.storage.collection(name)` is served by
+an in-memory store that enforces these declarations — see "In a dev-tunnel preview"
+in `@civitai/sdk`'s README. Nothing else of the manifest is exposed. Without the
+plugin, a preview's document store refuses every call `local_preview_no_manifest`
+unless the app passes `initialize({ localPreview: { manifest } })`.
 
 ### Web storage in a block (`@civitai/app-sdk/safe-storage`)
 
