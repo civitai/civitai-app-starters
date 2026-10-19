@@ -1,16 +1,16 @@
 import { html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 
-import { priceLabel, type ChatModelEntry } from '../agent/model-list.js';
+import { DEFAULT_MARKER, defaultLabel, prettyModelId, priceLabel, type ChatModelEntry } from '../agent/model-list.js';
 import { LightElement, emit } from './light.js';
 
 /** How many matches the menu shows at once; typing narrows the rest. */
 const SHOWN = 150;
 
-/** A model's name for the button: its listed label, else the last part of its id. */
+/** A model's name for the button: its listed label, else its id made readable. */
 export function modelLabel(id: string, models: ChatModelEntry[]): string {
   const entry = models.find((model) => model.id === id);
   if (entry) return entry.label;
-  return id.split(/[/:]/).filter(Boolean).at(-1) ?? id;
+  return prettyModelId(id);
 }
 
 /**
@@ -35,7 +35,7 @@ export class CivitaiChatModelPicker extends LightElement {
   declare value: string;
   /** The chat picked `value` itself, rather than following the default. */
   declare own: boolean;
-  /** What "Default" means for this viewer: their own default model, when they set one. */
+  /** What the default row follows for this viewer: their own default model, when they set one. */
   declare defaultModel: string | undefined;
   declare models: ChatModelEntry[];
   declare loading: boolean;
@@ -92,7 +92,32 @@ export class CivitaiChatModelPicker extends LightElement {
     emit(this, 'cvt-model-pick', { model });
   }
 
-  /** The models the search matches, the page's default left out: "Default" stands for it. */
+  /**
+   * The default row's name: the model a chat that follows the default uses, by name, marked as the
+   * default ("GPT-6 Luna · default"). That is the viewer's own default when they set one, else the page's.
+   */
+  #defaultName(): string {
+    return defaultLabel(this.#defaultModelName());
+  }
+
+  /** The name of the model the default row follows, unmarked. */
+  #defaultModelName(): string {
+    const page = this.models.find((model) => model.source === 'default');
+    const id = this.defaultModel ?? page?.id ?? this.value;
+    const name = modelLabel(id, this.models);
+    return page && id === page.id && name.endsWith(DEFAULT_MARKER) ? name.slice(0, -DEFAULT_MARKER.length) : name;
+  }
+
+  /** The search matches the default row: "default" itself, or words of the model's name (not of the marker). */
+  #wantsDefault(typed: string): boolean {
+    const wanted = typed.trim().toLowerCase();
+    if (wanted === 'default') return true;
+    const words = wanted.split(/\s+/).filter(Boolean);
+    const name = this.#defaultModelName().toLowerCase();
+    return words.length > 0 && words.every((word) => name.includes(word));
+  }
+
+  /** The models the search matches, the page's default left out: the default row stands for it. */
   #matches(): ChatModelEntry[] {
     const words = this.query.toLowerCase().split(/\s+/).filter(Boolean);
     return this.models.filter((model) => model.source !== 'default' && words.every((word) => model.label.toLowerCase().includes(word) || model.id.toLowerCase().includes(word)));
@@ -110,10 +135,12 @@ export class CivitaiChatModelPicker extends LightElement {
       // An exact id or name picks that model. A typed id (one word with / or :) is meant as is,
       // never swapped for a longer id it begins; anything else, like "OpenAI: GPT-4o", is a search.
       const wanted = typed.toLowerCase();
-      // "Default", by name or as typed, means what the Default row means: follow the viewer's default.
-      if (wanted === 'default') return this.#pick(undefined);
+      // "default", or the default row's whole name, means what that row means: follow the viewer's default.
+      if (wanted === 'default' || wanted === this.#defaultName().toLowerCase()) return this.#pick(undefined);
       const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
+      // The default row is listed first, so it is the first match when the search names it.
+      if (this.#wantsDefault(typed) && !/^\S*[/:]\S*$/.test(typed)) return this.#pick(undefined);
       const [first] = this.#matches();
       if (this.noCustom) {
         if (first) this.#pick(first.id);
@@ -138,10 +165,10 @@ export class CivitaiChatModelPicker extends LightElement {
   #menu(): TemplateResult {
     const matches = this.#matches();
     const typed = this.query.trim();
-    // Typing "default" shows the Default row, never "default" as a model id nothing serves.
-    const wantsDefault = typed.toLowerCase() === 'default';
-    const custom = !this.noCustom && typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
-    const fallback = this.defaultModel ? `Your default: ${modelLabel(this.defaultModel, this.models)}` : "The app's default model";
+    // Typing "default" (or the default's name) shows the default row, never "default" as a model id nothing serves.
+    const wantsDefault = this.#wantsDefault(typed);
+    const custom = !this.noCustom && typed !== '' && typed.toLowerCase() !== 'default' && !this.models.some((model) => model.id === typed);
+    const fallback = this.defaultModel ? 'Your default, from Settings' : "The app's default model";
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input
         class="cvt-model-search"
@@ -155,7 +182,7 @@ export class CivitaiChatModelPicker extends LightElement {
         ${typed === '' || wantsDefault
           ? html`<li>
               <button type="button" role="option" aria-selected=${String(!this.own)} @click=${() => this.#pick(undefined)}>
-                <span class="cvt-model-name">Default</span>
+                <span class="cvt-model-name">${this.#defaultName()}</span>
                 <span class="cvt-model-id">${fallback}</span>
               </button>
             </li>`
@@ -176,8 +203,10 @@ export class CivitaiChatModelPicker extends LightElement {
   }
 
   override render(): TemplateResult {
-    // The page's default is listed as "Default"; any other model shows its own name.
-    const name = modelLabel(this.value, this.models);
+    // A chat that follows the default shows the default row's name ("GPT-6 Luna · default"); one that
+    // picked its own model shows that model's name. The marker is its own span, so in a narrow chip the
+    // name is cut short and "· default" still shows.
+    const name = this.own ? modelLabel(this.value, this.models) : this.#defaultModelName();
     return html`<button
         class="cvt-model-chip"
         type="button"
@@ -187,7 +216,7 @@ export class CivitaiChatModelPicker extends LightElement {
         ?disabled=${this.disabled}
         @click=${() => this.#toggle()}
       >
-        <span class="cvt-visually-hidden">Model for this chat: </span><span class="cvt-model-chip-name">${name}</span>
+        <span class="cvt-visually-hidden">Model for this chat: </span><span class="cvt-model-chip-name">${name}</span>${this.own ? nothing : html`<span class="cvt-model-chip-marker">${DEFAULT_MARKER}</span>`}
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
       </button>
       ${this.open ? this.#menu() : nothing}`;

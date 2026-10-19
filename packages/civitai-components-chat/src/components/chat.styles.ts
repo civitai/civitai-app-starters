@@ -561,14 +561,29 @@ civitai-chat-turn {
   overflow-wrap: anywhere;
 }
 
+/*
+ * One minmax(0, 1fr) column, never the implicit auto one: an auto track sizes to its widest content,
+ * so a code block widened the reply, the turn and the thread past a phone and everything scrolled
+ * sideways. Pinned, a code block scrolls inside itself and the rest wraps.
+ */
 .cvt-assistant {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   justify-items: start;
 }
 
 .cvt-assistant > * {
   max-width: 100%;
+}
+
+/* The assistant's words sit in a bubble of their own, left, on the surface colour (the viewer's is
+   primary-light, right); its tool calls, cards and what it made stay outside it. */
+.cvt-assistant > .cvt-md {
+  padding: 10px 14px;
+  border-radius: 18px 18px 18px 4px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
 }
 
 .cvt-activity,
@@ -1264,6 +1279,11 @@ civitai-chat-model-picker {
   white-space: nowrap;
 }
 
+.cvt-model-chip-marker {
+  flex: none;
+  white-space: pre;
+}
+
 .cvt-model-chip svg {
   flex: none;
   width: 14px;
@@ -1482,19 +1502,105 @@ civitai-chat-model-picker {
   stroke: none;
 }
 
+/* Contents, so the breakdown is placed against the top bar (which is relative), inside the chat on a phone. */
+civitai-chat-spend {
+  display: contents;
+}
+
+/* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */
 .cvt-spend {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -6px 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cvt-spend-pill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  flex: none;
   padding: 3px 9px 3px 7px;
   border-radius: 999px;
   background: var(--civitai-color-surface-2);
-  color: var(--civitai-color-text-dimmed);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  cursor: default;
+}
+
+.cvt-spend:hover .cvt-spend-pill,
+.cvt-spend[aria-expanded='true'] .cvt-spend-pill {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: -4px;
+}
+
+.cvt-spend-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 30;
+  width: min(300px, calc(100% - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  font-size: 14px;
+}
+
+.cvt-spend-panel[hidden] {
+  display: none;
+}
+
+.cvt-spend-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.cvt-spend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cvt-spend-row dt {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-spend-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-spend-total {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--civitai-color-border);
+  font-weight: 600;
+}
+
+.cvt-spend-total dt {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend-note {
+  margin: 10px 0 0;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .cvt-spend svg {

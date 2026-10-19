@@ -305,7 +305,9 @@ describe('civitai-chat', () => {
     const root = chat.shadowRoot!;
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
     const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    expect(chip.textContent).toContain('Default');
+    // The default is shown by its name, marked as the default, never as the bare word "Default".
+    expect(chip.textContent).toContain('Qwen3.8-27B-NVFP4-RTX5090 · default');
+    expect(chip.textContent).not.toMatch(/\bDefault\b/);
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
 
     chip.click();
@@ -516,7 +518,7 @@ describe('civitai-chat', () => {
     // Loading ends, and the picker does not keep saying it is loading.
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-status')).toBeNull());
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
-    expect(options()).toEqual(["Default The app's default model"]);
+    expect(options()).toEqual(["Qwen3.8-27B-NVFP4-RTX5090 · default The app's default model"]);
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'z-ai/glm-5.3-flash';
     search.dispatchEvent(new Event('input'));
