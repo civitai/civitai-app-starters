@@ -328,6 +328,21 @@ describe('a waiting message that will not go comes back to the viewer', () => {
     expect(unsent(chat)).toEqual([]);
   });
 
+  it('NEGATIVE CONTROL: put back on the page, the chat waits its whole wait again, and then gives it back', async () => {
+    const { chat } = await mount();
+    queueNext(chat);
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    await chat.send('build me a timer');
+    chat.remove();
+    vi.advanceTimersByTime(QUEUE_TIMEOUT_MS - 1_000);
+    document.body.append(chat);
+    vi.advanceTimersByTime(QUEUE_TIMEOUT_MS - 1_000);
+    await chat.updateComplete;
+    expect(bubble(chat)).toBe('build me a timer');
+    vi.advanceTimersByTime(2_000);
+    await vi.waitFor(() => expect(chat.draft).toBe('build me a timer'));
+  });
+
   it('when another chat is opened (New chat): it does not go there', async () => {
     const { chat, asked } = await mount();
     const page = queueNext(chat);
