@@ -275,6 +275,31 @@ chat.tools.pin_to_board.render = (call) => (call.state === 'done' ? `Pinned to �
 chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 ```
 
+### Showing what the assistant called
+
+A page whose assistant uses many tools (an added MCP server's, say) can let the viewer see what it
+did. Set `tool-calls="details"` (or `chat.toolCalls = 'details'`); the default, `activity`, is the
+behaviour above.
+
+```html
+<civitai-chat tool-calls="details"></civitai-chat>
+```
+
+With `details`, every call that would otherwise show nothing once finished stays in the thread as a
+row: the tool's name (and its server's id, for an [added server](#more-mcp-servers)'s tool), a short
+line of its input, and Running, Done or Failed. Clicking or tapping it opens the whole input and the
+result or error, pretty-printed in a box that scrolls rather than widening the thread; past 1,500
+characters a value is cut, with Show more (up to 50,000). Calls in a row, with no words between
+them, fold into one row, "Used 3 tools" ("Using 3 tools…" while any still runs, and how many
+failed), which opens to the calls. A single call is not wrapped in a group. The rows are buttons
+with `aria-expanded`, so the keyboard opens them too, and opening animates only without
+`prefers-reduced-motion`.
+
+A call that has a view keeps it, exactly as with `activity`, and ends a run: a `render` in
+`toolViews` or `tools`, the built-in generation, panel, post and choice cards, and a call that
+answered with model cards. A failed call with a `render` also keeps its "didn't work" note. A chat
+reopened from storage groups the same as it did live.
+
 | Property | What it does |
 |---|---|
 | `app` | The signed-in `AppClient`; the chat starts when it is set. |
@@ -282,6 +307,7 @@ chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
 | `signIn` | `({ signal }) => Promise<AppClient>`, called from the viewer's click or key press when they first send something without `app`. Reject with an error whose `code` is `'canceled'` when they give up; their message stays in the box. |
 | `tools` | The page's own tools, by name: `description`, `inputSchema` (JSON Schema), `execute(input, { files })`, optional `activity` and `render`. A built-in tool of the same name wins. |
 | `toolViews` | How calls of any tool show, by tool name, including built-in and Civitai ones: `activity` (the line shown while it runs) and `render(call)`, which replaces the card with a lit template, DOM node or string; return `undefined` to keep the default. `call` is `{ name, input, state, output, error }`. |
+| `tool-calls` | `activity` (the default: a line while a call runs, then nothing) or `details` (each call with no view of its own as a row to open, calls in a row as one group). Also `toolCalls`. See [Showing what the assistant called](#showing-what-the-assistant-called). |
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
 | `mcp` | `{ orchestration?: boolean \| { exclude: string[] }, site?: boolean }`, both on by default: making media, and Civitai model search. `orchestration: { exclude: ['run_step', 'run_workflow'] }` keeps the service lookups but never runs (or charges for) a generation; the panels, which run through `run_step`, go with it. Other tools that charge per call, such as `transcribe_audio`, stay unless they are listed too; the microphone button transcribes on its own, not through the assistant, so neither `exclude` nor `beforeToolCall` stops voice input from charging. |
