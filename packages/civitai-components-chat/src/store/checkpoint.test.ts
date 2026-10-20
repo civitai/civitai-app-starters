@@ -305,6 +305,89 @@ describe('a subagent running when its tab died', () => {
   });
 });
 
+describe('a write subagent running when its tab died', () => {
+  it('comes back on Continue as the interrupted result with the files it had changed by its last save, and no subagent runs again', async () => {
+    const heads = fakeHeads();
+    const locks = fakeLocks();
+    // A's write subagent writes one file, then its next step never finishes: the tab dies while it runs.
+    let childAsked = 0;
+    const child = new MockLanguageModelV3({
+      doStream: async () => {
+        childAsked++;
+        if (childAsked === 1) {
+          return {
+            stream: convertArrayToReadableStream([
+              { type: 'stream-start', warnings: [] },
+              { type: 'tool-call', toolCallId: 'w1', toolName: 'write_file', input: JSON.stringify({ path: 'game/main.ts' }) },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+            ]) as never,
+          };
+        }
+        return { stream: new ReadableStream<StreamPart>({ start: (c) => c.enqueue({ type: 'stream-start', warnings: [] }) }) as never };
+      },
+    });
+    const wrote: string[] = [];
+    const sandbox: ToolSet = {
+      write_file: tool({ inputSchema: jsonSchema<{ path: string }>({ type: 'object', properties: { path: { type: 'string' } } }), execute: async ({ path }) => (wrote.push(path), { written: path }) }),
+    };
+    type SubagentStore = { checkpointSubagent(turn: Turn, id: string, progress: unknown): Promise<void> };
+    let a!: ReturnType<typeof tab>;
+    const deps = {
+      options: resolveSubagents({ tools: [], write: { tools: ['write_file'], files: { write_file: { op: 'write' } } } } as unknown as Parameters<typeof resolveSubagents>[0])!,
+      tools: sandbox,
+      gate: (tools: ToolSet, subagent: string) => gateToolSet(tools, { conversationId: 'CONV1', onResult: () => undefined, subagent }),
+      model: () => child,
+      maxOutputTokens: () => 1_000,
+      // The session wires this to its store; here, tab A's.
+      checkpoint: (id: string, progress: unknown) => void (a.store as unknown as SubagentStore).checkpointSubagent(a.store.current!.turns.at(-1)!, id, progress),
+    } as unknown as Parameters<typeof dispatchAgentTool>[0];
+    const dispatch = dispatchAgentTool(deps);
+    const dispatches: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'call_d', toolName: DISPATCH_AGENT, input: JSON.stringify({ task: 'edit the game', mode: 'write' }) },
+      { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+    ];
+    a = tab(heads, [dispatches], { locks: locks.tab('A'), tools: { [DISPATCH_AGENT]: dispatch } });
+    void a.agent.send('edit it');
+    await vi.waitFor(() => {
+      expect(childAsked).toBe(2);
+      expect(JSON.stringify(heads.writes.at(-1)?.metadata ?? {})).toContain('game/main.ts');
+    });
+    locks.kill('A');
+
+    const prompts: string[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async (request) => {
+        prompts.push(JSON.stringify(request.prompt));
+        return { stream: convertArrayToReadableStream(says('Picked it up.')) as never };
+      },
+    });
+    const b = tab(heads, [], { now: at(NOW + 30 * 60_000), locks: locks.tab('B') });
+    const agent = new Agent({ model: () => model, store: b.store, jobs: new JobManager({} as never), toolSet: async () => ({ [DISPATCH_AGENT]: dispatch }), attachments: () => [] });
+    agent.addEventListener('error', () => undefined);
+    const opened = (await b.store.open('CONV1')).conversation.turns.at(-1)!;
+    expect(replyElsewhere(opened, NOW + 30 * 60_000)).toBe('stale');
+    await agent.retry();
+
+    expect(b.store.current!.turns.at(-1)!.assistant.status).toBe('done');
+    expect(prompts).toHaveLength(1);
+    // The dispatch's result, as the model got it: interrupted, with the file the subagent had written.
+    const toolMessage = (JSON.parse(prompts[0]!) as { role: string; content: { type: string; toolCallId?: string; output?: { type: string; value: unknown } }[] }[])
+      .filter((m) => m.role === 'tool')
+      .flatMap((m) => m.content)
+      .find((part) => part.toolCallId === 'call_d');
+    expect(toolMessage?.output?.type).toBe('json');
+    expect(toolMessage?.output?.value).toMatchObject({ kind: 'subagent', mode: 'write', status: 'interrupted', changed: [{ path: 'game/main.ts', op: 'write' }], ranCommands: 0 });
+    expect(prompts[0]!).not.toContain(INTERRUPTED_CALL);
+    // Its subagent was asked twice, in A, and never again; its write ran once.
+    expect(childAsked).toBe(2);
+    expect(wrote).toEqual(['game/main.ts']);
+    // The card reads the same result after a reload.
+    const saved = b.store.current!.turns.at(-1)!.assistant.messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'call_d');
+    expect((saved as { output: { value: unknown } } | undefined)?.output.value).toMatchObject({ status: 'interrupted', changed: [{ path: 'game/main.ts', op: 'write' }] });
+  });
+});
+
 describe('the tab that ran the reply, reloaded or copied', () => {
   /** Tab A runs the reply's first two steps and dies on the third (or still runs it, `kill: false`). */
   async function aStopsInStep3(own: ReturnType<typeof tabStorage>, locks: ReturnType<typeof fakeLocks> | null, kill = true) {

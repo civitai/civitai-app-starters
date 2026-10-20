@@ -58,7 +58,7 @@ interface ChildRequest {
  * A parent reply whose model answers from `parent` in order, and subagents whose model answers by
  * task: `child(task, n)` is the `n`th step (from 1) of the subagent given `task`.
  */
-function setup(parent: Step[], child: (task: string, n: number) => Step, options: Partial<ChatSubagents> = {}) {
+function setup(parent: Step[], child: (task: string, n: number) => Step, options: Partial<ChatSubagents> & { write?: unknown } = {}) {
   const childRequests: ChildRequest[] = [];
   const parentRequests: unknown[] = [];
   const results: ChatToolResult[] = [];
@@ -99,11 +99,33 @@ function setup(parent: Step[], child: (task: string, n: number) => Step, options
     read_file: read('read_file'),
     list_dir: read('list_dir'),
     write_file: read('write_file'),
+    // Fails (an error output, as an MCP tool's failure reads) for a path with "fail" in it.
+    edit_file: tool({
+      inputSchema: jsonSchema<{ path?: string }>({ type: 'object', properties: { path: { type: 'string' } } }),
+      execute: async ({ path }) => (ran.push(`edit_file:${path ?? ''}`), path?.includes('fail') ? { error: 'The text to replace was not found.' } : { edited: true }),
+    }),
+    // Its path is under `target`, not `path`.
+    delete_path: tool({
+      inputSchema: jsonSchema<{ target?: string }>({ type: 'object', properties: { target: { type: 'string' } } }),
+      execute: async ({ target }) => (ran.push(`delete_path:${target ?? ''}`), { deleted: true }),
+    }),
+    // Throws: the call never gives a result.
+    boom: tool({
+      inputSchema: jsonSchema<{ path?: string }>({ type: 'object', properties: { path: { type: 'string' } } }),
+      execute: async ({ path }): Promise<{ written: true }> => {
+        ran.push(`boom:${path ?? ''}`);
+        throw new Error('disk full');
+      },
+    }),
+    run_command: tool({
+      inputSchema: jsonSchema<{ command?: string }>({ type: 'object', properties: { command: { type: 'string' } } }),
+      execute: async ({ command }) => (ran.push(`run_command:${command ?? ''}`), command === 'false' ? { error: 'exit code 1' } : { stdout: 'ok' }),
+    }),
     ask_choice: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ shown: true, awaitsUser: true }) }),
     // A page tool that hands the next move to the viewer, as an ask panel does.
     confirm: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => (ran.push('confirm:'), { shown: true, awaitsUser: true }) }),
   };
-  const resolved = resolveSubagents({ tools: ['read_file', 'list_dir'], ...options })!;
+  const resolved = resolveSubagents({ tools: ['read_file', 'list_dir'], ...options } as ChatSubagents)!;
   const reply = nextReply();
   const gate = { conversationId: 'c1', reply, onResult: (result: ChatToolResult) => results.push(result) };
   const tools: ToolSet = {
@@ -341,5 +363,101 @@ describe('which tools a subagent gets', () => {
       maxSteps: 3,
       maxToolCalls: 40,
     });
+  });
+});
+
+describe('write subagents', () => {
+  /** The page's write opt-in: an allowlist (hard exclusions and a missing tool listed too), its file tools and its command tool. */
+  const WRITE = {
+    tools: ['read_file', 'write_file', 'edit_file', 'delete_path', 'boom', 'run_command', 'ask_choice', DISPATCH_AGENT, 'not_there'],
+    instructions: 'Keep to the game folder.',
+    files: { write_file: { op: 'write' }, edit_file: { op: 'edit' }, boom: { op: 'write' }, delete_path: { op: 'delete', path: (input: unknown) => (input as { target?: string }).target } },
+    commands: ['run_command'],
+  };
+  /** The write rules a write subagent gets, pinned whole: a reworded rule fails here. */
+  const WRITE_PREAMBLE = [
+    'You are a subagent. Another assistant gave you the task in the user message and reads what you return; the user never sees your words.',
+    '- You cannot talk to the user or ask anyone anything. Do not ask questions: decide, or say what you could not do.',
+    '- You may edit files and run commands to do the task. Do only the task.',
+    '- Another subagent may be editing files at the same time: keep each edit small, and read a file again right before you edit it.',
+    '- Finish with, in at most 200 words: what you changed, what you ran, and what you could not do.',
+  ].join('\n');
+  const out = (t: ReturnType<typeof setup>, task: string) => t.dispatched().get(task) as unknown as Record<string, unknown> | undefined;
+
+  // An invariant guard: S1 refused every write dispatch, and these pages still have no usable write opt-in.
+  it.each([
+    ['no write opt-in, write tools in the read allowlist', { tools: ['read_file', 'write_file', 'run_command'] }],
+    ['an empty write allowlist', { write: { tools: [] } }],
+    ['none of the write tools there this reply', { write: { tools: ['not_there'] } }],
+  ])('refuses mode "write" with %s, and asks no subagent model anything', async (_name, options) => {
+    const t = setup([dispatch(['edit the readme', 'write']), says('ok')], () => says('should not run'), options);
+    await t.run();
+    expect(t.dispatched().get('edit the readme')).toEqual({ kind: 'subagent', error: WRITE_UNAVAILABLE, note: expect.any(String) });
+    expect(t.childRequests).toHaveLength(0);
+    expect(t.ran).toEqual([]);
+  });
+
+  it('gives a write subagent exactly its write allowlist (no dispatch_agent, no ask_choice, even when listed), and a read subagent still only the read one', async () => {
+    const t = setup([dispatch(['fix it', 'write'], ['look', 'read']), says('ok')], () => says('done'), { write: WRITE });
+    await t.run();
+    expect(t.childRequests.find((r) => r.task === 'fix it')?.tools).toEqual(['boom', 'delete_path', 'edit_file', 'read_file', 'run_command', 'write_file']);
+    expect(t.childRequests.find((r) => r.task === 'look')?.tools).toEqual(['list_dir', 'read_file']);
+    expect(t.childRequests).toHaveLength(2);
+  });
+
+  it('lists in changed only the files its file tools changed, read from their successful results, never from its words', async () => {
+    const t = setup(
+      [dispatch(['fix it', 'write']), says('ok')],
+      (_task, n) =>
+        n === 1
+          ? calls('w', ['write_file', { path: 'src/a.ts' }], ['edit_file', { path: 'src/fail.ts' }], ['boom', { path: 'src/boom.ts' }], ['delete_path', { target: 'old.ts' }], ['write_file', { path: 'src/a.ts' }], ['read_file', { path: 'src/read.ts' }])
+          : says('I changed src/a.ts, src/fail.ts, src/boom.ts, src/read.ts and src/claimed.ts.'),
+      { write: WRITE },
+    );
+    await t.run();
+    // Every call ran: the failed edit, the throw and the read are left out for how they went, not because they never ran.
+    expect([...t.ran].sort()).toEqual(['boom:src/boom.ts', 'delete_path:old.ts', 'edit_file:src/fail.ts', 'read_file:src/read.ts', 'write_file:src/a.ts', 'write_file:src/a.ts']);
+    const result = out(t, 'fix it');
+    expect(result).toMatchObject({ kind: 'subagent', mode: 'write', status: 'done', ranCommands: 0 });
+    expect([...((result?.changed ?? []) as { path: string; op: string }[])].sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: 'old.ts', op: 'delete' },
+      { path: 'src/a.ts', op: 'write' },
+    ]);
+    expect(JSON.stringify(result?.changed)).not.toContain('claimed');
+  });
+
+  it('counts the commands it ran in ranCommands, failed ones included, and lists none of them in changed', async () => {
+    const t = setup([dispatch(['test it', 'write']), says('ok')], (_task, n) => (n === 1 ? calls('c', ['run_command', { command: 'npm test' }], ['run_command', { command: 'false' }]) : says('Ran the tests.')), { write: WRITE });
+    await t.run();
+    expect(t.ran).toEqual(['run_command:npm test', 'run_command:false']);
+    const result = out(t, 'test it');
+    expect(result).toMatchObject({ kind: 'subagent', mode: 'write', status: 'done', summary: 'Ran the tests.', steps: 2, toolCalls: 2, changed: [], ranCommands: 2 });
+    expect(Object.keys(result ?? {}).sort()).toEqual(['activity', 'changed', 'kind', 'mode', 'ranCommands', 'status', 'steps', 'summary', 'toolCalls']);
+  });
+
+  it('reports each of a write subagent’s calls to the page, marked with its dispatch_agent call id', async () => {
+    const t = setup([dispatch(['fix it', 'write']), says('ok')], (_task, n) => (n === 1 ? calls('w', ['write_file', { path: 'src/a.ts' }]) : says('done')), { write: WRITE });
+    await t.run();
+    expect(t.results.filter((r) => r.name === 'write_file')).toEqual([expect.objectContaining({ name: 'write_file', input: { path: 'src/a.ts' }, isError: false, subagent: 'd-1' })]);
+  });
+
+  it('asks a write subagent with the write rules and the page’s write instructions, and a read one as before', async () => {
+    const t = setup([dispatch(['fix it', 'write'], ['look', 'read']), says('ok')], () => says('done'), { instructions: 'Report paths relative to the app.', write: WRITE });
+    await t.run();
+    const writer = t.childRequests.find((r) => r.task === 'fix it')?.system;
+    expect(writer).toContain(WRITE_PREAMBLE);
+    expect(writer).toContain('Keep to the game folder.');
+    expect(writer).not.toContain('Stay read-only');
+    expect(writer).not.toContain('Report paths relative to the app.');
+    const reader = t.childRequests.find((r) => r.task === 'look')?.system;
+    expect(reader).toContain(SUBAGENT_PREAMBLE);
+    expect(reader).toContain('Report paths relative to the app.');
+    expect(reader).not.toContain('Keep to the game folder.');
+  });
+
+  it('leaves a read subagent’s result exactly as before when the page also opted in to write subagents', async () => {
+    const t = setup([dispatch(['look', 'read']), says('ok')], (_task, n) => (n === 1 ? calls('r', ['read_file', { path: '/a' }]) : says('found')), { write: WRITE });
+    await t.run();
+    expect(t.dispatched().get('look')).toEqual({ kind: 'subagent', status: 'done', summary: 'found', steps: 2, toolCalls: 1, activity: [{ tool: 'read_file', arg: '/a' }] });
   });
 });
