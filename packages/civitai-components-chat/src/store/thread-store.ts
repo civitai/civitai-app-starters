@@ -106,6 +106,9 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     }
     this.#running.get(turn)?.release();
     this.#running.set(turn, { conversationId: conversation.id, release });
+    // A new run of the reply (Retry/Continue): an earlier run's write subagents all have results by now,
+    // and a record of theirs must not be read as this run's if a provider reuses a call id.
+    this.#subagents.delete(turn);
   }
 
   /**
