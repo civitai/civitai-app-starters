@@ -144,6 +144,55 @@ describe('useImageUpload', () => {
     await expect(pick).resolves.toBeNull();
   });
 
+  // ---- purpose: 'trainingData' (civitai/civitai#6461) — several images, one reply ----
+
+  it("trainingData: open() sends purpose:'trainingData' and nothing else", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { type: string; payload: { requestId: string; purpose?: string } };
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(sent.payload.purpose).toBe('trainingData');
+    expect(Object.keys(sent.payload).sort()).toEqual(['purpose', 'requestId']);
+  });
+
+  it('trainingData: resolves with the images array, in the order the host sent it', async () => {
+    const images = [
+      { url: 'https://example.test/v2/consumer/blobs/k1.png', air: 'k1.png' },
+      { url: 'https://example.test/v2/consumer/blobs/k2.webp', air: 'k2.webp' },
+    ];
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, { images });
+    await expect(pick).resolves.toEqual(images);
+  });
+
+  it('trainingData: resolves to null when the viewer cancelled (no `selected`)', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId);
+    await expect(pick).resolves.toBeNull();
+  });
+
+  it('trainingData: a single-image shape (a host that ignored the purpose) resolves null, never a fake list', async () => {
+    // A host that predates the purpose normalises it to `display` and answers
+    // with ONE moderated image — no `air`, nothing a training item can name.
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toBeNull();
+  });
+
   it('resolves with the moderated image on the matching IMAGE_UPLOAD_RESULT', async () => {
     const { result } = renderHook(() => useImageUpload());
     let pick!: Promise<unknown>;

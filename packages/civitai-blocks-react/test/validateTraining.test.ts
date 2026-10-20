@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  isValidTrainingDatasetResult,
+  isValidImageUploadResult,
   isValidTrainingResult,
   isValidWorkflowSnapshot,
   payloadValidatorFor,
@@ -9,8 +9,8 @@ import {
 
 /**
  * Inbound validators for the App Blocks `kind: 'training'` replies —
- * `TRAINING_DATASET_RESULT`, `TRAINING_RESULT`, and `trainingQuote` on a workflow
- * snapshot.
+ * `IMAGE_UPLOAD_RESULT` for a `trainingData` upload, `TRAINING_RESULT`, and
+ * `trainingQuote` on a workflow snapshot.
  *
  * The cases reach the two reply validators THROUGH `payloadValidatorFor`, i.e. the
  * lookup the transport itself uses, so a case passes only when the type is
@@ -26,57 +26,52 @@ const viaTransport = (type: string) => (payload: unknown) => {
   if (v === null) throw new Error(`${type} has no validator`);
   return v(payload);
 };
-const datasetReply = viaTransport('TRAINING_DATASET_RESULT');
 const trainingReply = viaTransport('TRAINING_RESULT');
+const uploadReply = viaTransport('IMAGE_UPLOAD_RESULT');
 
-const DATASET_OK = {
-  requestId: 'r1',
-  result: {
-    datasetId: `tds_${'0'.repeat(31)}1`,
-    count: 2,
-    rejected: [{ imageId: 9, reason: 'pending-scan' }],
-  },
-};
+/**
+ * `IMAGE_UPLOAD_RESULT` for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`
+ * (civitai/civitai#6461): `selected: { images: [{ url, air }] }`, or no
+ * `selected` when the viewer cancelled. A guard that dropped this shape would
+ * leave `useImageUpload({ purpose: 'trainingData' }).open()` waiting out the
+ * ten-minute human bound on an upload the host already finished.
+ */
+const IMAGE = { url: 'https://example.test/v2/consumer/blobs/k1a2b3.png', air: 'k1a2b3.png' };
+const UPLOAD_OK = { requestId: 'r1', selected: { images: [IMAGE] } };
 
-describe('TRAINING_DATASET_RESULT', () => {
-  it('accepts a result, an empty rejected list, and a zero count', () => {
-    expect(datasetReply(DATASET_OK)).toBe(true);
-    expect(datasetReply({ ...DATASET_OK, result: { ...DATASET_OK.result, rejected: [] } })).toBe(
+describe('IMAGE_UPLOAD_RESULT — the trainingData multi-image shape', () => {
+  it('accepts one image, several images, and a cancel (no selected)', () => {
+    expect(uploadReply(UPLOAD_OK)).toBe(true);
+    expect(
+      uploadReply({
+        requestId: 'r1',
+        selected: { images: [IMAGE, { url: 'https://example.test/b/2.webp', air: 'k2.webp' }] },
+      }),
+    ).toBe(true);
+    expect(uploadReply({ requestId: 'r1' })).toBe(true);
+  });
+
+  it('rejects a malformed images list, one field at a time', () => {
+    const bad = (images: unknown) => uploadReply({ requestId: 'r1', selected: { images } });
+    expect(bad('k1')).toBe(false);
+    expect(bad([null])).toBe(false);
+    expect(bad([{ ...IMAGE, url: '' }])).toBe(false);
+    expect(bad([{ ...IMAGE, url: 7 }])).toBe(false);
+    expect(bad([{ ...IMAGE, air: '' }])).toBe(false);
+    expect(bad([{ url: IMAGE.url }])).toBe(false);
+    expect(bad([IMAGE, { ...IMAGE, air: 3 }])).toBe(false);
+  });
+
+  it('still accepts the single-image shapes beside it (no purpose discriminator on the wire)', () => {
+    expect(
+      uploadReply({
+        requestId: 'r1',
+        selected: { imageId: 5, nsfwLevel: 1, contentRating: 'pg', url: IMAGE.url },
+      }),
+    ).toBe(true);
+    expect(uploadReply({ requestId: 'r1', selected: { url: IMAGE.url, width: 8, height: 8 } })).toBe(
       true,
     );
-    expect(datasetReply({ ...DATASET_OK, result: { ...DATASET_OK.result, count: 0 } })).toBe(true);
-  });
-
-  it('accepts a rejection reason the SDK does not list (forward-compatible)', () => {
-    const r = { ...DATASET_OK.result, rejected: [{ imageId: 9, reason: 'some-future-reason' }] };
-    expect(datasetReply({ ...DATASET_OK, result: r })).toBe(true);
-  });
-
-  it('accepts a host code AND a free-text server message on `error` (shape-only)', () => {
-    expect(datasetReply({ requestId: 'r1', error: 'invalid training dataset' })).toBe(true);
-    expect(datasetReply({ requestId: 'r1', error: 'training from apps is not enabled' })).toBe(true);
-    expect(datasetReply({ requestId: 'r1', error: '' })).toBe(true);
-  });
-
-  it('rejects a reply with neither result nor error, or a non-string error', () => {
-    expect(datasetReply({ requestId: 'r1' })).toBe(false);
-    expect(datasetReply({ requestId: 'r1', error: 500 })).toBe(false);
-    expect(datasetReply({ ...DATASET_OK, requestId: 7 })).toBe(false);
-  });
-
-  it('rejects a malformed result, one field at a time', () => {
-    const bad = (patch: Record<string, unknown>) =>
-      datasetReply({ ...DATASET_OK, result: { ...DATASET_OK.result, ...patch } });
-    expect(bad({ datasetId: '' })).toBe(false);
-    expect(bad({ datasetId: 42 })).toBe(false);
-    expect(bad({ count: -1 })).toBe(false);
-    expect(bad({ count: 1.5 })).toBe(false);
-    expect(bad({ count: '2' })).toBe(false);
-    expect(bad({ rejected: 'none' })).toBe(false);
-    expect(bad({ rejected: [{ imageId: '9', reason: 'pending-scan' }] })).toBe(false);
-    expect(bad({ rejected: [{ imageId: 9, reason: 3 }] })).toBe(false);
-    expect(bad({ rejected: [null] })).toBe(false);
-    expect(datasetReply({ requestId: 'r1', result: 'nope' })).toBe(false);
   });
 });
 
@@ -87,6 +82,7 @@ describe('TRAINING_RESULT', () => {
     expect(trainingReply({ requestId: 'r1', snapshot: SNAP_OK })).toBe(true);
     expect(trainingReply({ requestId: 'r1', error: 'declined' })).toBe(true);
     expect(trainingReply({ requestId: 'r1', error: 'submission-unconfirmed' })).toBe(true);
+    expect(trainingReply({ requestId: 'r1', error: 'training data not uploaded here' })).toBe(true);
     expect(
       trainingReply({
         requestId: 'r1',
@@ -163,6 +159,10 @@ describe('payloadValidatorFor — training reply identity', () => {
     // 🔴 Identity: TRAINING_RESULT settles a CHARGED run. A reply routed to the
     // wrong guard would resolve `runTraining()` against an unchecked shape.
     expect(payloadValidatorFor('TRAINING_RESULT')).toBe(isValidTrainingResult);
-    expect(payloadValidatorFor('TRAINING_DATASET_RESULT')).toBe(isValidTrainingDatasetResult);
+    expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBe(isValidImageUploadResult);
+  });
+
+  it('has no validator for the removed TRAINING_DATASET_RESULT (no longer a protocol type)', () => {
+    expect(payloadValidatorFor('TRAINING_DATASET_RESULT')).toBeNull();
   });
 });
