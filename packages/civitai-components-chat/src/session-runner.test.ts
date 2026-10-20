@@ -108,6 +108,19 @@ describe("ChatSession's runner", () => {
     expect(runner.runs.get('r1')!.live).toBe(true);
   });
 
+  it('reads the chat again once its run ended, without looking for the run again', async () => {
+    const runner = fakeRunner();
+    const orchestration = { queryWorkflows: vi.fn(async () => ({ items: [], next: '' })), submitWorkflow: vi.fn() };
+    const session = new ChatSession({ getToken: async () => 'token', site: {}, orchestration } as never, { runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] } });
+    void session.send('build it');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    runner.push('r1', { type: 'run-ended', status: 'done', messages: [{ role: 'assistant', content: 'Built.' }], steps: 1 });
+    await vi.waitFor(() => expect(session.agent.running).toBe(false));
+    expect(orchestration.queryWorkflows).toHaveBeenCalled();
+    expect(runner.requests.filter((request) => request.path.startsWith('runs?conversationId='))).toEqual([]);
+    expect(orchestration.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('sends the title and model the viewer sets to the runner, and writes no head itself', async () => {
     const runner = fakeRunner();
     const orchestration = { queryWorkflows: vi.fn(async () => ({ items: [], next: '' })), submitWorkflow: vi.fn() };

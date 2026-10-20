@@ -234,7 +234,8 @@ export class ChatSession extends EventTarget {
           spokenReplies: this.spokenReplies,
         }),
         pageState: () => options.remote!.pageState?.(),
-        reread: (id) => this.reloadConversation(id),
+        // Read while the agent still counts as running (so nothing sent meanwhile lands on the chat being replaced), and never followed by a lookup: the run just ended.
+        reread: (id) => this.#reread(id),
         progress: this.subagents,
         onToolResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
         wake: pageWake,
@@ -441,6 +442,16 @@ export class ChatSession extends EventTarget {
     return this.#remote ? Promise.resolve(null) : this.catalog().catch(() => null);
   }
 
+  /** The open chat read again after its remote run ended, whatever the agent says. */
+  async #reread(id: string): Promise<void> {
+    if (this.store.current?.id !== id) return;
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
+    this.jobs.clear();
+    this.posts.clear();
+    this.panels.clear();
+    this.#restore(opened, catalog);
+  }
+
   #restore(opened: OpenedConversation, catalog: ToolCatalog | null): void {
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
@@ -539,6 +550,8 @@ export class ChatSession extends EventTarget {
    * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
    */
   async openShared(shared: SharedPanel): Promise<void> {
+    // Remote: the page writes no head, so a chat it made would be the page's alone, and the runner would refuse its next turn.
+    if (this.#remote) throw new Error('A shared panel cannot be opened while replies run on a server runner.');
     this.newConversation();
     const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
     const conversation = this.store.current!;
@@ -554,7 +567,8 @@ export class ChatSession extends EventTarget {
    * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
    */
   async adjust(job: GenerationJob): Promise<boolean> {
-    if (this.backend || this.agent.running || !this.store.current) return false;
+    // Remote: the page writes no head, so a turn it made would be the page's alone.
+    if (this.backend || this.#remote || this.agent.running || !this.store.current) return false;
     const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
     if (!built) return false;
     const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);

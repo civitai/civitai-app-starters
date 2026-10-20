@@ -10,9 +10,10 @@ export interface SseMessage {
  * EventSource spec parses it (comments and `retry:` are read and dropped), except that a message's
  * `id` is only the one it carries itself. Unlike `EventSource`, the
  * request that opened it can carry headers (the page's auth). `idleMs`: a body that sends nothing for
- * that long (not even a comment) is taken as dead, and reading it throws `SseIdleError`.
+ * that long (not even a comment) is taken as dead, and reading it throws `SseIdleError`. `alive` is
+ * called whenever anything arrives, a keep-alive comment included.
  */
-export async function* readSse(body: ReadableStream<Uint8Array>, idleMs?: number): AsyncGenerator<SseMessage> {
+export async function* readSse(body: ReadableStream<Uint8Array>, idleMs?: number, alive?: () => void): AsyncGenerator<SseMessage> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -23,6 +24,7 @@ export async function* readSse(body: ReadableStream<Uint8Array>, idleMs?: number
   try {
     for (;;) {
       const { value, done } = await readWithin(reader, idleMs);
+      if (!done) alive?.();
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
       // A CR at the end of a chunk may be the first half of a CRLF: kept until the next chunk says.
       const lines = buffer.split(/\r\n|\n|\r(?!$)/);

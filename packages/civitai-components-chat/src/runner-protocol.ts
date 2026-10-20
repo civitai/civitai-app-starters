@@ -11,7 +11,7 @@
  * | Call | Body | Answer |
  * |---|---|---|
  * | `POST /runs` | {@link StartRunRequest} | `200`/`201` {@link StartRunResponse}; `4xx`/`5xx` {@link RunErrorResponse} |
- * | `GET /runs?conversationId=<id>` | | `200` {@link RunLookupResponse}: the conversation's live run, or `null` |
+ * | `GET /runs?conversationId=<id>` | | `200` {@link RunLookupResponse}: the conversation's live run, or `null` (never a run whose `run-ended` is journaled) |
  * | `GET /runs/<runId>/events` | `Last-Event-ID` header to resume | `200` `text/event-stream` of {@link RunEvent}; `404` once the run is unknown |
  * | `POST /runs/<runId>/stop` | {@link StopRunRequest} | `202`: the run stops gracefully and ends with `run-ended` `stopped` |
  * | `POST /conversations/<id>/patch` | {@link ConversationPatchRequest} | `204`: the runner writes it into the head |
@@ -162,7 +162,7 @@ export interface RunSummary {
   startedAt: string;
 }
 
-/** `GET /runs?conversationId=`: the conversation's live run, `null` when none runs. */
+/** `GET /runs?conversationId=`: the conversation's live run, `null` when none runs. A run whose `run-ended` is in its journal is not live. */
 export interface RunLookupResponse {
   v: 1;
   run: RunSummary | null;

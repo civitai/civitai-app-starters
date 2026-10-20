@@ -43,6 +43,8 @@ export function fakeRunner() {
     refuseStart: undefined as { status: number; body: unknown } | undefined,
     /** The next event stream opened sends, after its backlog, one message that is not an event (a broken runner). */
     garbleNext: false,
+    /** The next `times` event-stream opens are refused with `status`. */
+    refuseEvents: undefined as { status: number; times: number } | undefined,
     /** The parts `run-started` carries. */
     startParts: [] as TurnPart[],
   };
@@ -137,6 +139,10 @@ export function fakeRunner() {
       if (knobs.failEvents > 0) {
         knobs.failEvents--;
         throw new TypeError('fetch failed');
+      }
+      if (knobs.refuseEvents && knobs.refuseEvents.times > 0) {
+        knobs.refuseEvents.times--;
+        return json({ v: 1, error: 'unavailable', message: 'Not yet.' }, knobs.refuseEvents.status);
       }
       const run = runs.get(decodeURIComponent(eventsPath[1]!));
       if (!run) return json({ v: 1, error: 'not-found', message: 'No such run.' }, 404);

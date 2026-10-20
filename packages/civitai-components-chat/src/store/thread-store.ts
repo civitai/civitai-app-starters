@@ -35,9 +35,9 @@ export interface ThreadStoreDeps {
   /**
    * Remote mode (`runner: 'remote'`): a server-side runner is the only writer of every head, so this
    * store writes none. It still holds the open chat as the page changes it, and reads heads as ever. A
-   * title the viewer or the assistant gave, and the chat's model, go to the runner as a patch (`patch`);
-   * a model or title set before the chat's first message goes with its first run instead. Posts and
-   * panels are kept for this page only.
+   * title the viewer or the assistant gave, and the chat's model, go to the runner as a patch (`patch`)
+   * once the chat has a turn; before that, the model goes with its first run (`model`) and a title is
+   * kept for this page only, as are posts and panels.
    */
   remote?: { patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> };
 }

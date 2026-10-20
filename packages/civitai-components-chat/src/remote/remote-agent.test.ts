@@ -11,7 +11,7 @@ import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import { workflow } from '../test-support/fakes.js';
 import { scriptedModel, text, toolCall } from '../test-support/scripted-model.js';
 import type { ChatToolResult } from '../tools/gate.js';
-import { RemoteAgent, type RemoteAgentDeps } from './remote-agent.js';
+import { RemoteAgent, RUN_ACTIVE, type RemoteAgentDeps } from './remote-agent.js';
 import { RunnerClient } from './runner-client.js';
 
 const SETTINGS = { maxOutputTokens: 4096, tier: 'auto', allowMature: false, autoRunLimit: 10, spokenReplies: false } as const;
@@ -130,7 +130,7 @@ describe('RemoteAgent, against a runner', () => {
     runner.push('r1', ended(browserTurn.assistant.messages));
     await vi.waitFor(() => expect(rereads).toEqual(['c1']));
     await sent;
-    expect(agent.running).toBe(false);
+    await vi.waitFor(() => expect(agent.running).toBe(false));
     expect(agent.live).toBeNull();
     const turn = store.current!.turns[0]!;
     expect(turn.assistant.status).toBe('done');
@@ -197,7 +197,7 @@ describe('RemoteAgent, against a runner', () => {
     expect(opens[1]!.headers['last-event-id']).toBe('2');
     runner.push('r1', ended([{ role: 'assistant', content: 'Done.' }]));
     await sent;
-    expect(agent.running).toBe(false);
+    await vi.waitFor(() => expect(agent.running).toBe(false));
   });
 
   it('applies each event once even when a runner sends events it already sent', async () => {
@@ -220,20 +220,23 @@ describe('RemoteAgent, against a runner', () => {
   });
 
   it('reads the journal again from its start when a message does not fit what it shows', async () => {
-    const { agent, runner } = setup();
+    const { agent, runner, toolResults } = setup();
     void agent.send('go');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
-    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Kept once.' }]);
+    const report: ChatToolResult = { name: 'sandbox__run_command', input: {}, output: 'ok', isError: false };
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Kept once.' }, { type: 'tool-reported', result: report }]);
     runner.knobs.garbleNext = true;
     runner.dropStreams('r1');
     // The open after the drop resumes after id 1, gets the broken message, and the next one reads everything again.
     await vi.waitFor(() => expect(runner.eventOpens('r1')).toHaveLength(3));
     const opens = runner.eventOpens('r1');
-    expect(opens[1]!.headers['last-event-id']).toBe('1');
+    expect(opens[1]!.headers['last-event-id']).toBe('2');
     expect(opens[2]!.headers['last-event-id']).toBeUndefined();
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
     await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: ' Then more.' }]);
     await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'Kept once. Then more.' }]));
+    // Read again from the start, the report did not reach the page a second time.
+    expect(toolResults).toEqual([report]);
     agent.leave();
   });
 
@@ -286,7 +289,7 @@ describe('RemoteAgent, against a runner', () => {
     expect(turn.assistant.status).toBe('streaming');
     runner.push('r1', ended([{ role: 'assistant', content: 'Partial' }], 'stopped'));
     await sent;
-    expect(agent.running).toBe(false);
+    await vi.waitFor(() => expect(agent.running).toBe(false));
     expect(turn.assistant.status).toBe('aborted');
     expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: 'Partial' }]);
   });
@@ -336,7 +339,109 @@ describe('RemoteAgent, against a runner', () => {
     expect(made.store.current!.turns[0]!.assistant.status).toBe('streaming');
     first.runner.push('r1', ended([{ role: 'assistant', content: 'Built.' }]));
     await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+  });
+
+  it('stays running until the head was read again, so nothing sent meanwhile lands on the chat being replaced', async () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const made = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Done.' }], status: 'done' } }])]);
+    const { agent, runner, store } = made;
+    const slow = new RemoteAgent({
+      client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] }),
+      store,
+      model: () => 'model-a',
+      settings: () => SETTINGS,
+      reread: async (id) => {
+        await gate;
+        await store.open(id);
+      },
+    });
+    void agent;
+    const sent = slow.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    runner.push('r1', ended([{ role: 'assistant', content: 'Done.' }]));
+    await vi.waitFor(() => expect(slow.live).toBeNull());
+    expect(slow.running).toBe(true);
+    await slow.send('again');
+    expect(runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs')).toHaveLength(1);
+    open();
+    await sent;
+    await vi.waitFor(() => expect(slow.running).toBe(false));
+    expect(store.current!.turns.map((turn) => turn.user.content)).toEqual(['go']);
+  });
+
+  it('takes how a run ended from the head when the runner no longer knows it', async () => {
+    const { agent, runner, store, rereads } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Finished while you were away.' }], status: 'done' } }])]);
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    // The run ended and was let go of while the page slept.
+    runner.runs.delete('r1');
+    runner.dropStreams('r1');
+    await sent;
+    await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    const turn = store.current!.turns[0]!;
+    expect(turn.assistant.status).toBe('done');
+    expect(turn.assistant.error).toBeUndefined();
+    expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: 'Finished while you were away.' }]);
+  });
+
+  it('keeps trying through a refusal of the event stream that is not a 404, the turn still replying', async () => {
+    const { agent, runner, store } = setup();
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    // Two 403s on reopening, as a runner replica that has not caught up might answer.
+    runner.knobs.refuseEvents = { status: 403, times: 2 };
+    const before = runner.eventOpens('r1').length;
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(runner.eventOpens('r1').length).toBe(before + 3);
+    expect(agent.running).toBe(true);
+    expect(store.current!.turns[0]!.assistant.status).toBe('streaming');
+    runner.push('r1', ended([]));
+    await sent;
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+  });
+
+  it('ends the reply at once on Stop while its start has had no answer', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.failStarts = 1_000_000;
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs').length).toBeGreaterThan(1));
+    agent.abort();
     expect(agent.running).toBe(false);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    const starts = runner.requests.filter((request) => request.path === 'runs').length;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runner.requests.filter((request) => request.path === 'runs').length).toBe(starts);
+  });
+
+  it('writes no head even after reading one back (a later post or panel stays on the page)', async () => {
+    const { agent, runner, store, updateWorkflow, rereads } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [], status: 'done' } }])]);
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    runner.push('r1', ended([]));
+    await sent;
+    await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    await store.savePost('call_9', { status: 'posted' } as never);
+    await store.savePanel({ handle: 'p1' } as never);
+    expect(updateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('fails the turn when the chat already has a run, and asks again with retry once Retry is pressed', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.refuseStart = { status: 409, body: { v: 1, error: 'run-active', message: 'busy', runId: 'r9' } };
+    await agent.send('go');
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', error: RUN_ACTIVE });
+    expect(agent.running).toBe(false);
+    runner.knobs.refuseStart = undefined;
+    void agent.retry();
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const starts = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs');
+    expect((starts.at(-1)!.body as { turn: unknown }).turn).toEqual({ seq: 1, user: { content: 'go', attachments: [] }, retry: true });
+    agent.leave();
   });
 
   it('finds nothing to follow in a chat with no live run', async () => {

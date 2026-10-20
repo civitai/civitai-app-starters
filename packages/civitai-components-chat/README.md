@@ -1040,7 +1040,7 @@ chat.app = app;
 What changes in remote mode:
 
 - **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
-  `beforeToolCall`, `subagents`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
+  `beforeToolCall`, `subagents`, `systemPrompt`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
   anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide
   on (the app open in the page, say) goes in `pageState`. The settings that shape a reply (model,
   custom instructions, `instructions`, output cap, free or paid, mature content, auto-run limit) go
@@ -1058,7 +1058,9 @@ What changes in remote mode:
   is followed again when its chat is opened.
 - **The runner is the only writer of the saved conversation.** The page writes no head: it reads the
   chat again once a run ends. A title or model the viewer sets goes to the runner as a patch
-  (`POST /conversations/<id>/patch`). Posts and panels stay on the page.
+  (`POST /conversations/<id>/patch`). Posts and panels stay on the page, and a shared panel cannot be
+  opened (`openPanel` rejects) nor a generation adjusted, since either would make a turn only the page
+  has. Deleting a chat still deletes its saved workflows from the page; stop its reply first.
 - No `backend`: a backend's replies run on the page, so `runner="remote"` with one is refused.
 
 The protocol, briefly (`runner-protocol.ts` has every field):
