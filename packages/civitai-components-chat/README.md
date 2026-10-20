@@ -574,7 +574,7 @@ chat.subagents = {
 | `maxLive` | 3 | the next `dispatch_agent` is refused (a tool error the assistant reads), and nothing runs |
 | `maxPerReply` | 8 | the same, for the rest of the reply |
 | `maxSteps` | 30 | the subagent's last step must answer in words; it ends `ran_out` |
-| `maxToolCalls` | 40 | the next call does not run (the page is not asked) and the subagent ends `ran_out` |
+| `maxToolCalls` | 40 | the next call does not run (the page is not asked); the subagent takes one last step, in words, and ends `ran_out` |
 
 Each value is kept within bounds (1–10, 1–50, 2–200, 1–500). Several `dispatch_agent` calls in one
 step run at the same time, and are admitted in the order they start.
@@ -592,6 +592,7 @@ subagent's transcript:
 
 ```ts
 {
+  kind: 'subagent',    // on every output of the chat's own dispatch_agent, a refusal ({ kind, error, note }) included
   status: 'done' | 'ran_out' | 'stopped' | 'error',
   summary: string,     // its final words, cut to 4,000 characters
   steps: number,       // model requests it made
@@ -618,7 +619,13 @@ chat.addEventListener('tool-result', (event) => {
 });
 ```
 
-A refusal with `stop: true` given to a subagent's call ends that subagent (`ran_out`), not the reply.
+A refusal with `stop: true` given to a subagent's call ends that subagent (`ran_out`), not the reply. One
+given to the reply's own call ends the reply and stops every subagent still running (`stopped`).
+
+Only outputs marked `kind: 'subagent'` show as subagent cards and count in the Buzz badge, so a page tool
+of its own named `dispatch_agent` (offered while `subagents` is off) shows as any other call. When an
+earlier turn is trimmed to fit the history budget, a subagent's result keeps its conclusion and drops its
+activity log; it is never replaced by the note that invites calling the tool again.
 
 **Stop and retry.** Stopping the reply stops every subagent (`stopped`), and no further subagent request
 is made. A reply step that called `dispatch_agent` is never asked again after a dropped connection, so a

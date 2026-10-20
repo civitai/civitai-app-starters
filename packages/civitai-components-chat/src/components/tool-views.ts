@@ -2,7 +2,7 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { until } from 'lit/directives/until.js';
 
 import type { TurnPart } from '../agent/parts.js';
-import { DISPATCH_AGENT, subagentResultOf, type SubagentStatus } from '../agent/subagent-result.js';
+import { DISPATCH_AGENT, isSubagentOutput, subagentResultOf, type SubagentStatus } from '../agent/subagent-result.js';
 import type { SubagentTracker } from '../agent/subagents.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
@@ -43,8 +43,8 @@ export interface ToolViewContext {
 export interface ToolView {
   activity?: string;
   render?(part: ToolPart, ctx: ToolViewContext): unknown;
-  /** `render` also draws a call that failed, instead of the "didn't work" note. Built-in views only. */
-  ownsFailure?: boolean;
+  /** `render` also draws this call when it failed, instead of the "didn't work" note. Built-in views only. */
+  ownsFailure?(part: ToolPart, ctx: ToolViewContext): boolean;
 }
 
 const job: ToolView = {
@@ -108,13 +108,20 @@ const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 
  * looked at. While it runs it reads its progress from the session; after, only from the saved result,
  * so it shows the same after a reload.
  */
-function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult {
+/** A `dispatch_agent` call that is the chat's own: running and tracked, or with an output it marked. */
+function isOwnSubagent(part: ToolPart, ctx: ToolViewContext): boolean {
+  return part.state === 'calling' ? ctx.subagents?.get(part.toolCallId) !== undefined : isSubagentOutput(part.output);
+}
+
+function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | undefined {
+  // A page tool of the same name (offered while subagents are off) shows as any other call.
+  if (!isOwnSubagent(part, ctx)) return undefined;
   const task = String((part.input as { task?: unknown } | undefined)?.task ?? '').trim();
   const firstLine = task.split('\n').find((line) => line.trim() !== '')?.trim() ?? 'Research';
   const result = part.state === 'done' ? subagentResultOf(part.output) : undefined;
   const live = part.state === 'calling' ? ctx.subagents?.get(part.toolCallId) : undefined;
   const refusal = part.state === 'done' && !result ? String((part.output as { error?: unknown } | undefined)?.error ?? '') : '';
-  const status: keyof typeof SUBAGENT_STATUS = result ? result.status : part.state === 'calling' ? 'calling' : part.state === 'error' ? 'error' : 'refused';
+  const status: keyof typeof SUBAGENT_STATUS = result ? result.status : part.state === 'calling' ? 'calling' : 'refused';
   const steps = result?.steps ?? live?.steps ?? 0;
   const calls = result?.toolCalls ?? live?.toolCalls ?? 0;
   const key = `subagent:${part.toolCallId}`;
@@ -156,7 +163,7 @@ function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult {
 }
 
 export const BUILT_IN_VIEWS: Record<string, ToolView> = {
-  [DISPATCH_AGENT]: { activity: 'Starting a subagent…', render: renderSubagent, ownsFailure: true },
+  [DISPATCH_AGENT]: { render: renderSubagent, ownsFailure: isOwnSubagent },
   ...Object.fromEntries([...JOB_TOOLS].map((name) => [name, job])),
   [OPEN_PANEL]: { activity: 'Setting up the controls…', render: renderPanel },
   [UPDATE_PANEL]: { activity: 'Changing the controls…', render: renderPanel },
@@ -182,7 +189,7 @@ export function viewFor(name: string, pageViews: Record<string, ChatToolView>): 
   return {
     activity: page.activity ?? builtIn?.activity,
     render: render ? (part) => render(callOf(part)) : builtIn?.render,
-    ...(!render && builtIn?.ownsFailure ? { ownsFailure: true } : {}),
+    ...(!render && builtIn?.ownsFailure ? { ownsFailure: builtIn.ownsFailure } : {}),
   };
 }
 

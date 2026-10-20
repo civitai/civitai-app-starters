@@ -534,19 +534,24 @@ export class ChatSession extends EventTarget {
     });
     this.#hostToolNames = new Set(Object.keys(host));
     const tools: ToolSet = { ...builtIn, ...host };
+    // Aborts when the page ends the reply on one of its own calls: its subagents stop with it.
+    const replyEnded = new AbortController();
     // One reply number for the reply's calls and its subagents' calls alike.
     const gate: GateDeps = {
       conversationId: turn.conversationId,
       gate: this.#options.beforeToolCall?.(),
       onResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
       reply: nextReply(),
+      onEnded: () => replyEnded.abort(),
     };
     // Offered only when the page opted in and a tool it allowed is here; otherwise the reply's tools are as before.
     if (subagents && subagentToolNames(subagents.tools, tools).length > 0) {
       tools[DISPATCH_AGENT] = dispatchAgentTool({
         options: subagents,
         tools: { ...tools },
-        gate: (childTools, subagent) => gateToolSet(childTools, { ...gate, subagent }),
+        // Its own gate, so a page's stop on a subagent's call ends only that subagent.
+        gate: (childTools, subagent) => gateToolSet(childTools, { ...gate, subagent, onEnded: undefined }),
+        ended: replyEnded.signal,
         model: () => this.#model(subagents.model ?? this.assistantModel()),
         maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
         progress: this.subagents,

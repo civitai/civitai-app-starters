@@ -52,7 +52,7 @@ function head() {
                     type: 'tool-result',
                     toolCallId: 'd1',
                     toolName: 'dispatch_agent',
-                    output: { type: 'json', value: { status: 'done', summary: LONG_SUMMARY, steps: 12, toolCalls: 31, activity: [{ tool: 'sandbox__read_file', arg: LONG_PATH }] } },
+                    output: { type: 'json', value: { kind: 'subagent', status: 'done', summary: LONG_SUMMARY, steps: 12, toolCalls: 31, activity: [{ tool: 'sandbox__read_file', arg: LONG_PATH }] } },
                   },
                 ],
               },

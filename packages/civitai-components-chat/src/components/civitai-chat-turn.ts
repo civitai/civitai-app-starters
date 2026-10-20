@@ -120,7 +120,7 @@ export class CivitaiChatTurn extends LightElement {
   #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
-    if (failure && !view?.ownsFailure) {
+    if (failure && !view?.ownsFailure?.(part, this.#context())) {
       if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;

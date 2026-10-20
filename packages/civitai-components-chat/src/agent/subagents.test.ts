@@ -134,7 +134,7 @@ describe('dispatch_agent: what it refuses, before any subagent runs', () => {
   it('refuses mode "write" with a clear error, and asks no subagent model anything', async () => {
     const t = setup([dispatch(['edit the readme', 'write']), says('ok')], () => says('should not run'));
     await t.run();
-    expect(t.dispatched().get('edit the readme')).toEqual({ error: WRITE_UNAVAILABLE, note: expect.any(String) });
+    expect(t.dispatched().get('edit the readme')).toEqual({ kind: 'subagent', error: WRITE_UNAVAILABLE, note: expect.any(String) });
     expect(WRITE_UNAVAILABLE).toBe('write subagents are not available yet');
     expect(t.childRequests).toHaveLength(0);
     // Positive control: the same call with mode "read" does ask a subagent model.
@@ -161,7 +161,7 @@ describe('dispatch_agent: what it refuses, before any subagent runs', () => {
     release();
     await running;
     const out = t.dispatched();
-    expect(out.get('t4')).toEqual({ error: '3 subagents are already running, the most at once. Dispatch this after one returns.', note: expect.any(String) });
+    expect(out.get('t4')).toEqual({ kind: 'subagent', error: '3 subagents are already running, the most at once. Dispatch this after one returns.', note: expect.any(String) });
     expect(['t1', 't2', 't3'].map((task) => out.get(task)?.status)).toEqual(['done', 'done', 'done']);
     expect(t.requestsFor('t4')).toBe(0);
     expect(t.childRequests.map((r) => r.task).sort()).toEqual(['t1', 't2', 't3']);
@@ -171,7 +171,7 @@ describe('dispatch_agent: what it refuses, before any subagent runs', () => {
     const t = setup([dispatch(['a1'], ['a2'], ['a3']), dispatch(['b1'], ['b2'], ['b3']), dispatch(['c1'], ['c2'], ['c3']), says('ok')], () => says('done'));
     await t.run();
     const out = t.dispatched();
-    expect(out.get('c3')).toEqual({ error: 'This reply already started 8 subagents, the most one reply may.', note: expect.any(String) });
+    expect(out.get('c3')).toEqual({ kind: 'subagent', error: 'This reply already started 8 subagents, the most one reply may.', note: expect.any(String) });
     expect(t.requestsFor('c3')).toBe(0);
     expect(t.childRequests).toHaveLength(8);
   });
@@ -200,7 +200,7 @@ describe('a subagent’s own caps', () => {
     expect(t.dispatched().get('dig')).toMatchObject({ status: 'ran_out', steps: 30, toolCalls: 29, summary: 'Out of steps: here is what I found.' });
   });
 
-  it('ends at its 41st tool call: that call and the ones after it do not run, and no further step is asked for', async () => {
+  it('ends at its 41st tool call: that call and the ones after it do not run, and one last step in words gives its summary', async () => {
     // 10 calls a step: the 5th step holds calls 41 to 50.
     const t = setup([dispatch(['many']), says('ok')], (_task, n) =>
       calls(`m${n}`, ...Array.from({ length: 10 }, (_, i): [string, unknown] => ['read_file', { path: `/s${n}/f${i}` }])),
@@ -208,8 +208,12 @@ describe('a subagent’s own caps', () => {
     await t.run();
     expect(t.ran).toHaveLength(40);
     expect(t.ran.at(-1)).toBe('read_file:/s4/f9');
-    expect(t.requestsFor('many')).toBe(5);
-    expect(t.dispatched().get('many')).toMatchObject({ status: 'ran_out', toolCalls: 40, steps: 5 });
+    // One more step, in words only, so the parent gets what it found.
+    const asked = t.childRequests.filter((r) => r.task === 'many');
+    expect(asked).toHaveLength(6);
+    expect(asked.map((r) => r.toolChoice)).toEqual(['auto', 'auto', 'auto', 'auto', 'auto', 'none']);
+    expect(asked[5]!.system).toContain('This is your last step');
+    expect(t.dispatched().get('many')).toMatchObject({ status: 'ran_out', toolCalls: 40, steps: 6, summary: 'Out of steps: here is what I found.' });
     // The activity log is the calls' tools and paths only, capped at 50 (40 here).
     expect(t.dispatched().get('many')!.activity).toHaveLength(40);
     expect(t.dispatched().get('many')!.activity[0]).toEqual({ tool: 'read_file', arg: '/s1/f0' });
@@ -218,9 +222,9 @@ describe('a subagent’s own caps', () => {
   it('takes the page’s step and call caps over the defaults', async () => {
     const t = setup([dispatch(['few']), says('ok')], (_task, n) => calls(`f${n}`, ['read_file', { path: `/f${n}` }], ['list_dir', { path: `/d${n}` }]), { maxSteps: 7, maxToolCalls: 11 });
     await t.run();
-    // 2 calls a step: the 6th step holds calls 11 and 12, so 11 run and the 12th ends it.
+    // 2 calls a step: the 6th step holds calls 11 and 12, so 11 run, the 12th ends it, and a 7th step is in words.
     expect(t.ran).toHaveLength(11);
-    expect(t.requestsFor('few')).toBe(6);
+    expect(t.requestsFor('few')).toBe(7);
     expect(t.dispatched().get('few')).toMatchObject({ status: 'ran_out', toolCalls: 11 });
   });
 
@@ -240,7 +244,7 @@ describe('what a subagent gives back', () => {
     const out = t.dispatched().get('summarise')!;
     expect(out.summary).toBe(words.slice(0, 4_000));
     expect(out.summary).toHaveLength(4_000);
-    expect(out).toEqual({ status: 'done', summary: words.slice(0, 4_000), steps: 2, toolCalls: 1, activity: [{ tool: 'read_file', arg: '/secret.txt' }] });
+    expect(out).toEqual({ kind: 'subagent', status: 'done', summary: words.slice(0, 4_000), steps: 2, toolCalls: 1, activity: [{ tool: 'read_file', arg: '/secret.txt' }] });
     // The tool's output stayed in the subagent: the parent never sees it.
     expect(JSON.stringify(out)).not.toContain('contents of');
   });

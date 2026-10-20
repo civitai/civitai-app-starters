@@ -26,13 +26,15 @@ describe('conversationSpend', () => {
       assistant: {
         status: 'done',
         messages: [
-          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd2', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd3', toolName: 'dispatch_agent', input: {} }] },
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd2', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd3', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd4', toolName: 'dispatch_agent', input: {} }] },
           {
             role: 'tool',
             content: [
-              { type: 'tool-result', toolCallId: 'd1', toolName: 'dispatch_agent', output: { type: 'json', value: { status: 'done', summary: 's', steps: 13, toolCalls: 20, activity: [] } } },
-              { type: 'tool-result', toolCallId: 'd2', toolName: 'dispatch_agent', output: { type: 'json', value: { status: 'ran_out', summary: '', steps: 4, toolCalls: 3, activity: [] } } },
-              { type: 'tool-result', toolCallId: 'd3', toolName: 'dispatch_agent', output: { type: 'json', value: { error: 'write subagents are not available yet' } } },
+              { type: 'tool-result', toolCallId: 'd1', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', status: 'done', summary: 's', steps: 13, toolCalls: 20, activity: [] } } },
+              { type: 'tool-result', toolCallId: 'd2', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', status: 'ran_out', summary: '', steps: 4, toolCalls: 3, activity: [] } } },
+              { type: 'tool-result', toolCallId: 'd3', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', error: 'write subagents are not available yet' } } },
+              // A page's own tool of that name: not a subagent, whatever its output says.
+              { type: 'tool-result', toolCallId: 'd4', toolName: 'dispatch_agent', output: { type: 'json', value: { status: 'done', summary: '', steps: 50, toolCalls: 0, activity: [] } } },
             ],
           },
           { role: 'assistant', content: 'Here is what they found.' },

@@ -23,6 +23,7 @@ const SAVED: ModelMessage[] = [
         output: {
           type: 'json',
           value: {
+            kind: 'subagent',
             status: 'done',
             summary: 'Auth lives in src/auth; tokens refresh in refresh.ts.',
             steps: 4,
@@ -87,8 +88,8 @@ describe('the subagent card', () => {
   });
 
   it('shows a refused dispatch and a failed subagent with why, in the card', async () => {
-    const refused: TurnPart = { kind: 'tool', toolCallId: 'd2', toolName: 'dispatch_agent', input: { task: 'Edit it', mode: 'write' }, state: 'done', output: { error: 'write subagents are not available yet', note: 'Nothing ran.' } };
-    const failed: TurnPart = { kind: 'tool', toolCallId: 'd3', toolName: 'dispatch_agent', input: { task: 'Read it', mode: 'read' }, state: 'done', output: { status: 'error', summary: '', steps: 1, toolCalls: 0, activity: [], error: 'The model is down.' } };
+    const refused: TurnPart = { kind: 'tool', toolCallId: 'd2', toolName: 'dispatch_agent', input: { task: 'Edit it', mode: 'write' }, state: 'done', output: { kind: 'subagent', error: 'write subagents are not available yet', note: 'Nothing ran.' } };
+    const failed: TurnPart = { kind: 'tool', toolCallId: 'd3', toolName: 'dispatch_agent', input: { task: 'Read it', mode: 'read' }, state: 'done', output: { kind: 'subagent', status: 'error', summary: '', steps: 1, toolCalls: 0, activity: [], error: 'The model is down.' } };
     const el = await turnWith([refused, failed]);
     const [first, second] = [...el.querySelectorAll('.cvt-subagent')];
     expect(first!.getAttribute('data-status')).toBe('refused');
@@ -98,6 +99,18 @@ describe('the subagent card', () => {
     first!.querySelector<HTMLButtonElement>('button')!.click();
     await el.updateComplete;
     expect(text(first!.querySelector('[data-subagent="error"]'))).toBe('write subagents are not available yet');
+  });
+});
+
+describe('a page tool of its own named dispatch_agent', () => {
+  it('is not drawn as a subagent card: it shows as any other call', async () => {
+    const own: TurnPart = { kind: 'tool', toolCallId: 'p1', toolName: 'dispatch_agent', input: { task: 'Ship it' }, state: 'done', output: { status: 'done', steps: 3, summary: 'shipped', toolCalls: 0, activity: [] } };
+    const failed: TurnPart = { kind: 'tool', toolCallId: 'p2', toolName: 'dispatch_agent', input: {}, state: 'done', output: { error: 'no truck' } };
+    const running: TurnPart = { kind: 'tool', toolCallId: 'p3', toolName: 'dispatch_agent', input: {}, state: 'calling' };
+    const el = await turnWith([own, failed, running], { subagents: new SubagentTracker(), live: true });
+    expect(el.querySelector('.cvt-subagent')).toBeNull();
+    expect(text(el.querySelector('.cvt-step-failed summary'))).toBe("A step didn't work");
+    expect(text(el.querySelector('.cvt-activity'))).toBe('Working on it…');
   });
 });
 

@@ -61,6 +61,8 @@ export interface GateDeps {
   reply?: number;
   /** A subagent's calls: the `dispatch_agent` call's id, passed to the gate and on every result. */
   subagent?: string;
+  /** Called once, when a call's `stop: true` ends the reply these calls belong to. */
+  onEnded?(): void;
 }
 
 const STOPPED = 'The reply was stopped before this call ran.';
@@ -90,15 +92,6 @@ let replies = 0;
 /** A new reply number: what `gateToolSet` takes when it is given none. */
 export function nextReply(): number {
   return ++replies;
-}
-
-/**
- * `output` marked as one that ends the run it came in, with the words to end on: the step loop then
- * asks for no further step. For a cap the chat itself keeps (a subagent's tool calls).
- */
-export function endingOutput<T extends object>(output: T, message: string): T {
-  ENDING.set(output, message);
-  return output;
 }
 
 /**
@@ -139,6 +132,7 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
         }
         if (decision?.stop !== undefined) {
           ended = decision.stop;
+          deps.onEnded?.();
           const output = ending({ error: decision.refused, note: ENDED_NOTE }, ended);
           onResult({ name, input, output, isError: true, refused: decision.refused, stopped: true });
           return output;

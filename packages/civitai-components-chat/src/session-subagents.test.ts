@@ -191,4 +191,35 @@ describe('telling a subagent’s calls from the reply’s own', () => {
     expect(turn.assistant).toMatchObject({ status: 'done' });
     expect(turn.assistant.stopped).toBeUndefined();
   });
+
+  it('stops every subagent when the page ends the reply on one of the reply’s own calls: no subagent request after it', async () => {
+    const events: string[] = [];
+    let t!: ReturnType<typeof setup>;
+    t = setup({
+      subagents: () => ({ tools: ['sandbox__read_file'] }),
+      beforeToolCall: () => async (name, _input, { subagent }) => {
+        // The subagent's first read waits for the page's stop, so it is still running when the reply ends.
+        if (subagent !== undefined) {
+          await vi.waitFor(() => expect(events).toContain('stop'));
+          return { allow: true };
+        }
+        if (name !== 'sandbox__read_file') return { allow: true };
+        // The reply's own read is answered once its subagent is under way.
+        await vi.waitFor(() => expect(t.childBodies.length).toBeGreaterThanOrEqual(1));
+        events.push('stop');
+        return { refuse: 'Budget used.', stop: true, message: 'Budget used.' };
+      },
+      parent: [() => callsReply(['d1', 'dispatch_agent', { task: 'keep reading', mode: 'read' }], ['p1', 'sandbox__read_file', { path: '/a' }]), () => textReply('should not be asked')],
+      child: (_task, n) => (events.push(`child ${n}`), callsReply([`s${n}`, 'sandbox__read_file', { path: `/s${n}` }])),
+    });
+    t.session.newConversation();
+    await t.session.send('go');
+    const turn = t.session.store.current!.turns[0]!;
+    expect(turn.assistant).toMatchObject({ status: 'done', stopped: 'Budget used.' });
+    const stopAt = events.indexOf('stop');
+    expect(stopAt).toBeGreaterThan(0);
+    expect(events.slice(stopAt + 1)).toEqual([]);
+    const result = turn.assistant.messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'd1');
+    expect((result as { output: { value: unknown } }).output.value).toMatchObject({ status: 'stopped' });
+  });
 });

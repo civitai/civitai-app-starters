@@ -2,14 +2,13 @@ import { dynamicTool, jsonSchema, type LanguageModel, type ModelMessage, type To
 
 import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { ASK_CHOICE } from '../tools/build.js';
-import { endingOutput } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { AgentCore, type AgentCoreOutcome } from './core.js';
 import { defaultRules } from './system-prompt.js';
-import { ACTIVITY_MAX, DISPATCH_AGENT, SUMMARY_MAX_CHARS, type SubagentResult, type SubagentStatus } from './subagent-result.js';
+import { ACTIVITY_MAX, DISPATCH_AGENT, SUBAGENT_KIND, SUMMARY_MAX_CHARS, type SubagentRefusal, type SubagentResult, type SubagentStatus } from './subagent-result.js';
 import { summarizeInput } from './tool-groups.js';
 
-export { ACTIVITY_MAX, DISPATCH_AGENT, SUMMARY_MAX_CHARS, subagentResultOf, type SubagentResult, type SubagentStatus } from './subagent-result.js';
+export { ACTIVITY_MAX, DISPATCH_AGENT, SUBAGENT_KIND, SUMMARY_MAX_CHARS, isSubagentOutput, subagentResultOf, type SubagentRefusal, type SubagentResult, type SubagentStatus } from './subagent-result.js';
 
 /**
  * Read-only subagents: the `dispatch_agent` tool. Its call runs a child reply on {@link AgentCore} with a
@@ -138,6 +137,8 @@ export interface DispatchDeps {
   describeError?(error: unknown): HumanError;
   networkRetryDelaysMs?: readonly number[];
   progress?: SubagentTracker;
+  /** Aborts when the page ends the reply (`stop: true` on one of the reply's own calls): every subagent stops. */
+  ended?: AbortSignal;
 }
 
 /**
@@ -168,11 +169,11 @@ export function dispatchAgentTool(deps: DispatchDeps): Tool {
     }),
     execute: async (input, { toolCallId, abortSignal }) => {
       const { task, mode } = (input ?? {}) as { task?: unknown; mode?: unknown };
-      if (mode === 'write') return { error: WRITE_UNAVAILABLE, note: REFUSED_NOTE };
-      if (mode !== 'read') return { error: 'mode must be "read".', note: REFUSED_NOTE };
-      if (typeof task !== 'string' || task.trim() === '') return { error: 'task is empty: write a self-contained brief.', note: REFUSED_NOTE };
-      if (started >= options.maxPerReply) return { error: `This reply already started ${options.maxPerReply} subagents, the most one reply may.`, note: REFUSED_NOTE };
-      if (live >= options.maxLive) return { error: `${options.maxLive} subagents are already running, the most at once. Dispatch this after one returns.`, note: REFUSED_NOTE };
+      if (mode === 'write') return refusal(WRITE_UNAVAILABLE);
+      if (mode !== 'read') return refusal('mode must be "read".');
+      if (typeof task !== 'string' || task.trim() === '') return refusal('task is empty: write a self-contained brief.');
+      if (started >= options.maxPerReply) return refusal(`This reply already started ${options.maxPerReply} subagents, the most one reply may.`);
+      if (live >= options.maxLive) return refusal(`${options.maxLive} subagents are already running, the most at once. Dispatch this after one returns.`);
       live++;
       started++;
       try {
@@ -184,6 +185,11 @@ export function dispatchAgentTool(deps: DispatchDeps): Tool {
   });
 }
 
+/** A `dispatch_agent` call that started no subagent, marked as the chat's own. */
+function refusal(error: string): SubagentRefusal {
+  return { kind: SUBAGENT_KIND, error, note: REFUSED_NOTE };
+}
+
 /** One subagent, start to end. Its tools are the allowlisted ones, behind the page's gate and its own call cap. */
 async function runChild(deps: DispatchDeps, names: string[], task: string, id: string, signal: AbortSignal | undefined): Promise<SubagentResult> {
   const { options } = deps;
@@ -191,7 +197,11 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
   let calls = 0;
   const progress: SubagentProgress = { task, steps: 0, toolCalls: 0 };
   const report = () => deps.progress?.set(id, { ...progress });
-  if (signal?.aborted) return { status: 'stopped', summary: '', steps: 0, toolCalls: 0, activity };
+  // The reply stopped by the viewer, or ended by the page: the subagent stops either way.
+  const signals = [signal, deps.ended].filter((s): s is AbortSignal => s !== undefined);
+  if (signals.some((s) => s.aborted)) return { kind: SUBAGENT_KIND, status: 'stopped', summary: '', steps: 0, toolCalls: 0, activity };
+  // Set once the tool-call cap is reached: no call runs after it, and the next step is the last, in words.
+  let capped = false;
 
   const gated = deps.gate(Object.fromEntries(names.map((name) => [name, deps.tools[name]!])), id);
   const tools: ToolSet = {};
@@ -201,10 +211,10 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
     tools[name] = {
       ...tool,
       execute: async (input: unknown, callOptions: Parameters<typeof execute>[1]) => {
-        // Over the cap: nothing runs, the page is not asked, and the subagent takes no further step.
+        // Over the cap: nothing runs, the page is not asked, and its next step is its last, in words.
         if (calls >= options.maxToolCalls) {
-          const message = `This subagent used its ${options.maxToolCalls} tool calls.`;
-          return endingOutput({ error: message, note: 'Nothing ran. Write what you found so far.' }, message);
+          capped = true;
+          return { error: `This subagent used its ${options.maxToolCalls} tool calls.`, note: 'Nothing ran. Write what you found so far.' };
         }
         calls++;
         if (activity.length < ACTIVITY_MAX) activity.push({ tool: name, arg: shortArg(input) });
@@ -221,7 +231,7 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
 
   const core = new AgentCore({ describeError: (error) => (deps.describeError ?? humanize)(error) });
   const stop = () => core.abort();
-  signal?.addEventListener('abort', stop, { once: true });
+  for (const s of signals) s.addEventListener('abort', stop, { once: true });
   report();
   let outcome: AgentCoreOutcome | undefined;
   try {
@@ -236,6 +246,7 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
         maxOutputTokens: deps.maxOutputTokens(),
         maxSteps: options.maxSteps,
         lastStep: LAST_STEP,
+        wordsOnly: () => capped,
         maxNetworkRetries: SUBAGENT_NETWORK_RETRIES,
         ...(deps.networkRetryDelaysMs ? { networkRetryDelaysMs: deps.networkRetryDelaysMs } : {}),
       }),
@@ -245,16 +256,17 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
       },
     });
   } finally {
-    signal?.removeEventListener('abort', stop);
+    for (const s of signals) s.removeEventListener('abort', stop);
     deps.progress?.set(id, undefined);
   }
-  return resultOf(outcome!, Math.min(calls, options.maxToolCalls), activity, deps.describeError ?? humanize);
+  return resultOf(outcome!, Math.min(calls, options.maxToolCalls), activity, capped, deps.describeError ?? humanize);
 }
 
-function resultOf(outcome: AgentCoreOutcome, toolCalls: number, activity: SubagentResult['activity'], describe: (error: unknown) => HumanError): SubagentResult {
+function resultOf(outcome: AgentCoreOutcome, toolCalls: number, activity: SubagentResult['activity'], capped: boolean, describe: (error: unknown) => HumanError): SubagentResult {
   const status: SubagentStatus =
-    outcome.status === 'aborted' ? 'stopped' : outcome.status === 'error' ? 'error' : outcome.ranOut || outcome.stopped !== undefined ? 'ran_out' : 'done';
+    outcome.status === 'aborted' ? 'stopped' : outcome.status === 'error' ? 'error' : capped || outcome.ranOut || outcome.stopped !== undefined ? 'ran_out' : 'done';
   return {
+    kind: SUBAGENT_KIND,
     status,
     summary: finalWords(outcome.messages).slice(0, SUMMARY_MAX_CHARS),
     steps: outcome.steps,

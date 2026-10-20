@@ -53,6 +53,8 @@ export interface AgentCoreRequest {
   maxSteps?: number;
   /** What the last allowed step is told, added to `system`; the built-in words (to the user) unless set. */
   lastStep?: string;
+  /** Asked before each step: `true` makes it the last one, in words (no tools), as if the step limit were reached. */
+  wordsOnly?(): boolean;
 }
 
 export interface AgentCoreRun {
@@ -179,7 +181,7 @@ export class AgentCore {
     try {
       const tools = await run.tools();
       toolsBuilt = true;
-      const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, ...retry } = run.request(tools);
+      const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
       if (ownSteps !== undefined) maxSteps = ownSteps;
       const retryDelays = retry.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       const retryCap = retry.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
@@ -253,7 +255,7 @@ export class AgentCore {
             temperature: 0.7,
             providerOptions: PROVIDER_OPTIONS,
             // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${lastStep}` } : undefined),
+            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none', system: `${system}\n\n${lastStep}` } : undefined),
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
               recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
