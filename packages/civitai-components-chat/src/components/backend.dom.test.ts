@@ -277,7 +277,7 @@ describe('<civitai-chat> on a host backend', () => {
     search.value = '';
     search.dispatchEvent(new Event('input'));
     await (picker as unknown as { updateComplete: Promise<unknown> }).updateComplete;
-    expect([...picker.querySelectorAll('.cvt-model-name')].map((name) => name.textContent)).toEqual(['default-model · default', 'Big']);
+    expect([...picker.querySelectorAll('.cvt-model-name')].map((name) => name.textContent)).toEqual(['host/default-model · default', 'Big']);
   });
 
   it('switches /model only to a model the backend names, and has no /model with one model', async () => {
