@@ -22,6 +22,7 @@ import { isSuperseded } from '../store/conversation-store.js';
 import { replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolGate, ChatToolResult } from '../tools/gate.js';
+import type { ChatSubagents } from '../agent/subagents.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
 import type { Attachment, Settings, Turn } from '../types.js';
@@ -155,6 +156,7 @@ export class CivitaiChat extends LitElement {
     mcpServers: { attribute: false },
     holdReason: { attribute: 'hold-reason' },
     beforeToolCall: { attribute: false },
+    subagents: { attribute: false },
     scope: {},
     panelLinkBase: { attribute: 'panel-link-base' },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
@@ -241,6 +243,12 @@ export class CivitaiChat extends LitElement {
    * reported as a `tool-result` event.
    */
   declare beforeToolCall?: ChatToolGate;
+  /**
+   * Read-only subagents: when set, the assistant gets a `dispatch_agent` tool that starts another
+   * assistant on one research task, with only the tools `tools` allows, and gets back a short summary.
+   * Off (no such tool) unless set; read at the start of every reply. See "Subagents" in the README.
+   */
+  declare subagents?: ChatSubagents;
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
   /**
@@ -900,6 +908,7 @@ export class CivitaiChat extends LitElement {
       systemPrompt: () => this.systemPrompt,
       mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
       beforeToolCall: () => this.beforeToolCall,
+      subagents: () => this.subagents,
       // While a reply is still coming the message waits in the box instead of being dropped.
       ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
       compose: (message, refs) => this.#composeWith(message, refs),
@@ -911,7 +920,7 @@ export class CivitaiChat extends LitElement {
     this.#sessionStart = start;
     this.modelList = null;
     this.#models = new ModelDirectory(session.app.site, () => session.settings.allowMature);
-    for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
+    for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels, session.subagents] as EventTarget[]) {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
     // For the page's own telemetry: the words the viewer saw, and where the reply broke (`trace`).
@@ -1757,7 +1766,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>

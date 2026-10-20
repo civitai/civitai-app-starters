@@ -3,6 +3,7 @@ import { html, nothing, type PropertyDeclarations, type PropertyValues, type Tem
 import { repeat } from 'lit/directives/repeat.js';
 
 import type { LiveTurn } from '../agent/agent.js';
+import type { SubagentTracker } from '../agent/subagents.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
@@ -41,6 +42,7 @@ export class CivitaiChatThread extends LightElement {
     views: { attribute: false },
     toolCalls: { attribute: 'tool-calls' },
     mcpServerIds: { attribute: false },
+    subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -62,6 +64,8 @@ export class CivitaiChatThread extends LightElement {
   declare toolCalls: ToolCallsMode;
   /** The added MCP servers' ids, so a call row can show which one a tool is from. */
   declare mcpServerIds: ReadonlySet<string>;
+  /** The subagents running now, for their cards' live progress. */
+  declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
   declare queued: QueuedView | null;
@@ -211,6 +215,7 @@ export class CivitaiChatThread extends LightElement {
                 .views=${this.views}
                 .toolCalls=${this.toolCalls}
                 .mcpServerIds=${this.mcpServerIds}
+                .subagents=${this.subagents}
               ></civitai-chat-turn>`,
           )}
           ${this.#queuedMessage()}

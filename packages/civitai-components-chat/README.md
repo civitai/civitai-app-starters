@@ -548,6 +548,96 @@ gate answers.
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.
 
+## Subagents
+
+`subagents` gives the assistant a `dispatch_agent` tool: it starts a **read-only subagent**, another
+assistant that works on one research task in its own context and gives back a short summary, so a reply
+that needs a conclusion drawn from many files or pages does not carry all of them for the rest of the
+reply. Off unless set: without it (or with none of its tools there this reply) `dispatch_agent` is not
+offered and the reply's tools are exactly as before. Read at the start of every reply.
+
+```ts
+import type { ChatSubagents } from '@civitai/components-chat/civitai-chat';
+
+chat.subagents = {
+  // An allowlist of the exact tool names the assistant sees; a tool added later stays out until listed.
+  tools: ['sandbox__read_file', 'sandbox__list_dir', 'get_guide'],
+  instructions: 'Give paths relative to the app folder.', // optional, added to the subagent's rules
+  model: 'my/cheaper-model', // optional; the reply's own model when unset
+  // optional caps (defaults shown)
+  maxLive: 3, maxPerReply: 8, maxSteps: 30, maxToolCalls: 40,
+} satisfies ChatSubagents;
+```
+
+| | Default | What happens past it |
+|---|---|---|
+| `maxLive` | 3 | the next `dispatch_agent` is refused (a tool error the assistant reads), and nothing runs |
+| `maxPerReply` | 8 | the same, for the rest of the reply |
+| `maxSteps` | 30 | the subagent's last step must answer in words; it ends `ran_out` |
+| `maxToolCalls` | 40 | the next call does not run (the page is not asked); the subagent takes one last step, in words, and ends `ran_out` |
+
+Each value is kept within bounds (1–10, 1–50, 2–200, 1–500). Several `dispatch_agent` calls in one
+step run at the same time, and are admitted in the order they start.
+
+**What a subagent gets.** A history of its own: only the task. Its system prompt is the chat's built-in
+rules for its tools, then the subagent rules (it cannot talk to the user or ask anything, it stays
+read-only, and it finishes with what it found in at most 200 words), then `instructions`. Its tools are
+the allowlisted ones this reply has, behind the page's `beforeToolCall`. Never `dispatch_agent` itself
+(one level only), and never a tool that waits for the viewer (`ask_choice`, `open_panel`,
+`update_panel`), even when listed; a page tool whose result says `awaitsUser` comes back to it as an
+error. `mode: "write"` is refused with *"write subagents are not available yet"*, and nothing runs.
+
+**What the assistant gets back** (the `dispatch_agent` result, saved with the reply), never the
+subagent's transcript:
+
+```ts
+{
+  kind: 'subagent',    // on every output of the chat's own dispatch_agent, a refusal ({ kind, error, note }) included
+  status: 'done' | 'ran_out' | 'stopped' | 'error',
+  summary: string,     // its final words, cut to 4,000 characters
+  steps: number,       // model requests it made
+  toolCalls: number,
+  activity: { tool: string; arg: string }[], // each call's tool and a short argument (a path, a query), at most 50, no outputs
+  error?: string,      // status 'error'
+}
+```
+
+**Telling a subagent's calls from the reply's own.** A subagent's calls go through `beforeToolCall` and
+fire `tool-result` like any other, with the reply's own `reply` number, and carry `subagent`: the
+`toolCallId` of the `dispatch_agent` call that started it. The reply's own calls (the `dispatch_agent`
+call included) have no `subagent`. A page that keeps a per-reply tool budget leaves subagent calls out
+of it, so subagents have their own caps instead:
+
+```ts
+chat.beforeToolCall = (_name, _input, { reply, subagent }) => {
+  if (subagent !== undefined) return { allow: true }; // a subagent's call: its own caps apply
+  if (counted.reply !== reply) counted = { reply, calls: 0 };
+  return ++counted.calls <= LIMIT ? { allow: true } : { refuse: 'Tool budget used up.', stop: true };
+};
+chat.addEventListener('tool-result', (event) => {
+  const { name, subagent } = (event as CustomEvent<ChatToolResult>).detail; // `subagent` set on a subagent's call
+});
+```
+
+A refusal with `stop: true` given to a subagent's call ends that subagent (`ran_out`), not the reply. One
+given to the reply's own call ends the reply and stops every subagent still running (`stopped`).
+
+Only outputs marked `kind: 'subagent'` show as subagent cards and count in the Buzz badge, so a page tool
+of its own named `dispatch_agent` (offered while `subagents` is off) shows as any other call. When an
+earlier turn is trimmed to fit the history budget, a subagent's result keeps its conclusion and drops its
+activity log; it is never replaced by the note that invites calling the tool again.
+
+**Stop and retry.** Stopping the reply stops every subagent (`stopped`), and no further subagent request
+is made. A reply step that called `dispatch_agent` is never asked again after a dropped connection, so a
+subagent never runs twice; a subagent's own cut step that called no tool is asked again once. A
+`dispatch_agent` still running when the page closed comes back on Continue as an interrupted call, like
+any other tool call.
+
+**What the viewer sees.** Each `dispatch_agent` call shows as a card: its task, steps and tool calls,
+and status, live while it runs, and from the saved result after a reload; opened, its summary and what
+it looked at. The Buzz badge counts each subagent step as one assistant call, read from the saved
+results, and its breakdown says *"Including N subagent steps"*.
+
 ## More MCP servers
 
 `mcpServers` adds MCP servers beside the built-in two, for per-user servers whose address is known

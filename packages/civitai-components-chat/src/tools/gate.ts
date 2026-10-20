@@ -17,13 +17,25 @@ export type ChatToolDecision = { allow: true } | { refuse: string; stop?: false 
  * gate never lets a call by. `signal` aborts when the viewer stops the reply; a call whose reply was
  * stopped while the gate decided does not run, whatever the gate answers. `reply` is the same number
  * for every call in one reply and a new one for the next (Continue and Retry included), so a page can
- * keep a per-reply count by it.
+ * keep a per-reply count by it. `subagent` is set only on a call a subagent made (see `subagents` on the
+ * element): the id of the `dispatch_agent` call that started it. Its calls carry the reply's own `reply`;
+ * a page that counts calls per reply skips the ones with `subagent` to give subagents their own budget.
+ * A `stop: true` answered to a subagent's call ends that subagent, not the reply.
  */
 export type ChatToolGate = (
   name: string,
   input: unknown,
-  context: { conversationId: string; reply: number; signal?: AbortSignal },
+  context: ChatToolGateContext,
 ) => ChatToolDecision | Promise<ChatToolDecision>;
+
+/** What {@link ChatToolGate} is told about a call besides its name and input. */
+export interface ChatToolGateContext {
+  conversationId: string;
+  reply: number;
+  signal?: AbortSignal;
+  /** Set only on a subagent's call: the `toolCallId` of the parent's `dispatch_agent` call that started it. */
+  subagent?: string;
+}
 
 /** One finished tool call, as the `tool-result` event reports it. */
 export interface ChatToolResult {
@@ -37,12 +49,20 @@ export interface ChatToolResult {
   refused?: string;
   /** Set when this call ended the reply (`stop: true`), or did not run because another call ended it. */
   stopped?: true;
+  /** Set only on a subagent's call: the `toolCallId` of the parent's `dispatch_agent` call that started it. */
+  subagent?: string;
 }
 
 export interface GateDeps {
   conversationId: string;
   gate?: ChatToolGate;
   onResult(result: ChatToolResult): void;
+  /** The reply these calls belong to; a new one ({@link nextReply}) unless set, as a subagent's calls share their parent's. */
+  reply?: number;
+  /** A subagent's calls: the `dispatch_agent` call's id, passed to the gate and on every result. */
+  subagent?: string;
+  /** Called once, when a call's `stop: true` ends the reply these calls belong to. */
+  onEnded?(): void;
 }
 
 const STOPPED = 'The reply was stopped before this call ran.';
@@ -66,8 +86,13 @@ export function endedReply(output: unknown): string | undefined {
   return output !== null && typeof output === 'object' ? ENDING.get(output) : undefined;
 }
 
-/** The last reply number handed out; each `gateToolSet` (one per reply) takes the next. */
+/** The last reply number handed out; each reply takes the next. */
 let replies = 0;
+
+/** A new reply number: what `gateToolSet` takes when it is given none. */
+export function nextReply(): number {
+  return ++replies;
+}
 
 /**
  * Every tool with its `execute` wrapped: the gate first, then the tool, then one report of the result.
@@ -76,7 +101,9 @@ let replies = 0;
  */
 export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
   const gated: ToolSet = {};
-  const reply = ++replies;
+  const reply = deps.reply ?? nextReply();
+  const subagent = deps.subagent;
+  const onResult = (result: ChatToolResult) => deps.onResult(subagent === undefined ? result : { ...result, subagent });
   // The words the reply ends on, once a call ended it.
   let ended: string | undefined;
   const ending = (output: { error: string; note: string }, message: string) => (ENDING.set(output, message), output);
@@ -91,37 +118,38 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
       execute: async (input: unknown, options: Parameters<typeof execute>[1]) => {
         const signal = (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
         // Ended already: the gate is not asked, and nothing runs.
-        const decision = ended === undefined ? await decide(deps.gate, name, input, deps.conversationId, reply, signal) : undefined;
+        const decision = ended === undefined ? await decide(deps.gate, name, input, { conversationId: deps.conversationId, reply, ...(subagent !== undefined ? { subagent } : {}) }, signal) : undefined;
         if (signal?.aborted) {
           // Stopped while the gate decided: nothing runs, a confirmation that comes late included.
-          deps.onResult({ name, input, output: { error: STOPPED }, isError: true });
+          onResult({ name, input, output: { error: STOPPED }, isError: true });
           throw signal.reason ?? new Error(STOPPED);
         }
         if (ended !== undefined) {
           // Another call ended the reply, before this one or while its gate decided: whatever it said, this does not run.
           const output = ending({ error: ENDED, note: ENDED_NOTE }, ended);
-          deps.onResult({ name, input, output, isError: true, stopped: true });
+          onResult({ name, input, output, isError: true, stopped: true });
           return output;
         }
         if (decision?.stop !== undefined) {
           ended = decision.stop;
+          deps.onEnded?.();
           const output = ending({ error: decision.refused, note: ENDED_NOTE }, ended);
-          deps.onResult({ name, input, output, isError: true, refused: decision.refused, stopped: true });
+          onResult({ name, input, output, isError: true, refused: decision.refused, stopped: true });
           return output;
         }
         if (decision !== undefined) {
           const output = { error: decision.refused, note: REFUSED_BY_PAGE_NOTE };
-          deps.onResult({ name, input, output, isError: true, refused: decision.refused });
+          onResult({ name, input, output, isError: true, refused: decision.refused });
           return output;
         }
         let output: unknown;
         try {
           output = await (execute as (input: unknown, options: unknown) => unknown)(input, options);
         } catch (error) {
-          deps.onResult({ name, input, output: { error: error instanceof Error ? error.message : String(error) }, isError: true });
+          onResult({ name, input, output: { error: error instanceof Error ? error.message : String(error) }, isError: true });
           throw error;
         }
-        deps.onResult({ name, input, output, isError: isErrorOutput(output) });
+        onResult({ name, input, output, isError: isErrorOutput(output) });
         return output;
       },
     } as typeof tool;
@@ -130,11 +158,11 @@ export function gateToolSet(tools: ToolSet, deps: GateDeps): ToolSet {
 }
 
 /** The refusal (with the words to end the reply on, when it ends it), or `undefined` to let the call run. */
-async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, conversationId: string, reply: number, signal?: AbortSignal): Promise<{ refused: string; stop?: string } | undefined> {
+async function decide(gate: ChatToolGate | undefined, name: string, input: unknown, context: Omit<ChatToolGateContext, 'signal'>, signal?: AbortSignal): Promise<{ refused: string; stop?: string } | undefined> {
   if (!gate) return undefined;
   try {
     // Stop ends the wait even when the page never answers: a pending gate does not hold the reply open.
-    const decision = await untilAborted(gate(name, input, signal ? { conversationId, reply, signal } : { conversationId, reply }), signal);
+    const decision = await untilAborted(gate(name, input, signal ? { ...context, signal } : context), signal);
     if (!decision || typeof decision !== 'object' || !('refuse' in decision)) return undefined;
     const refused = String(decision.refuse || 'Refused.');
     if (decision.stop !== true) return { refused };

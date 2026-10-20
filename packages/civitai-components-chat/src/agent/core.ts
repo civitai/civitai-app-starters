@@ -49,6 +49,12 @@ export interface AgentCoreRequest {
   networkRetryDelaysMs?: readonly number[];
   /** The most automatic retries one reply makes in all; `MAX_NETWORK_RETRIES_PER_REPLY` unless set. */
   maxNetworkRetries?: number;
+  /** The most steps the reply may take, the last one in words; the page's `stepLimit()` unless set (a subagent's own cap). */
+  maxSteps?: number;
+  /** What the last allowed step is told, added to `system`; the built-in words (to the user) unless set. */
+  lastStep?: string;
+  /** Asked before each step: `true` makes it the last one, in words (no tools), as if the step limit were reached. */
+  wordsOnly?(): boolean;
 }
 
 export interface AgentCoreRun {
@@ -98,6 +104,8 @@ export interface AgentCoreOutcome {
   stopped?: string;
   /** `done` only: the reply used every step it may take. */
   ranOut?: boolean;
+  /** Steps whose answer started streaming, in all (a step asked for again after a drop counts once). */
+  steps: number;
   /** `error` only: what ended the reply, and where. */
   error?: unknown;
   where?: TraceContext;
@@ -155,8 +163,8 @@ export class AgentCore {
     // Whether `stepText`'s step is still open: a step that finished is in `completed` already.
     let stepOpen = false;
     let streamError: unknown;
-    // Read once per reply, so a change applies from the next one.
-    const maxSteps = stepLimit();
+    // Read once per reply, so a change applies from the next one; a request may set its own.
+    let maxSteps = stepLimit();
     // Steps whose answer started streaming; between one step's end and the next one's start its request is out.
     let steps = from?.steps ?? 0;
     let streaming = false;
@@ -168,12 +176,13 @@ export class AgentCore {
     // Where asking again could carry on from if the reply fails, set as each pass ends; none when the
     // failed step had called a tool (it may have run, and is in no finished step to send as it is).
     let resumable: ResumePoint | undefined;
-    let outcome: Omit<AgentCoreOutcome, 'messages'>;
+    let outcome: Omit<AgentCoreOutcome, 'messages' | 'steps'>;
     const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
     try {
       const tools = await run.tools();
       toolsBuilt = true;
-      const { model, system, history, maxOutputTokens, ...retry } = run.request(tools);
+      const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
+      if (ownSteps !== undefined) maxSteps = ownSteps;
       const retryDelays = retry.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       const retryCap = retry.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
       // Retries of the drop now being recovered from (reset once a step finishes, i.e. the connection
@@ -246,7 +255,7 @@ export class AgentCore {
             temperature: 0.7,
             providerOptions: PROVIDER_OPTIONS,
             // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
+            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none', system: `${system}\n\n${lastStep}` } : undefined),
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
               recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
@@ -366,7 +375,7 @@ export class AgentCore {
     // A step cut short never reached onStepFinish; keep what the user already read. A step that did
     // (closed after an error, or before a stop) is in `completed` already, and is not kept twice.
     if (outcome.status !== 'done' && stepOpen && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
-    const ended: AgentCoreOutcome = { ...outcome, messages: completed };
+    const ended: AgentCoreOutcome = { ...outcome, messages: completed, steps };
     run.settled?.(ended);
     this.#live = null;
     this.#abort = undefined;
@@ -435,7 +444,7 @@ function errorText(error: unknown): string {
  * A failed reply's outcome. The resume point is copied as it is now: the reply's messages may still
  * take the cut step's words, which are not a finished step and must not be sent again as one.
  */
-function failure(error: unknown, where: TraceContext, resume?: ResumePoint): Omit<AgentCoreOutcome, 'messages'> {
+function failure(error: unknown, where: TraceContext, resume?: ResumePoint): Omit<AgentCoreOutcome, 'messages' | 'steps'> {
   return { status: 'error', error, where, ...(resume ? { resume: { ...resume, messages: [...resume.messages] } } : {}) };
 }
 

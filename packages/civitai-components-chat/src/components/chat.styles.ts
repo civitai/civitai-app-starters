@@ -1056,6 +1056,129 @@ civitai-chat-panel {
   overflow-wrap: anywhere;
 }
 
+/* A subagent's card: one tappable header (44px tall) that wraps rather than overflows on a phone. */
+.cvt-subagent {
+  justify-self: stretch;
+  min-width: 0;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+  font-size: 13px;
+}
+
+.cvt-subagent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-subagent-head:hover {
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-subagent-head:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-subagent-title {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cvt-subagent-kind {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--civitai-color-text-dimmed);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cvt-subagent-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-subagent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-subagent[data-status='error'] .cvt-subagent-status,
+.cvt-subagent[data-status='refused'] .cvt-subagent-status {
+  color: var(--civitai-color-error);
+}
+
+.cvt-subagent[data-status='calling'] .cvt-subagent-status::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+.cvt-subagent-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 10px 10px 24px;
+}
+
+.cvt-subagent-text {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+  min-width: 0;
+}
+
+.cvt-subagent-activity li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity .cvt-call-name {
+  max-width: none;
+  white-space: normal;
+}
+
+.cvt-subagent-arg {
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-panel-chip {
   display: inline-flex;
   align-items: center;

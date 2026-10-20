@@ -3,6 +3,8 @@ import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Agent } from '../agent/agent.js';
+import { DISPATCH_AGENT, dispatchAgentTool, resolveSubagents } from '../agent/subagents.js';
+import { gateToolSet } from '../tools/gate.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { fakeHeads, fakeLocks, tabStorage } from '../test-support/fake-heads.js';
 import type { Turn } from '../types.js';
@@ -53,7 +55,7 @@ const results = (head: Head | undefined) =>
 function tab(
   heads = fakeHeads(),
   steps: (StreamPart[] | typeof HANGS)[] = [callsNote('call_1', 'one'), callsNote('call_2', 'two'), says('All done.')],
-  options: { noteWaits?: () => Promise<void>; now?: () => Date; own?: ReturnType<typeof tabStorage>; locks?: Pick<LockManager, 'request' | 'query'> | null } = {},
+  options: { noteWaits?: () => Promise<void>; now?: () => Date; own?: ReturnType<typeof tabStorage>; locks?: Pick<LockManager, 'request' | 'query'> | null; tools?: ToolSet } = {},
 ) {
   const ran: string[] = [];
   let asked = 0;
@@ -83,6 +85,7 @@ function tab(
     x: tool({ inputSchema: jsonSchema<{ text: string }>({ type: 'object', properties: { text: { type: 'string' } } }), execute: async (input) => ({ ...run('x')(input), made: 'x-result-7' }) }),
     // Starts and never finishes: the tab dies while it runs.
     hang: tool({ inputSchema: jsonSchema<{ text: string }>({ type: 'object', properties: { text: { type: 'string' } } }), execute: (input) => (run('hang')(input), new Promise(() => {})) }),
+    ...options.tools,
   };
   const own = options.own ?? tabStorage();
   const store = new ThreadStore({ orchestration: heads.orchestration, api: heads.api, hideMatureContent: () => true, now: options.now ?? at(NOW), newId: () => 'CONV1', ownReplies: own, locks: options.locks ?? null });
@@ -243,6 +246,62 @@ describe('a reply whose tab died mid-step, carried on elsewhere', () => {
     expect(sent.match(new RegExp(INTERRUPTED_CALL, 'g'))).toHaveLength(1);
     expect(sent.match(/"toolCallId":"call_hang"/g)).toHaveLength(2);
     expect(ranInA).toEqual(['note:one', 'hang:h']);
+  });
+});
+
+describe('a subagent running when its tab died', () => {
+  it('comes back on Continue as the interrupted result, and no subagent runs again', async () => {
+    const heads = fakeHeads();
+    const locks = fakeLocks();
+    // A's subagent starts, and never finishes: the tab dies while it runs.
+    let childAsked = 0;
+    const child = new MockLanguageModelV3({
+      doStream: async () => {
+        childAsked++;
+        return { stream: new ReadableStream<StreamPart>({ start: (c) => c.enqueue({ type: 'stream-start', warnings: [] }) }) as never };
+      },
+    });
+    const research: ToolSet = { read: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => 'read' }) };
+    const dispatch = dispatchAgentTool({
+      options: resolveSubagents({ tools: ['read'] })!,
+      tools: research,
+      gate: (tools, subagent) => gateToolSet(tools, { conversationId: 'CONV1', onResult: () => undefined, subagent }),
+      model: () => child,
+      maxOutputTokens: () => 1_000,
+    });
+    const dispatches: StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'call_d', toolName: DISPATCH_AGENT, input: JSON.stringify({ task: 'read everything', mode: 'read' }) },
+      { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+    ];
+    const a = tab(heads, [dispatches], { locks: locks.tab('A'), tools: { [DISPATCH_AGENT]: dispatch } });
+    void a.agent.send('research it');
+    await vi.waitFor(() => {
+      expect(JSON.stringify(heads.writes.at(-1)?.metadata ?? {})).toContain('"toolCallId":"call_d"');
+      expect(childAsked).toBe(1);
+    });
+    locks.kill('A');
+
+    const prompts: string[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async (request) => {
+        prompts.push(JSON.stringify(request.prompt));
+        return { stream: convertArrayToReadableStream(says('Picked it up.')) as never };
+      },
+    });
+    const b = tab(heads, [], { now: at(NOW + 30 * 60_000), locks: locks.tab('B') });
+    const agent = new Agent({ model: () => model, store: b.store, jobs: new JobManager({} as never), toolSet: async () => ({ [DISPATCH_AGENT]: dispatch }), attachments: () => [] });
+    agent.addEventListener('error', () => undefined);
+    const opened = (await b.store.open('CONV1')).conversation.turns.at(-1)!;
+    expect(replyElsewhere(opened, NOW + 30 * 60_000)).toBe('stale');
+    await agent.retry();
+
+    expect(b.store.current!.turns.at(-1)!.assistant.status).toBe('done');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.match(new RegExp(INTERRUPTED_CALL, 'g'))).toHaveLength(1);
+    expect(prompts[0]!.match(/"toolCallId":"call_d"/g)).toHaveLength(2);
+    // Its subagent was asked once, in A, and never again.
+    expect(childAsked).toBe(1);
   });
 });
 

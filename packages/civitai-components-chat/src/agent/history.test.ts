@@ -258,4 +258,28 @@ describe('buildModelMessages', () => {
     const messages = buildModelMessages([turn(1, 'hi', { status: 'aborted' })], () => undefined);
     expect(messages.at(-1)).toEqual({ role: 'assistant', content: '(The user stopped this reply.)' });
   });
+
+  it('keeps an earlier subagent result over budget as its conclusion without the activity log, never the note that invites calling it again', () => {
+    const activity = Array.from({ length: 50 }, (_, i) => ({ tool: 'sandbox__read_file', arg: `src/${'deep/'.repeat(10)}file${i}.ts` }));
+    const value = { kind: 'subagent', status: 'done', summary: 'Auth lives in src/auth.', steps: 9, toolCalls: 50, activity };
+    const dispatched: Turn = {
+      seq: 1,
+      createdAt: '2026-09-23T00:00:00Z',
+      user: { content: 'where is auth?', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'find auth', mode: 'read' } }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'd1', toolName: 'dispatch_agent', output: { type: 'json', value: value as never } }] },
+          { role: 'assistant', content: 'In src/auth.' },
+        ],
+      },
+    };
+    const later = toolTurn(2, 'now this', 'sandbox__read_file', 'x'.repeat(40_000));
+    const messages = buildModelMessages([dispatched, later], () => undefined, { budget: 12_000 });
+    const sent = JSON.stringify(messages);
+    expect(sent).not.toContain(RESULT_LEFT_OUT.slice(0, 20));
+    const result = messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'd1');
+    expect((result as { output: unknown }).output).toEqual({ type: 'json', value: { kind: 'subagent', status: 'done', summary: 'Auth lives in src/auth.', steps: 9, toolCalls: 50 } });
+  });
 });
