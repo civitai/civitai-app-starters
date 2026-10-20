@@ -1,0 +1,365 @@
+import type { Workflow, WorkflowTemplate } from '@civitai/sdk';
+import { jsonSchema, tool, type ModelMessage, type ToolSet } from 'ai';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { Agent } from '../agent/agent.js';
+import { partsFromMessages, type TurnPart } from '../agent/parts.js';
+import { JobManager } from '../orchestration/jobs.js';
+import { createPartsDiffer, type RunEvent } from '../runner-protocol.js';
+import { ThreadStore, type ThreadStoreDeps } from '../store/thread-store.js';
+import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
+import { workflow } from '../test-support/fakes.js';
+import { scriptedModel, text, toolCall } from '../test-support/scripted-model.js';
+import type { ChatToolResult } from '../tools/gate.js';
+import { RemoteAgent, type RemoteAgentDeps } from './remote-agent.js';
+import { RunnerClient } from './runner-client.js';
+
+const SETTINGS = { maxOutputTokens: 4096, tier: 'auto', allowMature: false, autoRunLimit: 10, spokenReplies: false } as const;
+
+/** A v2 head as the runner saves it once a run ended. */
+function head(conversationId: string, turns: unknown[]): Workflow {
+  return workflow({
+    id: `head-${conversationId}`,
+    tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+    metadata: { v: 2, app: 'chat-cvt', conversationId, title: 'Saved', titleSource: 'llm', createdAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z', turns },
+  });
+}
+
+/** A store in remote mode, whose every orchestrator write is watched; `heads` is what reading it back finds. */
+function remoteStore(heads: Workflow[] = []) {
+  const submitWorkflow = vi.fn(async (_: WorkflowTemplate) => workflow({ id: 'never' }));
+  const updateWorkflow = vi.fn(async () => undefined);
+  const queryWorkflows = vi.fn(async (query: { tags?: string[] }) => ({ items: query.tags?.includes('cvt:job') ? [] : heads, next: '' }));
+  const patch = vi.fn(async () => undefined);
+  const deps: ThreadStoreDeps = {
+    orchestration: { submitWorkflow, queryWorkflows: queryWorkflows as never },
+    api: { updateWorkflow, removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn(async () => undefined) },
+    hideMatureContent: () => true,
+    newId: () => 'c1',
+    ownReplies: null,
+    locks: null,
+    remote: { patch },
+  };
+  return { store: new ThreadStore(deps), submitWorkflow, updateWorkflow, queryWorkflows, patch, heads };
+}
+
+function setup(heads: Workflow[] = [], extra: Partial<RemoteAgentDeps> = {}) {
+  const runner = fakeRunner();
+  const made = remoteStore(heads);
+  const rereads: string[] = [];
+  const errors: unknown[] = [];
+  const toolResults: ChatToolResult[] = [];
+  const agent = new RemoteAgent({
+    client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, headers: async () => ({ authorization: 'Bearer viewer' }), reconnectDelaysMs: [0] }),
+    store: made.store,
+    scope: 'app-assistant',
+    model: () => 'model-a',
+    settings: () => SETTINGS,
+    pageState: () => ({ appId: 'app-7', sandbox: 'sb-1' }),
+    reread: async (id) => {
+      rereads.push(id);
+      await made.store.open(id);
+    },
+    onToolResult: (result) => toolResults.push(result),
+    newKey: () => 'key-1',
+    ...extra,
+  });
+  agent.addEventListener('error', (event) => errors.push((event as CustomEvent).detail));
+  const seen: TurnPart[][] = [];
+  agent.addEventListener('change', () => {
+    if (agent.live) seen.push(structuredClone(agent.live.parts));
+  });
+  return { ...made, runner, agent, rereads, errors, toolResults, seen };
+}
+
+/** Pushes events onto the run's journal one at a time, letting the page read each. */
+async function pushAll(runner: ReturnType<typeof fakeRunner>, runId: string, events: RunEvent[]) {
+  for (const event of events) {
+    runner.push(runId, event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+const ended = (messages: ModelMessage[], status: 'done' | 'stopped' | 'error' | 'ran_out' = 'done', extra: Partial<Extract<RunEvent, { type: 'run-ended' }>> = {}): RunEvent => ({ type: 'run-ended', status, messages, steps: 1, ...extra });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('RemoteAgent, against a runner', () => {
+  it('shows the same parts, and ends on the same turn, as the page’s own Agent for the same reply', async () => {
+    // The page's own reply, recorded as a runner would stream it.
+    const tools: ToolSet = {
+      generate_image: tool({ inputSchema: jsonSchema<{ prompt: string }>({ type: 'object', properties: { prompt: { type: 'string' } } }), execute: async () => ({ job: 'gen1-1', status: 'running' }) }),
+    };
+    const browserStore = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async () => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+      ownReplies: null,
+      locks: null,
+    });
+    const browser = new Agent({
+      model: () => scriptedModel([toolCall('generate_image', { prompt: 'a red bike' }), text('Your bike ', 'is on ', 'its way!')]),
+      store: browserStore,
+      jobs: new JobManager({} as never),
+      toolSet: async () => tools,
+      attachments: () => [],
+    });
+    const differ = createPartsDiffer();
+    const journal: RunEvent[] = [];
+    let browserLast: TurnPart[] = [];
+    browser.addEventListener('change', () => {
+      if (!browser.live) return;
+      journal.push(...differ.diff(browser.live.parts));
+      browserLast = structuredClone(browser.live.parts);
+    });
+    await browser.send('make a red bike');
+    const browserTurn = browserStore.current!.turns[0]!;
+    expect(browserTurn.assistant.status).toBe('done');
+    // Not a trivial reply: a tool call with its result, and words after it.
+    expect(browserLast.map((part) => part.kind)).toEqual(['tool', 'text']);
+
+    // The same reply, run by a runner and followed by the page.
+    const { agent, runner, store, rereads, errors } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'make a red bike', attachments: [] }, assistant: { messages: browserTurn.assistant.messages, status: 'done' } }])]);
+    const sent = agent.send('make a red bike');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', journal);
+    expect(agent.live!.parts).toEqual(browserLast);
+    expect(agent.running).toBe(true);
+    runner.push('r1', ended(browserTurn.assistant.messages));
+    await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    await sent;
+    expect(agent.running).toBe(false);
+    expect(agent.live).toBeNull();
+    const turn = store.current!.turns[0]!;
+    expect(turn.assistant.status).toBe('done');
+    expect(turn.assistant.messages).toEqual(browserTurn.assistant.messages);
+    expect(partsFromMessages(turn.assistant.messages)).toEqual(partsFromMessages(browserTurn.assistant.messages));
+    expect(errors).toEqual([]);
+  });
+
+  it('starts the run with the turn, the model, the settings and the page’s state, with the page’s auth on every call', async () => {
+    const { agent, runner } = setup();
+    void agent.send('build me a todo app');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const start = runner.requests.find((request) => request.method === 'POST' && request.path === 'runs')!;
+    expect(start.body).toEqual({
+      v: 1,
+      idempotencyKey: 'key-1',
+      conversationId: 'c1',
+      scope: 'app-assistant',
+      turn: { seq: 1, user: { content: 'build me a todo app', attachments: [] } },
+      model: 'model-a',
+      settings: SETTINGS,
+      page: { appId: 'app-7', sandbox: 'sb-1' },
+    });
+    expect(runner.requests.every((request) => request.headers.authorization === 'Bearer viewer')).toBe(true);
+    agent.leave();
+  });
+
+  it('writes no head while a run goes, and reads the head again once it ended', async () => {
+    const { agent, runner, submitWorkflow, updateWorkflow, queryWorkflows, rereads } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'hi', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Hello.' }], status: 'done' } }])]);
+    const sent = agent.send('hi');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Hello.' }, { type: 'step-finished', steps: 1, calledTools: false }, { type: 'checkpoint', savedAt: '2026-10-19T00:00:01Z' }]);
+    expect(queryWorkflows).not.toHaveBeenCalled();
+    runner.push('r1', ended([{ role: 'assistant', content: 'Hello.' }]));
+    await sent;
+    await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    expect(queryWorkflows).toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(updateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('resumes after the last event it read when the stream is cut, without showing anything twice', async () => {
+    const { agent, runner } = setup();
+    runner.knobs.dropAfter = 3;
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.eventOpens('r1').length).toBeGreaterThan(0));
+    await pushAll(runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Hello' },
+      { type: 'text-delta', index: 0, text: ' world' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't1', output: { exitCode: 0 } },
+      { type: 'text-delta', index: 2, text: 'Done.' },
+    ]);
+    await vi.waitFor(() => expect(agent.live?.parts.length).toBe(3));
+    expect(agent.live!.parts).toEqual([
+      { kind: 'text', text: 'Hello world' },
+      { kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' }, state: 'done', output: { exitCode: 0 } },
+      { kind: 'text', text: 'Done.' },
+    ]);
+    const opens = runner.eventOpens('r1');
+    expect(opens.length).toBeGreaterThan(1);
+    // The first open asks for the whole journal; each one after resumes after the last event read.
+    expect(opens[0]!.headers['last-event-id']).toBeUndefined();
+    expect(opens[1]!.headers['last-event-id']).toBe('2');
+    runner.push('r1', ended([{ role: 'assistant', content: 'Done.' }]));
+    await sent;
+    expect(agent.running).toBe(false);
+  });
+
+  it('applies each event once even when a runner sends events it already sent', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'One' },
+      { type: 'text-delta', index: 0, text: ' two' },
+    ]);
+    // A runner that replays from after `run-started` (id 0) whatever the client last read: 'One' and ' two' come again.
+    runner.knobs.replayFrom = 1;
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(runner.eventOpens('r1')).toHaveLength(2));
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(runner.eventOpens('r1')[1]!.headers['last-event-id']).toBe('2');
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: ' three' }]);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'One two three' }]));
+    agent.leave();
+  });
+
+  it('keeps reconnecting through a network drop, the turn still replying and no error shown', async () => {
+    const { agent, runner, store, errors } = setup();
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Working' }]);
+    const before = runner.eventOpens('r1').length;
+    runner.knobs.failEvents = 4;
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(runner.eventOpens('r1').length).toBe(before + 5));
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const turn = store.current!.turns[0]!;
+    expect(agent.running).toBe(true);
+    expect(turn.assistant.status).toBe('streaming');
+    expect(turn.assistant.error).toBeUndefined();
+    expect(errors).toEqual([]);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: ' on it.' }]);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working on it.' }]);
+    runner.push('r1', ended([{ role: 'assistant', content: 'Working on it.' }]));
+    await sent;
+    expect(turn.assistant.status).toBe('done');
+  });
+
+  it('asks again for a start whose answer never came, with the same key, so the run starts once', async () => {
+    const { agent, runner } = setup();
+    runner.knobs.failStarts = 2;
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const starts = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs');
+    expect(starts).toHaveLength(3);
+    expect(new Set(starts.map((request) => (request.body as { idempotencyKey: string }).idempotencyKey))).toEqual(new Set(['key-1']));
+    expect(runner.runs.size).toBe(1);
+    agent.leave();
+  });
+
+  it('sends Stop to the runner, and shows the reply stopped only once the run says it ended', async () => {
+    const { agent, runner, store } = setup();
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Partial' }]);
+    agent.abort();
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs/r1/stop')).toHaveLength(1));
+    expect(runner.requests.find((request) => request.path === 'runs/r1/stop')!.body).toEqual({ v: 1 });
+    const turn = store.current!.turns[0]!;
+    expect(agent.running).toBe(true);
+    expect(turn.assistant.status).toBe('streaming');
+    runner.push('r1', ended([{ role: 'assistant', content: 'Partial' }], 'stopped'));
+    await sent;
+    expect(agent.running).toBe(false);
+    expect(turn.assistant.status).toBe('aborted');
+    expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: 'Partial' }]);
+  });
+
+  it('finds the live run of a chat opened again (a reload) and follows it from its start', async () => {
+    const first = setup();
+    void first.agent.send('build it');
+    await vi.waitFor(() => expect(first.runner.openStreams('r1')).toBe(1));
+    await pushAll(first.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Building' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm run build' } },
+    ]);
+    first.agent.leave();
+    expect(first.runner.requests.filter((request) => request.path === 'runs/r1/stop')).toEqual([]);
+
+    // The reloaded page: a new store and agent on the same runner, the head saved with the reply running.
+    const runningHead = workflow({
+      id: 'head-c1',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', 'cvt:conv:c1'],
+      metadata: { v: 3, app: 'chat-cvt', conversationId: 'c1', title: 'Build it', titleSource: 'first-message', createdAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z', turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'build it', attachments: [] }, assistant: { messages: [], status: 'running', savedAt: '2026-10-19T00:00:01Z' } }] },
+    });
+    const made = remoteStore([runningHead]);
+    const rereads: string[] = [];
+    const agent = new RemoteAgent({
+      client: new RunnerClient({ url: RUNNER_URL, fetch: first.runner.fetch, reconnectDelaysMs: [0] }),
+      store: made.store,
+      model: () => 'model-a',
+      settings: () => SETTINGS,
+      reread: async (id) => {
+        rereads.push(id);
+        await made.store.open(id);
+      },
+    });
+    await made.store.open('c1');
+    const opensBefore = first.runner.eventOpens('r1').length;
+    expect(await agent.reattach('c1')).toBe(true);
+    expect(first.runner.requests.some((request) => request.method === 'GET' && request.path === 'runs?conversationId=c1')).toBe(true);
+    await vi.waitFor(() =>
+      expect(agent.live?.parts).toEqual([
+        { kind: 'text', text: 'Building' },
+        { kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm run build' }, state: 'calling' },
+      ]),
+    );
+    // Read from the journal's start: no event id to resume after.
+    expect(first.runner.eventOpens('r1')[opensBefore]!.headers['last-event-id']).toBeUndefined();
+    expect(agent.live!.seq).toBe(1);
+    expect(made.store.current!.turns[0]!.assistant.status).toBe('streaming');
+    first.runner.push('r1', ended([{ role: 'assistant', content: 'Built.' }]));
+    await vi.waitFor(() => expect(rereads).toEqual(['c1']));
+    expect(agent.running).toBe(false);
+  });
+
+  it('finds nothing to follow in a chat with no live run', async () => {
+    const { agent, runner, store } = setup();
+    store.startNew();
+    expect(await agent.reattach('c1')).toBe(false);
+    expect(agent.running).toBe(false);
+    expect(runner.requests.map((request) => request.path)).toEqual(['runs?conversationId=c1']);
+  });
+
+  it('feeds subagent cards and the page’s tool-result reports from the run', async () => {
+    const progress = { set: vi.fn() };
+    const { agent, runner, toolResults } = setup([], { progress });
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const result: ChatToolResult = { name: 'create_app', input: { name: 'todo' }, output: { app: 'todo' }, isError: false };
+    await pushAll(runner, 'r1', [
+      { type: 'subagent-progress', toolCallId: 'd1', progress: { task: 'read the docs', steps: 2, toolCalls: 3, lastTool: 'site__search' } },
+      { type: 'subagent-progress', toolCallId: 'd1', progress: null },
+      { type: 'tool-reported', result },
+    ]);
+    expect(progress.set.mock.calls).toEqual([
+      ['d1', { task: 'read the docs', steps: 2, toolCalls: 3, lastTool: 'site__search' }],
+      ['d1', undefined],
+    ]);
+    expect(toolResults).toEqual([result]);
+    agent.leave();
+  });
+
+  it('fails the turn with the runner’s words when the run ends in an error, offering Retry when it can carry on', async () => {
+    const message = 'The assistant isn’t available right now.';
+    const { agent, runner, store, errors } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [], status: 'error', error: message } }])]);
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const trace = { stage: 'request', step: 2, msIntoStep: 5, message: 'upstream 503' } as const;
+    runner.push('r1', { type: 'error', message, kind: 'assistant_unavailable', trace });
+    runner.push('r1', ended([], 'error', { resumable: true, steps: 1 }));
+    await sent;
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    const turn = store.current!.turns[0]!;
+    // Read back from the head, with what is kept for this page only carried over: the kind, the trace, the resume point.
+    expect(turn.assistant).toMatchObject({ status: 'error', error: message, errorKind: 'assistant_unavailable', errorTrace: trace, resume: { messages: [], steps: 1 } });
+    expect(errors[0]).toEqual({ kind: 'assistant_unavailable', message, trace });
+  });
+});

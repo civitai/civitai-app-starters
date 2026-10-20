@@ -9,6 +9,7 @@ import type { JSONValue, ModelMessage } from 'ai';
 
 import { DISPATCH_AGENT, interruptedSubagent, type SubagentCheckpoint } from '../agent/subagent-result.js';
 
+import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
@@ -31,6 +32,8 @@ export interface ThreadStoreDeps {
    * tab closes, crashes or is unloaded. With none, a reply is never taken as dead by its note alone.
    */
   locks?: Pick<LockManager, 'request' | 'query'> | null;
+  /** Remote mode (not implemented yet). */
+  remote?: { patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> };
 }
 
 /** The reply this tab started and has not seen end, and the time of the latest save this tab made of it. */

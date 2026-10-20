@@ -2,6 +2,8 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
+import type { ChatAgent } from './agent/chat-agent.js';
+import type { ChatRemoteRunner } from './remote/runner-client.js';
 import { absoluteUrl, backendModels, unavailableApp, type ChatBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
@@ -65,6 +67,8 @@ export type ChatRunner = 'browser' | 'remote';
 export interface SessionOptions {
   /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` throws, not implemented yet. */
   runner?: ChatRunner;
+  /** Not implemented yet. */
+  remote?: ChatRemoteRunner;
   /** Keeps an embedding app's conversations and preferences apart from the rest. */
   scope?: string;
   /** Tools the embedding page offers; read at the start of every reply. */
@@ -120,7 +124,7 @@ export class ChatSession extends EventTarget {
   readonly posts: PostManager;
   readonly panels: PanelManager;
   readonly store: ConversationStore;
-  readonly agent: Agent;
+  readonly agent: ChatAgent;
   /** The subagents running now, for their cards' live progress. */
   readonly subagents = new SubagentTracker();
   /** The models the picker offers, loaded once when it is first opened. */
