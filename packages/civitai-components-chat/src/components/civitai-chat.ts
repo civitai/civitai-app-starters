@@ -578,7 +578,7 @@ export class CivitaiChat extends LitElement {
 
   protected override willUpdate(changed: PropertyValues): void {
     // Before the start below, which then opens it in place of the last chat.
-    if (changed.has('conversationId')) this.#openWanted(this.conversationId);
+    if (changed.has('conversationId')) void this.#openWanted(this.conversationId);
     // A backend wins over an app: with one, the chat never signs in to Civitai.
     const source = this.#source();
     // Signed out, or someone else signed in: what the last viewer wrote and did not send is not shown.
@@ -690,28 +690,28 @@ export class CivitaiChat extends LitElement {
   async open(id: string): Promise<boolean> {
     const wanted = typeof id === 'string' ? id.trim() : '';
     if (!wanted) return false;
-    if (this.#openWanted(wanted)) {
+    const opening = this.#openWanted(wanted);
+    if (opening === 'kept') {
       await this.#started;
       await this.#starting;
-    } else if (wanted !== this.chatId) {
-      await this.#open(wanted, true, true);
+    } else {
+      await opening;
     }
     return this.chatId === wanted;
   }
 
   /**
    * Opens the saved chat the page asked for, unless it is open already. With no session for the
-   * current app or backend yet, it is kept for the start to open instead (`true`).
+   * current app or backend yet, it is kept for the start to open instead (`'kept'`).
    */
-  #openWanted(id: string | null | undefined): boolean {
+  #openWanted(id: string | null | undefined): Promise<void> | 'kept' | undefined {
     const wanted = typeof id === 'string' ? id.trim() : '';
-    if (!wanted) return false;
+    if (!wanted) return undefined;
     if (!this.#session || this.#sessionFor !== this.#startedWith) {
       this.#wanted = wanted;
-      return true;
+      return 'kept';
     }
-    if (wanted !== this.chatId) void this.#open(wanted, true, true);
-    return false;
+    return wanted === this.chatId ? undefined : this.#open(wanted, true, true);
   }
 
   /**
