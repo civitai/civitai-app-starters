@@ -388,12 +388,12 @@ describe('RemoteAgent, against a runner', () => {
     expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: 'Finished while you were away.' }]);
   });
 
-  it('keeps trying through a refusal of the event stream that is not a 404, the turn still replying', async () => {
+  it('keeps trying through a refusal of the event stream other than 404, 410, 401 or 403, the turn still replying', async () => {
     const { agent, runner, store } = setup();
     const sent = agent.send('go');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
-    // Two 403s on reopening, as a runner replica that has not caught up might answer.
-    runner.knobs.refuseEvents = { status: 403, times: 2 };
+    // Two 400s on reopening, as a runner replica that has not caught up might answer.
+    runner.knobs.refuseEvents = { status: 400, times: 2 };
     const before = runner.eventOpens('r1').length;
     runner.dropStreams('r1');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
