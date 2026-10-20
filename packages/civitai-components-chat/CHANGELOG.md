@@ -1,5 +1,12 @@
 # @civitai/components-chat
 
+## 0.19.0
+
+### Minor Changes
+
+- 6fb166b: Read-only subagents, off unless the page opts in. Set `subagents` on `<civitai-chat>` (`{ tools, instructions?, model?, maxLive?, maxPerReply?, maxSteps?, maxToolCalls? }`) and the assistant gets a `dispatch_agent` tool that starts another assistant on one research task, in its own context, with only the allowlisted tools (never `dispatch_agent` itself or a tool that waits for the viewer), and gets back a short result (`status`, `summary` cut to 4,000 characters, `steps`, `toolCalls`, `activity`), never the transcript. Caps default to 3 running at once, 8 per reply, 30 steps and 40 tool calls per subagent. A subagent's calls reach `beforeToolCall` and the `tool-result` event with the reply's own `reply` number and a new `subagent` field (the `dispatch_agent` call's id), so a page's per-reply tool budget can leave them out. `mode: "write"` is refused. Every output of the chat's own `dispatch_agent` carries `kind: 'subagent'`; only those show as cards and count in the badge. Stop, and a page `stop: true` on one of the reply's own calls, end every subagent; a subagent that reaches its tool-call cap takes one last step in words; each shows as a card in the thread (live, and from the saved result after a reload); the Buzz badge counts subagent steps and says how many it includes. Without `subagents`, the reply's tools are exactly as before.
+- 9571fe7: `<civitai-chat voice-conversation>` offers a hands-free spoken conversation: the viewer talks, each reply is read aloud as it streams, and talking over a reply stops it. An end-of-turn model decides when the viewer has finished, so a pause to think is not cut off. Nothing for it loads or is billed until the viewer starts one; the voice is set with `configureChat({ conversationVoice })`.
+
 ## 0.18.0
 
 ### Minor Changes
