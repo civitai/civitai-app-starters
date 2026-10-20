@@ -6,6 +6,7 @@ import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
 import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
+import type { ChatAgent } from './chat-agent.js';
 import { AgentCore, type AgentCoreOutcome, type LiveTurn } from './core.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
@@ -59,7 +60,7 @@ export interface AgentRetryDetail {
 }
 
 /** Runs one assistant reply at a time and records it on the thread store; the reply's loop is {@link AgentCore}'s. */
-export class Agent extends EventTarget {
+export class Agent extends EventTarget implements ChatAgent {
   #deps: AgentDeps;
   #core: AgentCore;
 
@@ -86,6 +87,16 @@ export class Agent extends EventTarget {
 
   abort(): void {
     this.#core.abort();
+  }
+
+  /** The page leaves the reply: in the page, that ends it as Stop does. */
+  leave(): void {
+    this.abort();
+  }
+
+  /** The session is replaced: in the page, that ends the reply as Stop does. */
+  dispose(): void {
+    this.abort();
   }
 
   /**

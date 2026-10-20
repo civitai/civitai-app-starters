@@ -9,6 +9,7 @@ import type { JSONValue, ModelMessage } from 'ai';
 
 import { DISPATCH_AGENT, interruptedSubagent, type SubagentCheckpoint } from '../agent/subagent-result.js';
 
+import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
 
@@ -31,6 +32,14 @@ export interface ThreadStoreDeps {
    * tab closes, crashes or is unloaded. With none, a reply is never taken as dead by its note alone.
    */
   locks?: Pick<LockManager, 'request' | 'query'> | null;
+  /**
+   * Remote mode (`runner: 'remote'`): a server-side runner is the only writer of every head, so this
+   * store writes none. It still holds the open chat as the page changes it, and reads heads as ever. A
+   * title the viewer or the assistant gave, and the chat's model, go to the runner as a patch (`patch`)
+   * once the chat has a turn; before that, the model goes with its first run (`model`) and a title is
+   * kept for this page only, as are posts and panels.
+   */
+  remote?: { patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> };
 }
 
 /** The reply this tab started and has not seen end, and the time of the latest save this tab made of it. */
@@ -302,6 +311,11 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (id) conversation.model = id;
     else delete conversation.model;
     this.#emit('conversation-change');
+    // Remote: the runner writes it, now or with the run that is live; a chat with nothing saved yet sends it with its first run.
+    if (this.#deps.remote) {
+      if (conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { model: id || null });
+      return;
+    }
     // A reply still streaming saves it with that reply.
     if (conversation.turns.at(-1)?.assistant.status === 'streaming') return;
     const head = this.#heads.get(conversation.id);
@@ -321,6 +335,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   // Each write replaces the whole metadata, so they go one at a time per workflow, each built from the latest state.
   // Only a rename of a chat that is not open writes back a head as it was read, which may be a v3 one.
   #writeHead(workflowId: string, metadata: () => StoredConversationMetadata): Promise<void> {
+    // Remote: the runner is the only writer of a head.
+    if (this.#deps.remote) return Promise.resolve();
     const write = (this.#writes.get(workflowId) ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => {
@@ -339,6 +355,10 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     conversation.titleSource = source;
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
+    if (this.#deps.remote) {
+      if (source !== 'first-message' && conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { title: conversation.title, titleSource: source });
+      return;
+    }
     const newest = conversation.turns.at(-1);
     if (newest && newest.assistant.status !== 'streaming') await this.completeTurn(newest);
   }
@@ -348,7 +368,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     const summary = this.summaries.find((s) => s.id === id);
     if (!summary) return;
     const metadata: StoredConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
-    await this.#writeHead(summary.head.workflowId, () => metadata);
+    if (this.#deps.remote) await this.#deps.remote.patch(id, { title: metadata.title, titleSource: 'user' });
+    else await this.#writeHead(summary.head.workflowId, () => metadata);
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
   }
@@ -382,6 +403,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   async #submitHead(conversation: Conversation, seq: number): Promise<string | undefined> {
+    // Remote: the runner saves the turn when its run starts.
+    if (this.#deps.remote) return undefined;
     const template: WorkflowTemplate = {
       steps: [{ $type: 'echo', name: 'turn', input: { message: 'chat-cvt turn' } }],
       tags: [APP_TAG, TURN_TAG, HEAD_TAG, conversationTag(conversation.id), ...this.#scopeTags()],

@@ -4,6 +4,9 @@ export { CivitaiChat, QUEUE_TIMEOUT_MS, type BeforeSendDetail, type CanSendChang
 export type { Example as ChatExample } from './components/civitai-chat-welcome.js';
 export { configureChat, type ChatConfig, type ChatModelOption } from './config.js';
 export type { ChatBackend } from './backend.js';
+export type { ChatRunner } from './session.js';
+export type { ChatRemoteRunner } from './remote/runner-client.js';
+export type { RunPageState } from './runner-protocol.js';
 export type { ChatConversation, ChatConversationStore, ChatConversationSummary, ChatSavedTurn } from './store/conversation-store.js';
 export type { AgentErrorDetail as ChatReplyError } from './agent/agent.js';
 export type { AgentRetryDetail as ChatReplyRetry } from './agent/agent.js';

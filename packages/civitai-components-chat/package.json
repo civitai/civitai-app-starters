@@ -30,6 +30,14 @@
     "./civitai-chat-studio/define": {
       "types": "./dist/civitai-chat-studio.define.d.ts",
       "import": "./dist/civitai-chat-studio.define.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./runner-protocol": {
+      "types": "./dist/runner-protocol.d.ts",
+      "import": "./dist/runner-protocol.js"
     }
   },
   "files": [

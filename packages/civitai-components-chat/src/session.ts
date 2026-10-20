@@ -2,6 +2,7 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
+import type { ChatAgent } from './agent/chat-agent.js';
 import { absoluteUrl, backendModels, unavailableApp, type ChatBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
@@ -38,6 +39,8 @@ import { gateToolSet, nextReply, type ChatToolGate, type ChatToolResult, type Ga
 import { DISPATCH_AGENT, dispatchAgentTool, offersDispatch, resolveSubagents, SubagentTracker, type ChatSubagents } from './agent/subagents.js';
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
+import { RemoteAgent } from './remote/remote-agent.js';
+import { RunnerClient, type ChatRemoteRunner } from './remote/runner-client.js';
 import { voiceLanguage } from './voice/languages.js';
 import { transcribe } from './voice/transcribe.js';
 
@@ -53,18 +56,17 @@ export interface PendingUpload {
 }
 
 /**
- * Unreachable for now: `ChatSession` is not exported and the element passes no `runner`, so nothing
- * outside this package can set it until the element exposes it (then document it).
- *
  * Experimental: where a reply's loop runs. `'browser'` (the default) runs it on the page, as every
- * chat does today. `'remote'` is reserved for a server-side runner that keeps a reply going when the
- * page sleeps or closes; it is not implemented yet.
+ * chat always has. `'remote'` runs it on a server runner (`remote`), which keeps a reply going when the
+ * page sleeps or closes; the page follows it (`RemoteAgent`).
  */
 export type ChatRunner = 'browser' | 'remote';
 
 export interface SessionOptions {
-  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` throws, not implemented yet. */
+  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and no `backend`. */
   runner?: ChatRunner;
+  /** The server runner `runner: 'remote'` uses. */
+  remote?: ChatRemoteRunner;
   /** Keeps an embedding app's conversations and preferences apart from the rest. */
   scope?: string;
   /** Tools the embedding page offers; read at the start of every reply. */
@@ -92,11 +94,28 @@ export interface SessionOptions {
   backend?: ChatBackend;
 }
 
-/** Only the browser runner exists yet: `'remote'` (and anything else) is refused before anything is wired. */
-function assertRunner(runner: unknown): void {
-  if (runner === undefined || runner === 'browser') return;
-  if (runner === 'remote') throw new Error("The 'remote' chat runner is not implemented yet (experimental): leave runner unset or 'browser'.");
-  throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser'.`);
+/** A runner the options cannot run is refused before anything is wired: whether it is the remote one. */
+function assertRunner(options: SessionOptions): boolean {
+  const { runner } = options;
+  if (runner === undefined || runner === 'browser') return false;
+  if (runner !== 'remote') throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser' or 'remote'.`);
+  if (typeof options.remote?.url !== 'string' || !options.remote.url.trim()) throw new Error("The 'remote' chat runner needs remote.url: the server runner's base URL.");
+  if (options.backend) throw new Error("The 'remote' chat runner cannot be used with a backend: a backend's replies run on the page.");
+  return true;
+}
+
+/** The page waking, for a remote reply's connection: shown again, back online, or restored from the back-forward cache. */
+function pageWake(listener: () => void): () => void {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return () => undefined;
+  const visible = () => document.visibilityState === 'visible' && listener();
+  document.addEventListener('visibilitychange', visible);
+  window.addEventListener('online', listener);
+  window.addEventListener('pageshow', listener);
+  return () => {
+    document.removeEventListener('visibilitychange', visible);
+    window.removeEventListener('online', listener);
+    window.removeEventListener('pageshow', listener);
+  };
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
@@ -120,7 +139,8 @@ export class ChatSession extends EventTarget {
   readonly posts: PostManager;
   readonly panels: PanelManager;
   readonly store: ConversationStore;
-  readonly agent: Agent;
+  /** The page's own `Agent`, or with `runner: 'remote'` a `RemoteAgent` following the server's runs. */
+  readonly agent: ChatAgent;
   /** The subagents running now, for their cards' live progress. */
   readonly subagents = new SubagentTracker();
   /** The models the picker offers, loaded once when it is first opened. */
@@ -136,12 +156,14 @@ export class ChatSession extends EventTarget {
   #models = new Map<string, LanguageModel>();
   /** What the run tools can do, from the latest catalog; panels run through them. */
   #runTools = new Map<string, JobToolInfo>();
+  /** With `runner: 'remote'`: the agent following the server's runs. */
+  #remote: RemoteAgent | undefined;
 
   /** `app` may be `null` only with `options.backend`. */
   constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
     const backend = options.backend;
-    assertRunner(options.runner);
+    const remote = assertRunner(options) ? new RunnerClient(options.remote!) : undefined;
     if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
     const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
@@ -191,9 +213,35 @@ export class ChatSession extends EventTarget {
           api: this.api,
           hideMatureContent: () => !this.settings.allowMature,
           scope: options.scope,
+          // Remote: the runner is the only writer of the chat's head.
+          ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
         });
     // A backend's models are the ones it names: nothing is asked of Civitai or OpenRouter.
     this.modelCatalog = backend ? { load: async () => this.modelChoices() } : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    if (remote) {
+      this.agent = this.#remote = new RemoteAgent({
+        client: remote,
+        store: this.store,
+        ...(options.scope ? { scope: options.scope } : {}),
+        model: () => this.assistantModel(),
+        settings: () => ({
+          ...(this.settings.customInstructions ? { customInstructions: this.settings.customInstructions } : {}),
+          ...(this.#options.hostInstructions?.() ? { hostInstructions: this.#options.hostInstructions()! } : {}),
+          maxOutputTokens: outputTokenCap(this.settings.maxOutputTokens),
+          tier: this.settings.assistantTier ?? 'auto',
+          allowMature: this.settings.allowMature,
+          autoRunLimit: this.settings.autoRunLimit,
+          spokenReplies: this.spokenReplies,
+        }),
+        pageState: () => options.remote!.pageState?.(),
+        // Read while the agent still counts as running (so nothing sent meanwhile lands on the chat being replaced), and never followed by a lookup: the run just ended.
+        reread: (id) => this.#reread(id),
+        progress: this.subagents,
+        onToolResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
+        wake: pageWake,
+      });
+      return;
+    }
     this.agent = new Agent({
       model: () => this.#model(this.assistantModel()),
       titleModel: () => this.#model(this.defaultModel()),
@@ -232,6 +280,8 @@ export class ChatSession extends EventTarget {
    * current one changes nothing.
    */
   syncMcpServers(): void {
+    // Remote: the runner holds the tools; the page opens no server.
+    if (this.#remote) return;
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     void this.mcpServers.tools();
   }
@@ -245,8 +295,8 @@ export class ChatSession extends EventTarget {
 
   /** Read at every turn, so switching a server on or off applies from the next reply. */
   async catalog(): Promise<ToolCatalog> {
-    // A host's backend has no Civitai sign-in: neither built-in server is asked anything.
-    if (this.backend) {
+    // A host's backend has no Civitai sign-in, and a remote runner holds the tools: neither built-in server is asked anything.
+    if (this.backend || this.#remote) {
       this.#runTools = new Map();
       return { orchestration: [], site: [] };
     }
@@ -360,13 +410,15 @@ export class ChatSession extends EventTarget {
   }
 
   async openConversation(id: string): Promise<void> {
-    this.agent.abort();
+    // A remote reply carries on on the server, and is followed again when its chat is opened.
+    this.agent.leave();
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
-    const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
     this.#restore(opened, catalog);
     this.updateSettings({ lastConversationId: id });
+    void this.#remote?.reattach(id);
   }
 
   /**
@@ -376,7 +428,24 @@ export class ChatSession extends EventTarget {
    */
   async reloadConversation(id: string): Promise<void> {
     if (this.agent.running || this.store.current?.id !== id) return;
-    const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
+    this.jobs.clear();
+    this.posts.clear();
+    this.panels.clear();
+    this.#restore(opened, catalog);
+    // A run that started meanwhile (another tab or device) is followed here too.
+    void this.#remote?.reattach(id);
+  }
+
+  /** The tool schemas a reopened chat's jobs are rebuilt with; none in remote mode, where the runner holds the tools and the page asks no tool server. */
+  #restoreCatalog(): Promise<ToolCatalog | null> {
+    return this.#remote ? Promise.resolve(null) : this.catalog().catch(() => null);
+  }
+
+  /** The open chat read again after its remote run ended, whatever the agent says. */
+  async #reread(id: string): Promise<void> {
+    if (this.store.current?.id !== id) return;
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
@@ -390,7 +459,7 @@ export class ChatSession extends EventTarget {
   }
 
   newConversation(): void {
-    this.agent.abort();
+    this.agent.leave();
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
@@ -481,6 +550,8 @@ export class ChatSession extends EventTarget {
    * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
    */
   async openShared(shared: SharedPanel): Promise<void> {
+    // Remote: the page writes no head, so a chat it made would be the page's alone, and the runner would refuse its next turn.
+    if (this.#remote) throw new Error('A shared panel cannot be opened while replies run on a server runner.');
     this.newConversation();
     const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
     const conversation = this.store.current!;
@@ -496,7 +567,8 @@ export class ChatSession extends EventTarget {
    * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
    */
   async adjust(job: GenerationJob): Promise<boolean> {
-    if (this.backend || this.agent.running || !this.store.current) return false;
+    // Remote: the page writes no head, so a turn it made would be the page's alone.
+    if (this.backend || this.#remote || this.agent.running || !this.store.current) return false;
     const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
     if (!built) return false;
     const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);
