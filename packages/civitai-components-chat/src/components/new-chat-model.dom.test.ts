@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChatBackend } from '../backend.js';
 import type { ChatConversation } from '../store/conversation-store.js';
 import { completion, memoryStore, textReply, urlOf } from '../test-support/fake-backend.js';
-import type { CivitaiChat } from './civitai-chat.js';
+import type { CivitaiChat, ModelChangeDetail } from './civitai-chat.js';
 import { defineElements } from './define.js';
 
 /**
@@ -41,9 +41,13 @@ function spyOnReplies(): string[] {
   return models;
 }
 
-/** `newChatModel` is not on the backend type before this change: set it through a cast. */
-const backendOf = (store: ReturnType<typeof memoryStore>, newChatModel?: string): ChatBackend =>
-  ({ url: '/api/llm', model: 'host/default-model', models: MODELS, store, ...(newChatModel !== undefined ? { newChatModel } : {}) }) as ChatBackend;
+const backendOf = (store: ReturnType<typeof memoryStore>, newChatModel?: string): ChatBackend => ({
+  url: '/api/llm',
+  model: 'host/default-model',
+  models: MODELS,
+  store,
+  ...(newChatModel !== undefined ? { newChatModel } : {}),
+});
 
 const saved = (id: string, model?: string): ChatConversation => ({
   id,
@@ -144,9 +148,9 @@ describe('<civitai-chat> backend newChatModel (host store with a gateway)', () =
   it('model-change names the chat and the model the viewer picked; opening or starting a chat fires none', async () => {
     spyOnReplies();
     const store = memoryStore([saved('A', 'host/small'), saved('OLD')]);
-    const changes: unknown[] = [];
+    const changes: ModelChangeDetail[] = [];
     const chat = await mount((c) => {
-      c.addEventListener('model-change', (event) => changes.push((event as CustomEvent).detail));
+      c.addEventListener('model-change', (event) => changes.push((event as CustomEvent<ModelChangeDetail>).detail));
       c.backend = backendOf(store, 'host/big');
     });
     openFromHistory(chat, 'A');

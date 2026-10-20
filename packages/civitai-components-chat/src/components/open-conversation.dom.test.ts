@@ -12,9 +12,6 @@ import { defineElements } from './define.js';
  * `open(id)`) and hears which one is open (`chat-change`), in every store the chat can keep chats in.
  */
 
-/** The deep-link API as a page uses it: `conversationId` and `open()`. */
-type Linkable = CivitaiChat & { conversationId?: string | null; open(id: string): Promise<boolean> };
-
 beforeAll(() => defineElements());
 afterEach(() => {
   document.body.replaceChildren();
@@ -73,9 +70,9 @@ const hostStore = () => memoryStore([record('A', 'about apples'), record('B', 'a
 const backendOf = (store: ReturnType<typeof memoryStore>): ChatBackend => ({ url: '/api/llm', model: 'host/default-model', store });
 
 /** Mounts the chat with a `chat-change` listener on before it starts, so the first announcement is seen. */
-async function mount(set: (chat: Linkable) => void): Promise<{ chat: Linkable; seen: (string | null)[] }> {
+async function mount(set: (chat: CivitaiChat) => void): Promise<{ chat: CivitaiChat; seen: (string | null)[] }> {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  const chat = document.createElement('civitai-chat') as Linkable;
+  const chat = document.createElement('civitai-chat');
   const seen: (string | null)[] = [];
   chat.addEventListener('chat-change', (event) => seen.push((event as CustomEvent<ChatChangeDetail>).detail.chatId));
   set(chat);
@@ -152,7 +149,7 @@ describe('<civitai-chat> deep-linking: orchestrator store', () => {
 
   it('open(id) called before the chat starts opens that chat once it does', async () => {
     stubFetch();
-    const chat = document.createElement('civitai-chat') as Linkable;
+    const chat = document.createElement('civitai-chat');
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const opening = chat.open('CONV2');
     signedIn(chat);

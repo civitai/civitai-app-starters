@@ -3,7 +3,7 @@ import { ulid } from 'ulid';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, TitleSource, Turn } from '../types.js';
-import { supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation } from './conversation-store.js';
+import { notFoundError, supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation, type OpenOptions } from './conversation-store.js';
 import { clampTitle, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
 
 export interface HostThreadStoreDeps {
@@ -76,7 +76,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * A chat whose delete worked is refused, so it never becomes the open one, where nothing could save
    * it; one whose delete failed still exists and opens as usual.
    */
-  async open(id: string): Promise<OpenedConversation> {
+  async open(id: string, options: OpenOptions = {}): Promise<OpenedConversation> {
     const generation = ++this.#generation;
     let record: ChatConversation | null;
     try {
@@ -89,6 +89,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     }
     // The viewer opened or started another chat meanwhile: this one must not take its place.
     if (generation !== this.#generation) throw supersededError();
+    if (options.existing && !record) throw notFoundError();
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {

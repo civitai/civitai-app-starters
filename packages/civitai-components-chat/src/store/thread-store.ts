@@ -11,7 +11,7 @@ import { DISPATCH_AGENT, interruptedSubagent, type SubagentCheckpoint } from '..
 
 import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
-import { supersededError, type ConversationStore } from './conversation-store.js';
+import { notFoundError, supersededError, type ConversationStore, type OpenOptions } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
   orchestration: Pick<OrchestrationClient, 'submitWorkflow' | 'queryWorkflows'>;
@@ -191,7 +191,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     this.#emit('list-change');
   }
 
-  async open(id: string): Promise<OpenedConversation> {
+  async open(id: string, options: OpenOptions = {}): Promise<OpenedConversation> {
     const generation = ++this.#generation;
     let heads: Awaited<ReturnType<OrchestrationClient['queryWorkflows']>>;
     let jobWorkflows: Workflow[];
@@ -206,6 +206,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     // The viewer opened or started another chat meanwhile: this one must not take its place.
     if (generation !== this.#generation) throw supersededError();
     const head = newestHead(heads.items);
+    if (options.existing && !head) throw notFoundError();
     const now = this.#now().toISOString();
     const turns = (head?.metadata.turns ?? []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     await this.#markLiveness(id, turns.at(-1));

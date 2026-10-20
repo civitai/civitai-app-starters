@@ -57,6 +57,15 @@ export interface ChatChangeDetail {
 }
 
 /**
+ * `model-change`'s detail: the viewer changed the open chat's model (the model button, or `/model`).
+ * `model` is the chat's own model now, or `null` when it follows the default again.
+ */
+export interface ModelChangeDetail {
+  chatId: string;
+  model: string | null;
+}
+
+/**
  * `before-send`'s detail: the message about to go as the viewer's (`''` when it is only files). Call
  * `queue(waiting)` from the listener itself to keep the message back without losing it: the chat shows
  * it at once as the viewer's, marked `waiting`, and holds, and sends it once the page calls `release()`
@@ -159,6 +168,8 @@ export class CivitaiChat extends LitElement {
     beforeToolCall: { attribute: false },
     subagents: { attribute: false },
     scope: {},
+    // Every set is a request to open it, even of the same id: the viewer may have left that chat since.
+    conversationId: { attribute: 'conversation-id', hasChanged: () => true },
     runner: {},
     remoteRunner: { attribute: false },
     panelLinkBase: { attribute: 'panel-link-base' },
@@ -257,6 +268,14 @@ export class CivitaiChat extends LitElement {
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
   /**
+   * A saved conversation to open, e.g. from the page's URL. Set before the chat starts, it opens in
+   * place of the last chat; set later, it opens at once (unless it is already the open chat). One that
+   * cannot be opened shows "Could not open that chat." and a new chat. The open chat may change after
+   * (the viewer picks another): `chatId` and `chat-change` say which is open. See "Deep-linking a
+   * conversation" in the README.
+   */
+  declare conversationId?: string | null;
+  /**
    * Experimental: where replies run. `browser` (the default) runs them on the page. `remote` runs them
    * on a server runner (`remoteRunner`) that keeps a reply going when the page sleeps or closes; see
    * "Server runner" in the README. Set it, with `remoteRunner`, before `app`.
@@ -324,6 +343,10 @@ export class CivitaiChat extends LitElement {
   #carriedDraft?: string;
   /** Counts the chats opened, so only the latest one's end clears the loader. */
   #opening = 0;
+  /** The saved chat the page asked for (`conversationId`, `open()`) before a session was there to open it. */
+  #wanted?: string;
+  /** The latest session start, for `open()` to wait on. */
+  #starting?: Promise<void>;
   /** The chat `chat-change` last named, so each change is announced once. */
   #announcedChat: string | null = null;
   /** The open chat being deleted: the moment with no chat open, before the new one, is not announced. */
@@ -554,6 +577,8 @@ export class CivitaiChat extends LitElement {
   };
 
   protected override willUpdate(changed: PropertyValues): void {
+    // Before the start below, which then opens it in place of the last chat.
+    if (changed.has('conversationId')) this.#openWanted(this.conversationId);
     // A backend wins over an app: with one, the chat never signs in to Civitai.
     const source = this.#source();
     // Signed out, or someone else signed in: what the last viewer wrote and did not send is not shown.
@@ -561,7 +586,7 @@ export class CivitaiChat extends LitElement {
     if ((changed.has('app') || changed.has('backend')) && source && source !== this.#startedWith) {
       this.#startedWith = source;
       this.#starts++;
-      void this.#start(source);
+      this.#starting = this.#start(source);
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
@@ -654,6 +679,39 @@ export class CivitaiChat extends LitElement {
   #composeWith(message: string, refs: string[]): void {
     this.refs = this.#refsFor(refs);
     void this.compose(message);
+  }
+
+  /**
+   * Opens the saved conversation `id`, as setting `conversationId` does; called before the chat has
+   * started, it opens once it does. Resolves `true` once that chat is the open one, `false` when it
+   * could not be opened (the chat then says so and starts a new one) or another chat was opened
+   * meanwhile. Never rejects.
+   */
+  async open(id: string): Promise<boolean> {
+    const wanted = typeof id === 'string' ? id.trim() : '';
+    if (!wanted) return false;
+    if (this.#openWanted(wanted)) {
+      await this.#started;
+      await this.#starting;
+    } else if (wanted !== this.chatId) {
+      await this.#open(wanted, true, true);
+    }
+    return this.chatId === wanted;
+  }
+
+  /**
+   * Opens the saved chat the page asked for, unless it is open already. With no session for the
+   * current app or backend yet, it is kept for the start to open instead (`true`).
+   */
+  #openWanted(id: string | null | undefined): boolean {
+    const wanted = typeof id === 'string' ? id.trim() : '';
+    if (!wanted) return false;
+    if (!this.#session || this.#sessionFor !== this.#startedWith) {
+      this.#wanted = wanted;
+      return true;
+    }
+    if (wanted !== this.chatId) void this.#open(wanted, true, true);
+    return false;
   }
 
   /**
@@ -989,8 +1047,11 @@ export class CivitaiChat extends LitElement {
 
     // Picking up after a sign-in redirect, and opening a shared panel, are Civitai's.
     const resume = this.fullPage && !backend ? takeResume() : null;
-    const target = resume?.conversationId ?? settings.lastConversationId;
-    if (target) await this.#open(target, false);
+    // The chat the page asked for comes before the last one, and says so when it cannot be opened.
+    const wanted = this.#wanted;
+    this.#wanted = undefined;
+    const target = resume?.conversationId ?? wanted ?? settings.lastConversationId;
+    if (target) await this.#open(target, target === wanted, target === wanted);
     else session.newConversation();
     const shared = this.fullPage && !backend ? await takeSharedPanel() : null;
     if (shared) {
@@ -1017,7 +1078,8 @@ export class CivitaiChat extends LitElement {
     return this.renderRoot?.querySelector<CivitaiChatComposer>('civitai-chat-composer') ?? null;
   }
 
-  async #open(id: string, announce = true): Promise<void> {
+  /** `existing`: the page asked for it, so one with nothing saved under `id` cannot be opened. */
+  async #open(id: string, announce = true, existing = false): Promise<void> {
     const session = this.#session;
     // The chat being deleted stays listed until its delete settles; picking it then is not a pick.
     if (!session || id === this.#leaving) return;
@@ -1026,7 +1088,7 @@ export class CivitaiChat extends LitElement {
     // Each pick opens at once, whatever is still loading: the stores drop an open that lands after a
     // later open or new chat, so the latest pick is the one that ends open, and only it lifts the hold.
     try {
-      await session.openConversation(id);
+      await session.openConversation(id, { existing });
     } catch (error) {
       // The viewer went to another chat meanwhile: nothing to undo or say, and theirs stays as it is.
       if (isSuperseded(error)) return;
@@ -1305,13 +1367,7 @@ export class CivitaiChat extends LitElement {
         }
         const picked = resolveModel(arg, models);
         if (!typed && picked !== undefined && !models.some((model) => model.id === picked)) return notify(`There is no model called ${arg.trim()} here.`);
-        try {
-          await session.setChatModel(picked);
-        } catch (error) {
-          // The switch holds for this session; only keeping it with the chat failed, as the picker says.
-          return this.#toast("Could not save this chat's model; it applies until you reload.", error);
-        }
-        notify(this.#switchedModel(session));
+        if (await this.#changeModel(session, picked)) notify(this.#switchedModel(session));
       },
     };
   }
@@ -1355,8 +1411,30 @@ export class CivitaiChat extends LitElement {
 
   #pickModel(model: string | undefined): void {
     const session = this.#session;
-    if (!session) return;
-    void session.setChatModel(model).catch((error: unknown) => this.#toast("Could not save this chat's model; it applies until you reload.", error));
+    if (session) void this.#changeModel(session, model);
+  }
+
+  /**
+   * Switches the open chat's model for the viewer (`undefined`: follow the default) and fires
+   * `model-change` when that changed it; whether keeping it with the chat worked. The switch holds for
+   * this session either way.
+   */
+  async #changeModel(session: ChatSession, model: string | undefined): Promise<boolean> {
+    const before = session.store.current?.model ?? null;
+    // The store switches it before it saves.
+    const saving = session.setChatModel(model);
+    const chatId = this.chatId;
+    const after = session.store.current?.model ?? null;
+    if (chatId !== null && after !== before) {
+      this.dispatchEvent(new CustomEvent<ModelChangeDetail>('model-change', { detail: { chatId, model: after }, bubbles: true, composed: true }));
+    }
+    try {
+      await saving;
+      return true;
+    } catch (error) {
+      this.#toast("Could not save this chat's model; it applies until you reload.", error);
+      return false;
+    }
   }
 
   /** The open chat's model button; hidden on a backend that offers nothing to pick. */

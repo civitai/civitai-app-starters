@@ -20,6 +20,12 @@ export interface ChatBackend {
   model: string;
   /** Other models the viewer may pick for a chat. Without any, the model button is hidden. */
   models?: ChatModelOption[];
+  /**
+   * The model a new chat starts on, e.g. the one the viewer last picked (`model-change`): one of
+   * `models`, else new chats start on `model`. Read each time a new chat starts. A saved chat keeps
+   * its own model, and one saved without a model keeps following `model`.
+   */
+  newChatModel?: string;
   /** Where conversations are kept. */
   store: ChatConversationStore;
 }
@@ -27,6 +33,12 @@ export interface ChatBackend {
 /** The models a viewer may pick besides the backend's default: usable ids only, the default left out. */
 export function backendModels(backend: ChatBackend): ChatModelOption[] {
   return (backend.models ?? []).filter((model) => typeof model?.id === 'string' && model.id.trim() !== '' && model.id !== backend.model);
+}
+
+/** The model a new chat starts on as its own: `newChatModel` when it is one of `models` (not `model` itself), else none. */
+export function newChatModelOf(backend: ChatBackend): string | undefined {
+  const wanted = typeof backend.newChatModel === 'string' ? backend.newChatModel.trim() : '';
+  return wanted && backendModels(backend).some((model) => model.id === wanted) ? wanted : undefined;
 }
 
 const UNAVAILABLE = 'Not available: this chat runs on its host backend, without a Civitai sign-in.';
