@@ -34,6 +34,11 @@ export interface OpenOptions {
    * opening as a new, empty chat with that id, and does not become the open chat.
    */
   existing?: boolean;
+  /**
+   * Called once the chat was read (and, with `existing`, found), just before it becomes the open chat:
+   * not at all when it cannot be opened, so the chat open now stays as it is.
+   */
+  ready?: () => void;
 }
 
 /** A row of the chat list. */
@@ -65,6 +70,11 @@ export interface ConversationStore extends EventTarget {
   refreshList(): Promise<void>;
   loadMore(): Promise<void>;
   open(id: string, options?: OpenOptions): Promise<OpenedConversation>;
+  /**
+   * Whether `id` is saved where this store keeps chats: it was read from there, or a save of it worked.
+   * A new chat is not, until its first save. Fires `saved-change` when that becomes true.
+   */
+  isSaved(id: string): boolean;
   startNew(): Conversation;
   appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
   completeTurn(turn: Turn): Promise<void>;

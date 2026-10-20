@@ -51,9 +51,13 @@ type Lightboxed = { attachment: Attachment; job?: undefined } | { job: Generatio
 
 export type ChatLayout = 'auto' | 'compact' | 'wide';
 
-/** `chat-change`'s detail: the chat now open, or `null` while none is. */
+/**
+ * `chat-change`'s detail: the chat now open, or `null` while none is. `saved`: whether that chat is
+ * saved in its store, so `conversation-id` can open it again (a new chat is not, until its first save).
+ */
 export interface ChatChangeDetail {
   chatId: string | null;
+  saved: boolean;
 }
 
 /**
@@ -360,12 +364,13 @@ export class CivitaiChat extends LitElement {
   #carriedDraft?: string;
   /** Counts the chats opened, so only the latest one's end clears the loader. */
   #opening = 0;
-  /** The saved chat the page asked for (`conversationId`, `open()`) before a session was there to open it. */
+  /** The saved chat the page asked for (`conversationId`) before a session was there to open it. */
   #wanted?: string;
-  /** The latest session start, for `open()` to wait on. */
-  #starting?: Promise<void>;
-  /** The chat `chat-change` last named, so each change is announced once. */
+  /** The chat the latest open is loading (while `loading`): what is about to be the open chat. */
+  #openingId?: string;
+  /** The chat `chat-change` last named, and whether it was saved, so each change is announced once. */
   #announcedChat: string | null = null;
+  #announcedSaved = false;
   /** The open chat being deleted: the moment with no chat open, before the new one, is not announced. */
   #leaving?: string;
   /** What `can-send-change` last said, so each change is announced once. */
@@ -594,8 +599,6 @@ export class CivitaiChat extends LitElement {
   };
 
   protected override willUpdate(changed: PropertyValues): void {
-    // Before the start below, which then opens it in place of the last chat.
-    if (changed.has('conversationId')) void this.#openWanted(this.conversationId);
     // A backend wins over an app: with one, the chat never signs in to Civitai.
     const source = this.#source();
     // Signed out, or someone else signed in: what the last viewer wrote and did not send is not shown.
@@ -609,6 +612,8 @@ export class CivitaiChat extends LitElement {
       this.#starts++;
       void this.#start(source);
     }
+    // After any start above: an id set with a new `app` or `backend` is kept for the session it starts.
+    if (changed.has('conversationId')) this.#openWanted(this.conversationId);
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
   }
@@ -703,36 +708,19 @@ export class CivitaiChat extends LitElement {
   }
 
   /**
-   * Opens the saved conversation `id`, as setting `conversationId` does; called before the chat has
-   * started, it opens once it does. Resolves `true` once that chat is the open one, `false` when it
-   * could not be opened (the chat then says so and starts a new one) or another chat was opened
-   * meanwhile. Never rejects.
+   * Opens the saved chat the page asked for (`conversationId`), unless it is the open chat, or the one
+   * an open now loading is about to make it. With no session for the current app or backend yet (none
+   * started, or one starting or that failed to start), it is kept for the start to open instead.
    */
-  async open(id: string): Promise<boolean> {
+  #openWanted(id: string | null | undefined): void {
     const wanted = typeof id === 'string' ? id.trim() : '';
-    if (!wanted) return false;
-    const opening = this.#openWanted(wanted);
-    if (opening === 'kept') {
-      await this.#started;
-      await this.#starting;
-    } else {
-      await opening;
-    }
-    return this.chatId === wanted;
-  }
-
-  /**
-   * Opens the saved chat the page asked for, unless it is open already. With no session for the
-   * current app or backend yet, it is kept for the start to open instead (`'kept'`).
-   */
-  #openWanted(id: string | null | undefined): Promise<void> | 'kept' | undefined {
-    const wanted = typeof id === 'string' ? id.trim() : '';
-    if (!wanted) return undefined;
+    if (!wanted) return;
     if (!this.#session || this.#sessionFor !== this.#startedWith) {
       this.#wanted = wanted;
-      return 'kept';
+      return;
     }
-    return wanted === this.chatId ? undefined : this.#open(wanted, true, true);
+    const next = this.loading && this.#openingId !== undefined ? this.#openingId : this.chatId;
+    if (wanted !== next) void this.#open(wanted, true, true);
   }
 
   /**
@@ -951,11 +939,13 @@ export class CivitaiChat extends LitElement {
 
   #announceChat(): void {
     const chatId = this.chatId;
-    if (chatId === this.#announcedChat) return;
+    const saved = chatId !== null && (this.#session?.store.isSaved(chatId) ?? false);
+    if (chatId === this.#announcedChat && saved === this.#announcedSaved) return;
     // Deleting the open chat leaves none open for a moment, then starts a new one: only that one is news.
     if (chatId === null && this.#leaving) return;
     this.#announcedChat = chatId;
-    this.dispatchEvent(new CustomEvent<ChatChangeDetail>('chat-change', { detail: { chatId }, bubbles: true, composed: true }));
+    this.#announcedSaved = saved;
+    this.dispatchEvent(new CustomEvent<ChatChangeDetail>('chat-change', { detail: { chatId, saved }, bubbles: true, composed: true }));
   }
 
   #announceActivePanel(): void {
@@ -1058,6 +1048,8 @@ export class CivitaiChat extends LitElement {
       this.#announceActivePanel();
       this.#announceChat();
     });
+    // The open chat's first save: it can be opened by its id from now on.
+    session.store.addEventListener('saved-change', () => this.#announceChat());
     this.requestUpdate();
     // Into the new box as soon as it shows, before the last chat loads: nothing to flash empty or overwrite.
     const carried = this.#carriedDraft;
@@ -1118,6 +1110,7 @@ export class CivitaiChat extends LitElement {
     // The chat being deleted stays listed until its delete settles; picking it then is not a pick.
     if (!session || id === this.#leaving) return;
     const ticket = ++this.#opening;
+    this.#openingId = id;
     this.loading = true;
     // Each pick opens at once, whatever is still loading: the stores drop an open that lands after a
     // later open or new chat, so the latest pick is the one that ends open, and only it lifts the hold.
@@ -1126,11 +1119,15 @@ export class CivitaiChat extends LitElement {
     } catch (error) {
       // The viewer went to another chat meanwhile: nothing to undo or say, and theirs stays as it is.
       if (isSuperseded(error)) return;
-      session.newConversation();
+      // A chat the page asked for left the open chat as it was (a reply in it still runs): it stays. With none open yet, a new one.
+      if (!existing || !session.store.current) session.newConversation();
       if (announce) this.#toast('Could not open that chat.', error);
     } finally {
       // Only the latest open clears the loader: until it lands, the chat being left may still be open.
-      if (ticket === this.#opening) this.loading = false;
+      if (ticket === this.#opening) {
+        this.loading = false;
+        this.#openingId = undefined;
+      }
       this.historyOpen = false;
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();

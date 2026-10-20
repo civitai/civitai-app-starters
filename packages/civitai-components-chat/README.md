@@ -354,8 +354,7 @@ reopened from storage groups the same as it did live.
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
-[A message that waits](#a-message-that-waits)), `newChat()`, `open(id)` (see
-[Deep-linking a conversation](#deep-linking-a-conversation)), `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+[A message that waits](#a-message-that-waits)), `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
@@ -401,10 +400,13 @@ chat.addEventListener('before-send', (e) => {
 
 `chat.chatId` is the id of the chat now open (`null` before the chat has started). A new chat has
 its id from the start, before anything in it is saved, and keeps it once it is. `chat-change` fires
-with `{ chatId }` (type `ChatChangeDetail`; it bubbles and is composed) each time that changes: when
-the last chat is opened on load (or a fresh one started), when the viewer opens one from the list,
-on `newChat()`, and when the open chat is deleted (naming the new chat that replaces it). It fires
-once per change; reloading the chat already open, or deleting another one, fires nothing.
+with `{ chatId, saved }` (type `ChatChangeDetail`; it bubbles and is composed) each time that changes: when
+the last chat is opened on load (or a fresh one started), when the viewer opens one from the list or
+the page sets `conversation-id`, on `newChat()`, and when the open chat is deleted (naming the new
+chat that replaces it). `saved` says whether that chat is saved in its store, so its id can open it
+again: a new chat is not, and `chat-change` fires once more, with `saved: true`, when its first save
+lands (with `runner="remote"`, when the chat is read back after its first reply). It fires once per
+change; reloading the chat already open, or deleting another one, fires nothing.
 
 ```ts
 chat.addEventListener('chat-change', (e) => restoreFor(e.detail.chatId));
@@ -417,33 +419,38 @@ that link pointing at the chat that is open:
 
 - `conversation-id` (property `conversationId`): set before the chat starts, it opens that
   conversation in place of the last one; set later, it opens it at once, unless it is already the
-  open chat. Setting it again to the same id opens it again if the viewer has left it since.
-- `open(id)`: the same, as a method. It resolves `true` once that chat is open, and `false` when it
-  could not be opened or another chat was opened meanwhile. It never rejects. Called before the chat
-  has started, it waits for the start and opens that chat then.
-- `chat-change` (see [Which chat is open](#which-chat-is-open)) names the chat now open: the one
-  opened, a new chat, or the chat that replaces a deleted one.
+  open chat (or the one a chat still loading is about to open). Setting it again to the same id
+  opens it again if the viewer has left it since. Clearing it changes nothing.
+- `chat-change` (see [Which chat is open](#which-chat-is-open)) names the chat now open, and whether
+  it is `saved`: write only a saved chat's id into the link.
 
 Only a saved conversation opens. An id with nothing saved under it, or one the store cannot read,
-shows "Could not open that chat." and a new chat, and is never announced. A new chat has an id
-before its first message is saved, so a link to it opens only once it has one. Opening a chat
+shows "Could not open that chat." and is never announced: the chat open now stays open, with any
+reply running in it (before the chat has started, it starts on a new chat instead). Opening a chat
 reads it from its store and saves nothing. With `runner="remote"`, a chat whose reply is still
 running on the runner is followed again, as when the viewer opens it from the list.
 
 ```ts
 // `chat` is the <civitai-chat> element.
-const url = new URL(location.href);
-chat.conversationId = url.searchParams.get('c');
+chat.conversationId = new URL(location.href).searchParams.get('c');
 chat.addEventListener('chat-change', (e) => {
-  const { chatId } = e.detail;
-  if (chatId) url.searchParams.set('c', chatId);
+  const { chatId, saved } = e.detail;
+  const url = new URL(location.href);
+  const shown = url.searchParams.get('c');
+  // A new chat gets no link until its first save, so a reload never asks for a chat that does not exist.
+  const next = chatId && saved ? chatId : null;
+  if (next === shown) return;
+  if (next) url.searchParams.set('c', next);
   else url.searchParams.delete('c');
-  history.replaceState(null, '', url);
+  // Leaving a linked chat is a step Back returns from; a new chat getting its first link is not.
+  if (shown) history.pushState(null, '', url);
+  else history.replaceState(null, '', url);
 });
 // Back and forward between chats.
 addEventListener('popstate', () => {
   const id = new URL(location.href).searchParams.get('c');
-  if (id) void chat.open(id);
+  if (id) chat.conversationId = id;
+  else chat.newChat();
 });
 ```
 
@@ -1156,7 +1163,8 @@ chat.backend = {
 
 - **The chat list, opening a chat and deleting one go to `store`**, as with any backend, and so does
   reading a chat again once its run ends. The picker offers `model` and `models`, and the chat's
-  model is sent with each run.
+  model is sent with each run. `newChatModel` works as with any backend (see
+  [The model a new chat starts on](#the-model-a-new-chat-starts-on)): a new chat's first run starts on it.
 - **Each reply runs on the runner, and the runner is the only writer of the saved conversation.** The
   page never calls `store.save`, so the runner saves each turn into the host's store itself. A title or
   model the viewer sets after a chat's first turn goes to the runner as a patch

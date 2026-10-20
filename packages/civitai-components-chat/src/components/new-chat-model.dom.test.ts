@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import type { ChatBackend } from '../backend.js';
+import type { ChatBackend, ChatStoreBackend } from '../backend.js';
 import type { ChatConversation } from '../store/conversation-store.js';
 import { completion, memoryStore, textReply, urlOf } from '../test-support/fake-backend.js';
+import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import type { CivitaiChat, ModelChangeDetail } from './civitai-chat.js';
 import { defineElements } from './define.js';
 
@@ -174,5 +175,73 @@ describe('<civitai-chat> backend newChatModel (host store with a gateway)', () =
     await vi.waitFor(() => expect(changes).toHaveLength(2));
     expect(changes[1]).toEqual({ chatId: fresh, model: null });
     expect(await chip(chat)).toBe('host/default-model · default');
+  });
+});
+
+describe("<civitai-chat> newChatModel on a host's store-only backend (runner=\"remote\")", () => {
+  /** A store-only backend on a fake runner; `started()` is the model each run was started with. */
+  async function remoteChat(store: ReturnType<typeof memoryStore>, newChatModel?: string) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not here', { status: 404 })));
+    const runner = fakeRunner();
+    const backend: ChatStoreBackend = { model: 'host/default-model', models: MODELS, store, ...(newChatModel !== undefined ? { newChatModel } : {}) };
+    const chat = await mount((c) => {
+      c.runner = 'remote';
+      c.remoteRunner = { url: RUNNER_URL, fetch: runner.fetch };
+      c.backend = backend;
+    });
+    const started = () => [...runner.runs.values()].map((run) => run.request.model);
+    /** Sends, waits for its run to start, and ends it. */
+    const sendAndEnd = async (text: string) => {
+      void chat.send(text);
+      await vi.waitFor(() => expect(runner.runs.size).toBe(1));
+      runner.push('r1', { type: 'run-ended', status: 'done', messages: [], steps: 1 });
+    };
+    return { chat, started, sendAndEnd };
+  }
+
+  it('a new chat starts its run on newChatModel', async () => {
+    const { chat, started, sendAndEnd } = await remoteChat(memoryStore(), 'host/big');
+    expect(await chip(chat)).toBe('Big');
+    await sendAndEnd('hello');
+    expect(started()).toEqual(['host/big']);
+  });
+
+  it('newChatModel that is not one of models starts on the default', async () => {
+    const { chat, started, sendAndEnd } = await remoteChat(memoryStore(), 'host/gone');
+    expect(await chip(chat)).toBe('host/default-model · default');
+    await sendAndEnd('hello');
+    expect(started()).toEqual(['host/default-model']);
+  });
+
+  it('a saved chat with its own model keeps it', async () => {
+    const { chat, started, sendAndEnd } = await remoteChat(memoryStore([saved('A', 'host/small')]), 'host/big');
+    openFromHistory(chat, 'A');
+    await vi.waitFor(() => expect(chat.chatId).toBe('A'));
+    expect(await chip(chat)).toBe('Small');
+    await sendAndEnd('more');
+    expect(started()).toEqual(['host/small']);
+  });
+
+  it('a saved chat with no model of its own keeps following the default', async () => {
+    const { chat, started, sendAndEnd } = await remoteChat(memoryStore([saved('OLD')]), 'host/big');
+    openFromHistory(chat, 'OLD');
+    await vi.waitFor(() => expect(chat.chatId).toBe('OLD'));
+    expect(await chip(chat)).toBe('host/default-model · default');
+    await sendAndEnd('more');
+    expect(started()).toEqual(['host/default-model']);
+  });
+
+  it('model-change names the chat and the model the viewer picked', async () => {
+    const { chat } = await remoteChat(memoryStore(), 'host/big');
+    const changes: ModelChangeDetail[] = [];
+    chat.addEventListener('model-change', (event) => changes.push((event as CustomEvent<ModelChangeDetail>).detail));
+    const fresh = chat.chatId!;
+    chat.shadowRoot!.querySelector('civitai-chat-model-picker')!.dispatchEvent(new CustomEvent('cvt-model-pick', { detail: { model: 'host/small' }, bubbles: true, composed: true }));
+    expect(changes).toEqual([{ chatId: fresh, model: 'host/small' }]);
+    chat.shadowRoot!.querySelector('civitai-chat-model-picker')!.dispatchEvent(new CustomEvent('cvt-model-pick', { detail: {}, bubbles: true, composed: true }));
+    expect(changes).toEqual([
+      { chatId: fresh, model: 'host/small' },
+      { chatId: fresh, model: null },
+    ]);
   });
 });

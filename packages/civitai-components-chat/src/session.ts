@@ -452,14 +452,22 @@ export class ChatSession extends EventTarget {
     return job.results.find((result) => result.id === attachment.id)?.url;
   }
 
-  /** Opens a saved chat; with `existing`, one with nothing saved under `id` rejects instead of opening empty. */
-  async openConversation(id: string, options: OpenOptions = {}): Promise<void> {
+  /**
+   * Opens a saved chat. With `existing`, one with nothing saved under `id` rejects instead of opening
+   * empty, and the chat is read before anything is left: one that cannot be opened (not found, or a
+   * read that fails) leaves the open chat, and a reply running in it, as they are.
+   */
+  async openConversation(id: string, options: Pick<OpenOptions, 'existing'> = {}): Promise<void> {
     // A remote reply carries on on the server, and is followed again when its chat is opened.
-    this.agent.leave();
-    this.jobs.clear();
-    this.posts.clear();
-    this.panels.clear();
-    const [opened, catalog] = await Promise.all([this.store.open(id, options), this.#restoreCatalog()]);
+    const leave = (): void => {
+      this.agent.leave();
+      this.jobs.clear();
+      this.posts.clear();
+      this.panels.clear();
+    };
+    if (!options.existing) leave();
+    const opening = this.store.open(id, options.existing ? { existing: true, ready: leave } : {});
+    const [opened, catalog] = await Promise.all([opening, this.#restoreCatalog()]);
     this.#restore(opened, catalog);
     this.updateSettings({ lastConversationId: id });
     void this.#remote?.reattach(id);

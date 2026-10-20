@@ -211,6 +211,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     const turns = (head?.metadata.turns ?? []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     await this.#markLiveness(id, turns.at(-1));
     if (generation !== this.#generation) throw supersededError();
+    options.ready?.();
     if (head) this.#heads.set(id, { workflowId: head.workflowId, seq: turns.at(-1)?.seq ?? 0 });
     this.current = {
       id,
@@ -423,6 +424,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (!workflowId) return undefined;
     const previous = this.#heads.get(conversation.id);
     this.#heads.set(conversation.id, { workflowId, seq });
+    if (!previous) this.#emit('saved-change');
     this.#touchSummary(conversation);
     if (previous && previous.workflowId !== workflowId) {
       this.#deps.api.removeTag(previous.workflowId, HEAD_TAG).catch((error) => console.warn('[chat-cvt] an older save still counts as the latest', error));
@@ -563,7 +565,11 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     return this.#deps.now?.() ?? new Date();
   }
 
-  #emit(type: 'list-change' | 'conversation-change'): void {
+  isSaved(id: string): boolean {
+    return this.#heads.has(id);
+  }
+
+  #emit(type: 'list-change' | 'conversation-change' | 'saved-change'): void {
     this.dispatchEvent(new Event(type));
   }
 }
