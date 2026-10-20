@@ -1,5 +1,15 @@
 # @civitai/components-chat
 
+## 0.21.0
+
+### Minor Changes
+
+- ee75914: Experimental server runner: `<civitai-chat runner="remote">` with `remoteRunner = { url, headers, pageState }` runs each reply on a server that implements the new run protocol (`@civitai/components-chat/runner-protocol`), so a reply keeps going while the page sleeps or closes. The page follows the run's event stream into the same thread, tool views and subagent cards, reconnects with `Last-Event-ID` after a drop or a wake, finds a chat's live run again after a reload, and Stop asks the runner to stop. In remote mode the runner is the only writer of the saved conversation. The default stays `runner="browser"`, unchanged. New `@civitai/components-chat/core` entry: `AgentCore` and the rest of the reply loop with no DOM or Lit imports, for running it in Node. Both new entries are experimental: protocol v1 may change in a minor release until the first server runner ships.
+
+### Patch Changes
+
+- 5ddb17a: The default chat model is now `civitai/qwen3.8`, the orchestrator's alias for its current Qwen 3.8 deployment, and is shown by that name. The model list offers the orchestrator's hosted models by alias only: the AIRs behind them are no longer listed, though a typed AIR still works. OpenRouter models show their input and output price per million tokens ("$0.15 in · $0.60 out /M").
+
 ## 0.20.0
 
 ### Minor Changes
