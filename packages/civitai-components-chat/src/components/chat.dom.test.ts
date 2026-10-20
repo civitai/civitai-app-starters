@@ -277,12 +277,12 @@ describe('civitai-chat', () => {
     expect(replies()).toHaveLength(2);
   });
 
-  it("picks this chat's model from a searchable list priced per million output tokens, or any model id", async () => {
+  it("picks this chat's model from a searchable list priced per million input and output tokens, or any model id", async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const openRouter = {
       data: [
-        { id: 'cheap/model', name: 'Cheap Model', pricing: { completion: '0.00000061' }, supported_parameters: ['tools'] },
-        { id: 'pricey/model', name: 'Pricey Model', pricing: { completion: '0.000015' }, supported_parameters: ['tools'] },
+        { id: 'cheap/model', name: 'Cheap Model', pricing: { prompt: '0.00000015', completion: '0.00000061' }, supported_parameters: ['tools'] },
+        { id: 'pricey/model', name: 'Pricey Model', pricing: { prompt: '0.000003', completion: '0.000015' }, supported_parameters: ['tools'] },
       ],
     };
     const routable = {
@@ -290,7 +290,8 @@ describe('civitai-chat', () => {
         { id: 'cheap/model', owned_by: 'openrouter' },
         { id: 'pricey/model', owned_by: 'openrouter' },
         // Fits 1,024 + 34,000 tokens of reply, history, prompt and tools; not 16,384 + 34,000.
-        { id: 'urn:air:hosted:narrow-window', owned_by: 'civitai', context_length: 36_000 },
+        { id: 'civitai/narrow-window', owned_by: 'civitai', context_length: 36_000 },
+        { id: 'urn:air:hosted:behind-an-alias', owned_by: 'civitai', context_length: 262_144 },
       ],
     };
     const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => {
@@ -306,13 +307,14 @@ describe('civitai-chat', () => {
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
     const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
     // The default is shown by its name, marked as the default, never as the bare word "Default".
-    expect(chip.textContent).toContain('Qwen3.8-27B-NVFP4-RTX5090 · default');
+    expect(chip.textContent).toContain('civitai/qwen3.8 · default');
     expect(chip.textContent).not.toMatch(/\bDefault\b/);
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
 
     chip.click();
-    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.61/M out cheap/model'));
+    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.15 in · $0.61 out /M cheap/model'));
     expect(options().join(' | ')).not.toContain('Pricey');
+    expect(options().join(' | ')).not.toContain('behind-an-alias');
     expect(options().join(' | ')).not.toContain('narrow-window');
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'cheap';
@@ -337,7 +339,7 @@ describe('civitai-chat', () => {
     await chat.updateComplete;
     chip.click();
     await chat.updateComplete;
-    expect(options().join(' | ')).toContain('urn:air:hosted:narrow-window Hosted');
+    expect(options().join(' | ')).toContain('civitai/narrow-window Hosted');
     // The list loaded once for the session.
     expect(fetch.mock.calls.filter(([url]) => String(url) === 'https://openrouter.ai/api/v1/models')).toHaveLength(1);
   });
@@ -346,8 +348,8 @@ describe('civitai-chat', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const routable = {
       data: [
-        { id: 'urn:air:hosted:tiny-current', owned_by: 'civitai', context_length: 13_312 },
-        { id: 'urn:air:hosted:tiny-other', owned_by: 'civitai', context_length: 16_384 },
+        { id: 'civitai/tiny-current', owned_by: 'civitai', context_length: 13_312 },
+        { id: 'civitai/tiny-other', owned_by: 'civitai', context_length: 16_384 },
       ],
     };
     vi.stubGlobal(
@@ -359,17 +361,17 @@ describe('civitai-chat', () => {
     document.body.append(chat);
     const root = chat.shadowRoot!;
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model urn:air:hosted:tiny-current' } }));
+    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model civitai/tiny-current' } }));
     const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: urn:air:hosted:tiny-current'));
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: civitai/tiny-current'));
 
     chip.click();
     const names = () => [...root.querySelectorAll('.cvt-model-options .cvt-model-name')].map((name) => name.textContent);
     // Wait for the hosted list itself, not for an absence that holds before anything renders.
-    await vi.waitFor(() => expect(names()).toContain('urn:air:hosted:tiny-current'));
+    await vi.waitFor(() => expect(names()).toContain('civitai/tiny-current'));
     const listed = [...root.querySelectorAll('.cvt-model-options [role=option]')].map((option) => [option.querySelector('.cvt-model-name')!.textContent, option.getAttribute('aria-selected')]);
-    expect(listed).toContainEqual(['urn:air:hosted:tiny-current', 'true']);
-    expect(listed.map(([name]) => name)).not.toContain('urn:air:hosted:tiny-other');
+    expect(listed).toContainEqual(['civitai/tiny-current', 'true']);
+    expect(listed.map(([name]) => name)).not.toContain('civitai/tiny-other');
   });
 
   it("goes back to the viewer's own default when they type Default in the model list", async () => {
@@ -518,7 +520,7 @@ describe('civitai-chat', () => {
     // Loading ends, and the picker does not keep saying it is loading.
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-status')).toBeNull());
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
-    expect(options()).toEqual(["Qwen3.8-27B-NVFP4-RTX5090 · default The app's default model"]);
+    expect(options()).toEqual(["civitai/qwen3.8 · default The app's default model"]);
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'z-ai/glm-5.3-flash';
     search.dispatchEvent(new Event('input'));

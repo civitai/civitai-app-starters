@@ -411,7 +411,7 @@ describe('civitai-chat-settings-dialog', () => {
 
   it('offers free replies first, free only, or always paid, with what is left', async () => {
     const { changes, select, pick } = await settingsDialog({ left: 198 });
-    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'Qwen3.8-27B-NVFP4-RTX5090 · default', 'Smart', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'civitai/qwen3.8 · default', 'Smart', 'Custom…']);
     expect(select.value).toBe('auto');
     expect(select.getAttribute('description')).toBe('Free replies while they last (198 left), then about 1 Buzz a reply.');
 
@@ -438,7 +438,7 @@ describe('civitai-chat-settings-dialog', () => {
 
   it('lets the viewer pick a listed model or type any model id, and drops the free options when there are none', async () => {
     const { dialog, changes, select, pick } = await settingsDialog(null);
-    expect(select.data.map((option) => option.label)).toEqual(['Qwen3.8-27B-NVFP4-RTX5090 · default', 'Smart', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['civitai/qwen3.8 · default', 'Smart', 'Custom…']);
 
     await pick('z-ai/glm-5.3-flash');
     expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash', assistantTier: 'auto' }]);
@@ -460,7 +460,7 @@ describe('civitai-chat-settings-dialog', () => {
     const changes: unknown[] = [];
     dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
     const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
-    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'Qwen3.8-27B-NVFP4-RTX5090 · default', 'Custom…']);
+    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'civitai/qwen3.8 · default', 'Custom…']);
     expect(select.value).toBe('free');
     expect(select.getAttribute('description')).toContain('replies are refused');
 
@@ -496,11 +496,11 @@ describe('civitai-chat-settings-dialog', () => {
 describe('civitai-chat-model-picker', () => {
   const models = [
     { id: 'urn:air:page:default', label: 'Page Model', source: 'default' as const },
-    { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', source: 'openrouter' as const, pricePerMillion: 0.4 },
-    { id: 'q/quill', label: 'Quill', source: 'openrouter' as const, pricePerMillion: 1.3 },
+    { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', source: 'openrouter' as const, price: { input: 0.4, output: 0.4 } },
+    { id: 'q/quill', label: 'Quill', source: 'openrouter' as const, price: { input: 1.3, output: 1.3 } },
     // The longer name is listed first, so only an exact name match picks GPT-4o itself.
-    { id: 'openai/gpt-4o-mini', label: 'OpenAI: GPT-4o-mini', source: 'openrouter' as const, pricePerMillion: 0.6 },
-    { id: 'openai/gpt-4o', label: 'OpenAI: GPT-4o', source: 'openrouter' as const, pricePerMillion: 7.5 },
+    { id: 'openai/gpt-4o-mini', label: 'OpenAI: GPT-4o-mini', source: 'openrouter' as const, price: { input: 0.6, output: 0.6 } },
+    { id: 'openai/gpt-4o', label: 'OpenAI: GPT-4o', source: 'openrouter' as const, price: { input: 7.5, output: 7.5 } },
   ];
   const open = async (props: Partial<HTMLElementTagNameMap['civitai-chat-model-picker']>) => {
     const picker = await mount('civitai-chat-model-picker', { models, ...props });
@@ -570,7 +570,7 @@ describe('civitai-chat-model-picker', () => {
 describe('civitai-chat-model-picker: the default by name', () => {
   const models = [
     { id: 'urn:air:page:pm', label: 'Page Model', source: 'default' as const },
-    { id: 'v/violet', label: 'Violet 7', source: 'openrouter' as const, pricePerMillion: 0.9 },
+    { id: 'v/violet', label: 'Violet 7', source: 'openrouter' as const, price: { input: 0.9, output: 0.9 } },
   ];
   // The chip's visible text: the name, then the marker in a span of its own that never truncates.
   const chipName = (picker: Element) => [...picker.querySelectorAll('.cvt-model-chip-name, .cvt-model-chip-marker')].map((span) => span.textContent).join('');

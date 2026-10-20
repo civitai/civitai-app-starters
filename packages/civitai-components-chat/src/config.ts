@@ -13,7 +13,7 @@ export interface ChatModelOption {
 export interface ChatConfig {
   /** What the chat calls itself to the viewer and to its assistant. */
   name: string;
-  /** The chat model, as an AIR the orchestrator serves through its OpenAI-compatible endpoint. */
+  /** The chat model: an id or alias the orchestrator serves through its OpenAI-compatible endpoint. */
   model: string;
   /** Other models the viewer may pick in Settings, besides the default and a custom id. */
   models: ChatModelOption[];
@@ -47,7 +47,7 @@ export const DEFAULT_OUTPUT_TOKENS = 16_384;
 
 export const chatConfig: ChatConfig = {
   name: 'Civitai Chat',
-  model: 'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar',
+  model: 'civitai/qwen3.8',
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
   autoRunLimit: 100,
