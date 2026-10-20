@@ -1019,7 +1019,10 @@ studio.addEventListener('media-action', (e) => chat.mediaAction(e.detail.id, e.d
 
 ## Server runner
 
-Experimental. By default a reply runs on the page (`runner="browser"`): it stops when the page sleeps,
+Experimental, and so are the `@civitai/components-chat/runner-protocol` and `@civitai/components-chat/core`
+entries: protocol v1 may still change in a minor release until the first server runner ships.
+
+By default a reply runs on the page (`runner="browser"`): it stops when the page sleeps,
 closes or loses its network for long. With `runner="remote"` each reply runs on a server instead, and
 the page follows it, so a long reply keeps working while the viewer is away. The server implements the
 run protocol in `@civitai/components-chat/runner-protocol` (types and a few pure helpers); this package
@@ -1052,9 +1055,14 @@ What changes in remote mode:
   trying for as long as the run is live: the turn stays replying, never "cut off". Coming back into
   view, back online or out of the back-forward cache reconnects at once. Opening the chat again (a
   reload, another device) asks the runner for its live run (`GET /runs?conversationId=`) and follows it
-  from its start.
+  from its start; what the journal already held when it was looked up is shown, but not announced to
+  the page again, so `tool-result` still fires once per finished call. A runner that refuses the
+  viewer the events (401, 403) ends the reply on the page with a sign-in error (`reply-error`, kind
+  `auth`); the run itself goes on on the server.
 - **Stop asks the runner to stop** (`POST /runs/<id>/stop`), and the reply shows stopped once the run
-  says it ended. Opening another chat or starting a new one no longer stops a reply: it carries on, and
+  says it ended, or after 10 seconds, or at once when the runner refuses the stop: the message box is
+  always free again. Stop before the run's id is known (its start had no answer yet) ends the reply at
+  once and stops the run by the start's key (`POST /runs/stop`). Opening another chat or starting a new one no longer stops a reply: it carries on, and
   is followed again when its chat is opened.
 - **The runner is the only writer of the saved conversation.** The page writes no head: it reads the
   chat again once a run ends. A title or model the viewer sets goes to the runner as a patch
@@ -1068,15 +1076,16 @@ The protocol, briefly (`runner-protocol.ts` has every field):
 | Call | Body | Answer |
 |---|---|---|
 | `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
-| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run, or `null` |
+| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run with the latest event id in its journal (`lastEventId`), or `null` |
 | `GET /runs/<id>/events` | `Last-Event-ID` to resume | `RunEvent`s as SSE, `id:` the journal position |
 | `POST /runs/<id>/stop` | `{ v: 1 }` | `202` |
+| `POST /runs/stop` | `idempotencyKey`, `conversationId` | `202`: stops the run that start started, or keeps a later start with that key from replying |
 | `POST /conversations/<id>/patch` | `title`, `titleSource`, `model` | `204` |
 
 Every request and response carries `v: 1`. The events are `run-started`, the parts' edits
-(`text-delta`, `tool-call`, `tool-result`, `tool-error`, `parts-truncate`), `step-finished`,
-`checkpoint`, `subagent-progress`, `tool-reported`, `network-retry`, `error`, and last `run-ended` with
-its status (`done`, `stopped`, `error`, `ran_out`). A runner gets the edits from the reply's
+(`text-delta`, `tool-call`, `tool-result`, `tool-error`, `parts-truncate`), `subagent-progress`,
+`tool-reported`, `network-retry`, `error`, and last `run-ended` with its status (`done`, `stopped`,
+`error`, `ran_out`); an event of a type the page does not know is skipped. A runner gets the edits from the reply's
 `AgentCore.live.parts` with `createPartsDiffer()` every 100 ms or so, and the page applies them with
 `applyRunEvent()`, so the parts it shows are the parts the server's reply showed.
 

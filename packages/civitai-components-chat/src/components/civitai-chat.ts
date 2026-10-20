@@ -901,8 +901,8 @@ export class CivitaiChat extends LitElement {
     // Called right after `#starts` counts this start.
     const start = this.#starts;
     this.#conversationEnd();
-    // A remote reply carries on on the server: only one running in the page ends.
-    this.#session?.agent.leave();
+    // A remote reply carries on on the server (and the old session follows nothing more): only one running in the page ends.
+    this.#session?.agent.dispose();
     this.#session?.mcpServers.close();
     // An open still loading in the old session is moot: the new session is not held behind it.
     this.loading = false;

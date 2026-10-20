@@ -7,6 +7,7 @@ import {
   type RunPageState,
   type RunSummary,
   type StartRunRequest,
+  type StopRunByKeyRequest,
   type StartRunResponse,
 } from '../runner-protocol.js';
 
@@ -32,7 +33,15 @@ export interface ChatRemoteRunner {
    * answer never came); the last one repeats, for as long as the run is live. {@link RECONNECT_DELAYS_MS} unless set.
    */
   reconnectDelaysMs?: readonly number[];
+  /**
+   * The longest a call waits for the runner's answer (for the event stream, for its headers), after
+   * which it fails as unanswered and is asked again like a dropped one. {@link REQUEST_TIMEOUT_MS} unless set.
+   */
+  timeoutMs?: number;
 }
+
+/** How long a call to the runner waits for its answer. */
+export const REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Waits between reconnects in a row. The run carries on on the server whatever the page's network
@@ -66,40 +75,85 @@ export class RunnerClient {
     return new URL(path, new URL(base, (globalThis as { location?: { href?: string } }).location?.href)).toString();
   }
 
-  async start(body: StartRunRequest): Promise<StartRunResponse> {
-    const response = await this.#request(runPaths.start(), { method: 'POST', body: JSON.stringify(body) });
-    return (await response.json()) as StartRunResponse;
+  async start(body: StartRunRequest, signal?: AbortSignal): Promise<StartRunResponse> {
+    return (await this.#call(runPaths.start(), { method: 'POST', body: JSON.stringify(body) }, signal)) as StartRunResponse;
   }
 
   /** The conversation's live run, `null` when none runs. */
-  async lookup(conversationId: string): Promise<RunSummary | null> {
-    const response = await this.#request(runPaths.lookup(conversationId), { method: 'GET' });
-    return ((await response.json()) as RunLookupResponse).run ?? null;
+  async lookup(conversationId: string, signal?: AbortSignal): Promise<RunSummary | null> {
+    return ((await this.#call(runPaths.lookup(conversationId), { method: 'GET' }, signal)) as RunLookupResponse | undefined)?.run ?? null;
   }
 
-  async stop(runId: string): Promise<void> {
-    await this.#request(runPaths.stop(runId), { method: 'POST', body: JSON.stringify({ v: RUN_PROTOCOL_VERSION }) });
+  async stop(runId: string, signal?: AbortSignal): Promise<void> {
+    await this.#call(runPaths.stop(runId), { method: 'POST', body: JSON.stringify({ v: RUN_PROTOCOL_VERSION }) }, signal);
   }
 
-  async patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> {
-    await this.#request(runPaths.patch(conversationId), { method: 'POST', body: JSON.stringify({ v: RUN_PROTOCOL_VERSION, ...patch }) });
+  /** Stops the run a start with `idempotencyKey` started, known or not (`POST /runs/stop`). */
+  async stopByKey(idempotencyKey: string, conversationId: string, signal?: AbortSignal): Promise<void> {
+    const body: StopRunByKeyRequest = { v: RUN_PROTOCOL_VERSION, idempotencyKey, conversationId };
+    await this.#call(runPaths.stopByKey(), { method: 'POST', body: JSON.stringify(body) }, signal);
   }
 
-  /** Opens a run's event stream after `lastEventId` (from its start without one). Resolves once the answer's headers came. */
-  events(runId: string, lastEventId: string | undefined, signal: AbortSignal): Promise<Response> {
-    return this.#request(runPaths.events(runId), { method: 'GET', signal, headers: { accept: 'text/event-stream', ...(lastEventId !== undefined ? { 'last-event-id': lastEventId } : {}) } });
+  async patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>, signal?: AbortSignal): Promise<void> {
+    await this.#call(runPaths.patch(conversationId), { method: 'POST', body: JSON.stringify({ v: RUN_PROTOCOL_VERSION, ...patch }) }, signal);
   }
 
-  async #request(path: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Response> {
-    const own = (await this.options.headers?.()) ?? {};
-    const doFetch = this.options.fetch ?? fetch.bind(globalThis);
-    const response = await doFetch(this.url(path), {
-      ...init,
-      headers: { ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}), ...init.headers, ...own },
-    });
-    if (!response.ok) throw new RunnerHttpError(response.status, await errorBody(response));
+  /**
+   * Opens a run's event stream after `lastEventId` (from its start without one). Resolves once the
+   * answer's headers came, within the timeout; the stream then lasts until `signal` aborts.
+   */
+  async events(runId: string, lastEventId: string | undefined, signal: AbortSignal): Promise<Response> {
+    const { response, done } = await this.#open(runPaths.events(runId), { method: 'GET', headers: { accept: 'text/event-stream', ...(lastEventId !== undefined ? { 'last-event-id': lastEventId } : {}) } }, signal, true);
+    done();
     return response;
   }
+
+  /** A call whose answer is read whole, within the timeout: its JSON, or `undefined` for an empty body. */
+  async #call(path: string, init: RequestInit & { headers?: Record<string, string> }, signal?: AbortSignal): Promise<unknown> {
+    const { response, done } = await this.#open(path, init, signal, false);
+    try {
+      const text = await response.text();
+      return text ? (JSON.parse(text) as unknown) : undefined;
+    } finally {
+      done();
+    }
+  }
+
+  /**
+   * Sends a request that the timeout or `signal` aborts. `done` ends the timeout; for a stream
+   * (`keepSignal`) `signal` still aborts the body after it, for anything else it lets go of `signal` too.
+   */
+  async #open(path: string, init: RequestInit & { headers?: Record<string, string> }, signal: AbortSignal | undefined, keepSignal: boolean): Promise<{ response: Response; done: () => void }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new DOMException('The runner did not answer in time.', 'TimeoutError')), this.options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    const onAbort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+    const done = () => {
+      clearTimeout(timer);
+      if (!keepSignal) signal?.removeEventListener('abort', onAbort);
+    };
+    try {
+      const own = (await this.options.headers?.()) ?? {};
+      const doFetch = this.options.fetch ?? fetch.bind(globalThis);
+      const response = await doFetch(this.url(path), {
+        ...init,
+        signal: controller.signal,
+        headers: { ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}), ...init.headers, ...own },
+      });
+      if (!response.ok) throw new RunnerHttpError(response.status, await errorBody(response));
+      return { response, done };
+    } catch (error) {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      throw error;
+    }
+  }
+}
+
+/** Whether a call failed without an answer (dropped, or not answered in time), so asking again is worth it. */
+export function unanswered(error: unknown): boolean {
+  return error instanceof TypeError || (error instanceof Error && error.name === 'TimeoutError');
 }
 
 async function errorBody(response: Response): Promise<RunErrorResponse | undefined> {

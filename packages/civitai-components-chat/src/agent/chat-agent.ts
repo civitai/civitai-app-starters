@@ -21,4 +21,6 @@ export interface ChatAgent extends EventTarget {
    * chat is opened.
    */
   leave(): void;
+  /** The session is replaced: as `leave`, and nothing is started or followed by this agent any more. */
+  dispose(): void;
 }

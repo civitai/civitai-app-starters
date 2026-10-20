@@ -24,12 +24,14 @@ export async function* readSse(body: ReadableStream<Uint8Array>, idleMs?: number
   try {
     for (;;) {
       const { value, done } = await readWithin(reader, idleMs);
-      if (!done) alive?.();
-      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      // The end of the stream: an event it had not finished with a blank line is dropped, as EventSource drops it.
+      if (done) return;
+      alive?.();
+      buffer += decoder.decode(value, { stream: true });
       // A CR at the end of a chunk may be the first half of a CRLF: kept until the next chunk says.
       const lines = buffer.split(/\r\n|\n|\r(?!$)/);
-      buffer = done ? '' : lines.pop()!;
-      for (const raw of done ? [...lines, ''] : lines) {
+      buffer = lines.pop()!;
+      for (const raw of lines) {
         const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
         if (line === '') {
           if (sawData) yield { ...(id !== undefined ? { id } : {}), ...(event ? { event } : {}), data: data.join('\n') };
@@ -50,7 +52,6 @@ export async function* readSse(body: ReadableStream<Uint8Array>, idleMs?: number
         } else if (field === 'id' && !value_.includes('\0')) id = value_;
         else if (field === 'event') event = value_;
       }
-      if (done) return;
     }
   } finally {
     reader.cancel().catch(() => undefined);

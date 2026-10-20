@@ -6,14 +6,18 @@
  * Imported as `@civitai/components-chat/runner-protocol`. Types and a few pure helpers only: no DOM,
  * no Lit, nothing that runs on import.
  *
+ * EXPERIMENTAL: protocol v1 may still change in a minor release of this package until the first
+ * server runner ships.
+ *
  * ## Endpoints (relative to the runner's base URL; see {@link runPaths})
  *
  * | Call | Body | Answer |
  * |---|---|---|
  * | `POST /runs` | {@link StartRunRequest} | `200`/`201` {@link StartRunResponse}; `4xx`/`5xx` {@link RunErrorResponse} |
- * | `GET /runs?conversationId=<id>` | | `200` {@link RunLookupResponse}: the conversation's live run, or `null` (never a run whose `run-ended` is journaled) |
+ * | `GET /runs?conversationId=<id>` | | `200` {@link RunLookupResponse}: the conversation's live run with its latest event id, or `null` (never a run whose `run-ended` is journaled) |
  * | `GET /runs/<runId>/events` | `Last-Event-ID` header to resume | `200` `text/event-stream` of {@link RunEvent}; `404` once the run is unknown |
  * | `POST /runs/<runId>/stop` | {@link StopRunRequest} | `202`: the run stops gracefully and ends with `run-ended` `stopped` |
+ * | `POST /runs/stop` | {@link StopRunByKeyRequest} | `202`: stops the run a start with that key started, whether or not it exists yet (see the type) |
  * | `POST /conversations/<id>/patch` | {@link ConversationPatchRequest} | `204`: the runner writes it into the head |
  *
  * Every request carries the page's own auth headers; the runner decides who the viewer is.
@@ -72,6 +76,7 @@ export const runPaths = {
   lookup: (conversationId: string): string => `runs?conversationId=${encodeURIComponent(conversationId)}`,
   events: (runId: string): string => `runs/${encodeURIComponent(runId)}/events`,
   stop: (runId: string): string => `runs/${encodeURIComponent(runId)}/stop`,
+  stopByKey: (): string => 'runs/stop',
   patch: (conversationId: string): string => `conversations/${encodeURIComponent(conversationId)}/patch`,
 } as const;
 
@@ -160,6 +165,13 @@ export interface RunSummary {
   user: TurnUser;
   /** ISO 8601. */
   startedAt: string;
+  /**
+   * The id of the latest event in the run's journal as this answer was made. A client following the
+   * run from its start rebuilds what it shows from every event, but announces to its page (tool
+   * results, retries) only the events after this one: the page already heard of the others, before
+   * it reloaded or on the device that started the run.
+   */
+  lastEventId: string;
 }
 
 /** `GET /runs?conversationId=`: the conversation's live run, `null` when none runs. A run whose `run-ended` is in its journal is not live. */
@@ -171,6 +183,19 @@ export interface RunLookupResponse {
 /** `POST /runs/<runId>/stop`: stop the reply, keeping what it did, as the viewer's Stop does. */
 export interface StopRunRequest {
   v: 1;
+}
+
+/**
+ * `POST /runs/stop`: stop the run a start with `idempotencyKey` started, for a client that pressed
+ * Stop before it learned the run's id (its start had no answer yet, though it may have reached the
+ * runner). The runner stops that run as `POST /runs/<runId>/stop` does; when no start with that key
+ * has arrived, it records the key so that one arriving later starts no reply (it ends at once with
+ * `run-ended` `stopped`). `202` either way, so a client may send it again until it is answered.
+ */
+export interface StopRunByKeyRequest {
+  v: 1;
+  idempotencyKey: string;
+  conversationId: string;
 }
 
 /**
@@ -200,7 +225,7 @@ export interface RunSubagentProgress {
   ranCommands?: number;
 }
 
-/** Everything a run's event stream carries. */
+/** Everything a run's event stream carries. A client ignores an event of a type it does not know. */
 export type RunEvent =
   /** The first event. `parts`: what the reply shows at once (the saved steps of a reply carried on), else `[]`. */
   | { type: 'run-started'; v: 1; runId: string; conversationId: string; seq: number; user: TurnUser; parts: TurnPart[] }
@@ -214,10 +239,6 @@ export type RunEvent =
   | { type: 'tool-error'; toolCallId: string; error: string }
   /** The parts from `length` on are taken back (a step asked for again after a drop). */
   | { type: 'parts-truncate'; length: number }
-  /** A step finished: how many the reply finished so far, and whether this one called a tool. */
-  | { type: 'step-finished'; steps: number; calledTools: boolean }
-  /** The reply's progress so far was saved to the head (ISO 8601). */
-  | { type: 'checkpoint'; savedAt: string }
   /** A subagent's progress, by its `dispatch_agent` call's id; `null` once it ended. */
   | { type: 'subagent-progress'; toolCallId: string; progress: RunSubagentProgress | null }
   /** A tool call finished as the gate reports it (the browser runner's `tool-result` event). */

@@ -139,11 +139,11 @@ describe('applyRunEvent', () => {
     expect(parts).toEqual([{ kind: 'tool', toolCallId: 'k', toolName: 'sketch', input: {}, state: 'calling' }]);
   });
 
-  it('starts over from run-started, and leaves the parts alone for events that edit none', () => {
+  it('starts over from run-started, and leaves the parts alone for events that edit none, or of a type it does not know', () => {
     const parts: TurnPart[] = [{ kind: 'text', text: 'stale' }];
     expect(applyRunEvent(parts, { type: 'run-started', v: 1, runId: 'r', conversationId: 'c', seq: 2, user: { content: 'hi', attachments: [] }, parts: [{ kind: 'text', text: 'Saved.' }] })).toBe(true);
-    expect(applyRunEvent(parts, { type: 'checkpoint', savedAt: '2026-10-19T00:00:00Z' })).toBe(true);
-    expect(applyRunEvent(parts, { type: 'step-finished', steps: 1, calledTools: false })).toBe(true);
+    expect(applyRunEvent(parts, { type: 'network-retry', attempt: 1, trace: { stage: 'stream', step: 1, msIntoStep: 0, message: 'cut' } })).toBe(true);
+    expect(applyRunEvent(parts, { type: 'some-later-event', at: 1 } as unknown as RunEvent)).toBe(true);
     expect(parts).toEqual([{ kind: 'text', text: 'Saved.' }]);
   });
 });

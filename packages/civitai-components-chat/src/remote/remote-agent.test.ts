@@ -162,7 +162,8 @@ describe('RemoteAgent, against a runner', () => {
     const { agent, runner, submitWorkflow, updateWorkflow, queryWorkflows, rereads } = setup([head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'hi', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Hello.' }], status: 'done' } }])]);
     const sent = agent.send('hi');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
-    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Hello.' }, { type: 'step-finished', steps: 1, calledTools: false }, { type: 'checkpoint', savedAt: '2026-10-19T00:00:01Z' }]);
+    // An event of a type this client does not know (a later protocol's) is skipped.
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Hello.' }, { type: 'some-later-event', at: 1 } as unknown as RunEvent]);
     expect(queryWorkflows).not.toHaveBeenCalled();
     runner.push('r1', ended([{ role: 'assistant', content: 'Hello.' }]));
     await sent;
@@ -508,6 +509,63 @@ describe('RemoteAgent, against a runner', () => {
     expect(await attached).toBe(false);
     expect(agent.running).toBe(false);
     expect(runner.eventOpens('r1')).toEqual([]);
+  });
+
+  it('follows nothing, starts nothing and looks nothing up once disposed (its session was replaced)', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.holdLookups = true;
+    await runner.fetch(`${RUNNER_URL}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ v: 1, idempotencyKey: 'other', conversationId: 'c1', turn: { seq: 1, user: { content: 'hi', attachments: [] } }, model: 'm', settings: {} }),
+    });
+    await store.open('c1');
+    const attached = agent.reattach('c1');
+    await vi.waitFor(() => expect(runner.requests.some((request) => request.path === 'runs?conversationId=c1')).toBe(true));
+    agent.dispose();
+    runner.releaseLookups();
+    expect(await attached).toBe(false);
+    const before = runner.requests.length;
+    expect(await agent.reattach('c1')).toBe(false);
+    await agent.send('again');
+    expect(runner.requests.length).toBe(before);
+    expect(runner.eventOpens('r1')).toEqual([]);
+    expect(agent.running).toBe(false);
+  });
+
+  it('gives up on a lookup the runner never answers, and can look again', async () => {
+    const runner = fakeRunner();
+    const made = remoteStore();
+    const agent = new RemoteAgent({
+      client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0], timeoutMs: 50 }),
+      store: made.store,
+      model: () => 'model-a',
+      settings: () => SETTINGS,
+      reread: async () => undefined,
+    });
+    await runner.fetch(`${RUNNER_URL}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ v: 1, idempotencyKey: 'other', conversationId: 'c1', turn: { seq: 1, user: { content: 'hi', attachments: [] } }, model: 'm', settings: {} }),
+    });
+    await made.store.open('c1');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    runner.knobs.hangLookups = true;
+    expect(await agent.reattach('c1')).toBe(false);
+    // Not stuck "looking": the next open looks again, and follows the run.
+    runner.knobs.hangLookups = false;
+    expect(await agent.reattach('c1')).toBe(true);
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    agent.leave();
+  });
+
+  it('ends the reply on the page as stopped when the run does not say it stopped in time', async () => {
+    const { agent, runner, store } = setup([], { stopGraceMs: 30 });
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const turn = store.current!.turns[0]!;
+    agent.abort();
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs/r1/stop')).toHaveLength(1));
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(turn.assistant.status).toBe('aborted');
   });
 
   it('writes no head even after reading one back (a later post or panel stays on the page)', async () => {

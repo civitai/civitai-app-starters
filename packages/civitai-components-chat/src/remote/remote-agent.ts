@@ -20,7 +20,7 @@ import { CUT_OFF } from '../store/thread-store.js';
 import type { ChatToolResult } from '../tools/gate.js';
 import type { Attachment, Turn } from '../types.js';
 import type { ErrorKind } from '../ux/humanize.js';
-import { RECONNECT_DELAYS_MS, RunnerClient, RunnerHttpError } from './runner-client.js';
+import { RECONNECT_DELAYS_MS, RunnerClient, RunnerHttpError, unanswered } from './runner-client.js';
 import { readSse, type SseMessage } from './sse.js';
 
 /** An event stream that sent nothing (not even its keep-alive comment) for this long is taken as dead and opened again. */
@@ -31,6 +31,15 @@ export const REREAD_TIMEOUT_MS = 15_000;
 
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
+
+/** What a turn shows when the runner refuses the viewer on the run's events (401/403): the run itself goes on. */
+export const RUN_DENIED = "The assistant's server did not accept your sign-in, so this reply cannot be followed here. Reload the page to see it.";
+
+/** How long after Stop the reply waits for the run to say it stopped before it ends on the page anyway (the stop is still sent). */
+export const STOP_GRACE_MS = 10_000;
+
+/** The most times a stop that had no answer is sent again, at the reconnect waits, after the reply ended on the page. */
+export const STOP_ATTEMPTS = 20;
 
 /** What a turn shows when the chat already had a reply running (from another tab or device). */
 export const RUN_ACTIVE = 'Another reply is still running in this chat. Wait for it to finish, then send again.';
@@ -53,12 +62,16 @@ export interface RemoteAgentDeps {
   wake?(listener: () => void): () => void;
   newKey?(): string;
   idleMs?: number;
+  /** {@link STOP_GRACE_MS} unless set. */
+  stopGraceMs?: number;
 }
 
 interface Run {
   conversationId: string;
   turn: Turn;
   runId?: string;
+  /** The start's idempotency key: Stop before the run id is known stops the run by it. */
+  key?: string;
   /** The id of the latest event applied: a reconnect resumes after it. */
   lastEventId?: string;
   stopRequested: boolean;
@@ -69,8 +82,13 @@ interface Run {
   /** Set when the connection is closed to be opened again at once (`wake`), not after a wait. */
   reconnectNow?: boolean;
   lastMessageAt: number;
-  /** The highest event id whose side effects (tool reports, retries, subagent cards) were fired: a replay does not fire them again. */
+  /**
+   * The highest event id announced to the page (tool reports, retries): a replay does not announce
+   * them again. Following a run again after a reload starts at the latest id the lookup reported.
+   */
   firedThrough?: number;
+  /** The highest event id whose state (the turn's retries) this run took in: a journal read again does not take it twice. */
+  appliedThrough?: number;
   /** Journal re-reads in a row (an event that did not fit), for their waits: not reset by the events that do fit. */
   resyncs: number;
   /** Ends the wait before the next reconnect, while one waits. */
@@ -97,6 +115,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #attachNext: string | undefined;
   /** Runs that ended here: a lookup that still names one (the runner had not let go of it yet) is not followed again. */
   #ended = new Set<string>();
+  /** Bumped whenever the page leaves: a lookup that was on its way before starts nothing. */
+  #generation = 0;
+  #disposed = false;
 
   constructor(deps: RemoteAgentDeps) {
     super();
@@ -112,7 +133,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   }
 
   async send(content: string, attachments: Attachment[] = [], refs: string[] = []): Promise<void> {
-    if (this.running) return;
+    if (this.running || this.#disposed) return;
     // In remote mode the store writes nothing: the turn is the page's until the runner saves it.
     const turn = this.#deps.store.appendUserTurn(content, attachments, refs);
     const conversation = this.#deps.store.current;
@@ -123,29 +144,44 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   async retry(): Promise<void> {
     const conversation = this.#deps.store.current;
     const turn = conversation?.turns.at(-1);
-    if (this.running || !conversation || turn?.assistant.status !== 'error') return;
+    if (this.running || this.#disposed || !conversation || turn?.assistant.status !== 'error') return;
     turn.assistant = { messages: [], status: 'streaming' };
     await this.#start(conversation.id, turn, true);
   }
 
-  /** The viewer's Stop: asks the runner to stop the run. The reply keeps showing until the run says it ended. */
+  /**
+   * The viewer's Stop: asks the runner to stop the run. The reply keeps showing until the run says it
+   * ended, for at most {@link STOP_GRACE_MS}, and not at all once the runner refused the stop: then it
+   * ends on the page as stopped, so the message box is free again whatever the runner does.
+   */
   abort(): void {
     const run = this.#run;
     if (!run || run.closed || run.stopRequested) return;
     run.stopRequested = true;
     if (run.runId) {
-      void this.#sendStop(run);
+      const runId = run.runId;
+      void this.#stopRemotely(run.conversationId, () => this.#deps.client.stop(runId)).then((refused) => refused && this.#stoppedHere(run));
+      setTimeout(() => this.#stoppedHere(run), this.#deps.stopGraceMs ?? STOP_GRACE_MS);
       return;
     }
-    // No run id yet (its start has had no answer): the reply ends here at once, and a start that is
-    // answered after all is stopped then (see `#start`).
+    // No run id yet (its start has had no answer, but it may have reached the runner): the reply ends
+    // here at once, and the run that start may have started is stopped by its key.
     run.turn.assistant.status = 'aborted';
     this.#close(run);
+    const key = run.key!;
+    void this.#stopRemotely(run.conversationId, () => this.#deps.client.stopByKey(key, run.conversationId));
   }
 
   /** Stops following the run, which carries on on the server; opening its chat again follows it again. */
   leave(): void {
+    this.#generation++;
     if (this.#run) this.#close(this.#run);
+  }
+
+  /** The session is done with: nothing is followed, sent or looked up any more (a stop already on its way still goes). */
+  dispose(): void {
+    this.#disposed = true;
+    this.leave();
   }
 
   /**
@@ -153,7 +189,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
    * reply of its turn: after a reload, or a chat opened on another device. Whether it found one.
    */
   async reattach(conversationId: string): Promise<boolean> {
-    if (this.#run) return false;
+    if (this.#run || this.#disposed) return false;
+    const generation = this.#generation;
     if (this.#attaching !== undefined) {
       // One lookup at a time; the chat opened last is looked up once this one is answered.
       this.#attachNext = conversationId;
@@ -163,6 +200,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     try {
       const summary = await this.#deps.client.lookup(conversationId);
       const conversation = this.#deps.store.current;
+      // The page left (another chat, a new one, the session replaced) while the lookup was on its way.
+      if (generation !== this.#generation || this.#disposed) return false;
       if (!summary || this.#ended.has(summary.runId) || this.#run || conversation?.id !== conversationId) return false;
       let turn = conversation.turns.find((t) => t.seq === summary.seq);
       if (!turn) {
@@ -175,6 +214,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       turn.assistant = { messages: [], status: 'streaming' };
       const run = this.#begin(conversationId, turn);
       run.runId = summary.runId;
+      // Everything up to now is rebuilt from the replay, but the page already heard of it: not announced again.
+      const heard = Number(summary.lastEventId);
+      if (summary.lastEventId !== undefined && Number.isFinite(heard)) run.firedThrough = heard;
       void this.#follow(run);
       return true;
     } catch (error) {
@@ -184,7 +226,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       this.#attaching = undefined;
       const next = this.#attachNext;
       this.#attachNext = undefined;
-      if (next !== undefined && next !== conversationId && this.#deps.store.current?.id === next) void this.reattach(next);
+      if (next !== undefined && next !== conversationId && !this.#disposed && this.#deps.store.current?.id === next) void this.reattach(next);
     }
   }
 
@@ -214,9 +256,10 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   async #start(conversationId: string, turn: Turn, retry: boolean): Promise<void> {
     const run = this.#begin(conversationId, turn);
     const page = this.#deps.pageState?.();
+    run.key = this.#deps.newKey?.() ?? ulid();
     const request: StartRunRequest = {
       v: RUN_PROTOCOL_VERSION,
-      idempotencyKey: this.#deps.newKey?.() ?? ulid(),
+      idempotencyKey: run.key,
       conversationId,
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
       turn: { seq: turn.seq, user: turn.user, ...(retry ? { retry: true } : {}) },
@@ -240,7 +283,6 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       }
     }
     if (run.closed) return;
-    if (run.stopRequested) void this.#sendStop(run);
     await this.#follow(run);
   }
 
@@ -264,8 +306,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         }
       } catch (error) {
         if (run.closed) return;
-        // The runner no longer knows the run; any other refusal is asked again (a renewed token, a replica catching up).
+        // The runner no longer knows the run, or refuses this viewer; any other refusal is asked again (a replica catching up).
         if (error instanceof RunnerHttpError && (error.status === 404 || error.status === 410)) return this.#lost(run);
+        if (error instanceof RunnerHttpError && (error.status === 401 || error.status === 403)) return this.#denied(run, error);
       }
       if (run.closed) return;
       // An event that did not fit what is shown: the whole journal is read again, from `run-started`
@@ -293,15 +336,17 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       return false;
     }
     const id = message.id !== undefined ? Number(message.id) : undefined;
-    // Read again from the start (a resync): its side effects already fired once.
-    const replayed = id !== undefined && run.firedThrough !== undefined && id <= run.firedThrough;
-    if (!this.#apply(run, event, replayed)) return false;
+    // Announced to the page already (before a resync, or before a reload), and taken into this run's state already (before a resync).
+    const heard = id !== undefined && run.firedThrough !== undefined && id <= run.firedThrough;
+    const known = id !== undefined && run.appliedThrough !== undefined && id <= run.appliedThrough;
+    if (!this.#apply(run, event, heard, known)) return false;
     if (message.id !== undefined) run.lastEventId = message.id;
-    if (id !== undefined && !replayed) run.firedThrough = id;
+    if (id !== undefined && !heard) run.firedThrough = id;
+    if (id !== undefined && !known) run.appliedThrough = id;
     return true;
   }
 
-  #apply(run: Run, event: RunEvent, replayed: boolean): boolean {
+  #apply(run: Run, event: RunEvent, heard: boolean, known: boolean): boolean {
     const live = this.#live;
     switch (event.type) {
       case 'run-started':
@@ -314,15 +359,15 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         this.#emit();
         return true;
       case 'subagent-progress':
-        if (!replayed) this.#deps.progress?.set(event.toolCallId, event.progress ?? undefined);
+        // A card's state, set to what it was: rebuilt from a replay as well.
+        this.#deps.progress?.set(event.toolCallId, event.progress ?? undefined);
         return true;
       case 'tool-reported':
-        if (!replayed) this.#deps.onToolResult?.(event.result);
+        if (!heard) this.#deps.onToolResult?.(event.result);
         return true;
       case 'network-retry':
-        if (replayed) return true;
-        (run.turn.assistant.networkRetries ??= []).push(event.trace);
-        this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt: event.attempt, trace: event.trace } }));
+        if (!known) (run.turn.assistant.networkRetries ??= []).push(event.trace);
+        if (!heard) this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt: event.attempt, trace: event.trace } }));
         return true;
       case 'error':
         run.error = event;
@@ -422,6 +467,44 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     await this.#finish(run, true);
   }
 
+  /** The runner refuses this viewer the run's events: the turn fails with an auth error here; the run itself is the runner's. */
+  async #denied(run: Run, error: RunnerHttpError): Promise<void> {
+    const trace = localTrace(error.message, error.status, error.name);
+    Object.assign(run.turn.assistant, { status: 'error', error: RUN_DENIED, errorKind: 'auth', errorTrace: trace });
+    this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { kind: 'auth', message: RUN_DENIED, trace } }));
+    await this.#finish(run, true);
+  }
+
+  /** Stop did not end the run in time, or the runner refused it: the reply ends on the page as stopped. */
+  #stoppedHere(run: Run): void {
+    if (run.closed || this.#run !== run) return;
+    run.turn.assistant.status = 'aborted';
+    void this.#finish(run, true);
+  }
+
+  /**
+   * Sends a stop (`call`) until it is answered: at the reconnect waits, at most {@link STOP_ATTEMPTS}
+   * times, whether or not the reply still shows here. Resolves `true` when the runner refused it.
+   */
+  async #stopRemotely(conversationId: string, call: () => Promise<void>): Promise<boolean> {
+    const delays = this.#deps.client.options.reconnectDelaysMs ?? RECONNECT_DELAYS_MS;
+    for (let attempt = 0; attempt < STOP_ATTEMPTS; attempt++) {
+      try {
+        await call();
+        return false;
+      } catch (error) {
+        if (!retryable(error)) {
+          console.warn(`[chat-cvt] the runner refused to stop the reply in ${conversationId}`, error);
+          return true;
+        }
+        const ms = delays.length ? delays[Math.min(attempt, delays.length - 1)]! : 0;
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      }
+    }
+    console.warn(`[chat-cvt] could not reach the runner to stop the reply in ${conversationId}`);
+    return false;
+  }
+
   /** The start was refused, so nothing ran: the turn fails here, and the runner saved nothing to read again. */
   #refused(run: Run, error: unknown): void {
     const http = error instanceof RunnerHttpError ? error : undefined;
@@ -439,25 +522,6 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     });
     this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { kind, message, trace } }));
     this.#close(run);
-  }
-
-  async #sendStop(run: Run): Promise<void> {
-    for (let failures = 0; !run.closed; failures++) {
-      try {
-        await this.#deps.client.stop(run.runId!);
-        return;
-      } catch (error) {
-        if (run.closed || !retryable(error)) {
-          if (!run.closed) {
-            console.warn('[chat-cvt] the runner refused to stop the reply', error);
-            // Stop can be pressed again.
-            run.stopRequested = false;
-          }
-          return;
-        }
-        await this.#pause(run, failures);
-      }
-    }
   }
 
   /** Waits the reconnect delay for the `failures`-th failure in a row; the page waking ends the wait. */
@@ -504,7 +568,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
 /** Whether a failed call is worth making again: no answer came, or the runner is down or busy for now. */
 function retryable(error: unknown): boolean {
   if (error instanceof RunnerHttpError) return error.status >= 500 || error.status === 408 || error.status === 429;
-  return error instanceof TypeError;
+  return unanswered(error);
 }
 
 const KINDS: ReadonlySet<string> = new Set<ErrorKind>(['free_tier_exhausted', 'free_tier_not_free', 'insufficient_buzz', 'blocked', 'auth', 'rate_limit', 'timeout', 'network', 'assistant_unavailable', 'unavailable', 'unknown']);

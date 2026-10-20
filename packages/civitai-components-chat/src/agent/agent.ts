@@ -94,6 +94,11 @@ export class Agent extends EventTarget implements ChatAgent {
     this.abort();
   }
 
+  /** The session is replaced: in the page, that ends the reply as Stop does. */
+  dispose(): void {
+    this.abort();
+  }
+
   /**
    * Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it, or asked
    * again after the connection was lost. The user's message is not sent again as a new one: the same
