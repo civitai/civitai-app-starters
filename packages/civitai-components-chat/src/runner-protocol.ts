@@ -115,9 +115,11 @@ export interface StartRunRequest {
   /** The chat's `scope`, which keeps an embedding app's conversations apart. */
   scope?: string;
   /**
-   * The turn to reply to: `seq` is the next turn of the saved conversation (the user's new message),
-   * or, with `retry`, its latest turn again (asked again after it failed: the runner carries on from
-   * its saved steps, or starts it over). A runner answers `stale-turn` to any other `seq`.
+   * The turn to reply to: `seq` is the next turn of the saved conversation (the user's new message).
+   * With `retry`, the reply to that turn is asked again after it failed: when the head has the turn,
+   * the runner carries on from its saved steps (or starts it over); when the head ends just before it
+   * (its first start was refused, so nothing saved it), it starts as a new turn. A runner answers
+   * `stale-turn` to any other `seq`.
    */
   turn: { seq: number; user: TurnUser; retry?: boolean };
   /** The model the reply uses. */
@@ -192,6 +194,10 @@ export interface RunSubagentProgress {
   steps: number;
   toolCalls: number;
   lastTool?: string;
+  /** A write subagent: its files changed so far (distinct paths) and commands run. */
+  mode?: 'write';
+  changed?: number;
+  ranCommands?: number;
 }
 
 /** Everything a run's event stream carries. */
@@ -234,17 +240,96 @@ export function encodeRunEvent(id: number | string, event: RunEvent): string {
   return `id: ${id}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
+/** What a differ remembers of a part: enough to tell what changed, nothing the part holds by reference. */
+type Seen = { kind: 'text'; text: string } | { kind: 'tool'; toolCallId: string; state: 'calling' | 'done' | 'error' };
+
 /** Turns snapshots of a reply's parts into the events that edit one into the next. */
 export interface PartsDiffer {
+  /**
+   * The events that edit the parts last seen into `parts`, which becomes the parts last seen. Call it
+   * whenever (`AgentCore`'s `change`, or on a {@link RUN_TEXT_FLUSH_MS} timer, and once more before a
+   * step's or the run's own events): what changed meanwhile goes as one edit per part.
+   */
   diff(parts: readonly TurnPart[]): RunEvent[];
 }
 
-/** Not implemented yet. */
-export function createPartsDiffer(_initial: readonly TurnPart[] = []): PartsDiffer {
-  return { diff: () => [] };
+/** A differ that has seen `initial` (the parts `run-started` carried), `[]` unless set. */
+export function createPartsDiffer(initial: readonly TurnPart[] = []): PartsDiffer {
+  let seen: Seen[] = initial.map(seenOf);
+  return {
+    diff(parts) {
+      const events: RunEvent[] = [];
+      let keep = 0;
+      while (keep < seen.length && keep < parts.length && extends_(seen[keep]!, parts[keep]!)) keep++;
+      if (keep < seen.length) {
+        events.push({ type: 'parts-truncate', length: keep });
+        seen = seen.slice(0, keep);
+      }
+      parts.forEach((part, index) => {
+        const was = seen[index];
+        if (part.kind === 'text') {
+          if (!was) events.push({ type: 'text-delta', index, text: part.text });
+          else if (was.kind === 'text' && part.text.length > was.text.length) events.push({ type: 'text-delta', index, text: part.text.slice(was.text.length) });
+        } else {
+          if (!was) events.push({ type: 'tool-call', index, toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+          if ((!was || (was.kind === 'tool' && was.state === 'calling')) && part.state !== 'calling') {
+            events.push(part.state === 'done' ? { type: 'tool-result', toolCallId: part.toolCallId, output: part.output } : { type: 'tool-error', toolCallId: part.toolCallId, error: part.error ?? '' });
+          }
+        }
+        seen[index] = seenOf(part);
+      });
+      return events;
+    },
+  };
 }
 
-/** Not implemented yet. */
-export function applyRunEvent(_parts: TurnPart[], _event: RunEvent): boolean {
-  return true;
+/** Whether `next` is `was` with only additions: more words, or a call that got its result. */
+function extends_(was: Seen, next: TurnPart): boolean {
+  if (was.kind === 'text') return next.kind === 'text' && next.text.startsWith(was.text);
+  return next.kind === 'tool' && next.toolCallId === was.toolCallId && (was.state === 'calling' || was.state === next.state);
+}
+
+function seenOf(part: TurnPart): Seen {
+  return part.kind === 'text' ? { kind: 'text', text: part.text } : { kind: 'tool', toolCallId: part.toolCallId, state: part.state };
+}
+
+/**
+ * Applies one event to a reply's parts, in place. `false` when the event does not fit the parts (a
+ * client that missed or repeated an event): the client then reads the journal again from its start.
+ * Events that edit no part apply as `true` and change nothing.
+ */
+export function applyRunEvent(parts: TurnPart[], event: RunEvent): boolean {
+  switch (event.type) {
+    case 'run-started':
+      parts.splice(0, parts.length, ...event.parts.map((part) => ({ ...part })));
+      return true;
+    case 'text-delta': {
+      if (event.index === parts.length) {
+        parts.push({ kind: 'text', text: event.text });
+        return true;
+      }
+      const part = parts[event.index];
+      if (part?.kind !== 'text') return false;
+      part.text += event.text;
+      return true;
+    }
+    case 'tool-call':
+      if (event.index !== parts.length) return false;
+      parts.push({ kind: 'tool', toolCallId: event.toolCallId, toolName: event.toolName, input: event.input, state: 'calling' });
+      return true;
+    case 'tool-result':
+    case 'tool-error': {
+      const tool = parts.find((part) => part.kind === 'tool' && part.toolCallId === event.toolCallId);
+      if (tool?.kind !== 'tool') return false;
+      if (event.type === 'tool-result') Object.assign(tool, { state: 'done', output: event.output });
+      else Object.assign(tool, { state: 'error', error: event.error });
+      return true;
+    }
+    case 'parts-truncate':
+      if (event.length > parts.length) return false;
+      parts.splice(event.length);
+      return true;
+    default:
+      return true;
+  }
 }

@@ -39,6 +39,27 @@ describe("ChatSession's runner", () => {
     expect(runner.requests).toEqual([]);
   });
 
+  it('asks no tool server anything in remote mode: the runner holds the tools', async () => {
+    const fetch = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const runner = fakeRunner();
+      const session = new ChatSession(app(), {
+        runner: 'remote',
+        remote: { url: RUNNER_URL, fetch: runner.fetch },
+        mcp: () => ({ mcpServers: [{ id: 'sandbox', url: 'https://mcp.example.com/sandbox' }] }),
+      });
+      expect(await session.catalog()).toEqual({ orchestration: [], site: [] });
+      session.syncMcpServers();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(session.mcpServers.servers).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(runner.requests).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("refuses 'remote' without a runner to use, or with a backend, before wiring anything", () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);

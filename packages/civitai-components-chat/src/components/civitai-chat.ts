@@ -16,7 +16,8 @@ import { humanize, RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
-import type { ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
+import type { ChatRunner, ChatSession, McpServerErrorDetail, PendingUpload } from '../session.js';
+import type { ChatRemoteRunner } from '../remote/runner-client.js';
 import { applyTheme } from '../settings.js';
 import { isSuperseded } from '../store/conversation-store.js';
 import { replyElsewhere } from '../store/thread-store.js';
@@ -158,6 +159,8 @@ export class CivitaiChat extends LitElement {
     beforeToolCall: { attribute: false },
     subagents: { attribute: false },
     scope: {},
+    runner: {},
+    remoteRunner: { attribute: false },
     panelLinkBase: { attribute: 'panel-link-base' },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     fullPage: { type: Boolean, attribute: 'full-page', reflect: true },
@@ -253,6 +256,14 @@ export class CivitaiChat extends LitElement {
   declare subagents?: ChatSubagents;
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
+  /**
+   * Experimental: where replies run. `browser` (the default) runs them on the page. `remote` runs them
+   * on a server runner (`remoteRunner`) that keeps a reply going when the page sleeps or closes; see
+   * "Server runner" in the README. Set it, with `remoteRunner`, before `app`.
+   */
+  declare runner?: ChatRunner;
+  /** The server runner `runner="remote"` uses: its base URL, the page's auth headers, and per-reply page state. */
+  declare remoteRunner?: ChatRemoteRunner;
   /**
    * The page that opens a shared panel's link (by calling `openPanel`, or as a full-page chat). A
    * full-page chat shares links to itself; elsewhere Share shows only once this is set.
@@ -890,7 +901,8 @@ export class CivitaiChat extends LitElement {
     // Called right after `#starts` counts this start.
     const start = this.#starts;
     this.#conversationEnd();
-    this.#session?.agent.abort();
+    // A remote reply carries on on the server: only one running in the page ends.
+    this.#session?.agent.leave();
     this.#session?.mcpServers.close();
     // An open still loading in the old session is moot: the new session is not held behind it.
     this.loading = false;
@@ -905,6 +917,8 @@ export class CivitaiChat extends LitElement {
     const session = new ChatSession(app, {
       scope,
       ...(backend ? { backend } : {}),
+      ...(this.runner ? { runner: this.runner } : {}),
+      ...(this.remoteRunner ? { remote: this.remoteRunner } : {}),
       hostTools: () => this.tools,
       hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
       systemPrompt: () => this.systemPrompt,

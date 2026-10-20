@@ -1017,6 +1017,79 @@ studio.files = () => chat.files();
 studio.addEventListener('media-action', (e) => chat.mediaAction(e.detail.id, e.detail.action));
 ```
 
+## Server runner
+
+Experimental. By default a reply runs on the page (`runner="browser"`): it stops when the page sleeps,
+closes or loses its network for long. With `runner="remote"` each reply runs on a server instead, and
+the page follows it, so a long reply keeps working while the viewer is away. The server implements the
+run protocol in `@civitai/components-chat/runner-protocol` (types and a few pure helpers); this package
+is its client. Set both before `app`:
+
+```js
+chat.runner = 'remote';
+chat.remoteRunner = {
+  url: 'https://runner.example.com/assistant/',
+  // Asked before every request to the runner, so a renewed token applies at once.
+  headers: async () => ({ authorization: `Bearer ${await getRunnerToken()}` }),
+  // What the server's tools and gate need to know about the page for one reply; read as each reply starts.
+  pageState: () => ({ appId: currentApp.id }),
+};
+chat.app = app;
+```
+
+What changes in remote mode:
+
+- **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
+  `beforeToolCall`, `subagents`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
+  anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide
+  on (the app open in the page, say) goes in `pageState`. The settings that shape a reply (model,
+  custom instructions, `instructions`, output cap, free or paid, mature content, auto-run limit) go
+  with each start, and the runner validates them. `tool-result` events still fire, as the runner's gate
+  reports each call.
+- **The reply survives the page.** The page reads the run's events (`GET /runs/<id>/events`, server-sent
+  events) into the same thread, tool cards, subagent cards and badges a page-run reply shows. A
+  dropped connection is opened again with `Last-Event-ID`, so nothing shows twice, and the page keeps
+  trying for as long as the run is live: the turn stays replying, never "cut off". Coming back into
+  view, back online or out of the back-forward cache reconnects at once. Opening the chat again (a
+  reload, another device) asks the runner for its live run (`GET /runs?conversationId=`) and follows it
+  from its start.
+- **Stop asks the runner to stop** (`POST /runs/<id>/stop`), and the reply shows stopped once the run
+  says it ended. Opening another chat or starting a new one no longer stops a reply: it carries on, and
+  is followed again when its chat is opened.
+- **The runner is the only writer of the saved conversation.** The page writes no head: it reads the
+  chat again once a run ends. A title or model the viewer sets goes to the runner as a patch
+  (`POST /conversations/<id>/patch`). Posts and panels stay on the page.
+- No `backend`: a backend's replies run on the page, so `runner="remote"` with one is refused.
+
+The protocol, briefly (`runner-protocol.ts` has every field):
+
+| Call | Body | Answer |
+|---|---|---|
+| `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
+| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run, or `null` |
+| `GET /runs/<id>/events` | `Last-Event-ID` to resume | `RunEvent`s as SSE, `id:` the journal position |
+| `POST /runs/<id>/stop` | `{ v: 1 }` | `202` |
+| `POST /conversations/<id>/patch` | `title`, `titleSource`, `model` | `204` |
+
+Every request and response carries `v: 1`. The events are `run-started`, the parts' edits
+(`text-delta`, `tool-call`, `tool-result`, `tool-error`, `parts-truncate`), `step-finished`,
+`checkpoint`, `subagent-progress`, `tool-reported`, `network-retry`, `error`, and last `run-ended` with
+its status (`done`, `stopped`, `error`, `ran_out`). A runner gets the edits from the reply's
+`AgentCore.live.parts` with `createPartsDiffer()` every 100 ms or so, and the page applies them with
+`applyRunEvent()`, so the parts it shows are the parts the server's reply showed.
+
+### Running the loop in Node
+
+`@civitai/components-chat/core` is the reply loop without the page: `AgentCore`, the parts, the model
+provider, the tool gate, the prompt and history builders, read-only subagents and the conversation
+store. Nothing it imports needs a DOM or Lit (a test walks its import graph), so a server runner runs
+a reply exactly as the page does:
+
+```js
+import { AgentCore, createAssistantModel, gateToolSet } from '@civitai/components-chat/core';
+import { createPartsDiffer, encodeRunEvent } from '@civitai/components-chat/runner-protocol';
+```
+
 ## Where chats live
 
 With a [backend](#your-own-backend), in its store. Otherwise every turn is a free, tagged `echo` workflow on the orchestrator, and every generation a tagged

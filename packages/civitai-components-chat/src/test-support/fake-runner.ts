@@ -41,6 +41,8 @@ export function fakeRunner() {
     replayFrom: undefined as number | undefined,
     /** Refuses every start with this answer. */
     refuseStart: undefined as { status: number; body: unknown } | undefined,
+    /** The next event stream opened sends, after its backlog, one message that is not an event (a broken runner). */
+    garbleNext: false,
     /** The parts `run-started` carries. */
     startParts: [] as TurnPart[],
   };
@@ -70,6 +72,7 @@ export function fakeRunner() {
     const encoder = new TextEncoder();
     let sent = 0;
     let closed = false;
+    let forget = () => {};
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         const handle = {
@@ -81,17 +84,28 @@ export function fakeRunner() {
           },
           drop(error?: Error) {
             if (closed) return;
-            closed = true;
-            streams.get(run.runId)?.delete(handle);
+            forget();
             if (error) controller.error(error);
             else controller.close();
           },
+        };
+        // Also when the page lets go of the stream itself (it cancels its reader): nothing is sent to it after.
+        forget = () => {
+          closed = true;
+          streams.get(run.runId)?.delete(handle);
         };
         if (!streams.has(run.runId)) streams.set(run.runId, new Set());
         streams.get(run.runId)!.add(handle);
         signal?.addEventListener('abort', () => handle.drop(new DOMException('The operation was aborted.', 'AbortError')));
         controller.enqueue(encoder.encode(': connected\n\n'));
         run.journal.slice(from).forEach((event, index) => handle.push(from + index, event));
+        if (knobs.garbleNext) {
+          knobs.garbleNext = false;
+          controller.enqueue(encoder.encode(`id: ${run.journal.length}\ndata: {not json\n\n`));
+        }
+      },
+      cancel() {
+        forget();
       },
     });
     return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });

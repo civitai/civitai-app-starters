@@ -125,7 +125,7 @@ describe('RemoteAgent, against a runner', () => {
     const sent = agent.send('make a red bike');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
     await pushAll(runner, 'r1', journal);
-    expect(agent.live!.parts).toEqual(browserLast);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual(browserLast));
     expect(agent.running).toBe(true);
     runner.push('r1', ended(browserTurn.assistant.messages));
     await vi.waitFor(() => expect(rereads).toEqual(['c1']));
@@ -219,6 +219,24 @@ describe('RemoteAgent, against a runner', () => {
     agent.leave();
   });
 
+  it('reads the journal again from its start when a message does not fit what it shows', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Kept once.' }]);
+    runner.knobs.garbleNext = true;
+    runner.dropStreams('r1');
+    // The open after the drop resumes after id 1, gets the broken message, and the next one reads everything again.
+    await vi.waitFor(() => expect(runner.eventOpens('r1')).toHaveLength(3));
+    const opens = runner.eventOpens('r1');
+    expect(opens[1]!.headers['last-event-id']).toBe('1');
+    expect(opens[2]!.headers['last-event-id']).toBeUndefined();
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: ' Then more.' }]);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'Kept once. Then more.' }]));
+    agent.leave();
+  });
+
   it('keeps reconnecting through a network drop, the turn still replying and no error shown', async () => {
     const { agent, runner, store, errors } = setup();
     const sent = agent.send('go');
@@ -236,7 +254,7 @@ describe('RemoteAgent, against a runner', () => {
     expect(errors).toEqual([]);
     expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
     await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: ' on it.' }]);
-    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working on it.' }]);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'Working on it.' }]));
     runner.push('r1', ended([{ role: 'assistant', content: 'Working on it.' }]));
     await sent;
     expect(turn.assistant.status).toBe('done');
@@ -259,6 +277,7 @@ describe('RemoteAgent, against a runner', () => {
     const sent = agent.send('go');
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
     await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Partial' }]);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'Partial' }]));
     agent.abort();
     await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs/r1/stop')).toHaveLength(1));
     expect(runner.requests.find((request) => request.path === 'runs/r1/stop')!.body).toEqual({ v: 1 });
@@ -339,6 +358,7 @@ describe('RemoteAgent, against a runner', () => {
       { type: 'subagent-progress', toolCallId: 'd1', progress: null },
       { type: 'tool-reported', result },
     ]);
+    await vi.waitFor(() => expect(toolResults).toHaveLength(1));
     expect(progress.set.mock.calls).toEqual([
       ['d1', { task: 'read the docs', steps: 2, toolCalls: 3, lastTool: 'site__search' }],
       ['d1', undefined],
