@@ -3,7 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import type { ChatAgent } from './agent/chat-agent.js';
-import { absoluteUrl, backendModels, hasGatewayUrl, namesGateway, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
+import { absoluteUrl, backendModels, hasGatewayUrl, namesGateway, newChatModelOf, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
@@ -23,13 +23,13 @@ import { OPEN_PANEL } from './panels/tools.js';
 import { sitePoster } from './posting/site.js';
 import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
 import { resolveAttachmentArgs, uploadId } from './store/attachments.js';
-import type { ConversationStore } from './store/conversation-store.js';
+import type { ConversationStore, OpenOptions } from './store/conversation-store.js';
 import { HostThreadStore } from './store/host-store.js';
 import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
 import type { McpTool } from './mcp/clients.js';
 import { isJobTool, loadOrchestrationTools, loadSiteTools, type ToolCatalog } from './tools/catalog.js';
-import type { Attachment, Settings, Turn } from './types.js';
+import type { Attachment, Conversation, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { humanizeHost } from './ux/humanize.js';
 import { decide } from './ux/spending.js';
@@ -383,8 +383,17 @@ export class ChatSession extends EventTarget {
 
   /** Switches the open chat's model from its next reply; `undefined` makes it follow the viewer's default. */
   async setChatModel(model: string | undefined): Promise<void> {
-    if (!this.store.current) this.store.startNew();
+    if (!this.store.current) this.#startNew();
     await this.store.setModel(model);
+  }
+
+  /** Starts a new chat in the store: on the backend's `newChatModel`, when it names one of its models. */
+  #startNew(): Conversation {
+    const conversation = this.store.startNew();
+    const model = this.backend ? newChatModelOf(this.backend) : undefined;
+    // Kept with the chat from its first save; nothing is saved now.
+    if (model) conversation.model = model;
+    return conversation;
   }
 
   updateSettings(patch: Partial<Settings>): void {
@@ -443,13 +452,22 @@ export class ChatSession extends EventTarget {
     return job.results.find((result) => result.id === attachment.id)?.url;
   }
 
-  async openConversation(id: string): Promise<void> {
+  /**
+   * Opens a saved chat. With `existing`, one with nothing saved under `id` rejects instead of opening
+   * empty, and the chat is read before anything is left: one that cannot be opened (not found, or a
+   * read that fails) leaves the open chat, and a reply running in it, as they are.
+   */
+  async openConversation(id: string, options: Pick<OpenOptions, 'existing'> = {}): Promise<void> {
     // A remote reply carries on on the server, and is followed again when its chat is opened.
-    this.agent.leave();
-    this.jobs.clear();
-    this.posts.clear();
-    this.panels.clear();
-    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
+    const leave = (): void => {
+      this.agent.leave();
+      this.jobs.clear();
+      this.posts.clear();
+      this.panels.clear();
+    };
+    if (!options.existing) leave();
+    const opening = this.store.open(id, options.existing ? { existing: true, ready: leave } : {});
+    const [opened, catalog] = await Promise.all([opening, this.#restoreCatalog()]);
     this.#restore(opened, catalog);
     this.updateSettings({ lastConversationId: id });
     void this.#remote?.reattach(id);
@@ -535,7 +553,7 @@ export class ChatSession extends EventTarget {
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
-    this.store.startNew();
+    this.#startNew();
   }
 
   async upload(pending: PendingUpload, onChange: () => void): Promise<void> {
@@ -608,7 +626,7 @@ export class ChatSession extends EventTarget {
   }
 
   async send(text: string, uploads: PendingUpload[] = [], refs: string[] = []): Promise<void> {
-    const conversation = this.store.current ?? this.store.startNew();
+    const conversation = this.store.current ?? this.#startNew();
     const seq = (conversation.turns.at(-1)?.seq ?? 0) + 1;
     const attachments = uploads
       .filter((pending) => pending.attachment)

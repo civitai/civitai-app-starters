@@ -20,6 +20,27 @@ export function isSuperseded(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === SUPERSEDED;
 }
 
+/** Why `open(id, { existing: true })` rejects when nothing is saved under `id`. */
+export const NOT_FOUND = 'not-found';
+
+export function notFoundError(): Error {
+  return Object.assign(new Error('There is no saved chat with that id.'), { code: NOT_FOUND });
+}
+
+/** How `open` opens a chat. */
+export interface OpenOptions {
+  /**
+   * Only a chat that is saved: one with nothing saved under its id rejects (`NOT_FOUND`) instead of
+   * opening as a new, empty chat with that id, and does not become the open chat.
+   */
+  existing?: boolean;
+  /**
+   * Called once the chat was read (and, with `existing`, found), just before it becomes the open chat:
+   * not at all when it cannot be opened, so the chat open now stays as it is.
+   */
+  ready?: () => void;
+}
+
 /** A row of the chat list. */
 export interface ListedConversation {
   id: string;
@@ -48,7 +69,12 @@ export interface ConversationStore extends EventTarget {
   readonly supersedesOpens?: boolean;
   refreshList(): Promise<void>;
   loadMore(): Promise<void>;
-  open(id: string): Promise<OpenedConversation>;
+  open(id: string, options?: OpenOptions): Promise<OpenedConversation>;
+  /**
+   * Whether `id` is saved where this store keeps chats: it was read from there, or a save of it worked.
+   * A new chat is not, until its first save. Fires `saved-change` when that becomes true.
+   */
+  isSaved(id: string): boolean;
   startNew(): Conversation;
   appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
   completeTurn(turn: Turn): Promise<void>;

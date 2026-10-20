@@ -4,7 +4,7 @@ import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, TitleSource, Turn } from '../types.js';
-import { supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation } from './conversation-store.js';
+import { notFoundError, supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation, type OpenOptions } from './conversation-store.js';
 import { clampTitle, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
 
 export interface HostThreadStoreDeps {
@@ -48,6 +48,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #deleting = new Map<string, number>();
   /** Bumped by every `open` and `startNew`: an `open` that finishes after a newer one is stale. */
   #generation = 0;
+  /** Chats read from the host's store, or saved to it from here (`isSaved`). */
+  #saved = new Set<string>();
   /** Deleted in this session. A write queued after the delete is dropped; the chat is never opened, listed or listed again. */
   #deleted = new Set<string>();
 
@@ -86,7 +88,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * A chat whose delete worked is refused, so it never becomes the open one, where nothing could save
    * it; one whose delete failed still exists and opens as usual.
    */
-  async open(id: string): Promise<OpenedConversation> {
+  async open(id: string, options: OpenOptions = {}): Promise<OpenedConversation> {
     const generation = ++this.#generation;
     let record: ChatConversation | null;
     try {
@@ -99,6 +101,9 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     }
     // The viewer opened or started another chat meanwhile: this one must not take its place.
     if (generation !== this.#generation) throw supersededError();
+    if (options.existing && !record) throw notFoundError();
+    options.ready?.();
+    if (record) this.#saved.add(id);
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {
@@ -270,9 +275,14 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
       throw error;
     }
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
+    this.#saved.delete(id);
     if (this.current?.id === id) this.current = null;
     this.#emit('list-change');
     this.#emit('conversation-change');
+  }
+
+  isSaved(id: string): boolean {
+    return this.#saved.has(id);
   }
 
   #delete(id: string): Promise<void> {
@@ -300,7 +310,11 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     // Remote: the runner is the only writer of a conversation in the host's store.
     if (this.#deps.remote) return Promise.resolve();
     return this.#queue(conversation.id, async () => {
-      if (!this.#deleted.has(conversation.id)) await this.#deps.store.save(this.#record(conversation));
+      if (this.#deleted.has(conversation.id)) return;
+      await this.#deps.store.save(this.#record(conversation));
+      if (this.#saved.has(conversation.id)) return;
+      this.#saved.add(conversation.id);
+      this.#emit('saved-change');
     });
   }
 
@@ -349,7 +363,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     return this.#deps.now?.() ?? new Date();
   }
 
-  #emit(type: 'list-change' | 'conversation-change'): void {
+  #emit(type: 'list-change' | 'conversation-change' | 'saved-change'): void {
     this.dispatchEvent(new Event(type));
   }
 }
