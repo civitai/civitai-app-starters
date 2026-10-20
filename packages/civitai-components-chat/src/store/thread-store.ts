@@ -418,7 +418,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       const progress = turn.assistant.status === 'streaming' ? this.#progress.get(turn) : undefined;
       if (!progress) return saved(turn);
       running = true;
-      const subagents = this.#subagents.get(turn);
+      const subagents = unfinishedSubagents(progress, this.#subagents.get(turn));
       return { ...saved(turn), assistant: { messages: progress, status: 'running', savedAt, ...(subagents ? { subagents } : {}) } };
     });
     const shared = {
@@ -699,6 +699,32 @@ function withInterruptedCalls(messages: ModelMessage[], subagents?: Record<strin
     } else out.push({ role: 'tool', content: missing });
   }
   return out;
+}
+
+/**
+ * The ids of the tool calls in `messages` that have no result: a call whose result is not in the tool
+ * message right after the assistant message that made it (the rule {@link withInterruptedCalls} reads by).
+ */
+function unansweredCalls(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  messages.forEach((message, index) => {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) return;
+    const next = messages[index + 1];
+    const answered = new Set(next?.role === 'tool' ? next.content.flatMap((part) => (part.type === 'tool-result' ? [part.toolCallId] : [])) : []);
+    for (const part of message.content) if (part.type === 'tool-call' && !answered.has(part.toolCallId)) ids.add(part.toolCallId);
+  });
+  return ids;
+}
+
+/**
+ * The write subagents worth saving with `messages`: only those whose `dispatch_agent` call has no result
+ * there yet, the only ones Continue reads. One whose result is in is not saved again.
+ */
+function unfinishedSubagents(messages: ModelMessage[], subagents: Record<string, SubagentCheckpoint> | undefined): Record<string, SubagentCheckpoint> | undefined {
+  if (!subagents) return undefined;
+  const open = unansweredCalls(messages);
+  const kept = Object.entries(subagents).filter(([id]) => open.has(id));
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
 
 /**

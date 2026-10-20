@@ -2,7 +2,7 @@ import { jsonSchema, tool, type LanguageModel, type ToolSet } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
-import { gateToolSet, nextReply, type ChatToolResult } from '../tools/gate.js';
+import { gateToolSet, nextReply, type ChatToolGate, type ChatToolResult } from '../tools/gate.js';
 import { AgentCore } from './core.js';
 import {
   DISPATCH_AGENT,
@@ -58,7 +58,7 @@ interface ChildRequest {
  * A parent reply whose model answers from `parent` in order, and subagents whose model answers by
  * task: `child(task, n)` is the `n`th step (from 1) of the subagent given `task`.
  */
-function setup(parent: Step[], child: (task: string, n: number) => Step, options: Partial<ChatSubagents> & { write?: unknown } = {}) {
+function setup(parent: Step[], child: (task: string, n: number) => Step, options: Partial<ChatSubagents> & { write?: unknown } = {}, pageGate?: ChatToolGate) {
   const childRequests: ChildRequest[] = [];
   const parentRequests: unknown[] = [];
   const results: ChatToolResult[] = [];
@@ -127,7 +127,7 @@ function setup(parent: Step[], child: (task: string, n: number) => Step, options
   };
   const resolved = resolveSubagents({ tools: ['read_file', 'list_dir'], ...options } as ChatSubagents)!;
   const reply = nextReply();
-  const gate = { conversationId: 'c1', reply, onResult: (result: ChatToolResult) => results.push(result) };
+  const gate = { conversationId: 'c1', reply, onResult: (result: ChatToolResult) => results.push(result), ...(pageGate ? { gate: pageGate } : {}) };
   const tools: ToolSet = {
     ...raw,
     [DISPATCH_AGENT]: dispatchAgentTool({
@@ -453,6 +453,34 @@ describe('write subagents', () => {
     expect(reader).toContain(SUBAGENT_PREAMBLE);
     expect(reader).toContain('Report paths relative to the app.');
     expect(reader).not.toContain('Keep to the game folder.');
+  });
+
+  it('counts neither a command nor a file change the page refused: only calls that ran count', async () => {
+    // The page refuses the subagent's write_file and two of its three commands; `ls` runs.
+    const refuse: ChatToolGate = (name, input, { subagent }) =>
+      subagent !== undefined && (name === 'write_file' || (name === 'run_command' && (input as { command?: string }).command !== 'ls')) ? { refuse: 'Not allowed.' } : { allow: true };
+    const t = setup(
+      [dispatch(['fix it', 'write']), says('ok')],
+      (_task, n) => (n === 1 ? calls('w', ['run_command', { command: 'npm test' }], ['run_command', { command: 'rm -rf build' }], ['write_file', { path: 'src/a.ts' }], ['run_command', { command: 'ls' }]) : says('done')),
+      { write: WRITE },
+      refuse,
+    );
+    await t.run();
+    expect(t.ran).toEqual(['run_command:ls']);
+    // Positive control: the page did see and refuse the other three, as subagent calls.
+    expect(t.results.filter((r) => r.subagent === 'd-1' && r.refused === 'Not allowed.').map((r) => r.name).sort()).toEqual(['run_command', 'run_command', 'write_file']);
+    expect(out(t, 'fix it')).toMatchObject({ mode: 'write', status: 'done', toolCalls: 4, changed: [], ranCommands: 1 });
+  });
+
+  it('does not count a command its tool-call cap stopped: only the calls under the cap ran', async () => {
+    const t = setup(
+      [dispatch(['test it', 'write']), says('ok')],
+      (_task, n) => (n === 1 ? calls('c', ...['c1', 'c2', 'c3', 'c4', 'c5'].map((command): [string, unknown] => ['run_command', { command }])) : says('stopped at the cap')),
+      { write: WRITE, maxToolCalls: 3 },
+    );
+    await t.run();
+    expect(t.ran).toEqual(['run_command:c1', 'run_command:c2', 'run_command:c3']);
+    expect(out(t, 'test it')).toMatchObject({ mode: 'write', status: 'ran_out', toolCalls: 3, changed: [], ranCommands: 3 });
   });
 
   it('leaves a read subagent’s result exactly as before when the page also opted in to write subagents', async () => {

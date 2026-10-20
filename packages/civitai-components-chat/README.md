@@ -650,7 +650,7 @@ changes when it is set.
 import type { ChatSubagents } from '@civitai/components-chat/civitai-chat';
 
 chat.subagents = {
-  tools: ['sandbox__read_file', 'sandbox__list_dir'], // read subagents, as above
+  tools: ['sandbox__read_file', 'sandbox__list_dir'], // read subagents, as above; `tools: []` for write subagents only
   write: {
     // Every tool a write subagent may use, read tools included; any tool, a free-form command tool too.
     tools: ['sandbox__read_file', 'sandbox__list_dir', 'sandbox__write_file', 'sandbox__edit_file', 'sandbox__delete_path', 'sandbox__run_command'],
