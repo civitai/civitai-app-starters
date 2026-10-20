@@ -1098,11 +1098,14 @@ chat.backend = {
   (`POST /conversations/<id>/patch`), and so does a rename of a chat that is not open.
 - What a host backend turns off stays off: Civitai's built-in tools, files, voice, Buzz, posting and
   sign-in.
-- **Deleting a chat stops its live run first.** The chat asks the runner for the chat's run
-  (`GET /runs?conversationId=`) and stops it (`POST /runs/<id>/stop`) before `store.delete`, so the run
-  cannot save the chat back. If the runner cannot be asked or refuses the stop, nothing is deleted
-  and the viewer stays on the chat, with an error. A run ends a little after its stop, so the host
-  should still serialise deletes against a live run, for example by refusing one until it ends.
+- **Deleting a chat stops its live run first, and waits for it to end.** The chat asks the runner for
+  the chat's run (`GET /runs?conversationId=`), stops it (`POST /runs/<id>/stop`; a `404` means it had
+  already ended), and asks again every 250 ms until no run is live: a run saves its final state before
+  it ends, so only then is `store.delete` called. The chat's row shows busy meanwhile. If the runner
+  cannot be reached, refuses the stop, or still lists the run after the runner's `timeoutMs` (20
+  seconds unless set), nothing is deleted and the viewer stays on the chat, with an error saying which.
+  This orders the page's own delete after the run's last save; a delete from elsewhere (another tab, an
+  API) is the host's to serialise against a live run, for example by refusing it until the run ends.
 
 What the host's side does: the runner saves each turn into the host's store and implements
 `POST /conversations/<id>/patch` against it.

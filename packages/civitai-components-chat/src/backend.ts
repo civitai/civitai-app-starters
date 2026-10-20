@@ -42,9 +42,19 @@ export interface ChatStoreBackend {
   fetch?: never;
 }
 
-/** Whether the backend names a model gateway (`url` or `fetch`), which only a page-run reply uses. */
+/**
+ * Whether the backend sets a gateway `url`: anything the model client takes (a string, or a URL
+ * object), but not a missing or blank one. The one test for a `url`, in the browser and in remote mode.
+ */
+export function hasGatewayUrl(backend: ChatBackend | ChatStoreBackend): boolean {
+  const url = (backend as Partial<ChatBackend>).url as unknown;
+  if (url === undefined || url === null) return false;
+  return typeof url !== 'string' || url.trim() !== '';
+}
+
+/** Whether the backend names a model gateway (a `url`, by {@link hasGatewayUrl}, or a `fetch`), which only a page-run reply uses. */
 export function namesGateway(backend: ChatBackend | ChatStoreBackend): backend is ChatBackend {
-  return (backend as Partial<ChatBackend>).url !== undefined || (backend as Partial<ChatBackend>).fetch !== undefined;
+  return hasGatewayUrl(backend) || (backend as Partial<ChatBackend>).fetch !== undefined;
 }
 
 /** The models a viewer may pick besides the backend's default: usable ids only, the default left out. */

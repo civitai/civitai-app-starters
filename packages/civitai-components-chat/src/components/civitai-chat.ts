@@ -140,6 +140,13 @@ export const AUTO_RESUME_WINDOW_MS = 30 * 60_000;
  * root carries the chat's styles, so the page's CSS and the chat's stay apart. Slot `welcome`
  * replaces what an empty chat shows.
  */
+/** What the viewer is told when a chat on a remote runner could not be deleted, by `stopRunBeforeDelete`'s error code. */
+const DELETE_BLOCKED: Record<string, string> = {
+  'runner-unreachable': 'Could not reach the chat runner, so the chat was not deleted. Try again.',
+  'stop-refused': 'Could not stop the reply in that chat, so it was not deleted.',
+  'still-stopping': 'The reply in that chat is still stopping, so it was not deleted. Try again in a moment.',
+};
+
 export class CivitaiChat extends LitElement {
   static override styles = [chatStyles, panelStyles];
 
@@ -311,6 +318,8 @@ export class CivitaiChat extends LitElement {
   declare modelsLoading: boolean;
 
   #session?: ChatSession;
+  /** Chats whose live run is being stopped before their delete: their rows show busy. */
+  #stopping: ReadonlySet<string> = new Set();
   /**
    * Why the session for this viewer could not start (options it refuses, e.g. a store-only backend
    * before `runner="remote"`): shown in place of the chat, and a later `runner` or `remoteRunner`
@@ -920,7 +929,9 @@ export class CivitaiChat extends LitElement {
     this.loading = false;
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
-    if (this.#source() !== source) return;
+    // A later start (another viewer, or a restart for the same one) builds the session instead; nothing
+    // is awaited from here to `this.#session = session`, so no session this start builds is left behind.
+    if (this.#source() !== source || start !== this.#starts) return;
     const backend = source === this.backend ? this.backend : undefined;
     const app = backend ? null : (source as AppClient);
     defineChatRuntime();
@@ -1568,15 +1579,20 @@ export class CivitaiChat extends LitElement {
     if (!(await dialog.ask())) return;
     const session = this.#session;
     const store = session?.store;
-    // Remote on a host's store: a live run would save the chat back after its delete, so it is stopped
-    // first; a stop that fails deletes nothing and leaves the viewer where they are. Every other mode
-    // deletes at once, as before.
+    // Remote on a host's store: a live run saves the chat when it ends, so the chat is deleted only once
+    // its run has been stopped and has ended; if that cannot be made sure of, nothing is deleted and the
+    // viewer stays where they are. Every other mode deletes at once, as before.
     if (session?.stopsRunBeforeDelete) {
+      this.#stopping = new Set([...this.#stopping, id]);
+      this.requestUpdate();
       try {
         await session.stopRunBeforeDelete(id);
       } catch (error) {
-        this.#toast('Could not stop the reply in that chat, so it was not deleted.', error);
+        this.#toast(DELETE_BLOCKED[(error as { code?: string } | null)?.code ?? ''] ?? DELETE_BLOCKED['stop-refused']!, error);
         return;
+      } finally {
+        this.#stopping = new Set([...this.#stopping].filter((stopping) => stopping !== id));
+        this.requestUpdate();
       }
     }
     const wasCurrent = store?.current?.id === id;
@@ -1689,6 +1705,7 @@ export class CivitaiChat extends LitElement {
       .summaries=${session.store.summaries}
       .currentId=${conversation?.id ?? null}
       .hasMore=${session.store.hasMore}
+      .stoppingIds=${this.#stopping}
       .userName=${this.userName}
       @cvt-new-chat=${() => this.newChat()}
       @cvt-open=${(e: CustomEvent<{ id: string }>) => void this.#open(e.detail.id)}

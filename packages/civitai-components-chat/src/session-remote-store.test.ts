@@ -35,7 +35,9 @@ const PLANNED = record('c1', 'Week plan', '2026-10-20T09:00:00.000Z', [
 ]);
 const OLD = record('c2', 'Old chat', '2026-10-19T09:00:00.000Z');
 
-function remoteOnHostStore() {
+type Wrap = (fetch: typeof globalThis.fetch, runner: ReturnType<typeof fakeRunner>) => typeof globalThis.fetch;
+
+function remoteOnHostStore({ wrap = (fetch) => fetch, timeoutMs }: { wrap?: Wrap; timeoutMs?: number } = {}) {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   // Anything the page sends outside the runner and the host's store would land here.
   const global = vi.fn(async () => new Response('{}'));
@@ -44,7 +46,8 @@ function remoteOnHostStore() {
   const runner = fakeRunner();
   // Typed loosely so this file also typechecks against a package without the store-only backend.
   const backend = { model: 'host/default', models: [{ id: 'host/big', label: 'Big' }], store } as never;
-  const session = new ChatSession(null, { scope: 'notes', runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] }, backend });
+  const remote = { url: RUNNER_URL, fetch: wrap(runner.fetch, runner), reconnectDelaysMs: [0], ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
+  const session = new ChatSession(null, { scope: 'notes', runner: 'remote', remote, backend });
   return { session, store, runner, global };
 }
 
@@ -113,32 +116,77 @@ describe("ChatSession with runner 'remote' and a store-only backend", () => {
   });
 });
 
+/** The runner's answer to a stop of r1: `answer` it, and end the run `afterMs` later, as a runner does once the reply has stopped. */
+function onStop({ afterMs = 20, answer }: { afterMs?: number; answer?: number } = {}): Wrap {
+  return (fetch, runner) =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/runs/r1/stop')) {
+        setTimeout(() => runner.push('r1', { type: 'run-ended', status: 'stopped', messages: [], steps: 1 }), afterMs);
+        if (answer !== undefined) return new Response(JSON.stringify({ v: 1, error: 'not-found', message: 'No such run.' }), { status: answer });
+      }
+      return fetch(input, init);
+    }) as typeof globalThis.fetch;
+}
+
+const seen = (runner: ReturnType<typeof fakeRunner>, from: number) => runner.requests.slice(from).map((request) => `${request.method} ${request.path}`);
+
+async function running(session: ChatSession, runner: ReturnType<typeof fakeRunner>): Promise<string> {
+  session.newConversation();
+  void session.send('build it');
+  await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+  return session.store.current!.id;
+}
+
 describe('stopRunBeforeDelete', () => {
-  it("stops the chat's live run on the runner, after looking it up, and only that", async () => {
-    const { session, runner, store } = remoteOnHostStore();
-    session.newConversation();
-    void session.send('build it');
-    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
-    const id = session.store.current!.id;
+  it('stops the live run, then resolves only once it has ended, looking it up again until then', async () => {
+    const { session, runner } = remoteOnHostStore({ wrap: onStop() });
+    const id = await running(session, runner);
     const before = runner.requests.length;
-    await session.stopRunBeforeDelete(id);
-    expect(runner.requests.slice(before).map((request) => `${request.method} ${request.path}`)).toEqual([`GET runs?conversationId=${id}`, 'POST runs/r1/stop']);
-    // A chat with no live run: looked up, nothing stopped.
-    const after = runner.requests.length;
-    await session.stopRunBeforeDelete('c2');
-    expect(runner.requests.slice(after).map((request) => `${request.method} ${request.path}`)).toEqual(['GET runs?conversationId=c2']);
-    expect(store.calls).toEqual([]);
+    await session.stopRunBeforeDelete(id, { pollMs: 10 });
+    // Resolved only after the run ended, which the runner does after its final save.
+    expect(runner.runs.get('r1')!.live).toBe(false);
+    const calls = seen(runner, before);
+    expect(calls.slice(0, 2)).toEqual([`GET runs?conversationId=${id}`, 'POST runs/r1/stop']);
+    // Looked up again until none was live: the last lookup is the one that found none.
+    expect(calls.slice(2).length).toBeGreaterThanOrEqual(1);
+    expect(new Set(calls.slice(2))).toEqual(new Set([`GET runs?conversationId=${id}`]));
     session.agent.leave();
   });
 
-  it('rejects when the runner refuses the stop', async () => {
-    const { session, runner } = remoteOnHostStore();
-    runner.knobs.refuseStop = { status: 503 };
-    session.newConversation();
-    void session.send('build it');
-    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
-    await expect(session.stopRunBeforeDelete(session.store.current!.id)).rejects.toThrow('No.');
-    session.agent.leave();
+  it('looks a chat with no live run up once, and stops nothing', async () => {
+    const { session, runner, store } = remoteOnHostStore();
+    await session.stopRunBeforeDelete('c2');
+    expect(seen(runner, 0)).toEqual(['GET runs?conversationId=c2']);
+    expect(store.calls).toEqual([]);
+  });
+
+  it('takes a stop answered 404 (the run ended meanwhile) as stopped', async () => {
+    const made = remoteOnHostStore({ wrap: onStop({ afterMs: 0, answer: 404 }) });
+    const id = await running(made.session, made.runner);
+    await expect(made.session.stopRunBeforeDelete(id, { pollMs: 10 })).resolves.toBeUndefined();
+    made.session.agent.leave();
+  });
+
+  it("refuses, with each reason's code: a refused stop, a run still live at the timeout, a runner that cannot be reached", async () => {
+    const refused = remoteOnHostStore();
+    refused.runner.knobs.refuseStop = { status: 503 };
+    const id = await running(refused.session, refused.runner);
+    await expect(refused.session.stopRunBeforeDelete(id)).rejects.toMatchObject({ code: 'stop-refused', message: 'The chat runner did not stop the reply.' });
+    refused.session.agent.leave();
+
+    // The stop is taken, but the run never ends.
+    const slow = remoteOnHostStore({ timeoutMs: 200 });
+    const slowId = await running(slow.session, slow.runner);
+    const before = slow.runner.requests.length;
+    await expect(slow.session.stopRunBeforeDelete(slowId, { pollMs: 20 })).rejects.toMatchObject({ code: 'still-stopping', message: 'The reply is still stopping.' });
+    expect(seen(slow.runner, before).slice(0, 2)).toEqual([`GET runs?conversationId=${slowId}`, 'POST runs/r1/stop']);
+    slow.session.agent.leave();
+
+    const unreachable = remoteOnHostStore({
+      wrap: (fetch) => (async (input: RequestInfo | URL, init?: RequestInit) => (String(input).includes('runs?conversationId=') ? Promise.reject(new TypeError('fetch failed')) : fetch(input, init))) as typeof globalThis.fetch,
+    });
+    await expect(unreachable.session.stopRunBeforeDelete('c2')).rejects.toMatchObject({ code: 'runner-unreachable', message: 'The chat runner could not be reached.' });
+    expect(unreachable.runner.requests.filter((request) => request.path.endsWith('/stop'))).toEqual([]);
   });
 
   it('asks nothing outside remote mode on a host store', async () => {
@@ -199,6 +247,9 @@ describe('a backend the runner cannot use', () => {
     // Remote with a gateway named: its replies would not go there.
     expect(() => new ChatSession(null, { runner: 'remote', remote, backend: { url: GATEWAY, model: 'm', store } })).toThrow(REMOTE_GATEWAY);
     expect(() => new ChatSession(null, { runner: 'remote', remote, backend: { fetch: vi.fn(), model: 'm', store } as never })).toThrow(REMOTE_GATEWAY);
+    expect(() => new ChatSession(null, { runner: 'remote', remote, backend: { url: '', fetch: vi.fn(), model: 'm', store } as never })).toThrow(REMOTE_GATEWAY);
+    // One test for a url in both modes: a blank one names no gateway, so remote takes it as store-only.
+    expect(new ChatSession(null, { runner: 'remote', remote, backend: { url: ' ', model: 'm', store } }).agent).toBeInstanceOf(RemoteAgent);
     // In the browser, a store-only backend has no gateway for the reply.
     expect(() => new ChatSession(null, { backend: { model: 'm', store } as never })).toThrow(NO_GATEWAY);
     expect(() => new ChatSession(null, { runner: 'browser', backend: { model: 'm', store } as never })).toThrow(NO_GATEWAY);

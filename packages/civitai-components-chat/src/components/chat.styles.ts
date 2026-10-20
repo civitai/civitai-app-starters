@@ -415,6 +415,11 @@ civitai-chat-sidebar {
   border-radius: var(--civitai-radius, 8px);
 }
 
+/* Its reply is being stopped before its delete. */
+.cvt-chat-row[data-stopping] {
+  opacity: 0.6;
+}
+
 .cvt-chat-row:hover,
 .cvt-chat-row[data-current] {
   background: var(--civitai-color-surface-2);

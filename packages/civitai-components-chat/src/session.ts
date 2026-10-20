@@ -3,7 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import type { ChatAgent } from './agent/chat-agent.js';
-import { absoluteUrl, backendModels, namesGateway, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
+import { absoluteUrl, backendModels, hasGatewayUrl, namesGateway, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
@@ -40,9 +40,22 @@ import { DISPATCH_AGENT, dispatchAgentTool, offersDispatch, resolveSubagents, Su
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { RemoteAgent } from './remote/remote-agent.js';
-import { RunnerClient, type ChatRemoteRunner } from './remote/runner-client.js';
+import { REQUEST_TIMEOUT_MS, RunnerClient, RunnerHttpError, type ChatRemoteRunner } from './remote/runner-client.js';
 import { voiceLanguage } from './voice/languages.js';
 import { transcribe } from './voice/transcribe.js';
+
+/** How often a stopped run is looked up again before its chat is deleted, until it has ended. */
+export const STOP_POLL_MS = 250;
+
+/**
+ * Why `stopRunBeforeDelete` refused (its error's `code`): the runner could not be reached, it refused
+ * the stop, or the run had not ended in time. In every case nothing should be deleted.
+ */
+export type DeleteBlockedCode = 'runner-unreachable' | 'stop-refused' | 'still-stopping';
+
+function deleteBlocked(code: DeleteBlockedCode, message: string, cause?: unknown): Error {
+  return Object.assign(new Error(message), { code, ...(cause === undefined ? {} : { cause }) });
+}
 
 /** Jobs still waiting for a click are offered again only in the most recent turns. */
 const REOFFER_TURNS = 3;
@@ -103,8 +116,7 @@ export interface SessionOptions {
 function assertRunner(options: SessionOptions): boolean {
   const { runner, backend } = options;
   if (runner === undefined || runner === 'browser') {
-    // A store-only backend has no gateway for a page-run reply to go to. Any `url` the model client takes
-    // (a string, or a URL object) is a gateway; only a missing or blank one is refused.
+    // A store-only backend has no gateway for a page-run reply to go to (`hasGatewayUrl`: a missing or blank `url`).
     if (backend && !hasGatewayUrl(backend)) throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
     return false;
   }
@@ -113,13 +125,6 @@ function assertRunner(options: SessionOptions): boolean {
   // Remote with a backend: the host keeps the conversations, the runner runs the replies, so the page has no gateway to call.
   if (backend && namesGateway(backend)) throw new Error("The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.");
   return true;
-}
-
-/** Whether a browser backend names a gateway to send replies to: a `url` set, and not a blank string. */
-function hasGatewayUrl(backend: ChatBackend | ChatStoreBackend): boolean {
-  const url = (backend as Partial<ChatBackend>).url as unknown;
-  if (url === undefined || url === null) return false;
-  return typeof url !== 'string' || url.trim() !== '';
 }
 
 /** The page waking, for a remote reply's connection: shown again, back online, or restored from the back-forward cache. */
@@ -493,14 +498,36 @@ export class ChatSession extends EventTarget {
   }
 
   /**
-   * Before a chat is deleted from a host's store in remote mode: stops its live run, if it has one, so
-   * the runner cannot save the chat back after the delete. Rejects when the runner could not be asked
-   * or refused the stop; then nothing should be deleted. Does nothing in any other mode.
+   * Before a chat is deleted from a host's store in remote mode: stops its live run, if it has one, and
+   * waits until the runner no longer lists a live run for it. A run saves its final state before it
+   * ends, so once none is live that save has landed and a delete after it stays deleted. A stop answered
+   * 404 (the run ended meanwhile) counts as stopped. Rejects, with a {@link DeleteBlockedCode} as its
+   * `code`, when the runner could not be reached, refused the stop, or still listed the run after
+   * `timeoutMs` (the runner's `timeoutMs`, else {@link REQUEST_TIMEOUT_MS}); then nothing should be
+   * deleted. Does nothing in any other mode.
    */
-  async stopRunBeforeDelete(conversationId: string): Promise<void> {
+  async stopRunBeforeDelete(conversationId: string, { pollMs = STOP_POLL_MS }: { pollMs?: number } = {}): Promise<void> {
     if (!this.stopsRunBeforeDelete) return;
-    const run = await this.#runner!.lookup(conversationId);
-    if (run) await this.#runner!.stop(run.runId);
+    const runner = this.#runner!;
+    const lookup = async () => {
+      try {
+        return await runner.lookup(conversationId);
+      } catch (error) {
+        throw deleteBlocked('runner-unreachable', 'The chat runner could not be reached.', error);
+      }
+    };
+    const run = await lookup();
+    if (!run) return;
+    try {
+      await runner.stop(run.runId);
+    } catch (error) {
+      if (!(error instanceof RunnerHttpError && error.status === 404)) throw deleteBlocked('stop-refused', 'The chat runner did not stop the reply.', error);
+    }
+    const deadline = Date.now() + (runner.options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    while (await lookup()) {
+      if (Date.now() >= deadline) throw deleteBlocked('still-stopping', 'The reply is still stopping.');
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
   }
 
   newConversation(): void {
