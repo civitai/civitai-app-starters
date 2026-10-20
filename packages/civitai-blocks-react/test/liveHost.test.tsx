@@ -2935,13 +2935,8 @@ describe('createLiveHost — training bridges (refused: the server refuses dev t
   // Every `kind: 'training'` procedure refuses a dev token server-side, and a run
   // is confirmed in host chrome this harness does not have. Each bridge must
   // refuse on ITS OWN reply channel, immediately, without a network call — a
-  // missing case would hang the hook to its bound (120s / 10 min).
+  // missing case would hang the hook to its 10-minute bound.
   for (const [type, replyType, payload] of [
-    [
-      'PREPARE_TRAINING_DATASET',
-      'TRAINING_DATASET_RESULT',
-      { items: [{ imageId: 1, caption: 'c' }] },
-    ],
     ['RUN_TRAINING', 'TRAINING_RESULT', { body: { kind: 'training', quoteId: 'tq_x' } }],
   ] as const) {
     it(`${type} replies ${replyType} with a refusal and makes no network call`, async () => {

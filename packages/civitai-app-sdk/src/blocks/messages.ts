@@ -42,8 +42,7 @@ import type {
   BlockCollectionFollowResult,
   BlockPostSource,
   BlockCreatePostResult,
-  BlockTrainingDatasetItem,
-  BlockTrainingDatasetResult,
+  BlockTrainingDataUploadResult,
   WorkflowBodyTraining,
   WorkflowBodyPassThroughStep,
 } from './types.js';
@@ -767,24 +766,6 @@ export type ParentToBlockMessage =
       };
     }
   | {
-      // Reply to PREPARE_TRAINING_DATASET. On success `result` carries the
-      // opaque `datasetId`, the server-derived `count` of ADMITTED images and
-      // the `rejected` ones with their reasons.
-      //
-      // 🔴 `error` IS A FREE-TEXT STRING AND THE VALIDATOR MUST STAY SHAPE-ONLY,
-      // for the reason given on CREATE_POST_RESULT: the host's own codes
-      // (`BlockPrepareTrainingDatasetHostError`) share the field with any server
-      // message it forwards (`training from apps is not enabled`, a rate limit,
-      // a refused caption), and a membership check would drop those replies at
-      // the transport, leaving the request to its timer.
-      type: 'TRAINING_DATASET_RESULT';
-      payload: {
-        requestId: string;
-        result?: BlockTrainingDatasetResult;
-        error?: string;
-      };
-    }
-  | {
       // Reply to RUN_TRAINING. On success `snapshot` is the submitted training
       // workflow (poll it with POLL_WORKFLOW / `useBuzzWorkflow().watch()`).
       //
@@ -953,9 +934,13 @@ export type ParentToBlockMessage =
       //   • `'generationSource'`: an UNSCANNED private img2img source
       //     ({@link BlockGenerationSourceImageInfo} — only { url, width, height };
       //     no imageId/nsfwLevel, scanned by the orchestrator at gen time).
+      //   • `'trainingData'` (civitai/civitai#6461): SEVERAL private training
+      //     images in one reply ({@link BlockTrainingDataUploadResult} —
+      //     `{ images: [{ url, air }] }`). A cancel is the bare `{ requestId }`.
       // The variant the host returns matches the `purpose`/`asyncScan` the block
-      // requested; narrow structurally (`'status' in selected` for pending, then
-      // `'imageId' in selected`) when a block uses more than one.
+      // requested; narrow structurally (`'images' in selected` for training data,
+      // `'status' in selected` for pending, then `'imageId' in selected`) when a
+      // block uses more than one.
       //
       // `error` (civitai/civitai#5639) is set only on a refused or failed
       // `bytes` upload, and never beside `selected`. A picker reply never
@@ -967,7 +952,8 @@ export type ParentToBlockMessage =
         selected?:
           | BlockUploadedImageInfo
           | BlockGenerationSourceImageInfo
-          | BlockPendingImageInfo;
+          | BlockPendingImageInfo
+          | BlockTrainingDataUploadResult;
         /** A `bytes` upload's refusal or failure: a host string or a forwarded server message. */
         error?: string;
       };
@@ -1548,31 +1534,19 @@ export type BlockToParentMessage =
       };
     }
   | {
-      // Ask the PAGE host to prepare a training dataset from the VIEWER'S OWN
-      // images — step 1 of the App Blocks `kind: 'training'` flow. The host calls
-      // `blocks.prepareTrainingDataset` with the page's block token (the block's
-      // own origin cannot reach it) and replies `TRAINING_DATASET_RESULT`. No
-      // dialog: preparing charges nothing.
-      //
-      // Scope `ai:write:budgeted`; flag `app-blocks-training-kind`; page host
-      // only (the model slot NACKs it with a `TRAINING_DATASET_RESULT` error).
-      // `items` is shape-checked by the host against the server's own item
-      // schema before any call — see `BlockTrainingDatasetItem` for the bounds.
-      //
-      // A server round-trip that imports up to 50 images into the orchestrator
-      // (the server's own import budget is 60s), so it is bucketed `'protocol'`
-      // but sent under the workflow trio's longer bound — see
-      // `@civitai/blocks-react`'s `requestTimeouts.ts`.
-      type: 'PREPARE_TRAINING_DATASET';
-      payload: { requestId: string; items: BlockTrainingDatasetItem[] };
-    }
-  | {
       // Ask the PAGE host to RUN a quoted `kind: 'training'` body. The host
       // reads the quote back from the server (`blocks.previewTrainingQuote`),
       // shows the viewer a consent dialog in ITS chrome — every number on it
       // server-resolved, never from this body — records the confirmation
       // (`blocks.consentTrainingQuote`, session-only) and only then submits.
-      // Replies `TRAINING_RESULT`.
+      // Replies `TRAINING_RESULT`. A quote naming an image this host did not
+      // upload for the block (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`)
+      // is refused with `training data not uploaded here`, before any dialog.
+      //
+      // (`PREPARE_TRAINING_DATASET`, the server-prepared dataset this flow used
+      // before civitai/civitai#6461, is REMOVED from the protocol. A host that
+      // carries #6461 answers it with `TRAINING_DATASET_RESULT { requestId,
+      // error: 'removed' }` so an older bundle fails at once.)
       //
       // 🔴 THIS IS THE ONLY WAY A TRAINING RUN STARTS. The server refuses a
       // training submit whose quote no signed-in session confirmed, so the same
@@ -1692,6 +1666,12 @@ export type BlockToParentMessage =
       //   • `'generationSource'` — a PRIVATE img2img source; UNSCANNED (the
       //     orchestrator scans at gen time). The host returns ONLY the source
       //     shape ({@link BlockGenerationSourceImageInfo} — { url, width, height }).
+      //   • `'trainingData'` — PRIVATE training images for a `kind: 'training'`
+      //     run (civitai/civitai#6461), PAGE APPS ONLY: the viewer picks up to 50
+      //     in a host modal, each uploaded as a consumer blob. ONE reply carries
+      //     them all ({@link BlockTrainingDataUploadResult}); the host remembers
+      //     every key it uploaded for this block. `asyncScan` and `bytes` do not
+      //     apply (`bytes` with this purpose is refused).
       // Generalizes cleanly the same way OPEN_RESOURCE_PICKER did the picker.
       //
       // `asyncScan` OPTS IN to the NON-BLOCKING display flow (absent/false ⇒
@@ -2207,7 +2187,6 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
   'CREATE_POST_FROM_APP',
-  'PREPARE_TRAINING_DATASET',
   'RUN_TRAINING',
   'RUN_CONFIRMED_STEP',
   'GET_IMAGES_BY_IDS',

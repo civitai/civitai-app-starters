@@ -94,7 +94,7 @@ expectTypeOf<WorkflowBodyTraining['quoteId']>().toEqualTypeOf<string | undefined
 expectTypeOf<WorkflowBodyTraining['engine']>().toEqualTypeOf<'ai-toolkit'>();
 
 // --- the host's caption bound (civitai/civitai#6461 raised it to 8,192) ---
-expectTypeOf(BLOCK_TRAINING_CAPTION_MAX_CHARS).toEqualTypeOf<8192>();
+expectTypeOf<typeof BLOCK_TRAINING_CAPTION_MAX_CHARS>().toEqualTypeOf<8192>();
 
 // --- ecosystem arms ---
 // @ts-expect-error — flux1 requires a modelVariant.

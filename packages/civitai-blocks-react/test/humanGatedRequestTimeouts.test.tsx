@@ -125,7 +125,7 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     return () =>
       result.current.runTraining({
         kind: 'training',
-        datasetId: `tds_${'0'.repeat(32)}`,
+        items: [{ air: 'k1.png', caption: 'c' }],
         engine: 'ai-toolkit',
         model: 'sdxl',
         params: {
