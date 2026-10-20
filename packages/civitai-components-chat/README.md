@@ -1081,7 +1081,7 @@ without `url` or `fetch`. The chat then starts without `app`, and:
 
 ```js
 chat.runner = 'remote';
-chat.remoteRunner = { url: '/agent/runner/', fetch: send }; // `send` signs the page's requests in
+chat.remoteRunner = { url: '/chat-runner/', fetch: send }; // `send` signs the page's requests in
 chat.backend = {
   model: 'host/default',
   models: [{ id: 'host/big', label: 'Big' }],
@@ -1098,10 +1098,17 @@ chat.backend = {
   (`POST /conversations/<id>/patch`), and so does a rename of a chat that is not open.
 - What a host backend turns off stays off: Civitai's built-in tools, files, voice, Buzz, posting and
   sign-in.
-- A delete goes straight to `store` while a run may be live. The host decides what that does, for
-  example by refusing to delete a chat whose run is live until it stops.
+- **Deleting a chat stops its live run first.** The chat asks the runner for the chat's run
+  (`GET /runs?conversationId=`) and stops it (`POST /runs/<id>/stop`) before `store.delete`, so the run
+  cannot save the chat back. If the runner cannot be asked or refuses the stop, nothing is deleted
+  and the viewer stays on the chat, with an error. A run ends a little after its stop, so the host
+  should still serialise deletes against a live run, for example by refusing one until it ends.
 
-These combinations are refused when the chat starts, before anything is wired:
+What the host's side does: the runner saves each turn into the host's store and implements
+`POST /conversations/<id>/patch` against it.
+
+These combinations are refused when the chat starts, before anything is wired. The element shows the
+message in place of the chat, and setting `runner` or `remoteRunner` afterwards starts it again:
 
 | `runner` | `backend` | Refused with |
 |---|---|---|
@@ -1149,8 +1156,8 @@ to its first `RESULT_HEAD_CHARS` (2,000) and last `RESULT_TAIL_CHARS` (6,000) ch
 import { McpServerPool, extraToolSet, gateToolSet } from '@civitai/components-chat/core';
 
 const pool = new McpServerPool({ onError: (server, error) => console.warn(server.id, error) });
-pool.sync([{ id: 'hq', url: 'http://host.internal/mcp', fetch: signedFetch, label: 'HQ' }]);
-const tools = extraToolSet(await pool.tools(), { taken: {} }); // { hq__list_tasks, … }
+pool.sync([{ id: 'docs', url: 'https://example.com/mcp', fetch: signedFetch, label: 'Docs' }]);
+const tools = extraToolSet(await pool.tools(), { taken: {} }); // { docs__search, … }
 ```
 
 ## Where chats live

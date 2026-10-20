@@ -106,20 +106,20 @@ describe('the headless entries in plain Node', () => {
     // The page's own functions, not copies: a runner's tools cannot drift from the page's.
     expect(core.extraToolSet).toBe(extraToolSet);
     expect([core.RESULT_HEAD_CHARS, core.RESULT_TAIL_CHARS]).toEqual([2_000, 6_000]);
-    expect((core.namespacedToolName as (server: string, tool: string) => string)('hq', 'list_tasks')).toBe('hq__list_tasks');
+    expect((core.namespacedToolName as (server: string, tool: string) => string)('docs', 'search')).toBe('docs__search');
 
-    const url = 'https://host.example/agent/mcp';
+    const url = 'https://example.com/mcp';
     // Three distinct runs, so the middle one is the only thing a correct trim leaves out.
     const reply = `${'a'.repeat(2_000)}${'b'.repeat(1_234)}${'c'.repeat(6_000)}`;
-    const mcp = fakeMcpServers({ [url]: [{ name: 'list_tasks', description: 'Lists tasks.', run: () => ({ content: [{ type: 'text', text: reply }] }) }] });
+    const mcp = fakeMcpServers({ [url]: [{ name: 'search', description: 'Searches the docs.', run: () => ({ content: [{ type: 'text', text: reply }] }) }] });
     const Pool = core.McpServerPool as new (deps: { onError(server: unknown, error: unknown): void }) => { sync(servers: unknown[]): void; tools(): Promise<unknown[]>; close(): void };
     const onError = vi.fn();
     const pool = new Pool({ onError });
-    pool.sync([{ id: 'hq', url, fetch: mcp.fetch, label: 'HQ' }]);
+    pool.sync([{ id: 'docs', url, fetch: mcp.fetch, label: 'Docs' }]);
     const tools = (core.extraToolSet as typeof extraToolSet)((await pool.tools()) as never, { taken: {} });
-    expect(Object.keys(tools)).toEqual(['hq__list_tasks']);
-    expect(tools.hq__list_tasks!.description).toBe('[HQ] Lists tasks.');
-    const text = await tools.hq__list_tasks!.execute!({}, { toolCallId: 'c', messages: [] });
+    expect(Object.keys(tools)).toEqual(['docs__search']);
+    expect(tools.docs__search!.description).toBe('[Docs] Searches the docs.');
+    const text = await tools.docs__search!.execute!({}, { toolCallId: 'c', messages: [] });
     expect(text).toBe(`${'a'.repeat(2_000)}\n…(1234 characters omitted)…\n${'c'.repeat(6_000)}`);
     expect(onError).not.toHaveBeenCalled();
     pool.close();

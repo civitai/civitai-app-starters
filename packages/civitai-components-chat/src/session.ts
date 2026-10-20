@@ -103,8 +103,9 @@ export interface SessionOptions {
 function assertRunner(options: SessionOptions): boolean {
   const { runner, backend } = options;
   if (runner === undefined || runner === 'browser') {
-    // A store-only backend has no gateway for a page-run reply to go to.
-    if (backend && typeof (backend as Partial<ChatBackend>).url !== 'string') throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
+    // A store-only backend has no gateway for a page-run reply to go to. Any `url` the model client takes
+    // (a string, or a URL object) is a gateway; only a missing or blank one is refused.
+    if (backend && !hasGatewayUrl(backend)) throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
     return false;
   }
   if (runner !== 'remote') throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser' or 'remote'.`);
@@ -112,6 +113,13 @@ function assertRunner(options: SessionOptions): boolean {
   // Remote with a backend: the host keeps the conversations, the runner runs the replies, so the page has no gateway to call.
   if (backend && namesGateway(backend)) throw new Error("The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.");
   return true;
+}
+
+/** Whether a browser backend names a gateway to send replies to: a `url` set, and not a blank string. */
+function hasGatewayUrl(backend: ChatBackend | ChatStoreBackend): boolean {
+  const url = (backend as Partial<ChatBackend>).url as unknown;
+  if (url === undefined || url === null) return false;
+  return typeof url !== 'string' || url.trim() !== '';
 }
 
 /** The page waking, for a remote reply's connection: shown again, back online, or restored from the back-forward cache. */
@@ -169,12 +177,15 @@ export class ChatSession extends EventTarget {
   #runTools = new Map<string, JobToolInfo>();
   /** With `runner: 'remote'`: the agent following the server's runs. */
   #remote: RemoteAgent | undefined;
+  /** With `runner: 'remote'`: the runner's calls. */
+  #runner: RunnerClient | undefined;
 
   /** `app` may be `null` only with `options.backend`. */
   constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
     const backend = options.backend;
     const remote = assertRunner(options) ? new RunnerClient(options.remote!) : undefined;
+    this.#runner = remote;
     if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
     const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
@@ -474,6 +485,22 @@ export class ChatSession extends EventTarget {
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
     this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
+  }
+
+  /** Remote mode on a host's store, where `stopRunBeforeDelete` has something to do. */
+  get stopsRunBeforeDelete(): boolean {
+    return Boolean(this.#runner && this.backend);
+  }
+
+  /**
+   * Before a chat is deleted from a host's store in remote mode: stops its live run, if it has one, so
+   * the runner cannot save the chat back after the delete. Rejects when the runner could not be asked
+   * or refused the stop; then nothing should be deleted. Does nothing in any other mode.
+   */
+  async stopRunBeforeDelete(conversationId: string): Promise<void> {
+    if (!this.stopsRunBeforeDelete) return;
+    const run = await this.#runner!.lookup(conversationId);
+    if (run) await this.#runner!.stop(run.runId);
   }
 
   newConversation(): void {

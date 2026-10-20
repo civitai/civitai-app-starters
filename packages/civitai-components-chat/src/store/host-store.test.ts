@@ -584,7 +584,7 @@ describe('HostThreadStore in remote mode', () => {
     await threads.setTitle('plan my week', 'first-message');
   }
 
-  const deps = (store: ReturnType<typeof memoryStore>) => ({ store, scope: 'hq', now: at('2026-10-20T10:00:00Z'), newId: () => 'C1' });
+  const deps = (store: ReturnType<typeof memoryStore>) => ({ store, scope: 'notes', now: at('2026-10-20T10:00:00Z'), newId: () => 'C1' });
 
   it('saves nothing itself: a model or title set after the first turn goes to the runner as a patch, one set before it stays on the page', async () => {
     const store = memoryStore();
@@ -611,7 +611,7 @@ describe('HostThreadStore in remote mode', () => {
   });
 
   it("lists, opens and deletes through the host's store; renaming a chat that is not open is a patch, and none after its delete", async () => {
-    const record = (id: string, title: string, updatedAt: string): ChatConversation => ({ id, title, titleSource: 'first-message', createdAt: updatedAt, updatedAt, turns: [], scope: 'hq' });
+    const record = (id: string, title: string, updatedAt: string): ChatConversation => ({ id, title, titleSource: 'first-message', createdAt: updatedAt, updatedAt, turns: [], scope: 'notes' });
     const store = memoryStore([record('C1', 'Week plan', '2026-10-20T09:00:00.000Z'), record('C2', 'Old chat', '2026-10-19T09:00:00.000Z')]);
     const patches: unknown[] = [];
     const threads = new HostThreadStore({ ...deps(store), remote: { patch: async (id: string, patch: unknown) => void patches.push([id, patch]) } } as never);

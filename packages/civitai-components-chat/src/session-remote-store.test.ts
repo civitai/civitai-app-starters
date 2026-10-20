@@ -27,7 +27,7 @@ const record = (id: string, title: string, updatedAt: string, turns: ChatConvers
   createdAt: updatedAt,
   updatedAt,
   turns,
-  scope: 'hq',
+  scope: 'notes',
 });
 
 const PLANNED = record('c1', 'Week plan', '2026-10-20T09:00:00.000Z', [
@@ -43,8 +43,8 @@ function remoteOnHostStore() {
   const store = memoryStore([PLANNED, OLD]);
   const runner = fakeRunner();
   // Typed loosely so this file also typechecks against a package without the store-only backend.
-  const backend = { model: 'hq/default', models: [{ id: 'hq/big', label: 'Big' }], store } as never;
-  const session = new ChatSession(null, { scope: 'hq', runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] }, backend });
+  const backend = { model: 'host/default', models: [{ id: 'host/big', label: 'Big' }], store } as never;
+  const session = new ChatSession(null, { scope: 'notes', runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] }, backend });
   return { session, store, runner, global };
 }
 
@@ -71,14 +71,14 @@ describe("ChatSession with runner 'remote' and a store-only backend", () => {
     await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
     const starts = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs');
     expect(starts).toHaveLength(1);
-    expect(starts[0]!.body).toMatchObject({ v: 1, conversationId: 'c1', scope: 'hq', turn: { seq: 2, user: { content: 'next step', attachments: [] } }, model: 'hq/default' });
+    expect(starts[0]!.body).toMatchObject({ v: 1, conversationId: 'c1', scope: 'notes', turn: { seq: 2, user: { content: 'next step', attachments: [] } }, model: 'host/default' });
 
     // The model and title the viewer sets go to the runner as patches, as does a rename of another chat.
-    await session.setChatModel('hq/big');
+    await session.setChatModel('host/big');
     await session.store.setTitle('Week plan, revised', 'user');
     await session.store.rename('c2', 'Archive');
     expect(runner.requests.filter((request) => request.path.startsWith('conversations/')).map((request) => [request.path, request.body])).toEqual([
-      ['conversations/c1/patch', { v: 1, model: 'hq/big' }],
+      ['conversations/c1/patch', { v: 1, model: 'host/big' }],
       ['conversations/c1/patch', { v: 1, title: 'Week plan, revised', titleSource: 'user' }],
       ['conversations/c2/patch', { v: 1, title: 'Archive', titleSource: 'user' }],
     ]);
@@ -101,14 +101,53 @@ describe("ChatSession with runner 'remote' and a store-only backend", () => {
 
   it("offers the backend's models, and uses a chat's own one only when the backend names it", async () => {
     const { session, runner } = remoteOnHostStore();
-    expect(session.defaultModel()).toBe('hq/default');
-    expect(session.modelChoices().map((choice) => choice.id)).toEqual(['hq/default', 'hq/big']);
+    expect(session.defaultModel()).toBe('host/default');
+    expect(session.modelChoices().map((choice) => choice.id)).toEqual(['host/default', 'host/big']);
     session.newConversation();
     await session.setChatModel('elsewhere/model');
-    expect(session.assistantModel()).toBe('hq/default');
-    await session.setChatModel('hq/big');
-    expect(session.assistantModel()).toBe('hq/big');
+    expect(session.assistantModel()).toBe('host/default');
+    await session.setChatModel('host/big');
+    expect(session.assistantModel()).toBe('host/big');
     // Nothing saved yet: no patch; the model goes with the chat's first run.
+    expect(runner.requests).toEqual([]);
+  });
+});
+
+describe('stopRunBeforeDelete', () => {
+  it("stops the chat's live run on the runner, after looking it up, and only that", async () => {
+    const { session, runner, store } = remoteOnHostStore();
+    session.newConversation();
+    void session.send('build it');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const id = session.store.current!.id;
+    const before = runner.requests.length;
+    await session.stopRunBeforeDelete(id);
+    expect(runner.requests.slice(before).map((request) => `${request.method} ${request.path}`)).toEqual([`GET runs?conversationId=${id}`, 'POST runs/r1/stop']);
+    // A chat with no live run: looked up, nothing stopped.
+    const after = runner.requests.length;
+    await session.stopRunBeforeDelete('c2');
+    expect(runner.requests.slice(after).map((request) => `${request.method} ${request.path}`)).toEqual(['GET runs?conversationId=c2']);
+    expect(store.calls).toEqual([]);
+    session.agent.leave();
+  });
+
+  it('rejects when the runner refuses the stop', async () => {
+    const { session, runner } = remoteOnHostStore();
+    runner.knobs.refuseStop = { status: 503 };
+    session.newConversation();
+    void session.send('build it');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await expect(session.stopRunBeforeDelete(session.store.current!.id)).rejects.toThrow('No.');
+    session.agent.leave();
+  });
+
+  it('asks nothing outside remote mode on a host store', async () => {
+    const runner = fakeRunner();
+    // Remote on the orchestrator's store: unchanged, so no lookup before a delete.
+    const app = { getToken: async () => 'token', site: {}, orchestration: { queryWorkflows: vi.fn(async () => ({ items: [], next: '' })), submitWorkflow: vi.fn() } } as never;
+    await new ChatSession(app, { runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch } }).stopRunBeforeDelete('c1');
+    // The browser on a gateway backend.
+    await new ChatSession(null, { remote: { url: RUNNER_URL, fetch: runner.fetch }, backend: { url: GATEWAY, model: 'm', store: memoryStore() } }).stopRunBeforeDelete('c1');
     expect(runner.requests).toEqual([]);
   });
 });
@@ -129,7 +168,7 @@ describe('a backend with a gateway, in the browser', () => {
       const session = new ChatSession(null, {
         ...(runner ? { runner } : {}),
         remote: { url: RUNNER_URL, fetch: remote.fetch },
-        backend: { url: GATEWAY, fetch: gateway, model: 'hq/default', store },
+        backend: { url: GATEWAY, fetch: gateway, model: 'host/default', store },
       });
       expect(session.agent).toBeInstanceOf(Agent);
       expect(session.store).toBeInstanceOf(HostThreadStore);
@@ -163,9 +202,16 @@ describe('a backend the runner cannot use', () => {
     // In the browser, a store-only backend has no gateway for the reply.
     expect(() => new ChatSession(null, { backend: { model: 'm', store } as never })).toThrow(NO_GATEWAY);
     expect(() => new ChatSession(null, { runner: 'browser', backend: { model: 'm', store } as never })).toThrow(NO_GATEWAY);
+    // A blank url names no gateway either.
+    expect(() => new ChatSession(null, { backend: { url: '  ', model: 'm', store } })).toThrow(NO_GATEWAY);
     // Remote still needs its runner first, backend or not.
     expect(() => new ChatSession(null, { runner: 'remote', backend: { model: 'm', store } as never })).toThrow("The 'remote' chat runner needs remote.url: the server runner's base URL.");
     expect(store.calls).toEqual([]);
     expect(global).not.toHaveBeenCalled();
+  });
+
+  it('still takes a URL object as the gateway in the browser, as the model client always has', () => {
+    const session = new ChatSession(null, { backend: { url: new URL(GATEWAY) as never, model: 'm', store: memoryStore() } });
+    expect(session.agent).toBeInstanceOf(Agent);
   });
 });
