@@ -404,17 +404,110 @@ describe('RemoteAgent, against a runner', () => {
     await vi.waitFor(() => expect(agent.running).toBe(false));
   });
 
-  it('ends the reply at once on Stop while its start has had no answer', async () => {
+  it('ends the reply at once on Stop while its start has had no answer, and stops the run by its start key', async () => {
     const { agent, runner, store } = setup();
     runner.knobs.failStarts = 1_000_000;
     void agent.send('go');
     await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs').length).toBeGreaterThan(1));
+    // The first stops by key get no answer either: asked again until one is answered.
+    runner.knobs.failStops = 2;
     agent.abort();
     expect(agent.running).toBe(false);
     expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
     const starts = runner.requests.filter((request) => request.path === 'runs').length;
+    // An earlier start may have reached the runner and started a run whose id the page never learned: it is stopped by its key.
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs/stop')).toHaveLength(3));
+    expect(runner.requests.filter((request) => request.path === 'runs/stop').map((request) => request.body)).toEqual(Array(3).fill({ v: 1, idempotencyKey: 'key-1', conversationId: 'c1' }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runner.requests.filter((request) => request.path === 'runs').length).toBe(starts);
+    expect(runner.requests.filter((request) => request.path === 'runs/stop')).toHaveLength(3);
+  });
+
+  it.each([401, 403])('ends the turn with an auth error the page can show when the runner refuses the viewer (%i) on the event stream', async (status) => {
+    const { agent, runner, store, errors } = setup();
+    const sent = agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const turn = store.current!.turns[0]!;
+    runner.knobs.refuseEvents = { status, times: 1_000_000 };
+    runner.dropStreams('r1');
+    await sent;
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(turn.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(errors).toMatchObject([{ kind: 'auth' }]);
+    // The run itself is the runner's: the page asked nothing to stop it.
+    expect(runner.requests.filter((request) => request.path.endsWith('/stop'))).toEqual([]);
+    expect(runner.eventOpens('r1').length).toBeLessThan(5);
+  });
+
+  it('frees the composer on Stop even when the runner refuses it', async () => {
+    const { agent, runner, store } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Partial' }]);
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'text', text: 'Partial' }]));
+    const turn = store.current!.turns[0]!;
+    runner.knobs.refuseStop = { status: 403 };
+    agent.abort();
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs/r1/stop')).toHaveLength(1));
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(turn.assistant.status).toBe('aborted');
+  });
+
+  it('fires no host event for what the journal already held when a reloaded page follows the run again, only for what comes after', async () => {
+    const first = setup();
+    void first.agent.send('build it');
+    await vi.waitFor(() => expect(first.runner.openStreams('r1')).toBe(1));
+    const trace = { stage: 'stream', step: 1, msIntoStep: 3, message: 'cut' } as const;
+    const earlier: ChatToolResult = { name: 'sandbox__run_command', input: { command: 'npm test' }, output: 'ok', isError: false };
+    await pushAll(first.runner, 'r1', [
+      { type: 'tool-call', index: 0, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't1', output: 'ok' },
+      { type: 'tool-reported', result: earlier },
+      { type: 'network-retry', attempt: 1, trace },
+    ]);
+    await vi.waitFor(() => expect(first.toolResults).toEqual([earlier]));
+    first.agent.leave();
+
+    const made = remoteStore();
+    const toolResults: ChatToolResult[] = [];
+    const retries: unknown[] = [];
+    const agent = new RemoteAgent({
+      client: new RunnerClient({ url: RUNNER_URL, fetch: first.runner.fetch, reconnectDelaysMs: [0] }),
+      store: made.store,
+      model: () => 'model-a',
+      settings: () => SETTINGS,
+      reread: async (id) => void (await made.store.open(id)),
+      onToolResult: (result) => toolResults.push(result),
+    });
+    agent.addEventListener('network-retry', (event) => retries.push((event as CustomEvent).detail));
+    await made.store.open('c1');
+    expect(await agent.reattach('c1')).toBe(true);
+    // The state is rebuilt from the replay...
+    await vi.waitFor(() => expect(agent.live?.parts).toEqual([{ kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' }, state: 'done', output: 'ok' }]));
+    // ...but what the page already heard about before the reload is not announced again.
+    expect(toolResults).toEqual([]);
+    expect(retries).toEqual([]);
+    const later: ChatToolResult = { name: 'create_app', input: { name: 'todo' }, output: { app: 'todo' }, isError: false };
+    await pushAll(first.runner, 'r1', [{ type: 'tool-reported', result: later }]);
+    await vi.waitFor(() => expect(toolResults).toEqual([later]));
+    agent.leave();
+  });
+
+  it('never starts following a run once the page left, even when the lookup was already on its way', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.holdLookups = true;
+    await runner.fetch(`${RUNNER_URL}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ v: 1, idempotencyKey: 'other', conversationId: 'c1', turn: { seq: 1, user: { content: 'hi', attachments: [] } }, model: 'm', settings: {} }),
+    });
+    await store.open('c1');
+    const attached = agent.reattach('c1');
+    await vi.waitFor(() => expect(runner.requests.some((request) => request.path === 'runs?conversationId=c1')).toBe(true));
+    agent.leave();
+    runner.releaseLookups();
+    expect(await attached).toBe(false);
+    expect(agent.running).toBe(false);
+    expect(runner.eventOpens('r1')).toEqual([]);
   });
 
   it('writes no head even after reading one back (a later post or panel stays on the page)', async () => {

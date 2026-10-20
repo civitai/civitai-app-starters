@@ -45,10 +45,20 @@ export function fakeRunner() {
     garbleNext: false,
     /** The next `times` event-stream opens are refused with `status`. */
     refuseEvents: undefined as { status: number; times: number } | undefined,
+    /** Refuses every stop of a run by its id with this status. */
+    refuseStop: undefined as { status: number } | undefined,
+    /** The next N stops by idempotency key get no answer. */
+    failStops: 0,
+    /** Lookups wait until `releaseLookups()`. */
+    holdLookups: false,
+    /** Lookups never answer (until the request is aborted). */
+    hangLookups: false,
     /** The parts `run-started` carries. */
     startParts: [] as TurnPart[],
   };
   let count = 0;
+  let releaseLookups: () => void = () => {};
+  let held = new Promise<void>((resolve) => (releaseLookups = resolve));
 
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -130,9 +140,20 @@ export function fakeRunner() {
       const run = create(body as StartRunRequest);
       return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq }, 201);
     }
+    if (method === 'POST' && path === 'runs/stop') {
+      if (knobs.failStops > 0) {
+        knobs.failStops--;
+        throw new TypeError('fetch failed');
+      }
+      return new Response(null, { status: 202 });
+    }
     if (method === 'GET' && url.pathname.endsWith('/runs') && url.searchParams.has('conversationId')) {
+      if (knobs.hangLookups) {
+        await new Promise<never>((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError'))));
+      }
+      if (knobs.holdLookups) await held;
       const run = [...runs.values()].find((r) => r.live && r.conversationId === url.searchParams.get('conversationId'));
-      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z' } : null });
+      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z', lastEventId: String(run.journal.length - 1) } : null });
     }
     const eventsPath = /^runs\/([^/]+)\/events$/.exec(path);
     if (method === 'GET' && eventsPath) {
@@ -148,7 +169,10 @@ export function fakeRunner() {
       if (!run) return json({ v: 1, error: 'not-found', message: 'No such run.' }, 404);
       return events(run, headers['last-event-id'], init.signal ?? undefined);
     }
-    if (method === 'POST' && /^runs\/[^/]+\/stop$/.test(path)) return new Response(null, { status: 202 });
+    if (method === 'POST' && /^runs\/[^/]+\/stop$/.test(path)) {
+      if (knobs.refuseStop) return json({ v: 1, error: 'refused', message: 'No.' }, knobs.refuseStop.status);
+      return new Response(null, { status: 202 });
+    }
     if (method === 'POST' && /^conversations\/[^/]+\/patch$/.test(path)) return new Response(null, { status: 204 });
     return json({ v: 1, error: 'not-found', message: `No route ${method} ${path}` }, 404);
   };
@@ -159,6 +183,11 @@ export function fakeRunner() {
     runs,
     knobs,
     push,
+    /** Lets every held lookup answer. */
+    releaseLookups(): void {
+      releaseLookups();
+      held = new Promise<void>((resolve) => (releaseLookups = resolve));
+    },
     /** Cuts every open event stream of the run, as a network drop does. */
     dropStreams(runId: string, error: Error = new TypeError('terminated')): void {
       for (const stream of [...(streams.get(runId) ?? [])]) stream.drop(error);
