@@ -1069,7 +1069,47 @@ What changes in remote mode:
   (`POST /conversations/<id>/patch`). Posts and panels stay on the page, and a shared panel cannot be
   opened (`openPanel` rejects) nor a generation adjusted, since either would make a turn only the page
   has. Deleting a chat still deletes its saved workflows from the page; stop its reply first.
-- No `backend`: a backend's replies run on the page, so `runner="remote"` with one is refused.
+- No gateway: a backend's `url` (and `fetch`) are for replies that run on the page, so
+  `runner="remote"` with a backend that names one is refused. A backend that keeps only the
+  conversations is fine; see below.
+
+### A host's own conversation store
+
+A host with its own conversation store and no Civitai sign-in (see "Your own backend") can run its
+replies on a server runner too. Give the chat a **store-only backend**: `store`, `model` and `models`,
+without `url` or `fetch`. The chat then starts without `app`, and:
+
+```js
+chat.runner = 'remote';
+chat.remoteRunner = { url: '/agent/runner/', fetch: send }; // `send` signs the page's requests in
+chat.backend = {
+  model: 'host/default',
+  models: [{ id: 'host/big', label: 'Big' }],
+  store, // the same ChatConversationStore as "The conversation store"
+};
+```
+
+- **The chat list, opening a chat and deleting one go to `store`**, as with any backend, and so does
+  reading a chat again once its run ends. The picker offers `model` and `models`, and the chat's
+  model is sent with each run.
+- **Each reply runs on the runner, and the runner is the only writer of the saved conversation.** The
+  page never calls `store.save`, so the runner saves each turn into the host's store itself. A title or
+  model the viewer sets after a chat's first turn goes to the runner as a patch
+  (`POST /conversations/<id>/patch`), and so does a rename of a chat that is not open.
+- What a host backend turns off stays off: Civitai's built-in tools, files, voice, Buzz, posting and
+  sign-in.
+- A delete goes straight to `store` while a run may be live. The host decides what that does, for
+  example by refusing to delete a chat whose run is live until it stops.
+
+These combinations are refused when the chat starts, before anything is wired:
+
+| `runner` | `backend` | Refused with |
+|---|---|---|
+| `'remote'` | names `url` or `fetch` | `The 'remote' chat runner takes a backend's store and models only: …` |
+| `'browser'` or unset | no `url` | `A backend without url needs runner 'remote': …` |
+
+`runner="browser"` with a backend that names its `url` works as before, and so does `runner="remote"`
+with no backend (chats on the orchestrator, with a signed-in `app`).
 
 The protocol, briefly (`runner-protocol.ts` has every field):
 
@@ -1099,6 +1139,18 @@ a reply exactly as the page does:
 ```js
 import { AgentCore, createAssistantModel, gateToolSet } from '@civitai/components-chat/core';
 import { createPartsDiffer, encodeRunEvent } from '@civitai/components-chat/runner-protocol';
+```
+
+To offer an MCP server's tools exactly as the page offers its `mcpServers`, use the page's own adapter.
+Each tool is named `${id}__${tool}` (a name the model's API cannot take is skipped), and a reply is cut
+to its first `RESULT_HEAD_CHARS` (2,000) and last `RESULT_TAIL_CHARS` (6,000) characters:
+
+```js
+import { McpServerPool, extraToolSet, gateToolSet } from '@civitai/components-chat/core';
+
+const pool = new McpServerPool({ onError: (server, error) => console.warn(server.id, error) });
+pool.sync([{ id: 'hq', url: 'http://host.internal/mcp', fetch: signedFetch, label: 'HQ' }]);
+const tools = extraToolSet(await pool.tools(), { taken: {} }); // { hq__list_tasks, … }
 ```
 
 ## Where chats live

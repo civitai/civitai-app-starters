@@ -3,7 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import type { ChatAgent } from './agent/chat-agent.js';
-import { absoluteUrl, backendModels, unavailableApp, type ChatBackend } from './backend.js';
+import { absoluteUrl, backendModels, namesGateway, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
@@ -63,7 +63,11 @@ export interface PendingUpload {
 export type ChatRunner = 'browser' | 'remote';
 
 export interface SessionOptions {
-  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and no `backend`. */
+  /**
+   * Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and takes
+   * either no `backend` (conversations on the orchestrator, with a signed-in app) or a store-only one
+   * ({@link ChatStoreBackend}: conversations in the host's store).
+   */
   runner?: ChatRunner;
   /** The server runner `runner: 'remote'` uses. */
   remote?: ChatRemoteRunner;
@@ -89,18 +93,24 @@ export interface SessionOptions {
   /**
    * The host's own model gateway and storage. The session then needs no `app`, keeps conversations
    * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice,
-   * posting or free tier.
+   * posting or free tier. With `runner: 'remote'`, a {@link ChatStoreBackend}: the host keeps the
+   * conversations and the runner runs the replies, so it names no gateway.
    */
-  backend?: ChatBackend;
+  backend?: ChatBackend | ChatStoreBackend;
 }
 
 /** A runner the options cannot run is refused before anything is wired: whether it is the remote one. */
 function assertRunner(options: SessionOptions): boolean {
-  const { runner } = options;
-  if (runner === undefined || runner === 'browser') return false;
+  const { runner, backend } = options;
+  if (runner === undefined || runner === 'browser') {
+    // A store-only backend has no gateway for a page-run reply to go to.
+    if (backend && typeof (backend as Partial<ChatBackend>).url !== 'string') throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
+    return false;
+  }
   if (runner !== 'remote') throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser' or 'remote'.`);
   if (typeof options.remote?.url !== 'string' || !options.remote.url.trim()) throw new Error("The 'remote' chat runner needs remote.url: the server runner's base URL.");
-  if (options.backend) throw new Error("The 'remote' chat runner cannot be used with a backend: a backend's replies run on the page.");
+  // Remote with a backend: the host keeps the conversations, the runner runs the replies, so the page has no gateway to call.
+  if (backend && namesGateway(backend)) throw new Error("The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.");
   return true;
 }
 
@@ -127,7 +137,8 @@ export interface LiveSession {
 export class ChatSession extends EventTarget {
   /** The viewer's Civitai client; with a `backend`, a stand-in that refuses every call. */
   readonly app: AppClient;
-  readonly backend: ChatBackend | undefined;
+  /** With `runner: 'remote'`, a store-only one. */
+  readonly backend: ChatBackend | ChatStoreBackend | undefined;
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
@@ -207,7 +218,12 @@ export class ChatSession extends EventTarget {
       ...(options.compose ? { compose: options.compose } : {}),
     });
     this.store = backend
-      ? new HostThreadStore({ store: backend.store, scope: options.scope })
+      ? new HostThreadStore({
+          store: backend.store,
+          scope: options.scope,
+          // Remote: the runner is the only writer of each conversation in the host's store.
+          ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
+        })
       : new ThreadStore({
           orchestration: app.orchestration,
           api: this.api,
@@ -322,8 +338,10 @@ export class ChatSession extends EventTarget {
 
   #model(id: string): LanguageModel {
     let model = this.#models.get(id);
-    if (!model && this.backend) {
-      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(this.backend.url), model: id, ...(this.backend.fetch ? { fetch: this.backend.fetch } : {}) })));
+    // Only a page-run reply asks for a model, and in the browser a backend always names its gateway (`assertRunner`).
+    const backend = this.backend as ChatBackend | undefined;
+    if (!model && backend) {
+      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(backend.url), model: id, ...(backend.fetch ? { fetch: backend.fetch } : {}) })));
     }
     if (!model) {
       const wrap = (inner: typeof fetch) =>

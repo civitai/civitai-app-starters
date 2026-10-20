@@ -5,7 +5,7 @@ import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValu
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
-import { backendModels, type ChatBackend } from '../backend.js';
+import { backendModels, type ChatBackend, type ChatStoreBackend } from '../backend.js';
 import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
 import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from '../config.js';
@@ -93,7 +93,7 @@ interface Queued extends MessageFiles {
   text: string;
   /** The session (by its start), viewer and chat it was written in: it goes nowhere else. */
   start: number;
-  source: AppClient | ChatBackend | undefined;
+  source: AppClient | ChatBackend | ChatStoreBackend | undefined;
   chatId: string | null;
   /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
   held?: string;
@@ -190,9 +190,11 @@ export class CivitaiChat extends LitElement {
   /**
    * The host's own model gateway and conversation storage. Once set the chat starts without `app`
    * (which it then ignores, with `signIn`), and everything that runs on Civitai's services is off and
-   * hidden. See "Your own backend" in the README.
+   * hidden. See "Your own backend" in the README. With `runner="remote"`, a store-only backend
+   * (`store`, `model`, `models`; no `url`): the host keeps the conversations and the runner runs the
+   * replies. See "Server runner".
    */
-  declare backend?: ChatBackend;
+  declare backend?: ChatBackend | ChatStoreBackend;
   /**
    * Without `app`, the chat still opens and calls this when the viewer first sends a message or
    * adds a file, straight from that click or key press so a popup is allowed. Resolve with the
@@ -310,7 +312,7 @@ export class CivitaiChat extends LitElement {
 
   #session?: ChatSession;
   #models?: ModelDirectory;
-  #startedWith?: AppClient | ChatBackend;
+  #startedWith?: AppClient | ChatBackend | ChatStoreBackend;
   #started: Promise<ChatSession>;
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
@@ -331,7 +333,7 @@ export class CivitaiChat extends LitElement {
   /** What `can-send-change` last said, so each change is announced once. */
   #announcedCanSend = false;
   /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
-  #sessionFor?: AppClient | ChatBackend;
+  #sessionFor?: AppClient | ChatBackend | ChatStoreBackend;
   /**
    * Counts the sessions started, and which start the open one is: a send or a waiting message knows
    * exactly whether the session it was taken for is still the live one, even when the same app or
@@ -590,7 +592,7 @@ export class CivitaiChat extends LitElement {
   }
 
   /** What the chat runs on: the backend when set, else the signed-in app. */
-  #source(): AppClient | ChatBackend | undefined {
+  #source(): AppClient | ChatBackend | ChatStoreBackend | undefined {
     return this.backend ?? this.app;
   }
 
@@ -897,7 +899,7 @@ export class CivitaiChat extends LitElement {
     (await this.#composer())?.focus();
   }
 
-  async #start(source: AppClient | ChatBackend): Promise<void> {
+  async #start(source: AppClient | ChatBackend | ChatStoreBackend): Promise<void> {
     // Called right after `#starts` counts this start.
     const start = this.#starts;
     this.#conversationEnd();

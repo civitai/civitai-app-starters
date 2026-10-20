@@ -1,0 +1,5 @@
+---
+'@civitai/components-chat': minor
+---
+
+Experimental: `runner="remote"` now works with a host's own conversation store. Pass a store-only backend (`ChatStoreBackend`: `store`, `model`, `models`, and no `url` or `fetch`). The chat list, opening a chat and deleting one go to the host's store, and each reply runs on the server runner, which is the only writer of the saved conversation: the page never calls `store.save`, and sends title and model changes to the runner as patches. In remote mode, a backend that names a gateway (`url` or `fetch`) is refused, and so is a backend without `url` in the browser. `runner="browser"` with a gateway backend and `runner="remote"` without a backend are unchanged. `@civitai/components-chat/core` now also exports the page's MCP-to-tools adapter (`McpServerPool`, `extraToolSet`, `namespacedToolName`, `RESULT_HEAD_CHARS`, `RESULT_TAIL_CHARS`), so a server runner gives an MCP server's tools the same `${id}__${tool}` names and the same trimmed replies as the page. The run protocol is unchanged.
