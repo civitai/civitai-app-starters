@@ -550,7 +550,8 @@ Give the chat a height, as for any panel. Theming stays with the page: the chat 
 
 ## Subagents
 
-`subagents` gives the assistant a `dispatch_agent` tool: it starts a **read-only subagent**, another
+`subagents` gives the assistant a `dispatch_agent` tool: it starts a **read-only subagent** (or, with
+`write`, a [write subagent](#write-subagents)), another
 assistant that works on one research task in its own context and gives back a short summary, so a reply
 that needs a conclusion drawn from many files or pages does not carry all of them for the rest of the
 reply. Off unless set: without it (or with none of its tools there this reply) `dispatch_agent` is not
@@ -585,7 +586,8 @@ read-only, and it finishes with what it found in at most 200 words), then `instr
 the allowlisted ones this reply has, behind the page's `beforeToolCall`. Never `dispatch_agent` itself
 (one level only), and never a tool that waits for the viewer (`ask_choice`, `open_panel`,
 `update_panel`), even when listed; a page tool whose result says `awaitsUser` comes back to it as an
-error. `mode: "write"` is refused with *"write subagents are not available yet"*, and nothing runs.
+error. Without `write` (below), `mode: "write"` is refused with *"write subagents are not available
+yet"*, and nothing runs.
 
 **What the assistant gets back** (the `dispatch_agent` result, saved with the reply), never the
 subagent's transcript:
@@ -593,7 +595,7 @@ subagent's transcript:
 ```ts
 {
   kind: 'subagent',    // on every output of the chat's own dispatch_agent, a refusal ({ kind, error, note }) included
-  status: 'done' | 'ran_out' | 'stopped' | 'error',
+  status: 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted', // 'interrupted': a write subagent only, see below
   summary: string,     // its final words, cut to 4,000 characters
   steps: number,       // model requests it made
   toolCalls: number,
@@ -637,6 +639,75 @@ any other tool call.
 and status, live while it runs, and from the saved result after a reload; opened, its summary and what
 it looked at. The Buzz badge counts each subagent step as one assistant call, read from the saved
 results, and its breakdown says *"Including N subagent steps"*.
+
+### Write subagents
+
+`write` lets the assistant also start **write subagents** (`mode: "write"`): subagents that may edit
+files and run commands, each on its own allowlist. Off unless set, and nothing about read subagents
+changes when it is set.
+
+```ts
+import type { ChatSubagents } from '@civitai/components-chat/civitai-chat';
+
+chat.subagents = {
+  tools: ['sandbox__read_file', 'sandbox__list_dir'], // read subagents, as above
+  write: {
+    // Every tool a write subagent may use, read tools included; any tool, a free-form command tool too.
+    tools: ['sandbox__read_file', 'sandbox__list_dir', 'sandbox__write_file', 'sandbox__edit_file', 'sandbox__delete_path', 'sandbox__run_command'],
+    instructions: 'Work inside the app folder.', // optional, for write subagents (instead of `instructions`)
+    // The tools that change files, and where a call's input names the file (`path` unless set).
+    files: {
+      sandbox__write_file: { op: 'write' },
+      sandbox__edit_file: { op: 'edit' },
+      sandbox__delete_path: { op: 'delete', path: (input) => (input as { target?: string }).target },
+    },
+    commands: ['sandbox__run_command'], // counted in `ranCommands`
+  },
+} satisfies ChatSubagents;
+```
+
+- **Tools.** Exactly the `write.tools` this reply has; never `dispatch_agent`, `ask_choice`,
+  `open_panel` or `update_panel`, even when listed, and a tool whose result says `awaitsUser` comes back
+  as an error. With none of them there this reply, `mode: "write"` is refused and nothing runs. The
+  caps (`maxLive`, `maxPerReply`, `maxSteps`, `maxToolCalls`) and `model` are shared with read
+  subagents: `maxLive` counts read and write subagents together.
+- **Rules.** The chat's built-in rules for its tools, then the write rules (it may edit files and run
+  commands, only for the task; another subagent may be editing at the same time, so it keeps each edit
+  small and reads a file again right before editing it; it finishes with what it changed, what it ran
+  and what it could not do, in at most 200 words), then `write.instructions`.
+- **What comes back.** The read result, plus:
+
+  ```ts
+  {
+    mode: 'write',
+    changed: { path: string; op: string }[], // one entry per path and op
+    ranCommands: number,
+  }
+  ```
+
+  `changed` is built only from the **successful results** of the tools named in `files`: a call that
+  failed (its result has `error`), threw, was refused by the page or never ran is not in it, and neither
+  is anything the subagent *says* it changed. A call to a `commands` tool that ran (failed or not) counts
+  in `ranCommands`, and what it changed is **not** in `changed`, so after a write subagent the assistant
+  should re-read what it needs and run its checks again.
+- **Your checks see every write.** A write subagent's calls go through `beforeToolCall` and fire
+  `tool-result` with `subagent` set, exactly like a read subagent's, so a page that clears its
+  "tests passed" state on a file change clears it for a subagent's change too.
+- **Stop.** The one Stop button stops every subagent, read and write; there is no per-subagent Stop. A
+  file or command a write subagent already changed stays changed.
+- **Continue after the page closed.** A write subagent saves how far it got (`changed`, `ranCommands`,
+  steps) with the reply's progress as it goes (where the chat saves progress at all: not with a host `backend`
+  store). If the page closes while it runs, Continue gives that
+  `dispatch_agent` call the result `status: 'interrupted'` with the `changed` list saved by then (it may
+  have changed more after the last save), and the subagent is never run again.
+- **Card.** It says *"Subagent · edits"*, and how many files it changed and commands it ran; opened, the
+  list of changes.
+
+> **Concurrent write subagents are not kept apart.** There are no path scopes or locks: two write
+> subagents running at once may edit the same file, and the later write wins. The write rules ask each
+> to keep edits small and re-read before editing, and the tool tells the assistant to give each its own
+> files, but nothing enforces it. A free-form command tool is not confined either. Allow only what you
+> are willing to have changed, and set `maxLive: 1` if you need write subagents to run one at a time.
 
 ## More MCP servers
 

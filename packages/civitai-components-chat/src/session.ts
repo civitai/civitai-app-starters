@@ -35,7 +35,7 @@ import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { extraToolSet } from './tools/extra.js';
 import { gateToolSet, nextReply, type ChatToolGate, type ChatToolResult, type GateDeps } from './tools/gate.js';
-import { DISPATCH_AGENT, dispatchAgentTool, resolveSubagents, subagentToolNames, SubagentTracker, type ChatSubagents } from './agent/subagents.js';
+import { DISPATCH_AGENT, dispatchAgentTool, offersDispatch, resolveSubagents, SubagentTracker, type ChatSubagents } from './agent/subagents.js';
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { voiceLanguage } from './voice/languages.js';
@@ -79,7 +79,7 @@ export interface SessionOptions {
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   /** Asked before every tool call; read at the start of every reply. Each result is reported as a `tool-result` event. */
   beforeToolCall?(): ChatToolGate | undefined;
-  /** Read-only subagents (`dispatch_agent`); off unless set. Read at the start of every reply. */
+  /** Subagents (`dispatch_agent`): read ones, and write ones with `write`; off unless set. Read at the start of every reply. */
   subagents?(): ChatSubagents | undefined;
   /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
   ask?(message: string, refs: string[]): void;
@@ -545,7 +545,7 @@ export class ChatSession extends EventTarget {
       onEnded: () => replyEnded.abort(),
     };
     // Offered only when the page opted in and a tool it allowed is here; otherwise the reply's tools are as before.
-    if (subagents && subagentToolNames(subagents.tools, tools).length > 0) {
+    if (subagents && offersDispatch(subagents, tools)) {
       tools[DISPATCH_AGENT] = dispatchAgentTool({
         options: subagents,
         tools: { ...tools },
@@ -555,6 +555,12 @@ export class ChatSession extends EventTarget {
         model: () => this.#model(subagents.model ?? this.assistantModel()),
         maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
         progress: this.subagents,
+        // A write subagent's progress rides on the reply's own saves, so Continue after a closed page gets its `changed`.
+        checkpoint: (id, progress) => {
+          const conversation = this.store.current;
+          const running = conversation?.id === turn.conversationId ? conversation.turns.find((t) => t.seq === turn.seq) : undefined;
+          if (running) this.store.checkpointSubagent?.(running, id, progress).catch((error: unknown) => console.warn('[chat-cvt] could not save the subagent so far', error));
+        },
         ...(this.backend ? { describeError: humanizeHost } : {}),
       });
     }

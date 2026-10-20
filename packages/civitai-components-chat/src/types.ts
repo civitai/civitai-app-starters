@@ -155,7 +155,11 @@ export type SavedTurnStatusV3 = TurnStatus | 'running';
  * only: every tool call in them comes with its result.
  */
 export interface SavedTurnV3 extends Omit<SavedTurn, 'assistant'> {
-  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string; savedAt?: string };
+  /**
+   * `subagents`: on a `running` reply, the write subagents its step had started, by `dispatch_agent` call
+   * id, as far as each had got by that save (see `SubagentCheckpoint`).
+   */
+  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string; savedAt?: string; subagents?: Record<string, unknown> };
 }
 
 /**

@@ -1129,6 +1129,7 @@ civitai-chat-panel {
 }
 
 .cvt-subagent[data-status='error'] .cvt-subagent-status,
+.cvt-subagent[data-status='interrupted'] .cvt-subagent-status,
 .cvt-subagent[data-status='refused'] .cvt-subagent-status {
   color: var(--civitai-color-error);
 }
