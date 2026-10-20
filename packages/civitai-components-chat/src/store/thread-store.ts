@@ -82,6 +82,10 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #heads = new Map<string, Head>();
   /** Bumped by every open and new chat, so an open that lands after a later one cannot take its place. */
   #generation = 0;
+  /** The chat each turn belongs to, so a reply that ends after the viewer left its chat is saved there. */
+  #owners = new WeakMap<Turn, Conversation>();
+  /** Chats deleted (or being deleted) here: a reply of theirs that ends after is not saved, which would bring them back. */
+  #removed = new Set<string>();
   /** A running reply's finished steps so far (`checkpoint`): every save of the chat carries them, as `running`. */
   #progress = new WeakMap<Turn, ModelMessage[]>();
   /** A running reply's write subagents as far as each had got (`checkpointSubagent`), by `dispatch_agent` call id: saved with its progress. */
@@ -129,8 +133,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
    * while it waits ride on it. Nothing until the turn's first save went through: its end saves it then.
    */
   async checkpoint(turn: Turn, { messages }: { messages: ModelMessage[] }): Promise<void> {
-    const conversation = this.current;
-    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    const conversation = this.#ownerOf(turn);
+    if (!conversation || turn.assistant.status !== 'streaming') return;
     this.#progress.set(turn, [...messages]);
     await this.#saveProgress(conversation, turn);
   }
@@ -141,8 +145,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
    * `dispatch_agent` call is saved as it starts, and a subagent's record means nothing without it.
    */
   async checkpointSubagent(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void> {
-    const conversation = this.current;
-    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    const conversation = this.#ownerOf(turn);
+    if (!conversation || turn.assistant.status !== 'streaming') return;
     this.#subagents.set(turn, { ...this.#subagents.get(turn), [toolCallId]: progress });
     if (!this.#progress.has(turn)) return;
     await this.#saveProgress(conversation, turn);
@@ -224,6 +228,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       ...(head?.metadata.panels ? { panels: head.metadata.panels } : {}),
       ...(typeof head?.metadata.model === 'string' && head.metadata.model.trim() ? { model: head.metadata.model.trim() } : {}),
     };
+    for (const turn of turns) this.#owners.set(turn, this.current);
     const jobs = jobWorkflows.flatMap((workflow) => {
       const metadata = jobMetadataOf(workflow);
       return metadata ? [{ metadata, workflow }] : [];
@@ -253,6 +258,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       assistant: { messages: [], status: 'streaming' },
     };
     conversation.turns.push(turn);
+    this.#owners.set(turn, conversation);
     conversation.updatedAt = now;
     this.#submits.set(submitKey(conversation.id, seq), this.#submitHead(conversation, seq));
     this.#touchSummary(conversation);
@@ -260,9 +266,13 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     return turn;
   }
 
+  /**
+   * Saves how the reply to `turn` ended into the chat it belongs to, which need not be the open one: the
+   * viewer may have opened or started another while it ran (its reply is then stopped, and ends after).
+   */
   async completeTurn(turn: Turn): Promise<void> {
     try {
-      const conversation = this.current;
+      const conversation = this.#ownerOf(turn);
       if (!conversation) return;
       await this.#submits.get(submitKey(conversation.id, turn.seq));
       const head = this.#heads.get(conversation.id);
@@ -281,6 +291,13 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       // How it ended is saved, or could not be: either way no reply of this tab's runs any more.
       if (turn.assistant.status !== 'streaming') this.#ended(turn);
     }
+  }
+
+  /** The chat `turn` belongs to: the one it was added to or read with, else the open chat when it holds it. */
+  #ownerOf(turn: Turn): Conversation | null {
+    const owner = this.#owners.get(turn);
+    const conversation = owner?.turns.includes(turn) ? owner : this.current?.turns.includes(turn) ? this.current : null;
+    return conversation && !this.#removed.has(conversation.id) ? conversation : null;
   }
 
   /** A reply of this tab's ended: its lock is let go, its progress dropped, and its note (when it is the one noted) cleared. */
@@ -377,8 +394,15 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   async remove(id: string): Promise<void> {
-    const workflows = await this.#all([APP_TAG, conversationTag(id)]);
-    await Promise.all(workflows.map((workflow) => (workflow.id ? this.#deps.api.deleteWorkflow(workflow.id) : undefined)));
+    this.#removed.add(id);
+    try {
+      const workflows = await this.#all([APP_TAG, conversationTag(id)]);
+      await Promise.all(workflows.map((workflow) => (workflow.id ? this.#deps.api.deleteWorkflow(workflow.id) : undefined)));
+    } catch (error) {
+      // Not deleted: its replies are saved again as usual.
+      this.#removed.delete(id);
+      throw error;
+    }
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
     this.#heads.delete(id);
     if (this.current?.id === id) this.current = null;
