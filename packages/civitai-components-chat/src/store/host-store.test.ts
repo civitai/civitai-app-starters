@@ -568,3 +568,64 @@ describe('HostThreadStore', () => {
     expect(threads.current).toBeNull();
   });
 });
+
+describe('HostThreadStore in remote mode', () => {
+  /** One chat's life as the page drives it: a model and a title before any turn, a reply, then model and title changes. */
+  async function drive(threads: HostThreadStore): Promise<void> {
+    threads.startNew();
+    await threads.setModel('m-early');
+    await threads.setTitle('Early', 'user');
+    const turn = threads.appendUserTurn('plan my week', []);
+    turn.assistant = { messages: [{ role: 'assistant', content: 'Here is a plan.' }], status: 'done' };
+    await threads.completeTurn(turn);
+    await threads.setModel('m-b');
+    await threads.setModel(undefined);
+    await threads.setTitle('Week', 'llm');
+    await threads.setTitle('plan my week', 'first-message');
+  }
+
+  const deps = (store: ReturnType<typeof memoryStore>) => ({ store, scope: 'notes', now: at('2026-10-20T10:00:00Z'), newId: () => 'C1' });
+
+  it('saves nothing itself: a model or title set after the first turn goes to the runner as a patch, one set before it stays on the page', async () => {
+    const store = memoryStore();
+    const patches: unknown[] = [];
+    // Typed loosely so this file also typechecks against a store without remote mode.
+    const threads = new HostThreadStore({ ...deps(store), remote: { patch: async (id: string, patch: unknown) => void patches.push([id, patch]) } } as never);
+    await drive(threads);
+    expect(store.calls).toEqual([]);
+    expect(store.records.size).toBe(0);
+    expect(patches).toEqual([
+      ['C1', { model: 'm-b' }],
+      ['C1', { model: null }],
+      ['C1', { title: 'Week', titleSource: 'llm' }],
+    ]);
+    // The page still holds the chat as it changed it.
+    expect(threads.current?.turns.map((turn) => turn.assistant.status)).toEqual(['done']);
+    expect(threads.summaries.map((summary) => [summary.id, summary.title])).toEqual([['C1', 'plan my week']]);
+  });
+
+  it('control: the same chat without remote mode saves the whole conversation at every step that saves', async () => {
+    const store = memoryStore();
+    await drive(new HostThreadStore(deps(store)));
+    expect(store.calls).toEqual(['save C1', 'save C1', 'save C1', 'save C1', 'save C1', 'save C1']);
+  });
+
+  it("lists, opens and deletes through the host's store; renaming a chat that is not open is a patch, and none after its delete", async () => {
+    const record = (id: string, title: string, updatedAt: string): ChatConversation => ({ id, title, titleSource: 'first-message', createdAt: updatedAt, updatedAt, turns: [], scope: 'notes' });
+    const store = memoryStore([record('C1', 'Week plan', '2026-10-20T09:00:00.000Z'), record('C2', 'Old chat', '2026-10-19T09:00:00.000Z')]);
+    const patches: unknown[] = [];
+    const threads = new HostThreadStore({ ...deps(store), remote: { patch: async (id: string, patch: unknown) => void patches.push([id, patch]) } } as never);
+    await threads.refreshList();
+    expect(threads.summaries.map((summary) => summary.id)).toEqual(['C1', 'C2']);
+    await threads.open('C1');
+    await threads.rename('C2', '  "Archive."  ');
+    expect(patches).toEqual([['C2', { title: 'Archive', titleSource: 'user' }]]);
+    expect(threads.summaries.find((summary) => summary.id === 'C2')?.title).toBe('Archive');
+    // The runner writes the rename; the page does not.
+    expect(store.records.get('C2')?.title).toBe('Old chat');
+    await threads.remove('C2');
+    await threads.rename('C2', 'Again');
+    expect(patches).toHaveLength(1);
+    expect(store.calls).toEqual(['list', 'load C1', 'delete C2']);
+  });
+});

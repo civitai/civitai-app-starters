@@ -60,14 +60,14 @@ describe("ChatSession's runner", () => {
     }
   });
 
-  it("refuses 'remote' without a runner to use, or with a backend, before wiring anything", () => {
+  it("refuses 'remote' without a runner to use, or with a backend that names a gateway, before wiring anything", () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
     try {
       expect(() => new ChatSession(app(), { runner: 'remote' })).toThrow("The 'remote' chat runner needs remote.url: the server runner's base URL.");
       expect(() => new ChatSession(app(), { runner: 'remote', remote: { url: ' ' } })).toThrow(/needs remote\.url/);
       expect(() => new ChatSession(null, { runner: 'remote', remote: { url: RUNNER_URL }, backend: { url: '/api/chat', model: 'm', store: {} as never } })).toThrow(
-        "The 'remote' chat runner cannot be used with a backend: a backend's replies run on the page.",
+        "The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.",
       );
       expect(fetch).not.toHaveBeenCalled();
     } finally {

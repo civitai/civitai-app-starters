@@ -5,7 +5,7 @@ import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValu
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
-import { backendModels, type ChatBackend } from '../backend.js';
+import { backendModels, type ChatBackend, type ChatStoreBackend } from '../backend.js';
 import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
 import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from '../config.js';
@@ -93,7 +93,7 @@ interface Queued extends MessageFiles {
   text: string;
   /** The session (by its start), viewer and chat it was written in: it goes nowhere else. */
   start: number;
-  source: AppClient | ChatBackend | undefined;
+  source: AppClient | ChatBackend | ChatStoreBackend | undefined;
   chatId: string | null;
   /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
   held?: string;
@@ -140,6 +140,13 @@ export const AUTO_RESUME_WINDOW_MS = 30 * 60_000;
  * root carries the chat's styles, so the page's CSS and the chat's stay apart. Slot `welcome`
  * replaces what an empty chat shows.
  */
+/** What the viewer is told when a chat on a remote runner could not be deleted, by `stopRunBeforeDelete`'s error code. */
+const DELETE_BLOCKED: Record<string, string> = {
+  'runner-unreachable': 'Could not reach the chat runner, so the chat was not deleted. Try again.',
+  'stop-refused': 'Could not stop the reply in that chat, so it was not deleted.',
+  'still-stopping': 'The reply in that chat is still stopping, so it was not deleted. Try again in a moment.',
+};
+
 export class CivitaiChat extends LitElement {
   static override styles = [chatStyles, panelStyles];
 
@@ -190,9 +197,11 @@ export class CivitaiChat extends LitElement {
   /**
    * The host's own model gateway and conversation storage. Once set the chat starts without `app`
    * (which it then ignores, with `signIn`), and everything that runs on Civitai's services is off and
-   * hidden. See "Your own backend" in the README.
+   * hidden. See "Your own backend" in the README. With `runner="remote"`, a store-only backend
+   * (`store`, `model`, `models`; no `url`): the host keeps the conversations and the runner runs the
+   * replies. See "Server runner".
    */
-  declare backend?: ChatBackend;
+  declare backend?: ChatBackend | ChatStoreBackend;
   /**
    * Without `app`, the chat still opens and calls this when the viewer first sends a message or
    * adds a file, straight from that click or key press so a popup is allowed. Resolve with the
@@ -309,8 +318,16 @@ export class CivitaiChat extends LitElement {
   declare modelsLoading: boolean;
 
   #session?: ChatSession;
+  /** Chats whose live run is being stopped before their delete: their rows show busy. */
+  #stopping: ReadonlySet<string> = new Set();
+  /**
+   * Why the session for this viewer could not start (options it refuses, e.g. a store-only backend
+   * before `runner="remote"`): shown in place of the chat, and a later `runner` or `remoteRunner`
+   * change starts it again.
+   */
+  #startError?: { source: AppClient | ChatBackend | ChatStoreBackend; message: string };
   #models?: ModelDirectory;
-  #startedWith?: AppClient | ChatBackend;
+  #startedWith?: AppClient | ChatBackend | ChatStoreBackend;
   #started: Promise<ChatSession>;
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
@@ -331,7 +348,7 @@ export class CivitaiChat extends LitElement {
   /** What `can-send-change` last said, so each change is announced once. */
   #announcedCanSend = false;
   /** What the session now open was started for; differs from `#startedWith` while a new one starts. */
-  #sessionFor?: AppClient | ChatBackend;
+  #sessionFor?: AppClient | ChatBackend | ChatStoreBackend;
   /**
    * Counts the sessions started, and which start the open one is: a send or a waiting message knows
    * exactly whether the session it was taken for is still the live one, even when the same app or
@@ -562,6 +579,10 @@ export class CivitaiChat extends LitElement {
       this.#startedWith = source;
       this.#starts++;
       void this.#start(source);
+    } else if ((changed.has('runner') || changed.has('remoteRunner')) && source && this.#startError?.source === source) {
+      // Only a start that failed: a running session keeps the runner it started with.
+      this.#starts++;
+      void this.#start(source);
     }
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
@@ -590,7 +611,7 @@ export class CivitaiChat extends LitElement {
   }
 
   /** What the chat runs on: the backend when set, else the signed-in app. */
-  #source(): AppClient | ChatBackend | undefined {
+  #source(): AppClient | ChatBackend | ChatStoreBackend | undefined {
     return this.backend ?? this.app;
   }
 
@@ -897,7 +918,7 @@ export class CivitaiChat extends LitElement {
     (await this.#composer())?.focus();
   }
 
-  async #start(source: AppClient | ChatBackend): Promise<void> {
+  async #start(source: AppClient | ChatBackend | ChatStoreBackend): Promise<void> {
     // Called right after `#starts` counts this start.
     const start = this.#starts;
     this.#conversationEnd();
@@ -908,27 +929,40 @@ export class CivitaiChat extends LitElement {
     this.loading = false;
     // The agent, its tools and the thread are most of the weight; a chat nobody opens never loads them.
     const { ChatSession, ModelDirectory, defineChatRuntime } = await import('../runtime.js');
-    if (this.#source() !== source) return;
+    // A later start (another viewer, or a restart for the same one) builds the session instead; nothing
+    // is awaited from here to `this.#session = session`, so no session this start builds is left behind.
+    if (this.#source() !== source || start !== this.#starts) return;
     const backend = source === this.backend ? this.backend : undefined;
     const app = backend ? null : (source as AppClient);
     defineChatRuntime();
     const scope = this.scope && SCOPE_PATTERN.test(this.scope) ? this.scope : undefined;
     if (this.scope && !scope) console.warn(`[chat-cvt] scope "${this.scope}" is ignored: use letters, digits, ".", "_" and "-", up to 64`);
-    const session = new ChatSession(app, {
-      scope,
-      ...(backend ? { backend } : {}),
-      ...(this.runner ? { runner: this.runner } : {}),
-      ...(this.remoteRunner ? { remote: this.remoteRunner } : {}),
-      hostTools: () => this.tools,
-      hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
-      systemPrompt: () => this.systemPrompt,
-      mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
-      beforeToolCall: () => this.beforeToolCall,
-      subagents: () => this.subagents,
-      // While a reply is still coming the message waits in the box instead of being dropped.
-      ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
-      compose: (message, refs) => this.#composeWith(message, refs),
-    });
+    let session: ChatSession;
+    try {
+      session = new ChatSession(app, {
+        scope,
+        ...(backend ? { backend } : {}),
+        ...(this.runner ? { runner: this.runner } : {}),
+        ...(this.remoteRunner ? { remote: this.remoteRunner } : {}),
+        hostTools: () => this.tools,
+        hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
+        systemPrompt: () => this.systemPrompt,
+        mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
+        beforeToolCall: () => this.beforeToolCall,
+        subagents: () => this.subagents,
+        // While a reply is still coming the message waits in the box instead of being dropped.
+        ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
+        compose: (message, refs) => this.#composeWith(message, refs),
+      });
+    } catch (error) {
+      // Options the session refuses: said in the chat, not left as an unhandled rejection under a spinner.
+      console.warn('[chat-cvt] the chat could not start', error);
+      this.#session = undefined;
+      this.#startError = { source, message: `The chat could not start: ${(error as Error).message}` };
+      this.requestUpdate();
+      return;
+    }
+    this.#startError = undefined;
     const { settings } = session;
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
@@ -1543,7 +1577,24 @@ export class CivitaiChat extends LitElement {
     if (!dialog) return;
     dialog.message = `"${title}" and everything made in it will be removed.`;
     if (!(await dialog.ask())) return;
-    const store = this.#session?.store;
+    const session = this.#session;
+    const store = session?.store;
+    // Remote on a host's store: a live run saves the chat when it ends, so the chat is deleted only once
+    // its run has been stopped and has ended; if that cannot be made sure of, nothing is deleted and the
+    // viewer stays where they are. Every other mode deletes at once, as before.
+    if (session?.stopsRunBeforeDelete) {
+      this.#stopping = new Set([...this.#stopping, id]);
+      this.requestUpdate();
+      try {
+        await session.stopRunBeforeDelete(id);
+      } catch (error) {
+        this.#toast(DELETE_BLOCKED[(error as { code?: string } | null)?.code ?? ''] ?? DELETE_BLOCKED['stop-refused']!, error);
+        return;
+      } finally {
+        this.#stopping = new Set([...this.#stopping].filter((stopping) => stopping !== id));
+        this.requestUpdate();
+      }
+    }
     const wasCurrent = store?.current?.id === id;
     // A store that takes the chat off the list as its delete starts (`supersedesOpens`, which now says
     // only this): off the open chat at once, so a delete that is slow (or never answers) holds nothing up.
@@ -1654,6 +1705,7 @@ export class CivitaiChat extends LitElement {
       .summaries=${session.store.summaries}
       .currentId=${conversation?.id ?? null}
       .hasMore=${session.store.hasMore}
+      .stoppingIds=${this.#stopping}
       .userName=${this.userName}
       @cvt-new-chat=${() => this.newChat()}
       @cvt-open=${(e: CustomEvent<{ id: string }>) => void this.#open(e.detail.id)}
@@ -1692,7 +1744,11 @@ export class CivitaiChat extends LitElement {
 
   override render(): TemplateResult {
     const session = this.#session;
-    if (!session) return this.#signsIn && !this.app ? this.#signedOut() : html`<div class="cvt-starting"><civitai-loader></civitai-loader></div>`;
+    if (!session) {
+      const failed = this.#startError;
+      if (failed && failed.source === this.#source()) return html`<div class="cvt-starting cvt-start-error" role="alert">${failed.message}</div>`;
+      return this.#signsIn && !this.app ? this.#signedOut() : html`<div class="cvt-starting"><civitai-loader></civitai-loader></div>`;
+    }
     // On a host backend: no files, voice, Buzz, posting or sign-in, so none of it is shown.
     const hosted = Boolean(session.backend);
     const conversation = session.store.current;

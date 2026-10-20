@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { fakeMcpServers } from './test-support/fake-mcp.js';
+import { extraToolSet } from './tools/extra.js';
 
 /**
  * `@civitai/components-chat/core` and `/runner-protocol` are what a server-side runner imports, so
@@ -95,6 +98,31 @@ describe('the headless entries in plain Node', () => {
     expect(protocol.RUN_PROTOCOL_VERSION).toBe(1);
     expect(typeof protocol.createPartsDiffer).toBe('function');
     expect(typeof protocol.applyRunEvent).toBe('function');
+  });
+
+  it("turn an MCP server's tools into the reply's tools exactly as the page does: the same adapter, the same names, the same trim", async () => {
+    // Loosely typed, so this file also typechecks against a core entry without the adapter.
+    const core = (await import('./core.js')) as unknown as Record<string, unknown>;
+    // The page's own functions, not copies: a runner's tools cannot drift from the page's.
+    expect(core.extraToolSet).toBe(extraToolSet);
+    expect([core.RESULT_HEAD_CHARS, core.RESULT_TAIL_CHARS]).toEqual([2_000, 6_000]);
+    expect((core.namespacedToolName as (server: string, tool: string) => string)('docs', 'search')).toBe('docs__search');
+
+    const url = 'https://example.com/mcp';
+    // Three distinct runs, so the middle one is the only thing a correct trim leaves out.
+    const reply = `${'a'.repeat(2_000)}${'b'.repeat(1_234)}${'c'.repeat(6_000)}`;
+    const mcp = fakeMcpServers({ [url]: [{ name: 'search', description: 'Searches the docs.', run: () => ({ content: [{ type: 'text', text: reply }] }) }] });
+    const Pool = core.McpServerPool as new (deps: { onError(server: unknown, error: unknown): void }) => { sync(servers: unknown[]): void; tools(): Promise<unknown[]>; close(): void };
+    const onError = vi.fn();
+    const pool = new Pool({ onError });
+    pool.sync([{ id: 'docs', url, fetch: mcp.fetch, label: 'Docs' }]);
+    const tools = (core.extraToolSet as typeof extraToolSet)((await pool.tools()) as never, { taken: {} });
+    expect(Object.keys(tools)).toEqual(['docs__search']);
+    expect(tools.docs__search!.description).toBe('[Docs] Searches the docs.');
+    const text = await tools.docs__search!.execute!({}, { toolCallId: 'c', messages: [] });
+    expect(text).toBe(`${'a'.repeat(2_000)}\n…(1234 characters omitted)…\n${'c'.repeat(6_000)}`);
+    expect(onError).not.toHaveBeenCalled();
+    pool.close();
   });
 
   it('are published as their own subpaths, built from these sources', () => {
