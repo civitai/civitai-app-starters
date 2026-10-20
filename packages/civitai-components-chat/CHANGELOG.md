@@ -1,5 +1,15 @@
 # @civitai/components-chat
 
+## 0.22.0
+
+### Minor Changes
+
+- 78efe14: Deep-linking a conversation: `<civitai-chat conversation-id="…">` (property `conversationId`) opens a saved conversation by its id, with the orchestrator store, a host's store, and with the server runner on either (a chat whose reply is still running is followed again). An id with nothing saved under it, or one the store cannot read, shows "Could not open that chat." and leaves the open chat, and any reply running in it, as they are. Opening a chat saves nothing. `chat-change` now carries `saved` (`{ chatId, saved }`), and fires once more when a new chat's first save lands, so a page writes only a saved chat's id into its URL and a reload never asks for a chat that does not exist yet. Stores' `open(id, { existing: true })` rejects with a `not-found` error instead of opening an empty chat, and stores have `isSaved(id)` and a `saved-change` event.
+
+  A host backend's new `newChatModel` option, on a backend with a gateway and on a store-only backend: the model a new chat starts on (say, the viewer's last pick), when it is one of `models`. A saved chat keeps its own model, and one saved without a model keeps following `model`. New `model-change` event (`ModelChangeDetail`: `{ chatId, model }`) when the viewer changes the open chat's model.
+
+- 10c5103: Experimental: `runner="remote"` now works with a host's own conversation store. Pass a store-only backend (`ChatStoreBackend`: `store`, `model`, `models`, and no `url` or `fetch`). The chat list, opening a chat and deleting one go to the host's store, and each reply runs on the server runner, which is the only writer of the saved conversation: the page never calls `store.save`, and sends title and model changes to the runner as patches. Deleting a chat in this mode first stops its live run on the runner and waits until the runner lists it as ended (its final save done), with the chat's row shown busy; if the runner cannot be reached, refuses the stop, or the run has not ended within the runner's timeout, nothing is deleted and the viewer stays on the chat with an error saying which. In remote mode, a backend that names a gateway (`url` or `fetch`) is refused, and so is a backend without a `url` in the browser; a blank `url` counts as none in both modes. `<civitai-chat>` shows such a refusal in place of the chat instead of an endless spinner, and setting `runner` or `remoteRunner` afterwards starts it again. `runner="browser"` with a gateway backend and `runner="remote"` without a backend are unchanged. `@civitai/components-chat/core` now also exports the page's MCP-to-tools adapter (`McpServerPool`, `extraToolSet`, `namespacedToolName`, `RESULT_HEAD_CHARS`, `RESULT_TAIL_CHARS`), so a server runner gives an MCP server's tools the same `${id}__${tool}` names and the same trimmed replies as the page. The run protocol is unchanged.
+
 ## 0.21.0
 
 ### Minor Changes
