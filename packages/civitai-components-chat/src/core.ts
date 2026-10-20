@@ -4,7 +4,9 @@
  * Everything a server-side runner needs to run a reply exactly as `<civitai-chat>` runs it in the
  * browser: `AgentCore` (the step loop, its stop conditions and the automatic retries of a dropped
  * connection), the parts a reply shows, the model provider, the tool gate, the prompt and history
- * builders, read-only subagents, and the conversation store. No module this imports, however
+ * builders, read-only subagents, the conversation store, and an MCP server's tools as the chat offers
+ * them (`McpServerPool` + `extraToolSet`: each named `${serverId}__${tool}`, its reply kept to its
+ * first `RESULT_HEAD_CHARS` and last `RESULT_TAIL_CHARS` characters). No module this imports, however
  * indirectly, loads Lit or anything that needs a DOM (`core.test.ts` walks the import graph and fails
  * otherwise), so it loads in plain Node.
  *
@@ -59,6 +61,8 @@ export {
   type SubagentProgress,
 } from './agent/subagents.js';
 export { humanize, humanizeHost, RETRYABLE_ERRORS, type ErrorKind, type HumanError } from './ux/humanize.js';
+export { McpServerPool, namespacedToolName, type ChatMcpServer, type McpServerPoolDeps, type ServerTools } from './mcp/servers.js';
+export { extraToolSet, RESULT_HEAD_CHARS, RESULT_TAIL_CHARS, type ExtraToolDeps } from './tools/extra.js';
 export { isSuperseded, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation } from './store/conversation-store.js';
 export { ThreadStore, turnFrom, conversationMetadataOf, type OpenedConversation, type ThreadStoreDeps } from './store/thread-store.js';
 export type { Attachment, Conversation, ConversationMetadata, ConversationMetadataV3, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, Turn, TurnStatus, TurnUser } from './types.js';

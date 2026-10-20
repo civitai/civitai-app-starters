@@ -3,7 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import type { ChatAgent } from './agent/chat-agent.js';
-import { absoluteUrl, backendModels, newChatModelOf, unavailableApp, type ChatBackend } from './backend.js';
+import { absoluteUrl, backendModels, hasGatewayUrl, namesGateway, newChatModelOf, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
@@ -40,9 +40,22 @@ import { DISPATCH_AGENT, dispatchAgentTool, offersDispatch, resolveSubagents, Su
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
 import { RemoteAgent } from './remote/remote-agent.js';
-import { RunnerClient, type ChatRemoteRunner } from './remote/runner-client.js';
+import { REQUEST_TIMEOUT_MS, RunnerClient, RunnerHttpError, type ChatRemoteRunner } from './remote/runner-client.js';
 import { voiceLanguage } from './voice/languages.js';
 import { transcribe } from './voice/transcribe.js';
+
+/** How often a stopped run is looked up again before its chat is deleted, until it has ended. */
+export const STOP_POLL_MS = 250;
+
+/**
+ * Why `stopRunBeforeDelete` refused (its error's `code`): the runner could not be reached, it refused
+ * the stop, or the run had not ended in time. In every case nothing should be deleted.
+ */
+export type DeleteBlockedCode = 'runner-unreachable' | 'stop-refused' | 'still-stopping';
+
+function deleteBlocked(code: DeleteBlockedCode, message: string, cause?: unknown): Error {
+  return Object.assign(new Error(message), { code, ...(cause === undefined ? {} : { cause }) });
+}
 
 /** Jobs still waiting for a click are offered again only in the most recent turns. */
 const REOFFER_TURNS = 3;
@@ -63,7 +76,11 @@ export interface PendingUpload {
 export type ChatRunner = 'browser' | 'remote';
 
 export interface SessionOptions {
-  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and no `backend`. */
+  /**
+   * Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and takes
+   * either no `backend` (conversations on the orchestrator, with a signed-in app) or a store-only one
+   * ({@link ChatStoreBackend}: conversations in the host's store).
+   */
   runner?: ChatRunner;
   /** The server runner `runner: 'remote'` uses. */
   remote?: ChatRemoteRunner;
@@ -89,18 +106,24 @@ export interface SessionOptions {
   /**
    * The host's own model gateway and storage. The session then needs no `app`, keeps conversations
    * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice,
-   * posting or free tier.
+   * posting or free tier. With `runner: 'remote'`, a {@link ChatStoreBackend}: the host keeps the
+   * conversations and the runner runs the replies, so it names no gateway.
    */
-  backend?: ChatBackend;
+  backend?: ChatBackend | ChatStoreBackend;
 }
 
 /** A runner the options cannot run is refused before anything is wired: whether it is the remote one. */
 function assertRunner(options: SessionOptions): boolean {
-  const { runner } = options;
-  if (runner === undefined || runner === 'browser') return false;
+  const { runner, backend } = options;
+  if (runner === undefined || runner === 'browser') {
+    // A store-only backend has no gateway for a page-run reply to go to (`hasGatewayUrl`: a missing or blank `url`).
+    if (backend && !hasGatewayUrl(backend)) throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
+    return false;
+  }
   if (runner !== 'remote') throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser' or 'remote'.`);
   if (typeof options.remote?.url !== 'string' || !options.remote.url.trim()) throw new Error("The 'remote' chat runner needs remote.url: the server runner's base URL.");
-  if (options.backend) throw new Error("The 'remote' chat runner cannot be used with a backend: a backend's replies run on the page.");
+  // Remote with a backend: the host keeps the conversations, the runner runs the replies, so the page has no gateway to call.
+  if (backend && namesGateway(backend)) throw new Error("The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.");
   return true;
 }
 
@@ -127,7 +150,8 @@ export interface LiveSession {
 export class ChatSession extends EventTarget {
   /** The viewer's Civitai client; with a `backend`, a stand-in that refuses every call. */
   readonly app: AppClient;
-  readonly backend: ChatBackend | undefined;
+  /** With `runner: 'remote'`, a store-only one. */
+  readonly backend: ChatBackend | ChatStoreBackend | undefined;
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
@@ -158,12 +182,15 @@ export class ChatSession extends EventTarget {
   #runTools = new Map<string, JobToolInfo>();
   /** With `runner: 'remote'`: the agent following the server's runs. */
   #remote: RemoteAgent | undefined;
+  /** With `runner: 'remote'`: the runner's calls. */
+  #runner: RunnerClient | undefined;
 
   /** `app` may be `null` only with `options.backend`. */
   constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
     const backend = options.backend;
     const remote = assertRunner(options) ? new RunnerClient(options.remote!) : undefined;
+    this.#runner = remote;
     if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
     const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
@@ -207,7 +234,12 @@ export class ChatSession extends EventTarget {
       ...(options.compose ? { compose: options.compose } : {}),
     });
     this.store = backend
-      ? new HostThreadStore({ store: backend.store, scope: options.scope })
+      ? new HostThreadStore({
+          store: backend.store,
+          scope: options.scope,
+          // Remote: the runner is the only writer of each conversation in the host's store.
+          ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
+        })
       : new ThreadStore({
           orchestration: app.orchestration,
           api: this.api,
@@ -322,8 +354,10 @@ export class ChatSession extends EventTarget {
 
   #model(id: string): LanguageModel {
     let model = this.#models.get(id);
-    if (!model && this.backend) {
-      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(this.backend.url), model: id, ...(this.backend.fetch ? { fetch: this.backend.fetch } : {}) })));
+    // Only a page-run reply asks for a model, and in the browser a backend always names its gateway (`assertRunner`).
+    const backend = this.backend as ChatBackend | undefined;
+    if (!model && backend) {
+      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(backend.url), model: id, ...(backend.fetch ? { fetch: backend.fetch } : {}) })));
     }
     if (!model) {
       const wrap = (inner: typeof fetch) =>
@@ -466,6 +500,44 @@ export class ChatSession extends EventTarget {
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
     this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
+  }
+
+  /** Remote mode on a host's store, where `stopRunBeforeDelete` has something to do. */
+  get stopsRunBeforeDelete(): boolean {
+    return Boolean(this.#runner && this.backend);
+  }
+
+  /**
+   * Before a chat is deleted from a host's store in remote mode: stops its live run, if it has one, and
+   * waits until the runner no longer lists a live run for it. A run saves its final state before it
+   * ends, so once none is live that save has landed and a delete after it stays deleted. A stop answered
+   * 404 (the run ended meanwhile) counts as stopped. Rejects, with a {@link DeleteBlockedCode} as its
+   * `code`, when the runner could not be reached, refused the stop, or still listed the run after
+   * `timeoutMs` (the runner's `timeoutMs`, else {@link REQUEST_TIMEOUT_MS}); then nothing should be
+   * deleted. Does nothing in any other mode.
+   */
+  async stopRunBeforeDelete(conversationId: string, { pollMs = STOP_POLL_MS }: { pollMs?: number } = {}): Promise<void> {
+    if (!this.stopsRunBeforeDelete) return;
+    const runner = this.#runner!;
+    const lookup = async () => {
+      try {
+        return await runner.lookup(conversationId);
+      } catch (error) {
+        throw deleteBlocked('runner-unreachable', 'The chat runner could not be reached.', error);
+      }
+    };
+    const run = await lookup();
+    if (!run) return;
+    try {
+      await runner.stop(run.runId);
+    } catch (error) {
+      if (!(error instanceof RunnerHttpError && error.status === 404)) throw deleteBlocked('stop-refused', 'The chat runner did not stop the reply.', error);
+    }
+    const deadline = Date.now() + (runner.options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    while (await lookup()) {
+      if (Date.now() >= deadline) throw deleteBlocked('still-stopping', 'The reply is still stopping.');
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
   }
 
   newConversation(): void {

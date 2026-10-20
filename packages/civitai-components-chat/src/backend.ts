@@ -30,13 +30,48 @@ export interface ChatBackend {
   store: ChatConversationStore;
 }
 
+/**
+ * Experimental, with `runner: 'remote'` only: a host that keeps the conversations, while every reply
+ * runs on the server runner. The chat starts without an `app`, lists, opens, renames and deletes chats
+ * through `store`, and offers `model` and `models` in the picker; the runner writes each reply into
+ * the host's store itself. No `url` or `fetch`: the page sends no model request, so a backend that
+ * names a gateway is refused in remote mode, as is one without `url` in the browser.
+ */
+export interface ChatStoreBackend {
+  /** The model id a chat uses unless the viewer picks one of `models`; sent with each run. */
+  model: string;
+  /** Other models the viewer may pick for a chat. Without any, the model button is hidden. */
+  models?: ChatModelOption[];
+  /** The model a new chat starts on, as for {@link ChatBackend.newChatModel}. */
+  newChatModel?: string;
+  /** Where conversations are kept. */
+  store: ChatConversationStore;
+  url?: never;
+  fetch?: never;
+}
+
+/**
+ * Whether the backend sets a gateway `url`: anything the model client takes (a string, or a URL
+ * object), but not a missing or blank one. The one test for a `url`, in the browser and in remote mode.
+ */
+export function hasGatewayUrl(backend: ChatBackend | ChatStoreBackend): boolean {
+  const url = (backend as Partial<ChatBackend>).url as unknown;
+  if (url === undefined || url === null) return false;
+  return typeof url !== 'string' || url.trim() !== '';
+}
+
+/** Whether the backend names a model gateway (a `url`, by {@link hasGatewayUrl}, or a `fetch`), which only a page-run reply uses. */
+export function namesGateway(backend: ChatBackend | ChatStoreBackend): backend is ChatBackend {
+  return hasGatewayUrl(backend) || (backend as Partial<ChatBackend>).fetch !== undefined;
+}
+
 /** The models a viewer may pick besides the backend's default: usable ids only, the default left out. */
-export function backendModels(backend: ChatBackend): ChatModelOption[] {
+export function backendModels(backend: Pick<ChatBackend, 'model' | 'models'>): ChatModelOption[] {
   return (backend.models ?? []).filter((model) => typeof model?.id === 'string' && model.id.trim() !== '' && model.id !== backend.model);
 }
 
 /** The model a new chat starts on as its own: `newChatModel` when it is one of `models` (not `model` itself), else none. */
-export function newChatModelOf(backend: ChatBackend): string | undefined {
+export function newChatModelOf(backend: ChatBackend | ChatStoreBackend): string | undefined {
   const wanted = typeof backend.newChatModel === 'string' ? backend.newChatModel.trim() : '';
   return wanted && backendModels(backend).some((model) => model.id === wanted) ? wanted : undefined;
 }
