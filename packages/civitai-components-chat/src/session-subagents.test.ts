@@ -102,6 +102,59 @@ describe('subagents are opt-in', () => {
   });
 });
 
+describe('write subagents through the session', () => {
+  const dispatchDescription = (body: Body | undefined) =>
+    String((body?.tools?.find((tool) => tool.function.name === 'dispatch_agent')?.function as { description?: string } | undefined)?.description ?? '');
+
+  // An invariant guard: without a write opt-in, a write dispatch is refused as in S1.
+  it('refuses mode "write" without the write opt-in, with write tools in the read allowlist: no subagent request, nothing run', async () => {
+    const { session, childBodies, ran, parentBodies } = setup({
+      subagents: () => ({ tools: ['sandbox__read_file', 'sandbox__write_file'] }),
+      parent: [() => callsReply(['d1', 'dispatch_agent', { task: 'edit it', mode: 'write' }]), () => textReply('ok')],
+    });
+    session.newConversation();
+    await session.send('go');
+    expect(childBodies).toHaveLength(0);
+    expect(ran).toEqual([]);
+    const turn = session.store.current!.turns[0]!;
+    const result = turn.assistant.messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'd1');
+    expect((result as { output: { value: unknown } }).output.value).toMatchObject({ kind: 'subagent', error: 'write subagents are not available yet' });
+    // The tool tells the assistant only read is available.
+    expect(dispatchDescription(parentBodies[0])).toContain('mode must be "read"');
+  });
+
+  it('offers dispatch_agent when the page allows only write subagents', async () => {
+    const off = await names(setup().session);
+    const subagents = { tools: [], write: { tools: ['sandbox__write_file'] } } as unknown as ChatSubagents;
+    expect(await names(setup({ subagents: () => subagents }).session)).toEqual([...off, 'dispatch_agent'].sort());
+  });
+
+  it('runs a write subagent with its write allowlist; its file writes reach tool-result marked with the dispatch, and come back in changed', async () => {
+    const subagents = {
+      tools: ['sandbox__read_file'],
+      write: { tools: ['sandbox__read_file', 'sandbox__write_file', 'ask_choice', 'dispatch_agent'], files: { sandbox__write_file: { op: 'write' } } },
+    } as unknown as ChatSubagents;
+    const { session, childBodies, parentBodies, ran } = setup({
+      subagents: () => subagents,
+      parent: [() => callsReply(['d1', 'dispatch_agent', { task: 'edit the app', mode: 'write' }]), () => textReply('Edited.')],
+      child: (_task, n) => (n === 1 ? callsReply(['w1', 'sandbox__write_file', { path: '/src/a.ts' }]) : textReply('Changed /src/a.ts and /src/b.ts.')),
+    });
+    const results: ChatToolResult[] = [];
+    session.addEventListener('tool-result', (event) => results.push((event as CustomEvent<ChatToolResult>).detail));
+    session.newConversation();
+    await session.send('go');
+    expect(childBodies[0]!.tools!.map((tool) => tool.function.name).sort()).toEqual(['sandbox__read_file', 'sandbox__write_file']);
+    expect(ran).toEqual(['write_file:/src/a.ts']);
+    // The page sees the write (its checks can be cleared), marked as the subagent's.
+    expect(results.filter((r) => r.name === 'sandbox__write_file')).toEqual([expect.objectContaining({ isError: false, subagent: 'd1' })]);
+    const turn = session.store.current!.turns[0]!;
+    const result = turn.assistant.messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'd1');
+    expect((result as { output: { value: unknown } }).output.value).toMatchObject({ kind: 'subagent', mode: 'write', status: 'done', changed: [{ path: '/src/a.ts', op: 'write' }], ranCommands: 0 });
+    expect(dispatchDescription(parentBodies[0])).toContain('"write"');
+    expect(dispatchDescription(parentBodies[0])).toContain('ranCommands');
+  });
+});
+
 describe('a subagent’s tools', () => {
   it('are exactly the allowlisted ones this reply has: never dispatch_agent or ask_choice, even when listed, and no tool that is not listed', async () => {
     const { session, childBodies, parentBodies } = setup({

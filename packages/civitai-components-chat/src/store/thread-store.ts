@@ -5,7 +5,9 @@ import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag, stepLi
 import type { OrchestrationApi } from '../orchestration/api.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
-import type { ModelMessage } from 'ai';
+import type { JSONValue, ModelMessage } from 'ai';
+
+import { DISPATCH_AGENT, interruptedSubagent, type SubagentCheckpoint } from '../agent/subagent-result.js';
 
 import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
 import { supersededError, type ConversationStore } from './conversation-store.js';
@@ -73,6 +75,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #generation = 0;
   /** A running reply's finished steps so far (`checkpoint`): every save of the chat carries them, as `running`. */
   #progress = new WeakMap<Turn, ModelMessage[]>();
+  /** A running reply's write subagents as far as each had got (`checkpointSubagent`), by `dispatch_agent` call id: saved with its progress. */
+  #subagents = new WeakMap<Turn, Record<string, SubagentCheckpoint>>();
   /** Heads with a progress save queued and not yet built: another waits for that one, which is built from the latest state. */
   #checkpointQueued = new Set<string>();
   /** Replies running in this tab: the chat each is in, and how to let go of its lock once it ended. */
@@ -102,6 +106,9 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     }
     this.#running.get(turn)?.release();
     this.#running.set(turn, { conversationId: conversation.id, release });
+    // A new run of the reply (Retry/Continue): an earlier run's write subagents all have results by now,
+    // and a record of theirs must not be read as this run's if a provider reuses a call id.
+    this.#subagents.delete(turn);
   }
 
   /**
@@ -116,6 +123,23 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     const conversation = this.current;
     if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
     this.#progress.set(turn, [...messages]);
+    await this.#saveProgress(conversation, turn);
+  }
+
+  /**
+   * Saves how far a write subagent of a running reply has got, with the reply's progress (see
+   * `checkpoint`), through the same queue. Nothing until that reply has saved progress: its
+   * `dispatch_agent` call is saved as it starts, and a subagent's record means nothing without it.
+   */
+  async checkpointSubagent(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void> {
+    const conversation = this.current;
+    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    this.#subagents.set(turn, { ...this.#subagents.get(turn), [toolCallId]: progress });
+    if (!this.#progress.has(turn)) return;
+    await this.#saveProgress(conversation, turn);
+  }
+
+  async #saveProgress(conversation: Conversation, turn: Turn): Promise<void> {
     await this.#submits.get(submitKey(conversation.id, turn.seq));
     const head = this.#heads.get(conversation.id);
     if (head?.seq !== turn.seq || this.#checkpointQueued.has(head.workflowId)) return;
@@ -394,7 +418,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       const progress = turn.assistant.status === 'streaming' ? this.#progress.get(turn) : undefined;
       if (!progress) return saved(turn);
       running = true;
-      return { ...saved(turn), assistant: { messages: progress, status: 'running', savedAt } };
+      const subagents = unfinishedSubagents(progress, this.#subagents.get(turn));
+      return { ...saved(turn), assistant: { messages: progress, status: 'running', savedAt, ...(subagents ? { subagents } : {}) } };
     });
     const shared = {
       app: 'chat-cvt' as const,
@@ -658,7 +683,7 @@ export const INTERRUPTED_CALL = 'interrupted: this call did not finish and was n
  * it finished) gets {@link INTERRUPTED_CALL} as an error, right after the message that made it, beside
  * the results that did come in.
  */
-function withInterruptedCalls(messages: ModelMessage[]): ModelMessage[] {
+function withInterruptedCalls(messages: ModelMessage[], subagents?: Record<string, unknown>): ModelMessage[] {
   const out: ModelMessage[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
@@ -666,11 +691,7 @@ function withInterruptedCalls(messages: ModelMessage[]): ModelMessage[] {
     if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
     const next = messages[index + 1];
     const answered = new Set(next?.role === 'tool' ? next.content.flatMap((part) => (part.type === 'tool-result' ? [part.toolCallId] : [])) : []);
-    const missing = message.content.flatMap((part) =>
-      part.type === 'tool-call' && !answered.has(part.toolCallId)
-        ? [{ type: 'tool-result' as const, toolCallId: part.toolCallId, toolName: part.toolName, output: { type: 'error-text' as const, value: INTERRUPTED_CALL } }]
-        : [],
-    );
+    const missing = message.content.flatMap((part) => (part.type === 'tool-call' && !answered.has(part.toolCallId) ? [interruptedResult(part.toolCallId, part.toolName, subagents)] : []));
     if (missing.length === 0) continue;
     if (next?.role === 'tool') {
       out.push({ ...next, content: [...next.content, ...missing] });
@@ -678,6 +699,43 @@ function withInterruptedCalls(messages: ModelMessage[]): ModelMessage[] {
     } else out.push({ role: 'tool', content: missing });
   }
   return out;
+}
+
+/**
+ * The ids of the tool calls in `messages` that have no result: a call whose result is not in the tool
+ * message right after the assistant message that made it (the rule {@link withInterruptedCalls} reads by).
+ */
+function unansweredCalls(messages: ModelMessage[]): Set<string> {
+  const ids = new Set<string>();
+  messages.forEach((message, index) => {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) return;
+    const next = messages[index + 1];
+    const answered = new Set(next?.role === 'tool' ? next.content.flatMap((part) => (part.type === 'tool-result' ? [part.toolCallId] : [])) : []);
+    for (const part of message.content) if (part.type === 'tool-call' && !answered.has(part.toolCallId)) ids.add(part.toolCallId);
+  });
+  return ids;
+}
+
+/**
+ * The write subagents worth saving with `messages`: only those whose `dispatch_agent` call has no result
+ * there yet, the only ones Continue reads. One whose result is in is not saved again.
+ */
+function unfinishedSubagents(messages: ModelMessage[], subagents: Record<string, SubagentCheckpoint> | undefined): Record<string, SubagentCheckpoint> | undefined {
+  if (!subagents) return undefined;
+  const open = unansweredCalls(messages);
+  const kept = Object.entries(subagents).filter(([id]) => open.has(id));
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+
+/**
+ * The result a call with none is given: {@link INTERRUPTED_CALL}, or, for the chat's own write subagent
+ * saved with the reply's progress, its interrupted result with the files it had changed by then.
+ */
+function interruptedResult(toolCallId: string, toolName: string, subagents: Record<string, unknown> | undefined) {
+  const subagent = toolName === DISPATCH_AGENT && subagents && Object.hasOwn(subagents, toolCallId) ? interruptedSubagent(subagents[toolCallId]) : undefined;
+  return subagent
+    ? { type: 'tool-result' as const, toolCallId, toolName, output: { type: 'json' as const, value: subagent as unknown as JSONValue } }
+    : { type: 'tool-result' as const, toolCallId, toolName, output: { type: 'error-text' as const, value: INTERRUPTED_CALL } };
 }
 
 /**
@@ -714,7 +772,8 @@ export function turnFrom(turn: SavedTurn | SavedTurnV3): Turn {
 
 function interrupted(turn: SavedTurnV3, assistant: NonNullable<SavedTurnV3['assistant']>): Turn['assistant'] {
   // Shown and carried on from alike: a call that never finished reads as interrupted, not as still running.
-  const messages = withInterruptedCalls(Array.isArray(assistant.messages) ? assistant.messages : []);
+  const subagents = assistant.subagents && typeof assistant.subagents === 'object' ? assistant.subagents : undefined;
+  const messages = withInterruptedCalls(Array.isArray(assistant.messages) ? assistant.messages : [], subagents);
   const resume = continuePoint(messages, assistant.savedAt);
   const savedAt = typeof assistant.savedAt === 'string' ? assistant.savedAt : turn.createdAt;
   return { messages, status: 'error', error: CUT_OFF, savedAt, ...(resume ? { resume, errorKind: 'interrupted' } : {}) };

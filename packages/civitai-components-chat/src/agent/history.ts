@@ -1,4 +1,4 @@
-import type { ModelMessage, ToolModelMessage } from 'ai';
+import type { JSONValue, ModelMessage, ToolModelMessage } from 'ai';
 
 import { contextBudget } from '../config.js';
 import { DISPATCH_AGENT, subagentResultOf } from './subagent-result.js';
@@ -139,7 +139,7 @@ function withoutLongResults(message: ModelMessage): ModelMessage {
       const subagent = part.toolName === DISPATCH_AGENT && part.output.type === 'json' ? subagentResultOf(part.output.value) : undefined;
       if (subagent) {
         const { activity: _activity, ...kept } = subagent;
-        return { ...part, output: { type: 'json' as const, value: kept } };
+        return { ...part, output: { type: 'json' as const, value: kept as unknown as JSONValue } };
       }
       return { ...part, output: { type: 'text' as const, value: RESULT_LEFT_OUT } };
     }),

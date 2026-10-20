@@ -98,21 +98,23 @@ const SUBAGENT_STATUS: Record<SubagentStatus | 'calling' | 'refused', string> = 
   ran_out: 'Hit its limit',
   stopped: 'Stopped',
   error: 'Failed',
+  interrupted: 'Interrupted',
   refused: 'Not started',
 };
 
 const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
 
-/**
- * A subagent's card: its task, steps and tool calls, and how it went; opened, its summary and what it
- * looked at. While it runs it reads its progress from the session; after, only from the saved result,
- * so it shows the same after a reload.
- */
 /** A `dispatch_agent` call that is the chat's own: running and tracked, or with an output it marked. */
 function isOwnSubagent(part: ToolPart, ctx: ToolViewContext): boolean {
   return part.state === 'calling' ? ctx.subagents?.get(part.toolCallId) !== undefined : isSubagentOutput(part.output);
 }
 
+/**
+ * A subagent's card: its task, steps and tool calls, and how it went (a write subagent also says it edits,
+ * and how many files it changed and commands it ran); opened, its summary, what it changed and what it
+ * looked at. While it runs it reads its progress from the session; after, only from the saved result,
+ * so it shows the same after a reload.
+ */
 function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | undefined {
   // A page tool of the same name (offered while subagents are off) shows as any other call.
   if (!isOwnSubagent(part, ctx)) return undefined;
@@ -129,15 +131,20 @@ function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | 
   const open = rows?.isOpen(key) ?? false;
   const body = `cvt-subagent-${part.toolCallId.replace(/[^A-Za-z0-9_-]/g, '')}`;
   const problem = result?.error ?? (part.state === 'error' ? part.error : refusal) ?? '';
+  const writes = result ? result.mode === 'write' : live?.mode === 'write';
+  const changed = result?.changed ?? [];
+  const files = result ? new Set(changed.map((change) => change.path)).size : (live?.changed ?? 0);
+  const commands = (result ? result.ranCommands : live?.ranCommands) ?? 0;
   return html`<div class="cvt-subagent" data-status=${status} data-call=${part.toolCallId}>
     <button type="button" class="cvt-subagent-head" aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows?.toggle(key)}>
       <span class="cvt-call-chevron" aria-hidden="true"></span>
       <span class="cvt-subagent-title">
-        <span class="cvt-subagent-kind">Subagent</span>
+        <span class="cvt-subagent-kind">${writes ? 'Subagent · edits' : 'Subagent'}</span>
         <span class="cvt-subagent-task">${firstLine}</span>
       </span>
       <span class="cvt-subagent-meta">
         <span class="cvt-subagent-counts" data-subagent="counts">${plural(steps, 'step')} · ${plural(calls, 'tool call')}</span>
+        ${writes ? html`<span class="cvt-subagent-counts" data-subagent="edits">${plural(files, 'file')} changed · ${plural(commands, 'command')}</span>` : nothing}
         <span class="cvt-subagent-status" data-subagent="status">${SUBAGENT_STATUS[status]}</span>
       </span>
     </button>
@@ -149,6 +156,12 @@ function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | 
               ${live?.lastTool ? html`<div class="cvt-call-label">Now using</div><p class="cvt-subagent-text">${live.lastTool}</p>` : nothing}
               ${problem ? html`<div class="cvt-call-label">Why it stopped</div><p class="cvt-subagent-text" data-subagent="error">${problem}</p>` : nothing}
               ${result?.summary ? html`<div class="cvt-call-label">What it found</div><p class="cvt-subagent-text" data-subagent="summary">${result.summary}</p>` : nothing}
+              ${changed.length
+                ? html`<div class="cvt-call-label">What it changed</div>
+                    <ol class="cvt-subagent-activity" data-subagent="changed">
+                      ${changed.map((entry) => html`<li><span class="cvt-call-name">${entry.op}</span> <span class="cvt-subagent-arg">${entry.path}</span></li>`)}
+                    </ol>`
+                : nothing}
               ${result?.activity.length
                 ? html`<div class="cvt-call-label">What it looked at</div>
                     <ol class="cvt-subagent-activity">

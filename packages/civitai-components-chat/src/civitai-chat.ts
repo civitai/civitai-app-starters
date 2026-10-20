@@ -14,7 +14,14 @@ export type { ChatFile, ChatTool, ChatToolCall, ChatToolContext, ChatToolView } 
 export type { ToolCallsMode as ChatToolCallsMode } from './components/tool-calls.js';
 export type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
 export type { ChatToolDecision, ChatToolGate, ChatToolGateContext, ChatToolResult } from './tools/gate.js';
-export type { ChatSubagents, SubagentResult as ChatSubagentResult, SubagentStatus as ChatSubagentStatus } from './agent/subagents.js';
+export type {
+  ChatSubagents,
+  ChatWriteSubagents,
+  ChatSubagentFileTool,
+  SubagentChange as ChatSubagentChange,
+  SubagentResult as ChatSubagentResult,
+  SubagentStatus as ChatSubagentStatus,
+} from './agent/subagents.js';
 export type { ChatCommand, ChatCommandContext, ChatCommands, ChatCommandsOption } from './ux/commands.js';
 
 /** Registers `<civitai-chat>`; the rest of the chat loads once it has a signed-in `app`. Safe to call more than once. */

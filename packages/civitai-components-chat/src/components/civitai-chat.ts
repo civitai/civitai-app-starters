@@ -244,9 +244,11 @@ export class CivitaiChat extends LitElement {
    */
   declare beforeToolCall?: ChatToolGate;
   /**
-   * Read-only subagents: when set, the assistant gets a `dispatch_agent` tool that starts another
-   * assistant on one research task, with only the tools `tools` allows, and gets back a short summary.
-   * Off (no such tool) unless set; read at the start of every reply. See "Subagents" in the README.
+   * Subagents: when set, the assistant gets a `dispatch_agent` tool that starts another assistant on one
+   * research task, with only the tools `tools` allows, and gets back a short summary. With `write` set, it
+   * may also start write subagents, with only the tools `write.tools` allows (commands included), whose
+   * result lists the files they changed. Off (no such tool) unless set; read at the start of every reply.
+   * See "Subagents" in the README.
    */
   declare subagents?: ChatSubagents;
   /** Keeps this page's conversations and preferences apart; set it before `app`. */

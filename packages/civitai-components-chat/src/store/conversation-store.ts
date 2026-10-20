@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 
+import type { SubagentCheckpoint } from '../agent/subagent-result.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, SavedTurn, TitleSource, Turn } from '../types.js';
@@ -63,6 +64,12 @@ export interface ConversationStore extends EventTarget {
    * saves how it ended.
    */
   checkpoint?(turn: Turn, progress: { messages: ModelMessage[] }): Promise<void>;
+  /**
+   * A write subagent started by the reply to `turn` (its `dispatch_agent` call `toolCallId`) has got this
+   * far. A store that saves progress saves it with the reply's progress, so Continue after the page closed
+   * gives that call, if it has no result, the interrupted result with this `changed` list.
+   */
+  checkpointSubagent?(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void>;
   savePost(id: string, post: SavedPost): Promise<void>;
   setModel(model: string | undefined): Promise<void>;
   savePanel(panel: SavedPanel): Promise<void>;

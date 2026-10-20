@@ -193,6 +193,7 @@ function untilAborted<T>(value: T | Promise<T>, signal: AbortSignal | undefined)
   });
 }
 
-function isErrorOutput(output: unknown): boolean {
+/** Whether a tool output reads as a failure: an object with an `error`, as the gate reports it in `isError`. */
+export function isErrorOutput(output: unknown): boolean {
   return output !== null && typeof output === 'object' && 'error' in output && (output as { error?: unknown }).error !== undefined;
 }

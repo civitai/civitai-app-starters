@@ -102,6 +102,64 @@ describe('the subagent card', () => {
   });
 });
 
+describe('a write subagent’s card', () => {
+  const writeResult = (status: string) => ({
+    kind: 'subagent',
+    mode: 'write',
+    status,
+    summary: 'Split the scene into two files and ran the tests.',
+    steps: 3,
+    toolCalls: 5,
+    activity: [{ tool: 'sandbox__write_file', arg: 'game/scene.ts' }],
+    changed: [
+      { path: 'game/scene.ts', op: 'write' },
+      { path: 'game/hud.ts', op: 'write' },
+      { path: 'game/scene.ts', op: 'edit' },
+    ],
+    ranCommands: 1,
+  });
+  const part = (status: string): TurnPart => ({ kind: 'tool', toolCallId: 'd9', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' }, state: 'done', output: writeResult(status) });
+
+  it('says it edits, how many files it changed and how many commands it ran; opened, what it changed', async () => {
+    const el = await turnWith([part('done')]);
+    const card = el.querySelector('.cvt-subagent')!;
+    expect(text(card.querySelector('.cvt-subagent-kind'))).toBe('Subagent · edits');
+    expect(text(card.querySelector('[data-subagent="counts"]'))).toBe('3 steps · 5 tool calls');
+    // Files are counted once each, however many times it changed them.
+    expect(text(card.querySelector('[data-subagent="edits"]'))).toBe('2 files changed · 1 command');
+    card.querySelector<HTMLButtonElement>('button.cvt-subagent-head')!.click();
+    await el.updateComplete;
+    expect([...card.querySelectorAll('[data-subagent="changed"] li')].map(text)).toEqual(['write game/scene.ts', 'write game/hud.ts', 'edit game/scene.ts']);
+  });
+
+  it('shows an interrupted write subagent as interrupted, with what it had changed', async () => {
+    const el = await turnWith([part('interrupted')]);
+    const card = el.querySelector('.cvt-subagent')!;
+    expect(card.getAttribute('data-status')).toBe('interrupted');
+    expect(text(card.querySelector('[data-subagent="status"]'))).toBe('Interrupted');
+    expect(text(card.querySelector('[data-subagent="edits"]'))).toBe('2 files changed · 1 command');
+  });
+
+  it('shows a running write subagent’s mode and edits live, and a read one with neither', async () => {
+    const tracker = new SubagentTracker();
+    tracker.set('d1', { task: 'Split the scene', steps: 2, toolCalls: 3, mode: 'write', changed: 1, ranCommands: 0 } as Parameters<SubagentTracker['set']>[1]);
+    tracker.set('d2', { task: 'Read it', steps: 1, toolCalls: 1 });
+    const running = (id: string, mode: string): TurnPart => ({ kind: 'tool', toolCallId: id, toolName: 'dispatch_agent', input: { task: id === 'd1' ? 'Split the scene' : 'Read it', mode }, state: 'calling' });
+    const el = await turnWith([running('d1', 'write'), running('d2', 'read')], { subagents: tracker, live: true });
+    const [writer, reader] = [...el.querySelectorAll('.cvt-subagent')];
+    expect(text(writer!.querySelector('.cvt-subagent-kind'))).toBe('Subagent · edits');
+    expect(text(writer!.querySelector('[data-subagent="edits"]'))).toBe('1 file changed · 0 commands');
+    expect(text(reader!.querySelector('.cvt-subagent-kind'))).toBe('Subagent');
+    expect(reader!.querySelector('[data-subagent="edits"]')).toBeNull();
+  });
+
+  it('draws a read subagent’s saved card with no edits', async () => {
+    const el = await turnWith(partsFromMessages(SAVED));
+    expect(text(el.querySelector('.cvt-subagent-kind'))).toBe('Subagent');
+    expect(el.querySelector('[data-subagent="edits"]')).toBeNull();
+  });
+});
+
 describe('a page tool of its own named dispatch_agent', () => {
   it('is not drawn as a subagent card: it shows as any other call', async () => {
     const own: TurnPart = { kind: 'tool', toolCallId: 'p1', toolName: 'dispatch_agent', input: { task: 'Ship it' }, state: 'done', output: { status: 'done', steps: 3, summary: 'shipped', toolCalls: 0, activity: [] } };
