@@ -327,7 +327,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         const quietMs = this.#deps.quietMs ?? RUN_QUIET_MS;
         const listen = () => {
           clearTimeout(run.quiet);
-          run.quiet = setTimeout(() => this.#down(run, { stream: true }), quietMs);
+          // MUTANT (to be reverted): a quiet stream is never shown as reconnecting.
+          run.quiet = setTimeout(() => undefined, quietMs);
         };
         listen();
         const alive = () => {
