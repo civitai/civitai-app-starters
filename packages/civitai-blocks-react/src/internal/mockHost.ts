@@ -75,10 +75,8 @@ import {
   type BlockEntityReactionErrorCode,
   type BlockCreatePostHostError,
   type BlockCreatePostResult,
-  type BlockPrepareTrainingDatasetHostError,
   type BlockRunTrainingHostError,
-  type BlockTrainingDatasetResult,
-  type BlockTrainingRejectionReason,
+  type BlockTrainingDataImage,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -628,32 +626,80 @@ const trainingStepType = (body: WorkflowBody): BlockTrainedEpoch['$type'] | unde
  */
 export const MOCK_TRAINING_BOUNDS = {
   datasetMaxItems: 50,
-  captionMaxChars: 1000,
+  captionMaxChars: 8192,
   maxBuzzPerRun: 5000,
 } as const;
 
+/** A consumer-blob key: the host's `BLOB_KEY_REGEX` (civitai/civitai#6461). */
+const MOCK_BLOB_KEY = /^[A-Za-z0-9]{1,64}(\.[A-Za-z0-9]{1,8})?$/;
+/** The path a blob url names its key under. */
+const MOCK_BLOB_PATH_PREFIX = '/v2/consumer/blobs/';
+/** The host's cap on an item's `air` string (`SOURCE_IMAGE_URL_MAX`). */
+const MOCK_AIR_MAX_CHARS = 2048;
+
 /**
- * The host's `PREPARE_TRAINING_DATASET` item check, mirrored: the server's
- * `blockTrainingDatasetItemsSchema` — 1…50 items, each EXACTLY `{ imageId:
- * positive integer, caption: string ≤ 1000 }`. The real host runs this BEFORE any
- * server call and refuses with `invalid training dataset`, so the mock does too.
+ * The blob key an item's `air` names, or `null` — the host's
+ * `trainingBlobKeyFromAir`: the bare key, or an https url whose path is exactly
+ * `/v2/consumer/blobs/<key>` (its query dropped).
+ *
+ * ⚠️ NARROWER THAN THE HOST: the real check also requires the url to be on a
+ * Civitai-hosted origin; the mock accepts any https host so a harness can use
+ * placeholder urls. Name an item by its `air` (the bare key) and the two agree.
  */
-function isValidTrainingDatasetItems(items: unknown): boolean {
-  if (!Array.isArray(items)) return false;
-  if (items.length < 1 || items.length > MOCK_TRAINING_BOUNDS.datasetMaxItems) return false;
-  return items.every((it) => {
+const mockBlobKeyFromAir = (air: string): string | null => {
+  if (MOCK_BLOB_KEY.test(air)) return air;
+  let url: URL;
+  try {
+    url = new URL(air);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || !url.pathname.startsWith(MOCK_BLOB_PATH_PREFIX)) return null;
+  const key = url.pathname.slice(MOCK_BLOB_PATH_PREFIX.length);
+  return MOCK_BLOB_KEY.test(key) ? key : null;
+};
+
+/** The host's key identity (`trainingBlobKeyIdentity`): keys are case-insensitive. */
+const blobKeyIdentity = (key: string): string => key.toLowerCase();
+
+/**
+ * The server's `kind: 'training'` item schema (`blockTrainingDatasetItemsSchema`,
+ * civitai/civitai#6461), mirrored for the ESTIMATE: 1…50 items, each EXACTLY
+ * `{ air, caption }` with a caption up to 8,192 characters, every `air` a blob key
+ * or blob url, and no blob named twice. Returns the items with each `air`
+ * canonicalised to its bare key — what the server quotes and hashes — or the
+ * refusal message.
+ */
+function resolveTrainingItems(
+  items: unknown,
+): { items: Array<{ air: string; caption: string }> } | { refusal: string } {
+  if (!Array.isArray(items)) return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  if (items.length < 1 || items.length > MOCK_TRAINING_BOUNDS.datasetMaxItems) {
+    return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  }
+  const shaped = items.every((it) => {
     if (typeof it !== 'object' || it === null || Array.isArray(it)) return false;
     const keys = Object.keys(it);
-    if (keys.length !== 2 || !keys.includes('imageId') || !keys.includes('caption')) return false;
-    const { imageId, caption } = it as { imageId: unknown; caption: unknown };
+    if (keys.length !== 2 || !keys.includes('air') || !keys.includes('caption')) return false;
+    const { air, caption } = it as { air: unknown; caption: unknown };
     return (
-      typeof imageId === 'number' &&
-      Number.isInteger(imageId) &&
-      imageId > 0 &&
+      typeof air === 'string' &&
+      air.length <= MOCK_AIR_MAX_CHARS &&
       typeof caption === 'string' &&
       caption.length <= MOCK_TRAINING_BOUNDS.captionMaxChars
     );
   });
+  if (!shaped) return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  const out: Array<{ air: string; caption: string }> = [];
+  const seen = new Set<string>();
+  for (const it of items as Array<{ air: string; caption: string }>) {
+    const key = mockBlobKeyFromAir(it.air);
+    if (key === null) return { refusal: MOCK_TRAINING_AIR_ERROR };
+    if (seen.has(blobKeyIdentity(key))) return { refusal: MOCK_TRAINING_DUPLICATE_ERROR };
+    seen.add(blobKeyIdentity(key));
+    out.push({ air: key, caption: it.caption });
+  }
+  return { items: out };
 }
 
 /**
@@ -667,18 +713,21 @@ export const MOCK_SPEND_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
 /** The real server's refusal for an unknown, expired or spent quote on `RUN_TRAINING`. */
 export const MOCK_TRAINING_QUOTE_GONE_ERROR =
   'training quote not found, expired or already used — estimate again';
-/** The real server's refusal for a training estimate naming a dataset it does not hold. */
-export const MOCK_TRAINING_DATASET_GONE_ERROR = 'training dataset not found or expired';
 /**
- * The real server's two refusals for a dataset with NOTHING admitted
- * (`prepareBlockTrainingDataset`): every image failed eligibility, or every
- * eligible image failed its import. The server THROWS rather than returning
- * `count: 0`, so a successful reply always admits at least one image.
+ * The estimate's refusals for `items` outside the server's schema. The first two
+ * are the server's own custom messages (`blockTrainingDatasetItemsSchema`); the
+ * third stands for every other zod issue (count, caption length, missing or extra
+ * keys), whose real text is zod's formatting and not a contract.
  */
-export const MOCK_TRAINING_NONE_ELIGIBLE_ERROR =
-  'none of the requested images can be used for training';
-export const MOCK_TRAINING_NONE_IMPORTED_ERROR =
-  'none of the requested images could be prepared for training';
+export const MOCK_TRAINING_AIR_ERROR =
+  'air must be a consumer blob key or its Civitai-hosted blob url';
+export const MOCK_TRAINING_DUPLICATE_ERROR = 'a training dataset names each image once';
+export const MOCK_TRAINING_ITEMS_ERROR =
+  'training items must be 1 to 50 { air, caption } entries with captions of at most 8192 characters';
+/** The host code for a quote naming an image the host did not upload for the block. */
+const MOCK_TRAINING_NOT_UPLOADED_HERE: BlockRunTrainingHostError = 'training data not uploaded here';
+/** How many images a default `trainingData` upload returns. */
+const DEFAULT_TRAINING_DATA_UPLOAD_COUNT = 3;
 /**
  * The forced `RUN_TRAINING` errors that settle BEFORE the server claims (and so
  * consumes) the quote: the host's own gate and dialog codes. Derived from the
@@ -1404,38 +1453,34 @@ export interface MockHostOptions {
    */
   createPostError?: BlockCreatePostHostError | string;
   /**
-   * Images `PREPARE_TRAINING_DATASET` leaves out, with their reasons — what
-   * `usePrepareTrainingDataset()` reports on `rejected`. Only entries whose
-   * `imageId` the request actually named are reported, and `count` is the rest,
-   * exactly as the server derives it. Absent → every image is admitted.
+   * The images an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` returns — what
+   * `useImageUpload({ purpose: 'trainingData' }).open()` resolves with. Absent →
+   * {@link DEFAULT_TRAINING_DATA_UPLOAD_COUNT} images with FRESH keys on every
+   * upload, so two uploads never collide. `null` (or `[]`) → the viewer cancelled.
    * Live-tunable via {@link MockHost.setScenario}.
    *
-   * When this rejects EVERY named image the reply is an `error`, as on the real
-   * server — {@link MOCK_TRAINING_NONE_ELIGIBLE_ERROR}, or
-   * {@link MOCK_TRAINING_NONE_IMPORTED_ERROR} when every image that passed
-   * eligibility was rejected with an `import-*` reason. A success never has
-   * `count: 0`.
+   * The mock REMEMBERS every key it hands out, per install, as the real host
+   * does per block instance: `RUN_TRAINING` refuses a quote naming any other key
+   * with `training data not uploaded here`, before any other check, and keeps the
+   * quote. Keys compare case-insensitively; an item may name its blob by the
+   * `url` too.
    *
-   * KIND-FAITHFUL, like the rest of the training path: the mock holds the
-   * datasets it prepared, an estimate naming any other `datasetId` fails as the
-   * server's does, a quote is run at most once, and every training call needs
-   * `ai:write:budgeted` on the token ({@link MockHostOptions.consentGranted}) and
-   * a signed-in viewer. What it cannot model: image ownership and moderation (it
-   * has no images), the flag, and the page-only / dev-token refusals.
-   *
-   * ⚠️ The quote↔body check is NARROWER than the server's: the mock compares only
-   * `datasetId`, while the server hashes the whole body (minus `quoteId`) and
-   * refuses any change. A body edited between estimate and run passes here and
-   * fails in production.
+   * KIND-FAITHFUL, like the rest of the training path: the estimate refuses items
+   * outside the server's schema, a quote is run at most once and is checked
+   * against the whole body it was quoted for (minus `quoteId`), and every
+   * training call needs `ai:write:budgeted` on the token
+   * ({@link MockHostOptions.consentGranted}) and a signed-in viewer. What it
+   * cannot model: blob storage, the Civitai-hosted-url rule on `air`, the flag,
+   * and the page-only / dev-token refusals.
    */
-  trainingDatasetRejected?: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
+  cannedTrainingDataUpload?: BlockTrainingDataImage[] | null;
   /**
-   * Force `PREPARE_TRAINING_DATASET` to reply with an `error` — a
-   * {@link BlockPrepareTrainingDatasetHostError} for a host refusal, or any other
-   * string for the free-text server-message variant. Absent → it prepares.
-   * Live-tunable via {@link MockHost.setScenario}.
+   * Make `RUN_TRAINING` refuse EVERY quote with `training data not uploaded
+   * here`, as the real host does after a page reload forgot the uploads. Settles
+   * before the server claims the quote, so the quote survives. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
    */
-  trainingDatasetError?: BlockPrepareTrainingDatasetHostError | string;
+  trainingDataNotUploadedHere?: boolean;
   /**
    * The Buzz total a `kind: 'training'` estimate quotes. Default `500`. Above
    * `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000) the estimate fails exactly as the
@@ -1451,7 +1496,8 @@ export interface MockHostOptions {
    *
    * Whether the QUOTE survives follows the real flow: the host's own gate and
    * dialog codes (`declined`, `review-mode`, `block is not ready`, `sign in to
-   * train`, `invalid training request`, `no block token`) settle before the
+   * train`, `invalid training request`, `no block token`, `training data not
+   * uploaded here`) settle before the
    * server claims the quote, so it stays runnable; `submission-unconfirmed` and
    * any server message settle after the claim, so it is used up — re-running it
    * gets the quote-gone error. Live-tunable via {@link MockHost.setScenario};
@@ -1838,8 +1884,8 @@ export type MockHostScenarioPatch = Pick<
   | 'reactionError'
   | 'createPostResult'
   | 'createPostError'
-  | 'trainingDatasetRejected'
-  | 'trainingDatasetError'
+  | 'cannedTrainingDataUpload'
+  | 'trainingDataNotUploadedHere'
   | 'trainingQuoteTotal'
   | 'runTrainingError'
   | 'runTrainingCapRefusal'
@@ -2032,6 +2078,9 @@ const DEFAULT_IMAGE_BYTES_UPLOAD: BlockUploadedImageInfo = {
   contentRating: 'pg',
   url: 'https://image.civitai.com/mock/original=true/dev-bytes-upload.png',
 };
+
+/** Where the default `trainingData` upload's placeholder blob urls point. */
+const DEFAULT_TRAINING_DATA_URL_BASE = 'https://blobs.mock.invalid/v2/consumer/blobs/';
 
 const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
   url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
@@ -2662,11 +2711,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let createPostResult: BlockCreatePostResult =
     options.createPostResult ?? DEFAULT_CREATE_POST_RESULT;
   let createPostError: string | undefined = options.createPostError;
-  // App Blocks training bridges: canned dataset rejections, quote total, and
-  // forced-refusal knobs. The datasets/quotes themselves live per install.
-  let trainingDatasetRejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }> =
-    options.trainingDatasetRejected ?? [];
-  let trainingDatasetError: string | undefined = options.trainingDatasetError;
+  // App Blocks training: the canned upload, the "host forgot its uploads" knob,
+  // the quote total, and forced-refusal knobs. The uploaded keys and the quotes
+  // themselves live per install.
+  let cannedTrainingDataUpload: BlockTrainingDataImage[] | null | undefined =
+    options.cannedTrainingDataUpload;
+  let trainingDataNotUploadedHere: boolean = options.trainingDataNotUploadedHere === true;
   let trainingQuoteTotal: number = options.trainingQuoteTotal ?? DEFAULT_TRAINING_QUOTE_TOTAL;
   let runTrainingError: string | undefined = options.runTrainingError;
   // SAVE_IMAGE: a forced-refusal knob (see `saveImageError`).
@@ -2951,13 +3001,36 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         stepCosts?: number[];
       }
     >();
-    // Training: datasets this install prepared (id → admitted count) and the
-    // quotes its estimates stored (id → what a run is checked against).
-    const trainingDatasets = new Map<string, number>();
+    // Training: the blob keys this install's uploads handed out (by identity —
+    // the host's per-block-instance memory), and the quotes its estimates stored
+    // (id → what a run is checked against).
+    const trainingUploads = new Set<string>();
+    let trainingUploadSerial = 0;
     const trainingQuotes = new Map<
       string,
-      { datasetId: string; total: number; expiresAtMs: number; spent: boolean }
+      {
+        fingerprint: string | null;
+        itemKeys: string[];
+        total: number;
+        expiresAtMs: number;
+        spent: boolean;
+      }
     >();
+    /**
+     * What a training quote is bound to: the body without `quoteId`, its items
+     * canonicalised (the server quotes the bare key). `null` when the body is not
+     * plain JSON or its items do not resolve — then no run can match it.
+     */
+    const trainingFingerprint = (raw: Record<string, unknown>): string | null => {
+      const resolved = resolveTrainingItems(raw.items);
+      if ('refusal' in resolved) return null;
+      const { quoteId: _quoteId, ...rest } = raw;
+      try {
+        return canonicalStepJson({ ...rest, items: resolved.items }, 'body');
+      } catch {
+        return null;
+      }
+    };
     // Confirmed steps: the quotes this install's estimates stored (id → what a
     // run is checked against). Same serial as the training handles, so every
     // handle this install mints is distinct.
@@ -2967,7 +3040,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     >();
     let trainingSerial = 0;
     /** `<prefix>` + 32 hex characters — the real handles' shape. */
-    const trainingHandle = (prefix: 'tds_' | 'tq_' | 'sq_'): string => {
+    const trainingHandle = (prefix: 'tq_' | 'sq_'): string => {
       trainingSerial += 1;
       return `${prefix}${trainingSerial.toString(16).padStart(32, '0')}`;
     };
@@ -3175,7 +3248,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             imageIds?: number[];
             title?: string;
             resourceType?: BlockResourcePickerType;
-            purpose?: 'display' | 'generationSource';
+            purpose?: 'display' | 'generationSource' | 'trainingData';
             asyncScan?: boolean;
             body?: WorkflowBody;
             key?: string;
@@ -3205,9 +3278,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // here would assert the property under test — a block compiled
             // against an older SDK, or plain JS, can put anything in this field.
             idempotencyKey?: unknown;
-            // PREPARE_TRAINING_DATASET. `unknown` for the same reason as
-            // `sources`: the gate's job is to refuse what a block actually sent.
-            items?: unknown;
             // ESTIMATE_WORKFLOW_BATCH. `unknown`: the list shape is what is checked.
             bodies?: unknown;
           };
@@ -3347,9 +3417,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
           // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
           // kind-agnostic rule above, because the real arm is not a priced
-          // pass-through: it names a dataset the server must hold, refuses a
-          // price above the per-run ceiling, and STORES a quote the run is later
-          // checked against. (The spend scope is checked above, for every kind.)
+          // pass-through: it checks the dataset items against the server's
+          // schema, refuses a price above the per-run ceiling, and STORES a quote
+          // the run is later checked against. (Uploads are NOT checked here —
+          // the server's estimate does not; the host checks them at the run.) (The spend scope is checked above, for every kind.)
           // Each refusal is the server's message in the host's `failureSnapshot`
           // shape.
           if (body.kind === 'training') {
@@ -3358,8 +3429,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               status: 'failed',
               error,
             });
-            const imageCount = trainingDatasets.get(body.datasetId);
-            if (imageCount === undefined) return refuse(MOCK_TRAINING_DATASET_GONE_ERROR);
+            const resolved = resolveTrainingItems((body as { items?: unknown }).items);
+            if ('refusal' in resolved) return refuse(resolved.refusal);
+            const imageCount = resolved.items.length;
             const total = trainingQuoteTotal;
             if (total > MOCK_TRAINING_BOUNDS.maxBuzzPerRun) {
               return refuse(
@@ -3369,7 +3441,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const quoteId = trainingHandle('tq_');
             const expiresAtMs = Date.now() + TRAINING_QUOTE_TTL_MS;
             trainingQuotes.set(quoteId, {
-              datasetId: body.datasetId,
+              fingerprint: trainingFingerprint(body as unknown as Record<string, unknown>),
+              itemKeys: resolved.items.map((it) => it.air),
               total,
               expiresAtMs,
               spent: false,
@@ -4419,44 +4492,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
-          case 'PREPARE_TRAINING_DATASET': {
-            // The host's gate order (`prepareTrainingDatasetGate.ts`): no
-            // requestId → drop; signed-out → `sign in to train`; items outside
-            // the server's schema → `invalid training dataset`, before any call.
-            // Then the server: the spend scope, then the dataset.
-            if (!isRoutableRequestId(requestId)) return;
-            const reply = (payload: Record<string, unknown>) =>
-              dispatchToBlock({ type: 'TRAINING_DATASET_RESULT', payload: { requestId, ...payload } });
-            if (viewer === null) return reply({ error: 'sign in to train' });
-            const items = typed.payload?.items;
-            if (!isValidTrainingDatasetItems(items)) {
-              return reply({ error: 'invalid training dataset' });
-            }
-            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
-            if (trainingDatasetError !== undefined) return reply({ error: trainingDatasetError });
-            const named = new Set((items as Array<{ imageId: number }>).map((it) => it.imageId));
-            const rejected = trainingDatasetRejected
-              .filter((r) => named.has(r.imageId))
-              .map(({ imageId, reason }) => ({ imageId, reason }));
-            const rejectedIds = new Set(rejected.map((r) => r.imageId));
-            const count = [...named].filter((id) => !rejectedIds.has(id)).length;
-            if (count === 0) {
-              // The server THROWS here, eligibility before import: an `import-*`
-              // rejection means that image PASSED eligibility, so the server
-              // reached the import and refuses there.
-              const anyImported = rejected.some((r) => r.reason.startsWith('import-'));
-              return reply({
-                error: anyImported
-                  ? MOCK_TRAINING_NONE_IMPORTED_ERROR
-                  : MOCK_TRAINING_NONE_ELIGIBLE_ERROR,
-              });
-            }
-            const datasetId = trainingHandle('tds_');
-            trainingDatasets.set(datasetId, count);
-            const result: BlockTrainingDatasetResult = { datasetId, count, rejected };
-            return reply({ result });
-          }
-
           case 'RUN_TRAINING': {
             // The host's gate (`runTrainingGate.ts`): no requestId → drop;
             // signed-out → `sign in to train`; not a `kind:'training'` body with
@@ -4479,6 +4514,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
               return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });
             }
+            // The host reads the quote back and refuses, with no dialog, one
+            // naming any blob it did not upload for this block — before the
+            // server claims it, so the quote survives.
+            if (
+              trainingDataNotUploadedHere ||
+              quote.itemKeys.some((key) => !trainingUploads.has(blobKeyIdentity(key)))
+            ) {
+              return reply({ error: MOCK_TRAINING_NOT_UPLOADED_HERE });
+            }
             // Which outcomes consume the quote, modelled on the real flow: the
             // host's gate and consent dialog come first (quote kept); the
             // server's submit then claims the quote with a GETDEL
@@ -4491,7 +4535,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return reply({ error: runTrainingError });
             }
             quote.spent = true;
-            if (b.datasetId !== quote.datasetId) {
+            const runFingerprint = trainingFingerprint(b);
+            if (runFingerprint === null || runFingerprint !== quote.fingerprint) {
               return reply({
                 error: 'the training body differs from the one that was quoted — estimate again',
               });
@@ -4832,6 +4877,35 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               postableImageIds.add(uploadImageBytesResult.imageId);
               return reply({ selected: { ...uploadImageBytesResult } });
+            }
+
+            // TRAINING DATA (civitai/civitai#6461): several private images in ONE
+            // reply, `{ images: [{ url, air }] }`. Every key handed out is
+            // remembered for RUN_TRAINING's not-uploaded-here check.
+            if (typed.payload?.purpose === 'trainingData') {
+              let images: BlockTrainingDataImage[] | null;
+              if (cannedTrainingDataUpload === undefined) {
+                images = Array.from({ length: DEFAULT_TRAINING_DATA_UPLOAD_COUNT }, () => {
+                  trainingUploadSerial += 1;
+                  const air = `mockblob${trainingUploadSerial.toString(16).padStart(8, '0')}.png`;
+                  return { url: `${DEFAULT_TRAINING_DATA_URL_BASE}${air}`, air };
+                });
+              } else {
+                images = cannedTrainingDataUpload;
+              }
+              if (!images || images.length === 0) {
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId } });
+                return;
+              }
+              for (const img of images) {
+                const key = mockBlobKeyFromAir(img.air);
+                if (key !== null) trainingUploads.add(blobKeyIdentity(key));
+              }
+              dispatchToBlock({
+                type: 'IMAGE_UPLOAD_RESULT',
+                payload: { requestId, selected: { images: images.map(({ url, air }) => ({ url, air })) } },
+              });
+              return;
             }
 
             const isGenerationSource = typed.payload?.purpose === 'generationSource';
@@ -5580,12 +5654,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     }
     if (patch.createPostResult !== undefined) createPostResult = patch.createPostResult;
     if (patch.createPostError !== undefined) createPostError = patch.createPostError;
-    if (patch.trainingDatasetRejected !== undefined) {
-      trainingDatasetRejected = patch.trainingDatasetRejected;
-    }
-    // The training error knobs clear on an explicit `undefined` (key PRESENT in
+    // `null` is meaningful (a cancel) and `undefined` restores the default, so
+    // check for the KEY's presence.
+    if ('cannedTrainingDataUpload' in patch) cannedTrainingDataUpload = patch.cannedTrainingDataUpload;
+    // The training refusal knobs clear on an explicit `undefined` (key PRESENT in
     // the patch), so a harness can turn a refusal off without re-installing.
-    if ('trainingDatasetError' in patch) trainingDatasetError = patch.trainingDatasetError;
+    if ('trainingDataNotUploadedHere' in patch) {
+      trainingDataNotUploadedHere = patch.trainingDataNotUploadedHere === true;
+    }
     if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
     if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
     if ('saveImageError' in patch) saveImageError = patch.saveImageError;

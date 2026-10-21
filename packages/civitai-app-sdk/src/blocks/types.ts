@@ -279,8 +279,17 @@ export type BlockImageScanResult =
  *    UNSCANNED — the orchestrator scans it at generation time — so the host
  *    returns ONLY the source shape ({@link BlockGenerationSourceImageInfo}); no
  *    `imageId`/`nsfwLevel`/`contentRating` crosses back into the block.
+ *  - `'trainingData'`: PRIVATE training images for a `kind: 'training'` run
+ *    (civitai/civitai#6461). The viewer picks up to
+ *    {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} PNG, JPEG or WebP files in a host
+ *    modal; each is uploaded as a consumer blob, as Civitai's own training form
+ *    does. ONE reply carries every image that uploaded
+ *    ({@link BlockTrainingDataUploadResult}), and the host remembers each key it
+ *    uploaded for this block — `RUN_TRAINING` refuses a quote naming any other.
+ *    Page apps only. A host that predates the purpose normalises it to
+ *    `'display'` and answers with ONE moderated image instead.
  */
-export type BlockUploadPurpose = 'display' | 'generationSource';
+export type BlockUploadPurpose = 'display' | 'generationSource' | 'trainingData';
 
 /**
  * Which SPACE a `NAVIGATE` path is resolved in. Mirrors the host's
@@ -321,6 +330,34 @@ export type BlockNavigateScope = 'app' | 'site';
  * lockstep.
  */
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
+
+/**
+ * One image an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded — an
+ * element of {@link BlockTrainingDataUploadResult.images}. Mirrors the host's
+ * `TrainingDataUpload` in civitai/civitai's
+ * `src/components/AppBlocks/trainingDataUpload.ts` (civitai/civitai#6461).
+ *
+ * The image is PRIVATE training data: it is not published, scanned or given an
+ * `Image` row, so there is no `imageId`.
+ */
+export interface BlockTrainingDataImage {
+  /** The uploaded blob's url. Show it as the thumbnail; it is also accepted as an item's `air`. */
+  url: string;
+  /**
+   * The consumer-blob key — pass it as {@link BlockTrainingDatasetItem.air}.
+   * Opaque. The host compares keys case-insensitively.
+   */
+  air: string;
+}
+
+/**
+ * `IMAGE_UPLOAD_RESULT.selected` for `purpose: 'trainingData'`: every image that
+ * uploaded, in one reply. The viewer may finish with fewer than they picked when
+ * some failed to upload; a cancel is a reply with NO `selected`.
+ */
+export interface BlockTrainingDataUploadResult {
+  images: BlockTrainingDataImage[];
+}
 
 /**
  * Which of the viewer's own image libraries `OPEN_IMAGE_PICKER` (via
@@ -1727,8 +1764,10 @@ export type WorkflowBodyWorkflow = {
 // ============================================================
 //
 // 🔴 MIRRORED FROM THE HOST, NOT DESIGNED HERE. Every type in this section copies
-// civitai/civitai's zod at `a32f506516` (main, after civitai/civitai#5434):
-// `blockTrainingBodySchema` in `src/server/schema/blocks/workflow.schema.ts`, and
+// civitai/civitai's zod as of civitai/civitai#6461 (head `05f1d1fa8f`):
+// `blockTrainingBodySchema` in `src/server/schema/blocks/workflow.schema.ts`,
+// `blockTrainingDatasetItemsSchema` in
+// `src/server/schema/blocks/training-dataset.schema.ts` for `items`, and
 // `aiToolkitTrainingParamsSchema` in `src/server/schema/orchestrator/training.schema.ts`
 // for `params`. The host's zod is the definition; this is the copy. A field the
 // host adds is invisible here until this file is updated, and the host rejects a
@@ -1737,10 +1776,13 @@ export type WorkflowBodyWorkflow = {
 
 /** Ceiling on what ONE confirmed `kind: 'training'` run may cost, in Buzz. Host constant `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`. */
 export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
-/** Max images in one prepared training dataset. Host constant `BLOCK_TRAINING_DATASET_MAX_ITEMS`. */
+/**
+ * Max images in one training dataset ({@link WorkflowBodyTraining.items}), and in
+ * one `trainingData` upload. Host constant `BLOCK_TRAINING_DATASET_MAX_ITEMS`.
+ */
 export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
 /** Max characters of one dataset caption. Host constant `BLOCK_TRAINING_CAPTION_MAX_CHARS`. */
-export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 1000;
+export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 8192;
 /** Max sample prompts on a training body. Host constant `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. Host constant `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`. */
@@ -1850,16 +1892,16 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
   );
 
 /**
- * Train a LoRA with the ai-toolkit engine on a dataset Civitai prepared from the
- * VIEWER'S OWN images — the App Blocks `kind: 'training'` workflow body.
+ * Train a LoRA with the ai-toolkit engine on images the VIEWER uploaded through
+ * the host — the App Blocks `kind: 'training'` workflow body.
  *
  * ## Availability — read before building on it
  *
  *  - 🔴 Behind the host flag **`app-blocks-training-kind`**, which ships OFF and is
  *    evaluated per viewer. Where it is off, every training call is refused
  *    (`training from apps is not enabled`).
- *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers both training
- *    messages with an error, and the server refuses a non-page token.
+ *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers
+ *    `RUN_TRAINING` with an error, and the server refuses a non-page token.
  *  - The manifest must declare **`ai:write:budgeted`** and the viewer must have
  *    granted it; the viewer must be signed in.
  *  - **Not from a development or review session**: dev tokens (`dev:live`, dev
@@ -1868,17 +1910,22 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
  *
  * ## The flow
  *
- *  1. **Dataset** — `usePrepareTrainingDataset()` (`PREPARE_TRAINING_DATASET`)
- *     with `[{ imageId, caption }]`. Only the viewer's OWN scanned, unflagged
- *     images within the page's maturity ceiling are admitted; the rest come back
- *     in `rejected`. You get an opaque {@link WorkflowBodyTraining.datasetId}.
+ *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+ *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
+ *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
+ *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
  *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
  *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the
  *     orchestrator's own price for exactly this run, stored server-side.
  *  3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })`
  *     (`RUN_TRAINING`). Civitai shows the viewer a consent dialog in ITS chrome —
  *     price, base model, length, dataset size, all read back from the server,
- *     never from your body — and submits only on their click.
+ *     never from your body, with the host's own copies of the uploads as
+ *     thumbnails — and submits only on their click. A quote naming an image this
+ *     host did not upload for the block is refused with no dialog
+ *     (`training data not uploaded here`) — upload in the same page session as the
+ *     run; a reload forgets the uploads.
  *  4. **Follow** — `useBuzzWorkflow().watch(snapshot.workflowId)`.
  *
  * 🔴 `useBuzzWorkflow().submit()` REFUSES THIS BODY before sending it. The server
@@ -1894,8 +1941,12 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
  */
 export interface WorkflowBodyTraining {
   kind: 'training';
-  /** The handle `usePrepareTrainingDataset()` returned — `tds_` + 32 hex characters. */
-  datasetId: string;
+  /**
+   * The dataset: 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images this host
+   * uploaded for the viewer, each with its caption — see
+   * {@link BlockTrainingDatasetItem}. One blob may appear once.
+   */
+  items: BlockTrainingDatasetItem[];
   /** The only engine accepted. */
   engine: 'ai-toolkit';
   /**
@@ -1904,12 +1955,17 @@ export interface WorkflowBodyTraining {
    */
   model: string;
   params: AiToolkitTrainingParams;
-  /** At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. Moderated like a prompt. */
+  /**
+   * At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. The host runs
+   * it through the same trigger-word check Civitai's trainer and Training Studio
+   * use, at the estimate and again at the submit, before anything is reserved; a
+   * refused trigger word fails the estimate.
+   */
   triggerWord: string;
   /**
    * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
-   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Moderated like
-   * prompts.
+   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Checked for
+   * those bounds only, as in the Training Studio.
    */
   samplePrompts: string[];
   /**
@@ -1940,7 +1996,7 @@ export interface WorkflowBodyTraining {
  *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
  *    by a registry.
  *  - {@link WorkflowBodyTraining} (`kind: 'training'`) — an ai-toolkit LoRA run
- *    on a server-prepared dataset of the viewer's own images. ESTIMATE ONLY
+ *    on images the viewer uploaded through the host. ESTIMATE ONLY
  *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
  *    host-chrome consent dialog is the only way to confirm its quote.
  *  - {@link WorkflowBodyWorkflow} (`kind: 'workflow'`) — up to
@@ -2310,8 +2366,8 @@ export interface BlockWorkflowSnapshot {
    *
    * `cost.total` on the same snapshot equals `trainingQuote.total`.
    * `expiresAt` is an ISO-8601 timestamp: after it the run is refused and you
-   * estimate again. `imageCount` is the server-derived size of the prepared
-   * dataset, never a number the block sent.
+   * estimate again. `imageCount` is the size of the dataset the server quoted
+   * (`items.length`).
    *
    * Present ONLY on the reply to a `kind: 'training'` estimate. Absent on hosts
    * that predate civitai/civitai#5434.
@@ -2468,7 +2524,7 @@ export interface BlockTrainingQuote {
   quoteId: string;
   /** The quoted price, in Buzz. */
   total: number;
-  /** How many images the prepared dataset holds. */
+  /** How many images the quoted dataset holds. */
   imageCount: number;
   /** ISO-8601. The quote cannot be run after this. */
   expiresAt: string;
@@ -3702,92 +3758,26 @@ export type BlockCreatePostHostError =
   | 'declined';
 
 // ============================================================
-// App Blocks training bridges (PREPARE_TRAINING_DATASET / RUN_TRAINING)
+// App Blocks training bridge (RUN_TRAINING) and the dataset item
 // ============================================================
 
 /**
- * One image of a training dataset request — an `Image` id the VIEWER owns, and
- * the caption to train it with.
+ * One image of a training dataset ({@link WorkflowBodyTraining.items}) — a blob
+ * this host uploaded for the viewer, and the caption to train it with. The
+ * Training Studio's own `{ air, caption }` shape.
  *
- * Host bounds (`blockTrainingDatasetItemsSchema`): `imageId` a positive integer,
- * `caption` at most {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters, no other
- * keys; 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per request. A payload
- * outside them is refused by the host with `invalid training dataset` before any
- * server call. Captions are moderated like prompts.
+ * Host bounds (`blockTrainingDatasetItemsSchema`, civitai/civitai#6461): `air`
+ * is the blob's key ({@link BlockTrainingDataImage.air}) or its Civitai-hosted
+ * blob url — the server keeps only the key; `caption` at most
+ * {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters; no other keys;
+ * 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per body, and one blob at
+ * most once (keys compare case-insensitively). A body outside them is refused at
+ * the estimate.
  */
 export interface BlockTrainingDatasetItem {
-  imageId: number;
+  air: string;
   caption: string;
 }
-
-/**
- * Why the server left an image out of a prepared dataset. Mirrors
- * civitai/civitai's `BlockTrainingRejectionReason`.
- *
- * - `unavailable` — not found, OR not the viewer's own image. One reason for
- *   both, on purpose: the server will not tell an app whether someone else's
- *   image id exists.
- * - `unsupported-media` — a video or audio row.
- * - `not-eligible` — refused by moderation state or the page's maturity ceiling.
- * - `pending-scan` — not scanned yet; retry once the scan finishes.
- * - `import-failed` — the orchestrator did not accept the image.
- * - `import-unavailable` — the import timed out or the orchestrator was
- *   unavailable; retryable.
- *
- * The SDK's inbound validator checks `reason` only as a STRING, so a reason the
- * host adds later still arrives — give an exhaustive `switch` a default branch.
- */
-export type BlockTrainingRejectionReason =
-  | 'unavailable'
-  | 'unsupported-media'
-  | 'not-eligible'
-  | 'pending-scan'
-  | 'import-failed'
-  | 'import-unavailable';
-
-/**
- * The success payload of `TRAINING_DATASET_RESULT` — what
- * `usePrepareTrainingDataset().prepareDataset()` resolves with.
- */
-export interface BlockTrainingDatasetResult {
-  /**
-   * Opaque handle for {@link WorkflowBodyTraining.datasetId} (`tds_` + 32 hex
-   * characters), bound to this viewer, app and install.
-   */
-  datasetId: string;
-  /**
-   * How many images were ADMITTED — always at least 1: when nothing is admitted
-   * the server refuses the request instead of returning an empty dataset. The
-   * server derives it; a run trains on exactly these.
-   */
-  count: number;
-  /** The images left out, each with its reason. Empty when every image was admitted. */
-  rejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
-}
-
-/**
- * The HOST'S OWN refusal codes on a `TRAINING_DATASET_RESULT`'s `error`. Mirrors
- * civitai/civitai's `PREPARE_TRAINING_DATASET_HOST_ERRORS`
- * (`src/components/AppBlocks/prepareTrainingDatasetGate.ts`, civitai/civitai#5438).
- *
- * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: `error` also carries
- * any server message verbatim (`training from apps is not enabled`, a rate limit,
- * a moderation refusal of a caption). Compare by EQUALITY against these members
- * and treat anything else as an opaque server message.
- *
- * - `review-mode` — a mod-review sandbox with "run for real" off.
- * - `block is not ready` — the host handshake has not completed.
- * - `sign in to train` — anonymous viewer; there are no images of theirs to read.
- * - `invalid training dataset` — `items` failed the host's item schema (shape,
- *   count or caption length). Nothing was sent to the server.
- * - `no block token` — the host holds no block token yet.
- */
-export type BlockPrepareTrainingDatasetHostError =
-  | 'review-mode'
-  | 'block is not ready'
-  | 'sign in to train'
-  | 'invalid training dataset'
-  | 'no block token';
 
 /**
  * The HOST'S OWN refusal codes on a `TRAINING_RESULT`'s `error`. Mirrors
@@ -3795,8 +3785,8 @@ export type BlockPrepareTrainingDatasetHostError =
  * (`src/components/AppBlocks/runTrainingGate.ts`).
  *
  * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: server messages
- * (an expired or already-used quote, a body that differs from the quoted one, an
- * ineligible dataset image) arrive verbatim in the same field.
+ * (an expired or already-used quote, a body that differs from the quoted one)
+ * arrive verbatim in the same field.
  *
  * - `review-mode` — a mod-review sandbox with "run for real" off.
  * - `block is not ready` — the host handshake has not completed.
@@ -3804,6 +3794,11 @@ export type BlockPrepareTrainingDatasetHostError =
  * - `invalid training request` — the body is not a `kind: 'training'` body
  *   naming a `quoteId`.
  * - `no block token` — the host holds no block token yet.
+ * - `training data not uploaded here` — the quote names an image this host did
+ *   not upload for this block (civitai/civitai#6461): the host remembers only the
+ *   blobs its own `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded, and
+ *   forgets them on a reload. Refused BEFORE any dialog: NO RUN, nothing
+ *   charged. Upload the images again, estimate again, run that quote.
  * - `declined` — the viewer dismissed the consent dialog. 🔴 GUARANTEED to mean
  *   NO RUN WAS SUBMITTED.
  * - `submission-unconfirmed` — the submit was SENT but its outcome is unknown
@@ -3819,6 +3814,7 @@ export type BlockRunTrainingHostError =
   | 'sign in to train'
   | 'invalid training request'
   | 'no block token'
+  | 'training data not uploaded here'
   | 'declined'
   | 'submission-unconfirmed';
 

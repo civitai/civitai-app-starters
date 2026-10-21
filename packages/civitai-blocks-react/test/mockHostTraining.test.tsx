@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
@@ -148,5 +149,74 @@ describe('createMockHost — pass-through training', () => {
     expect(snap.status).toBe('succeeded');
     expect('trainedEpochs' in snap).toBe(false);
     expect('publishedModel' in snap).toBe(false);
+  });
+});
+
+/**
+ * The `kind: 'training'` UPLOAD knob (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`,
+ * civitai/civitai#6461). The end-to-end flow — estimate, the "not uploaded here"
+ * refusal, the run — is `trainingKindFlow.test.tsx`; this pins the knob's
+ * isolation from the two single-image purposes beside it on the same message.
+ */
+describe('createMockHost — training-data upload', () => {
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = undefined;
+    resetTransport();
+  });
+
+  async function mount(options: Parameters<typeof createMockHost>[0]) {
+    const host = createMockHost(options);
+    uninstall = host.install();
+    const hook = renderHook(() => ({
+      training: useImageUpload({ purpose: 'trainingData' }),
+      display: useImageUpload(),
+      source: useImageUpload({ purpose: 'generationSource' }),
+    }));
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    return { host, result: hook.result };
+  }
+
+  it('answers each purpose with its own shape — the training knob does not leak into display or source', async () => {
+    const images = [{ url: 'https://example.test/v2/consumer/blobs/t1.png', air: 't1.png' }];
+    const { result } = await mount({ cannedTrainingDataUpload: images });
+
+    let training: unknown;
+    let display: unknown;
+    let source: unknown;
+    await act(async () => {
+      training = await result.current.training.open();
+      display = await result.current.display.open();
+      source = await result.current.source.open();
+    });
+    expect(training).toEqual(images);
+    expect(display).toMatchObject({ contentRating: 'pg' });
+    expect(display).not.toHaveProperty('images');
+    expect(source).toMatchObject({ width: expect.any(Number), height: expect.any(Number) });
+    expect(source).not.toHaveProperty('images');
+  });
+
+  it('`cannedImageUpload: null` cancels display only; `cannedTrainingDataUpload: []` is a cancel too', async () => {
+    const { host, result } = await mount({ cannedImageUpload: null });
+    let training: unknown;
+    let display: unknown;
+    await act(async () => {
+      training = await result.current.training.open();
+      display = await result.current.display.open();
+    });
+    expect(display).toBeNull();
+    expect(Array.isArray(training)).toBe(true);
+
+    host.setScenario({ cannedTrainingDataUpload: [] });
+    await act(async () => {
+      training = await result.current.training.open();
+    });
+    expect(training).toBeNull();
   });
 });

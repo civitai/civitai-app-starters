@@ -105,6 +105,7 @@ export type {
   BlockStepToolCall,
   BlockTextToImageParams,
   BlockTrainedEpoch,
+  BlockTrainingDatasetItem,
   BlockTrainingQuote,
   BlockWorkflowSnapshot,
   BlockWorkflowStepSnapshot,

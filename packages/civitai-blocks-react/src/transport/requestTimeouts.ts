@@ -34,6 +34,24 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
 
 /**
+ * The bound for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` (civitai/civitai#6461),
+ * which is longer than {@link HUMAN_INTERACTION_TIMEOUT_MS} on purpose.
+ *
+ * The host replies ONCE, when its modal closes — after the viewer picked up to 50
+ * images AND the host uploaded every original. That second half is network work
+ * the viewer does not control, so ten minutes from `open()` can expire while the
+ * host is still uploading. The block would then reject, drop the late reply, and
+ * never learn the keys the host now remembers for `RUN_TRAINING`. The host always
+ * answers on close (images, or a bare cancel), so the bound only has to end a wait
+ * on a host that will never answer; an hour does that without cutting off a slow
+ * upload.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: it is at least
+ * the human bound, which is what that bucket guarantees.
+ */
+export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
+
+/**
  * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
  * host forwards it to the orchestrator and replies only once that answers. No
  * person is in the loop, so it stays in the `'protocol'` bucket below; it just
@@ -41,14 +59,9 @@ export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
  *
  * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
  * preflight plus the real submit plus a prompt audit), and
- * `PREPARE_TRAINING_DATASET` in `hooks/usePrepareTrainingDataset.ts`, whose
- * server moderates the captions and imports up to 50 images into the
- * orchestrator, the import alone under a 60s budget
- * (`BLOCK_TRAINING_IMPORT_BUDGET_MS` in civitai/civitai's
- * `block-training-dataset.service.ts`) — so the 30s default would reject a
- * healthy prepare mid-import.
+ * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`.
  *
- * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so the second
+ * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so every
  * caller shares the number instead of re-typing it.
  */
 export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
@@ -148,11 +161,6 @@ const REQUEST_TIMEOUT_CLASS = {
   APP_STORAGE_SET: 'protocol',
   CANCEL_APP_WORKFLOW: 'protocol',
   CANCEL_WORKFLOW: 'protocol',
-  // No dialog — preparing a dataset charges nothing and the host replies when
-  // the server does. Server-bound, so `'protocol'`; but sent under
-  // `WORKFLOW_REQUEST_TIMEOUT_MS`, not the 30s default, because the server's
-  // image import alone may take 60s. Same reasoning as the workflow trio below.
-  PREPARE_TRAINING_DATASET: 'protocol',
   // The workflow trio is server-bound, not person-bound. It carries its OWN
   // longer bound (`WORKFLOW_REQUEST_TIMEOUT_MS` in `hooks/useBuzzWorkflow.ts`)
   // for orchestrator latency — a different reason for a different number.

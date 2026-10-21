@@ -1463,43 +1463,55 @@ options drive both arms (including `declined`). **`dev:live` refuses this bridge
 it has no civitai chrome to render the server-resolved confirm in, and driving
 the write without it would let dev prove out a flow production does not have.
 
-### `usePrepareTrainingDataset()` and `useRunTraining()` — LoRA training
+### `useImageUpload({ purpose: 'trainingData' })` and `useRunTraining()` — LoRA training
 
-Train a LoRA with the ai-toolkit engine on the **viewer's own images**, from
-inside a page app — the App Blocks `kind: 'training'` flow. Four steps, three
-hooks:
+Train a LoRA with the ai-toolkit engine on **images the viewer uploads**, from
+inside a page app — the App Blocks `kind: 'training'` flow, with the same upload
+path and `{ air, caption }` dataset shape as Civitai's own training form. Four
+steps, three hooks:
 
-1. **Dataset** — `usePrepareTrainingDataset().prepareDataset([{ imageId, caption }])`
-   (`PREPARE_TRAINING_DATASET`). Only the viewer's own scanned, unflagged images
-   within the page's maturity ceiling are admitted; the rest come back in
-   `rejected` with a reason (`unavailable`, `unsupported-media`, `not-eligible`,
-   `pending-scan`, `import-failed`, `import-unavailable`; `pending-scan` and
-   `import-unavailable` are retryable). You get an opaque `datasetId` and the
-   admitted `count`, always at least 1 — if **nothing** is admitted the call
-   rejects with the server's message instead. 1–50 images, captions up to 1,000 characters; captions are
-   moderated. No dialog, no charge.
+1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+   (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). Civitai opens an upload
+   modal in **its own chrome**; the viewer picks up to 50 PNG, JPEG or WebP
+   images, and each is uploaded as a private blob (not published). `open()`
+   resolves with every image that uploaded, `[{ url, air }]`, or `null` when
+   the viewer cancels. Pair each `air` with your caption — captions up to 8,192
+   characters, one blob at most once. The host answers only when its modal
+   closes, after every original has uploaded, so `open()` waits up to an hour,
+   not the ten minutes the other pickers use.
 2. **Quote** — `useBuzzWorkflow().estimate(body)` with a `WorkflowBodyTraining`
-   (`kind: 'training'`, no `quoteId`). The reply carries `trainingQuote:
-   { quoteId, total, imageCount, expiresAt }` — the orchestrator's own price for
-   exactly this run, stored server-side for 15 minutes.
+   (`kind: 'training'`, `items: [{ air, caption }]`, no `quoteId`). The reply
+   carries `trainingQuote: { quoteId, total, imageCount, expiresAt }` — the
+   orchestrator's own price for exactly this run, stored server-side for 15
+   minutes.
 3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })` (`RUN_TRAINING`).
    **Civitai shows the viewer a consent dialog in its own chrome** — price, base
    model, length and dataset size, all read back from the server, never from
-   your body — and submits only on their click. Change nothing in the body
-   between the estimate and the run; the server checks it against the quoted one.
+   your body, with the host's own copies of the uploads as thumbnails — and
+   submits only on their click. Change nothing in the body between the estimate
+   and the run; the server checks it against the quoted one.
 4. **Follow** — `useBuzzWorkflow().watch(workflowId)`. Once the run's moderation
    status is approved, `trainedEpochs` lists the epochs whose checkpoint is
    ready; send the viewer to the publish wizard with one of them (see
    `trainedEpochs` on `BlockWorkflowSnapshot`).
 
+🔴 **Upload and run in the same page session.** The host remembers the blobs
+its own upload modal uploaded for this block, and **refuses a quote naming any
+other** with `training data not uploaded here` — before any dialog, so no run
+and no charge. A page reload forgets the uploads: ask the viewer to upload
+again, then estimate again.
+
 🔴 **Availability.** Behind the host flag **`app-blocks-training-kind`**, which
 ships **off** and is evaluated per viewer. **Page apps only** — the model slot
-answers both messages with an error. The manifest must declare
+answers `RUN_TRAINING` with an error. The manifest must declare
 **`ai:write:budgeted`** and the viewer must be signed in and have granted it.
 **Refused from `dev:live` and from review sessions** (the server refuses
 development and review tokens); build the flow against the mock host. Requires a
 civitai.com host carrying civitai/civitai#5434 (`kind: 'training'`,
-`RUN_TRAINING`) and civitai/civitai#5438 (`PREPARE_TRAINING_DATASET`).
+`RUN_TRAINING`) and civitai/civitai#6461 (uploaded blobs as the dataset). The
+server-prepared dataset this flow used before #6461 (`usePrepareTrainingDataset`,
+`PREPARE_TRAINING_DATASET`) is **removed**; a host carrying #6461 answers that
+message with the error `removed`.
 
 🔴 **Money.** There is no `maxBuzz` and no timeout knob — the price is the quote.
 A confirmed run may cost more than the token's per-call `buzzBudget` (the viewer
@@ -1516,32 +1528,26 @@ saying anything about money:
 | `err.declined` | the viewer dismissed the dialog — **no run was submitted** | revert, say nothing |
 | `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the run **may be running and charged** | 🔴 **never retry automatically**: check the viewer's trainings first (`useAppWorkflows()` lists this app's runs). Re-running the same body after the server did start it is a **second, separately charged run** |
 | `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, a dev-session cap) or a **temporary-availability** deny. Refunded: **no run, nothing charged**; the quote is used up | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); estimate again before any retry — buying Buzz does not lift these caps |
+| `err.trainingDataNotUploaded` (`code: 'training data not uploaded here'`) | the quote names an image this host did not upload for this block (typically after a reload) — refused before any dialog: **no run, nothing charged** | ask the viewer to upload the images again, then estimate and run the new quote |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
 | `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid training request` / `no block token`) | show or ignore per case |
-| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, ineligible image) | estimate again, then retry |
+| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body) | estimate again, then retry |
 
-`prepareDataset` rejects with a `PrepareTrainingDatasetError` (`.code` for the
-host's refusals — `review-mode`, `block is not ready`, `sign in to train`,
-`invalid training dataset`, `no block token` — plus `.signInRequired` and
-`.timedOut`). Preparing charges nothing, so none of them cost Buzz. It prompts
-for `ai:write:budgeted` and retries once on a grant (see the table below);
-`runTraining` deliberately does not — it carries no idempotency key and has an
-outcome where a run may exist, so it never re-sends.
+`runTraining` never prompts for `ai:write:budgeted` or re-sends — it carries no
+idempotency key and has an outcome where a run may exist.
 
 ```tsx
-const { prepareDataset } = usePrepareTrainingDataset();
+const { open } = useImageUpload({ purpose: 'trainingData' });
 const { estimate, watch } = useBuzzWorkflow();
 const { runTraining } = useRunTraining();
 
-async function train(images: Array<{ id: number; caption: string }>) {
-  // Rejects (no `.code`) when NOTHING is admitted, e.g. "none of the requested
-  // images can be used for training"; a resolved dataset always has count >= 1.
-  const dataset = await prepareDataset(images.map((i) => ({ imageId: i.id, caption: i.caption })));
-  if (dataset.rejected.length > 0) showNotice(`${dataset.rejected.length} image(s) left out`);
+async function train(captionFor: (image: BlockTrainingDataImage) => string) {
+  const images = await open();
+  if (!images) return; // the viewer cancelled
 
   const body: WorkflowBodyTraining = {
     kind: 'training',
-    datasetId: dataset.datasetId,
+    items: images.map((image) => ({ air: image.air, caption: captionFor(image) })),
     engine: 'ai-toolkit',
     model: baseModelKey, // a key from Civitai's training catalog
     params: aiToolkitParams, // AiToolkitTrainingParams
@@ -1561,6 +1567,7 @@ async function train(images: Array<{ id: number; caption: string }>) {
     if (err.declined) return; // no run
     if (err.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
     if (err.refused) return showError(err.message); // a cap / availability refusal; no run, nothing charged
+    if (err.trainingDataNotUploaded) return showError('Upload the images again.'); // no run
     if (err.signInRequired) return requestSignIn();
     showError('Could not start training. Get a new price and try again.');
   }
@@ -1569,19 +1576,22 @@ async function train(images: Array<{ id: number; caption: string }>) {
 
 With the mock host — `createMockHost` or `Harness` from
 `@civitai/blocks-react/testing` — the training path is **kind-faithful**: it
-holds the datasets it prepared and the quotes it stored, refuses an unknown
-dataset, a dataset with nothing admitted, a quote above 5,000 and a quote run
-twice, and needs
-`ai:write:budgeted` on the token and a signed-in viewer. Its knobs are
-`trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`,
-`runTrainingError` (`'declined'`, `'submission-unconfirmed'`, or any server
-message), `runTrainingCapRefusal` (the server's resolved cap / availability refusal, which consumes the quote →
+remembers the blob keys its uploads handed out and refuses a run naming any
+other (`training data not uploaded here`, quote kept), refuses items outside the
+server's schema at the estimate, a quote above 5,000, a quote run twice and a
+body that differs from the quoted one, and needs `ai:write:budgeted` on the
+token and a signed-in viewer. Its knobs are `cannedTrainingDataUpload` (the
+images an upload returns; default three fresh ones per upload, `null` for a
+cancel), `trainingDataNotUploadedHere` (refuse every run as a host that forgot
+its uploads would), `trainingQuoteTotal`, `runTrainingError` (`'declined'`,
+`'submission-unconfirmed'`, or any server message), `runTrainingCapRefusal` (the
+server's resolved cap / availability refusal, which consumes the quote →
 `err.refused`) and `generation.trainedEpochs` for the finished run. It has no
-consent dialog, so `runTraining` settles at once where the real host waits on a
-click, and it checks a run's body against its quote by `datasetId` only — the
-server compares the whole body.
-**`dev:live` refuses both bridges**, because the server refuses every training
-request from a dev token.
+upload modal and no consent dialog, so `open()` and `runTraining` settle at once
+where the real host waits on the viewer; and it accepts any https blob url as an
+`air`, where the server accepts only Civitai-hosted ones — name items by `air`.
+**`dev:live` refuses the run** (the server refuses every training request from a
+dev token) and answers the upload as a cancel.
 
 ### `useRunConfirmedStep()` — one job above the per-call budget
 
@@ -2213,8 +2223,10 @@ answers a raw `multiple` + Checkpoint request with the host's error.
 
 Host-mediated image upload — the host opens its native upload modal and the
 iframe never handles the bytes. Resolves with a moderated image (or `null` on
-dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source
-or `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
+dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source,
+`{ purpose: 'trainingData' }` for several private training images in one call
+(`[{ url, air }] | null` — see the LoRA training section), or
+`{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
 
 ```tsx
 const { open } = useImageUpload();
@@ -2863,7 +2875,6 @@ had just worked.
 |---|---|---|
 | `useBuzzWorkflow()` | `submit()` | `ai:write:budgeted` |
 | `useCreatePostFromApp()` | `createPost()` | `posts:write:self` |
-| `usePrepareTrainingDataset()` | `prepareDataset()` | `ai:write:budgeted` |
 | `useGoodPurchase()` | `purchase()` | `goods:purchase:self` |
 | `useTip()` | `tip()` | `social:tip:self` |
 
