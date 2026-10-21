@@ -125,10 +125,7 @@ describe('the live reply status line, by what the reply shows last', () => {
 
   it('says a first state other than working a moment after the line appears, and a first "Working" not at all', async () => {
     const working = await thread({ seq: 1, parts: [], startedAt: Date.now() });
-    const followed = document.createElement('civitai-chat-thread');
-    Object.assign(followed, { turns: [turn()], live: { seq: 1, parts: [], startedAt: Date.now(), reattached: true }, jobs, views });
-    document.body.append(followed);
-    await followed.updateComplete;
+    const followed = await thread({ seq: 1, parts: [], startedAt: Date.now(), reattached: true });
     const region = (root: ParentNode) => line(root)!.querySelector('[role="status"]')!;
     // Empty as it appears, so the words go into a region already on the page.
     expect(region(followed).textContent).toBe('');
