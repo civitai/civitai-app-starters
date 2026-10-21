@@ -3,10 +3,33 @@ import type { AppClient } from '@civitai/sdk';
 import type { ChatModelOption } from './config.js';
 import type { ChatConversationStore } from './store/conversation-store.js';
 
+/** What {@link ChatTranscribe} is called with besides the recording. */
+export interface ChatTranscribeOptions {
+  /** The language the viewer speaks, as they chose it beside the microphone (else the browser's): a code such as `'en'`. */
+  language?: string;
+  /** Aborted when the viewer cancels the recording or stops the transcription; the result is then ignored. */
+  signal?: AbortSignal;
+}
+
+/** What {@link ChatTranscribe} resolves to: the words spoken. */
+export interface ChatTranscription {
+  text: string;
+}
+
+/**
+ * A host's own speech-to-text, for the microphone on a chat with a backend. Called with a playable
+ * recording (`audio/webm`, or `audio/mp4` where the browser records only that) of one phrase: the chat
+ * cuts a recording at the viewer's pauses and calls this for each phrase as it ends, so it may run
+ * several times, concurrently, for one recording. The words of every phrase go into the message box in
+ * the order spoken. A rejection shows the viewer that the recording could not be turned into text.
+ */
+export type ChatTranscribe = (audio: Blob, options: ChatTranscribeOptions) => Promise<ChatTranscription>;
+
 /**
  * A host that runs its own model gateway and storage. With it the chat starts without an `app`, sends
  * every reply to `url` and keeps conversations in `store`; nothing that needs Civitai's services
- * (making media, uploads, voice, posting, Buzz, model search) is offered.
+ * (making media, uploads, voice conversations, posting, Buzz, model search) is offered. The microphone
+ * is offered only with `transcribe`.
  */
 export interface ChatBackend {
   /** An OpenAI-compatible API: replies are `POST ${url}/v1/chat/completions`. May be relative to the page. */
@@ -28,6 +51,8 @@ export interface ChatBackend {
   newChatModel?: string;
   /** Where conversations are kept. */
   store: ChatConversationStore;
+  /** Optional: the host's own speech-to-text. With it the microphone is offered and dictation goes here; without it there is no microphone. */
+  transcribe?: ChatTranscribe;
 }
 
 /**
@@ -46,6 +71,8 @@ export interface ChatStoreBackend {
   newChatModel?: string;
   /** Where conversations are kept. */
   store: ChatConversationStore;
+  /** Optional: the host's own speech-to-text, as for {@link ChatBackend.transcribe}. */
+  transcribe?: ChatTranscribe;
   url?: never;
   fetch?: never;
 }
@@ -74,6 +101,22 @@ export function backendModels(backend: Pick<ChatBackend, 'model' | 'models'>): C
 export function newChatModelOf(backend: ChatBackend | ChatStoreBackend): string | undefined {
   const wanted = typeof backend.newChatModel === 'string' ? backend.newChatModel.trim() : '';
   return wanted && backendModels(backend).some((model) => model.id === wanted) ? wanted : undefined;
+}
+
+/** Whether the backend brings its own speech-to-text: a `transcribe` function. The one test for it. */
+export function hasTranscribe(backend: ChatBackend | ChatStoreBackend): boolean {
+  return typeof backend.transcribe === 'function';
+}
+
+/**
+ * One phrase through the backend's `transcribe`: its words, trimmed. Rejects when the backend has
+ * none, or answers anything but `{ text: string }`.
+ */
+export async function transcribeOnHost(backend: ChatBackend | ChatStoreBackend, audio: Blob, options: ChatTranscribeOptions): Promise<string> {
+  if (!hasTranscribe(backend)) throw new Error('This chat has no speech-to-text: its backend sets no transcribe.');
+  const result = (await backend.transcribe!.call(backend, audio, options)) as Partial<ChatTranscription> | null | undefined;
+  if (typeof result?.text !== 'string') throw new Error('backend.transcribe must resolve to { text: string }.');
+  return result.text.trim();
 }
 
 const UNAVAILABLE = 'Not available: this chat runs on its host backend, without a Civitai sign-in.';

@@ -3,7 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import type { ChatAgent } from './agent/chat-agent.js';
-import { absoluteUrl, backendModels, hasGatewayUrl, namesGateway, newChatModelOf, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
+import { absoluteUrl, backendModels, hasGatewayUrl, hasTranscribe, namesGateway, newChatModelOf, transcribeOnHost, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
@@ -105,8 +105,8 @@ export interface SessionOptions {
   compose?(message: string, refs: string[]): void;
   /**
    * The host's own model gateway and storage. The session then needs no `app`, keeps conversations
-   * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice,
-   * posting or free tier. With `runner: 'remote'`, a {@link ChatStoreBackend}: the host keeps the
+   * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice
+   * conversations, posting or free tier; dictation only through the backend's own `transcribe`. With `runner: 'remote'`, a {@link ChatStoreBackend}: the host keeps the
    * conversations and the runner runs the replies, so it names no gateway.
    */
   backend?: ChatBackend | ChatStoreBackend;
@@ -617,9 +617,23 @@ export class ChatSession extends EventTarget {
     void this.app.orchestration.cancelWorkflow(workflowId).catch(() => undefined);
   }
 
-  /** About 1 Buzz per call, whatever the length. */
+  /**
+   * Who turns the viewer's dictation into text: `'civitai'` (the orchestrator, signed in as the
+   * viewer), `'host'` (a backend's own `transcribe`), or `null` (a backend without one: no
+   * microphone). Only `'civitai'` streams live and offers a spoken conversation.
+   */
+  get dictation(): 'civitai' | 'host' | null {
+    const backend = this.backend;
+    if (!backend) return 'civitai';
+    return hasTranscribe(backend) ? 'host' : null;
+  }
+
+  /** One recorded phrase as text: through a backend's `transcribe`, else Civitai's (about 1 Buzz per call, whatever the length). */
   transcribe(recording: Blob, signal?: AbortSignal): Promise<string> {
-    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, voiceLanguage(this.settings.voiceLanguage));
+    const language = voiceLanguage(this.settings.voiceLanguage);
+    const backend = this.backend;
+    if (backend) return transcribeOnHost(backend, recording, { language, ...(signal ? { signal } : {}) });
+    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, language);
   }
 
   async send(text: string, uploads: PendingUpload[] = [], refs: string[] = []): Promise<void> {
