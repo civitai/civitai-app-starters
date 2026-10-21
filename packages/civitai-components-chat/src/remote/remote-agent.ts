@@ -18,7 +18,7 @@ import {
   type StartRunRequest,
 } from '../runner-protocol.js';
 import type { ConversationStore } from '../store/conversation-store.js';
-import { CUT_OFF, INTERRUPTED_CALL } from '../store/thread-store.js';
+import { CUT_OFF } from '../store/thread-store.js';
 import type { ChatToolResult } from '../tools/gate.js';
 import type { Attachment, Turn } from '../types.js';
 import type { ErrorKind } from '../ux/humanize.js';
@@ -33,6 +33,12 @@ export const REREAD_TIMEOUT_MS = 15_000;
 
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
+
+/**
+ * What a reply ended on the page (Stop refused or not answered in time, the viewer refused, the run
+ * lost) shows for a call whose result never reached it: the call may well have finished on the runner.
+ */
+export const RESULT_NOT_RECEIVED = "This call's result wasn't received here. It may have finished; reload to see it.";
 
 /** What a turn shows when the runner refuses the viewer on the run's events (401/403): the run itself goes on. */
 export const RUN_DENIED = "The assistant's server did not accept your sign-in, so this reply cannot be followed here. Reload the page to see it.";
@@ -452,9 +458,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     if (!fresh || fresh === settled) return;
     const unfinished = fresh.assistant.status === 'streaming' || (fresh.assistant.status === 'error' && fresh.assistant.error === CUT_OFF);
     if (headWins) {
-      // Ended on the page: only a head whose reply finished, or that holds strictly more of it, replaces what the page kept.
-      const more = partsFromMessages(fresh.assistant.messages).length > partsFromMessages(settled.assistant.messages).length;
-      if (unfinished && !more) {
+      // Ended on the page: only a head whose reply finished, or that holds more of it, replaces what the page kept.
+      if (unfinished && !holdsMore(partsFromMessages(fresh.assistant.messages), partsFromMessages(settled.assistant.messages))) {
         fresh.assistant = settled.assistant;
         this.#emit();
       }
@@ -597,11 +602,24 @@ function messagesFromParts(parts: readonly TurnPart[]): ModelMessage[] {
         ? typeof part.output === 'string'
           ? { type: 'text', value: part.output }
           : { type: 'json', value: (part.output ?? null) as JSONValue }
-        : { type: 'error-text', value: part.state === 'error' ? (part.error ?? '') : INTERRUPTED_CALL };
+        : { type: 'error-text', value: part.state === 'error' ? (part.error ?? '') : RESULT_NOT_RECEIVED };
     results.push({ type: 'tool-result', toolCallId: part.toolCallId, toolName: part.toolName, output });
   }
   if (said.length === 0) return [];
   return [{ role: 'assistant', content: said }, ...(results.length ? [{ role: 'tool' as const, content: results }] : [])];
+}
+
+/**
+ * Whether a saved reply holds more than the page kept of the same one. Both are a start of one event
+ * stream, and the head saves whole steps, so it holds more when it has more parts, or as many with the
+ * result of a call the page never got, or the last words written further.
+ */
+function holdsMore(head: readonly TurnPart[], kept: readonly TurnPart[]): boolean {
+  if (head.length !== kept.length) return head.length > kept.length;
+  const answered = kept.some((part) => part.kind === 'tool' && part.state !== 'done' && head.some((saved) => saved.kind === 'tool' && saved.toolCallId === part.toolCallId && saved.state === 'done'));
+  const [headLast, keptLast] = [head.at(-1), kept.at(-1)];
+  const furtherWords = headLast?.kind === 'text' && keptLast?.kind === 'text' && headLast.text.length > keptLast.text.length;
+  return answered || furtherWords;
 }
 
 /** Whether a failed call is worth making again: no answer came, or the runner is down or busy for now. */
