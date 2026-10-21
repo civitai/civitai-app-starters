@@ -1049,12 +1049,17 @@ export interface WorkflowBodyTraining {
    */
   model: string;
   params: AiToolkitTrainingParams;
-  /** At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. Moderated like a prompt. */
+  /**
+   * At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. The host runs
+   * it through the same trigger-word check Civitai's trainer and Training Studio
+   * use, at the estimate and again at the submit, before anything is reserved; a
+   * refused trigger word fails the estimate.
+   */
   triggerWord: string;
   /**
    * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
-   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Moderated like
-   * prompts.
+   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Checked for
+   * those bounds only, as in the Training Studio.
    */
   samplePrompts: string[];
   /**

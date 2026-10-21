@@ -1476,7 +1476,9 @@ steps, three hooks:
    images, and each is uploaded as a private blob (not published). `open()`
    resolves with every image that uploaded, `[{ url, air }]`, or `null` when
    the viewer cancels. Pair each `air` with your caption — captions up to 8,192
-   characters, one blob at most once.
+   characters, one blob at most once. The host answers only when its modal
+   closes, after every original has uploaded, so `open()` waits up to an hour,
+   not the ten minutes the other pickers use.
 2. **Quote** — `useBuzzWorkflow().estimate(body)` with a `WorkflowBodyTraining`
    (`kind: 'training'`, `items: [{ air, caption }]`, no `quoteId`). The reply
    carries `trainingQuote: { quoteId, total, imageCount, expiresAt }` — the

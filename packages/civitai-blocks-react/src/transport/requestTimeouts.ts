@@ -34,6 +34,24 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
 
 /**
+ * The bound for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` (civitai/civitai#6461),
+ * which is longer than {@link HUMAN_INTERACTION_TIMEOUT_MS} on purpose.
+ *
+ * The host replies ONCE, when its modal closes — after the viewer picked up to 50
+ * images AND the host uploaded every original. That second half is network work
+ * the viewer does not control, so ten minutes from `open()` can expire while the
+ * host is still uploading. The block would then reject, drop the late reply, and
+ * never learn the keys the host now remembers for `RUN_TRAINING`. The host always
+ * answers on close (images, or a bare cancel), so the bound only has to end a wait
+ * on a host that will never answer; an hour does that without cutting off a slow
+ * upload.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: it is at least
+ * the human bound, which is what that bucket guarantees.
+ */
+export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
+
+/**
  * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
  * host forwards it to the orchestrator and replies only once that answers. No
  * person is in the loop, so it stays in the `'protocol'` bucket below; it just

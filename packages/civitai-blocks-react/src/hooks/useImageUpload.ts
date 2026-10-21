@@ -11,7 +11,10 @@ import type {
 
 export type { BlockTrainingDataImage };
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import {
+  HUMAN_INTERACTION_TIMEOUT_MS,
+  TRAINING_DATA_UPLOAD_TIMEOUT_MS,
+} from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
@@ -183,7 +186,10 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  *    which this resolves as `null` — never as a list it did not upload.
  *
  * Human-interactive, so it uses the same generous {@link HUMAN_INTERACTION_TIMEOUT_MS}
- * as the pickers (the host still resolves earlier on upload/dismiss/close).
+ * as the pickers (the host still resolves earlier on upload/dismiss/close) — except
+ * `'trainingData'`, which waits up to {@link TRAINING_DATA_UPLOAD_TIMEOUT_MS} (one
+ * hour): the host replies only after uploading up to 50 originals, which can take
+ * longer than ten minutes.
  * Host-mediated, same trust model as `useResourcePicker` / `useBuzzWorkflow`.
  *
  * Backward-compatible: when `purpose` is omitted the hook sends NO `purpose`
@@ -351,7 +357,9 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
         getTransport(),
         { type: 'OPEN_IMAGE_UPLOAD', payload: { purpose } },
         'IMAGE_UPLOAD_RESULT',
-        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
+        // NOT the 10-minute human bound: the host answers only after uploading
+        // every original, which can outlast it — see TRAINING_DATA_UPLOAD_TIMEOUT_MS.
+        { timeoutMs: TRAINING_DATA_UPLOAD_TIMEOUT_MS },
       );
       // Only the multi-image shape is an answer to THIS purpose. A host that
       // predates `trainingData` normalises it to `display` and replies with one

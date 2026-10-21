@@ -1739,6 +1739,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                   'Test the bytes upload against the real site, or use ' +
                   'createMockHost({ uploadImageBytesResult }) in dev:mock.',
               );
+            } else if ((typed.payload as { purpose?: unknown } | null)?.purpose === 'trainingData') {
+              logOnce(
+                'open-image-upload-training-data',
+                "OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+                  'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+                  'Test the training flow against the real site, or use ' +
+                  'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+              );
             } else {
               logOnce(
                 'open-image-upload',
