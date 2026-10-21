@@ -1,4 +1,3 @@
-import type { CivitaiToastRegion } from '@civitai/components/civitai-toast-region';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ChatToolResult } from '../tools/gate.js';
@@ -89,32 +88,6 @@ describe('civitai-chat holdReason', () => {
     const { chat, composer } = await mount((el) => (el.mcpServers = [{ id: 'sandbox', url: 'https://sandbox.example/mcp', label: 'Sandbox', token: () => 'tok' }]));
     await chat.updateComplete;
     await vi.waitFor(() => expect(composer.querySelector('.cvt-composer-hold')?.textContent).toBe('Connecting to Sandbox…'));
-  });
-});
-
-describe('civitai-chat /model', () => {
-  async function commands() {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'viewer/default-model' }));
-    const { root, composer } = await mount();
-    await vi.waitFor(() => expect(root.querySelector('civitai-toast-region')).not.toBeNull());
-    const region = root.querySelector<CivitaiToastRegion>('civitai-toast-region')!;
-    const shown = vi.spyOn(region, 'show');
-    const say = async (words: string) => {
-      shown.mockClear();
-      composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: words } }));
-      await vi.waitFor(() => expect(shown).toHaveBeenCalled());
-      return (shown.mock.calls[0]![0] as { message: string }).message;
-    };
-    return { say };
-  }
-
-  it('says this chat changed, and which default new chats keep, naming where that default is set', async () => {
-    const { say } = await commands();
-    expect(await say('/model z-ai/glm-5.3-flash')).toBe(
-      'This chat now uses z-ai/glm-5.3-flash, from the next reply. New chats use your default, viewer/default-model (Settings → Assistant).',
-    );
-    expect(await say('/model default')).toBe('This chat now follows your default, viewer/default-model (Settings → Assistant), from the next reply.');
   });
 });
 

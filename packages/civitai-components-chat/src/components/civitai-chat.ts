@@ -32,7 +32,6 @@ import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.j
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { ConversationView } from '../voice/conversation/index.js';
 import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
-import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatThread, QueuedView } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
 import { mediaActions } from './media-actions.js';
@@ -1347,16 +1346,9 @@ export class CivitaiChat extends LitElement {
     }
   }
 
-  #freeAllowance(session: ChatSession): FreeAllowance | null {
-    if (session.backend) return null;
-    const free = session.freeTier.modelFor(chatConfig.model);
-    return free ? { left: free.remaining, resetAt: session.freeTier.resetAt(chatConfig.model) } : null;
-  }
-
   #continuePaid(): void {
     const session = this.#session;
     if (!session) return;
-    this.#updateSettings({ assistantTier: 'auto' });
     void session.agent.retry();
   }
 
@@ -1403,18 +1395,8 @@ export class CivitaiChat extends LitElement {
     };
   }
 
-  /**
-   * What `/model <x>` says it did. `/model` changes this chat only, so with a stored default it also says
-   * which model new chats get, and where that default is changed.
-   */
   #switchedModel(session: ChatSession): string {
-    const stored = session.backend ? undefined : session.settings.assistantModel?.trim() || undefined;
-    if (!stored) return `This chat now uses ${this.#modelName(session)}, from the next reply.`;
-    const fallback = `your default, ${modelName(stored, chatConfig.models)} (Settings → Assistant)`;
-    const own = session.store.current?.model;
-    return own
-      ? `This chat now uses ${modelName(own, chatConfig.models)}, from the next reply. New chats use ${fallback}.`
-      : `This chat now follows ${fallback}, from the next reply.`;
+    return `This chat now uses ${this.#modelName(session)}, from the next reply.`;
   }
 
   /** The open chat's model in words: its own, or the default it follows. */
@@ -1422,7 +1404,7 @@ export class CivitaiChat extends LitElement {
     const { models } = this.#modelOptions(session);
     const own = session.store.current?.model;
     if (own) return modelName(own, models);
-    return session.backend ? `the default (${session.backend.model})` : `the default (${modelName(session.settings.assistantModel?.trim() || undefined, models)})`;
+    return session.backend ? `the default (${session.backend.model})` : `the default (${modelName(chatConfig.model, models)})`;
   }
 
   #loadModels(): void {
@@ -1476,7 +1458,6 @@ export class CivitaiChat extends LitElement {
       .value=${session.assistantModel()}
       ?own=${Boolean(session.store.current?.model)}
       ?no-custom=${Boolean(backend)}
-      .defaultModel=${backend ? undefined : session.settings.assistantModel?.trim() || undefined}
       .models=${usableModels(this.modelList ?? session.modelChoices(), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
       ?loading=${this.modelsLoading}
       @cvt-model-open=${() => this.#loadModels()}
@@ -1961,14 +1942,11 @@ export class CivitaiChat extends LitElement {
       <civitai-chat-settings-dialog
         .open=${this.settingsOpen}
         .settings=${session.settings}
-        .freeAllowance=${this.#freeAllowance(session)}
         .userName=${this.userName}
         .canExport=${turns.length > 0}
         .canSignOut=${this.canSignOut}
         .canTheme=${this.fullPage}
         .hosted=${hosted}
-        .models=${chatConfig.models}
-        .defaultModelName=${(this.modelList ?? session.modelChoices()).find((model) => model.source === 'default')?.label}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
         @cvt-export=${() => this.#export()}

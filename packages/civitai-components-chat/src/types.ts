@@ -200,15 +200,8 @@ export interface Settings {
   maxOutputTokens?: number;
   /** Sent with every request as the user's standing instructions to the assistant. */
   customInstructions?: string;
-  /** The model a chat uses when it has none of its own; the configured default when unset. */
-  assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
-  /**
-   * How replies are paid for: `auto` (the default) uses free replies while they last and then Buzz,
-   * `free` uses only free replies, `paid` always uses Buzz.
-   */
-  assistantTier?: 'auto' | 'free' | 'paid';
   lastConversationId?: string;
 }
 

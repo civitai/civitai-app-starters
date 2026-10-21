@@ -260,7 +260,7 @@ export class ChatSession extends EventTarget {
           ...(this.settings.customInstructions ? { customInstructions: this.settings.customInstructions } : {}),
           ...(this.#options.hostInstructions?.() ? { hostInstructions: this.#options.hostInstructions()! } : {}),
           maxOutputTokens: outputTokenCap(this.settings.maxOutputTokens),
-          tier: this.settings.assistantTier ?? 'auto',
+          tier: 'auto',
           allowMature: this.settings.allowMature,
           autoRunLimit: this.settings.autoRunLimit,
           spokenReplies: this.spokenReplies,
@@ -361,16 +361,13 @@ export class ChatSession extends EventTarget {
     }
     if (!model) {
       const wrap = (inner: typeof fetch) =>
-        freeTierFetch(inner, id, this.freeTier, () => {
-          const tier = this.settings.assistantTier ?? 'auto';
-          return { useFree: tier !== 'paid', payWhenOut: tier !== 'free' };
-        });
+        freeTierFetch(inner, id, this.freeTier, () => ({ useFree: true, payWhenOut: true }));
       this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
     }
     return model;
   }
 
-  /** The model the open chat's next reply uses: its own, else the viewer's default, else the page's. */
+  /** The model the open chat's next reply uses: its own, else the page's. */
   assistantModel(): string {
     const backend = this.backend;
     if (backend) {
@@ -378,7 +375,7 @@ export class ChatSession extends EventTarget {
       const own = this.store.current?.model?.trim();
       return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
     }
-    return this.store.current?.model?.trim() || this.settings.assistantModel?.trim() || chatConfig.model;
+    return this.store.current?.model?.trim() || chatConfig.model;
   }
 
   /** Switches the open chat's model from its next reply; `undefined` makes it follow the viewer's default. */

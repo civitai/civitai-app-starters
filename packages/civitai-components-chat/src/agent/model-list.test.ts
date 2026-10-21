@@ -63,6 +63,18 @@ describe('buildModelList', () => {
     expect(['urn:air:x:repository:hub/Quartz-9B@main.tar', 'urn:air:x:repository:hub/b@', 'civitai/qwen3.8', 'plain'].map(prettyModelId)).toEqual(['Quartz-9B', 'b', 'civitai/qwen3.8', 'plain']);
   });
 
+  it('leaves out batch variants, which never answer within a reply', () => {
+    const batch = { id: 'd/cheap:batch', name: 'Cheap D (batch)', pricing: { prompt: '0.00000005', completion: '0.0000002' }, supported_parameters: ['tools'] };
+    const list = buildModelList({
+      openRouter: { data: [...openRouter.data, batch] },
+      orchestration: { data: [...orchestration.data, { id: batch.id, object: 'model', owned_by: 'openrouter' }] },
+      defaultModel: DEFAULT,
+      listed: [],
+    });
+    expect(list.map((entry) => entry.id)).toContain('d/cheap');
+    expect(list.map((entry) => entry.id)).not.toContain('d/cheap:batch');
+  });
+
   it('keeps the default and the page models when neither list loaded', () => {
     expect(buildModelList({ openRouter: null, orchestration: null, defaultModel: DEFAULT, listed: LISTED }).map((entry) => entry.id)).toEqual([DEFAULT, 'g/listed']);
   });

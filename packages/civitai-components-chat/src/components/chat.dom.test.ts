@@ -238,7 +238,6 @@ describe('civitai-chat', () => {
     const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response('{}', { status: 400 }));
     vi.stubGlobal('fetch', fetch);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'viewer/default-model' }));
     const app = fakeApp() as { orchestration: { submitWorkflow: ReturnType<typeof vi.fn> } };
     const chat = document.createElement('civitai-chat');
     // No tool servers, so a reply goes straight to the model.
@@ -255,22 +254,20 @@ describe('civitai-chat', () => {
       fetch.mock.calls.filter(([url]) => String(url).includes('chat/completions')).map(([, init]) => (JSON.parse(String(init?.body)) as { model: string }).model);
 
     say('/model');
-    await vi.waitFor(() => expect(toast()).toContain('This chat uses the default (viewer/default-model).'));
+    await vi.waitFor(() => expect(toast()).toContain('This chat uses the default (civitai/qwen3.8).'));
 
     say('/model z-ai/glm-5.3-flash');
     await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: z-ai/glm-5.3-flash'));
     expect(toast()).toContain('This chat now uses z-ai/glm-5.3-flash, from the next reply.');
-    // The chat's own choice: the viewer's default stays as it was.
-    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('viewer/default-model');
 
     await chat.send('a red bike');
     await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash']));
     expect(app.orchestration.submitWorkflow.mock.calls[0]?.[0]).toMatchObject({ metadata: { model: 'z-ai/glm-5.3-flash' } });
 
     say('/model default');
-    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: viewer/default-model'));
+    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: civitai/qwen3.8'));
     await chat.send('a blue bike');
-    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash', 'viewer/default-model']));
+    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash', 'civitai/qwen3.8']));
 
     say('/clear');
     await chat.updateComplete;
@@ -372,73 +369,6 @@ describe('civitai-chat', () => {
     const listed = [...root.querySelectorAll('.cvt-model-options [role=option]')].map((option) => [option.querySelector('.cvt-model-name')!.textContent, option.getAttribute('aria-selected')]);
     expect(listed).toContainEqual(['civitai/tiny-current', 'true']);
     expect(listed.map(([name]) => name)).not.toContain('civitai/tiny-other');
-  });
-
-  it("goes back to the viewer's own default when they type Default in the model list", async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'z-ai/glm-5.3-prime' }));
-    const chat = document.createElement('civitai-chat');
-    chat.app = fakeApp();
-    document.body.append(chat);
-    const root = chat.shadowRoot!;
-    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
-    const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
-    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
-
-    for (const typed of ['default', 'Default']) {
-      chip.click();
-      await chat.updateComplete;
-      const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
-      search.value = typed;
-      search.dispatchEvent(new Event('input'));
-      await chat.updateComplete;
-      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: z-ai/glm-5.3-prime'));
-      const own = root.querySelector('civitai-chat-model-picker')!.own;
-      expect(own).toBe(false);
-      // Pinned again for the second spelling.
-      root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
-      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
-    }
-  });
-
-  it('lets a viewer stuck on Free with a model that has no free replies allow paid replies and get the reply', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantTier: 'free' }));
-    const replies: (string | null)[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: unknown, init?: RequestInit) => {
-        const target = String(url);
-        if (target.includes('free-tier')) {
-          return new Response(JSON.stringify({ enabled: true, models: [{ key: 'default-chat', airs: ['urn:air:only:the-default'], remaining: 5, windows: [{ limit: 10, remaining: 5 }] }] }));
-        }
-        if (target.includes('chat/completions')) {
-          replies.push(new Headers(init?.headers).get('X-Civitai-Tier'));
-          return new Response('{}', { status: 400 });
-        }
-        return new Response('{}');
-      }),
-    );
-    const chat = document.createElement('civitai-chat');
-    chat.mcp = { orchestration: false, site: false };
-    chat.app = fakeApp();
-    document.body.append(chat);
-    const root = chat.shadowRoot!;
-    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model z-ai/not-free' } }));
-    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('.cvt-model-chip')!.title).toBe('Model for this chat: z-ai/not-free'));
-
-    await chat.send('a red bike');
-    const button = () => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'));
-    await vi.waitFor(() => expect(button()).toBeDefined());
-    expect(replies).toEqual([]);
-
-    button()!.click();
-    await vi.waitFor(() => expect(replies).toEqual([null]));
-    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantTier).toBe('auto');
   });
 
   it('offers Continue on a reply that ran out of steps, and Continue asks the assistant to carry on', async () => {

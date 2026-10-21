@@ -22,7 +22,6 @@ export class CivitaiChatModelPicker extends LightElement {
   static override properties: PropertyDeclarations = {
     value: {},
     own: { type: Boolean },
-    defaultModel: { attribute: false },
     models: { attribute: false },
     loading: { type: Boolean },
     disabled: { type: Boolean },
@@ -35,8 +34,6 @@ export class CivitaiChatModelPicker extends LightElement {
   declare value: string;
   /** The chat picked `value` itself, rather than following the default. */
   declare own: boolean;
-  /** What the default row follows for this viewer: their own default model, when they set one. */
-  declare defaultModel: string | undefined;
   declare models: ChatModelEntry[];
   declare loading: boolean;
   declare disabled: boolean;
@@ -94,7 +91,7 @@ export class CivitaiChatModelPicker extends LightElement {
 
   /**
    * The default row's name: the model a chat that follows the default uses, by name, marked as the
-   * default ("GPT-6 Luna · default"). That is the viewer's own default when they set one, else the page's.
+   * default ("GPT-6 Luna · default").
    */
   #defaultName(): string {
     return defaultLabel(this.#defaultModelName());
@@ -103,7 +100,7 @@ export class CivitaiChatModelPicker extends LightElement {
   /** The name of the model the default row follows, unmarked. */
   #defaultModelName(): string {
     const page = this.models.find((model) => model.source === 'default');
-    return modelLabel(this.defaultModel ?? page?.id ?? this.value, this.models);
+    return modelLabel(page?.id ?? this.value, this.models);
   }
 
   /** The search means the default row: "default", or the row's whole name as shown. */
@@ -130,7 +127,7 @@ export class CivitaiChatModelPicker extends LightElement {
       // An exact id or name picks that model. A typed id (one word with / or :) is meant as is,
       // never swapped for a longer id it begins; anything else, like "OpenAI: GPT-4o", is a search.
       const wanted = typed.toLowerCase();
-      // "default", or the default row's whole name, means what that row means: follow the viewer's default.
+      // "default", or the default row's whole name, means what that row means: follow the page's default.
       if (this.#wantsDefault(typed)) return this.#pick(undefined);
       const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.label.toLowerCase() === wanted);
       if (exact) return this.#pick(exact.id);
@@ -161,7 +158,6 @@ export class CivitaiChatModelPicker extends LightElement {
     // Typing "default" (or the default row's whole name) shows that row, never "default" as a model id nothing serves.
     const wantsDefault = this.#wantsDefault(typed);
     const custom = !this.noCustom && typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
-    const fallback = this.defaultModel ? 'Your default, from Settings' : "The app's default model";
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input
         class="cvt-model-search"
@@ -176,7 +172,7 @@ export class CivitaiChatModelPicker extends LightElement {
           ? html`<li>
               <button type="button" role="option" aria-selected=${String(!this.own)} @click=${() => this.#pick(undefined)}>
                 <span class="cvt-model-name">${this.#defaultName()}</span>
-                <span class="cvt-model-id">${fallback}</span>
+                <span class="cvt-model-id">The app's default model</span>
               </button>
             </li>`
           : nothing}
