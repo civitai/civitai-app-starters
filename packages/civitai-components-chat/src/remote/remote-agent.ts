@@ -5,6 +5,7 @@ import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
 import type { ChatAgent } from '../agent/chat-agent.js';
 import type { LiveTurn } from '../agent/core.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
+import { DISPATCH_AGENT, isSubagentOutput, SUBAGENT_KIND, type SubagentResult } from '../agent/subagent-result.js';
 import type { ErrorTrace } from '../agent/error-trace.js';
 import {
   applyRunEvent,
@@ -63,7 +64,7 @@ export interface RemoteAgentDeps {
   /** Reads the chat's head again (the runner wrote it) once a run ended: the session's `reloadConversation`. */
   reread(conversationId: string): Promise<void>;
   /** The session's subagent cards. */
-  progress?: { set(id: string, progress: RunSubagentProgress | undefined): void };
+  progress?: { set(id: string, progress: RunSubagentProgress | undefined): void; get?(id: string): RunSubagentProgress | undefined };
   /** A tool call finished, as the runner's gate reported it. */
   onToolResult?(result: ChatToolResult): void;
   /** Calls `listener` whenever the page wakes (shown again, back online, restored); returns how to stop. */
@@ -99,6 +100,8 @@ interface Run {
   appliedThrough?: number;
   /** Journal re-reads in a row (an event that did not fit), for their waits: not reset by the events that do fit. */
   resyncs: number;
+  /** The calls whose result never reached the page, when the reply ended on the page: a head's real result for one of them is more than the page has. */
+  unreceived?: Set<string>;
   /** Ends the wait before the next reconnect, while one waits. */
   wakeWait?: () => void;
   unsubscribe?: () => void;
@@ -424,7 +427,11 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     this.#teardown(run);
     if (this.#run === run) {
       // Ended on the page, with no `run-ended` to say what it kept: what it showed is kept as the turn's messages.
-      if (headWins && this.#live?.parts.length) run.turn.assistant.messages = messagesFromParts(this.#live.parts);
+      if (headWins && this.#live?.parts.length) {
+        const kept = messagesFromParts(this.#live.parts, (id) => this.#deps.progress?.get?.(id));
+        run.turn.assistant.messages = kept.messages;
+        run.unreceived = kept.unreceived;
+      }
       this.#live = null;
       this.#emit();
     }
@@ -459,7 +466,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     const unfinished = fresh.assistant.status === 'streaming' || (fresh.assistant.status === 'error' && fresh.assistant.error === CUT_OFF);
     if (headWins) {
       // Ended on the page: only a head whose reply finished, or that holds more of it, replaces what the page kept.
-      if (unfinished && !holdsMore(partsFromMessages(fresh.assistant.messages), partsFromMessages(settled.assistant.messages))) {
+      if (unfinished && !holdsMore(partsFromMessages(fresh.assistant.messages), partsFromMessages(settled.assistant.messages), run.unreceived ?? new Set())) {
         fresh.assistant = settled.assistant;
         this.#emit();
       }
@@ -586,9 +593,11 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
 
 /**
  * A reply's parts as the messages a turn keeps: its words and calls in order, then each call's result.
- * A call that never got one is closed as interrupted, as a reply read back unfinished closes it.
+ * A call whose result never reached the page gets {@link RESULT_NOT_RECEIVED} (a subagent's, a result
+ * with status `unreceived`, for its card): it may have finished on the runner. Also says which calls those were.
  */
-function messagesFromParts(parts: readonly TurnPart[]): ModelMessage[] {
+function messagesFromParts(parts: readonly TurnPart[], progressOf: (id: string) => RunSubagentProgress | undefined): { messages: ModelMessage[]; unreceived: Set<string> } {
+  const unreceived = new Set<string>();
   const said: Exclude<Extract<ModelMessage, { role: 'assistant' }>['content'], string> = [];
   const results: ToolResultPart[] = [];
   for (const part of parts) {
@@ -597,26 +606,38 @@ function messagesFromParts(parts: readonly TurnPart[]): ModelMessage[] {
       continue;
     }
     said.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+    if (part.state === 'calling') unreceived.add(part.toolCallId);
     const output: ToolResultPart['output'] =
       part.state === 'done'
         ? typeof part.output === 'string'
           ? { type: 'text', value: part.output }
           : { type: 'json', value: (part.output ?? null) as JSONValue }
-        : { type: 'error-text', value: part.state === 'error' ? (part.error ?? '') : RESULT_NOT_RECEIVED };
+        : part.state === 'error'
+          ? { type: 'error-text', value: part.error ?? '' }
+          : part.toolName === DISPATCH_AGENT
+            ? { type: 'json', value: unreceivedSubagent(progressOf(part.toolCallId)) as unknown as JSONValue }
+            : { type: 'error-text', value: RESULT_NOT_RECEIVED };
     results.push({ type: 'tool-result', toolCallId: part.toolCallId, toolName: part.toolName, output });
   }
-  if (said.length === 0) return [];
-  return [{ role: 'assistant', content: said }, ...(results.length ? [{ role: 'tool' as const, content: results }] : [])];
+  if (said.length === 0) return { messages: [], unreceived };
+  return { messages: [{ role: 'assistant', content: said }, ...(results.length ? [{ role: 'tool' as const, content: results }] : [])], unreceived };
+}
+
+/** A subagent whose result never reached the page, with how far it was last seen to have got. */
+function unreceivedSubagent(progress: RunSubagentProgress | undefined): SubagentResult {
+  return { kind: SUBAGENT_KIND, status: 'unreceived', summary: '', steps: progress?.steps ?? 0, toolCalls: progress?.toolCalls ?? 0, activity: [], error: RESULT_NOT_RECEIVED };
 }
 
 /**
  * Whether a saved reply holds more than the page kept of the same one. Both are a start of one event
  * stream, and the head saves whole steps, so it holds more when it has more parts, or as many with the
- * result of a call the page never got, or the last words written further.
+ * real result of a call the page never got (`unreceived`, by id), or the last words written further. A
+ * result made up when the head was read back (the placeholder a write subagent saved mid-run gets) is not one.
  */
-function holdsMore(head: readonly TurnPart[], kept: readonly TurnPart[]): boolean {
+function holdsMore(head: readonly TurnPart[], kept: readonly TurnPart[], unreceived: ReadonlySet<string>): boolean {
   if (head.length !== kept.length) return head.length > kept.length;
-  const answered = kept.some((part) => part.kind === 'tool' && part.state !== 'done' && head.some((saved) => saved.kind === 'tool' && saved.toolCallId === part.toolCallId && saved.state === 'done'));
+  const placeholder = (output: unknown) => isSubagentOutput(output) && (output as { status?: unknown }).status === 'interrupted';
+  const answered = head.some((saved) => saved.kind === 'tool' && unreceived.has(saved.toolCallId) && saved.state === 'done' && !placeholder(saved.output));
   const [headLast, keptLast] = [head.at(-1), kept.at(-1)];
   const furtherWords = headLast?.kind === 'text' && keptLast?.kind === 'text' && headLast.text.length > keptLast.text.length;
   return answered || furtherWords;

@@ -18,8 +18,12 @@ export const ACTIVITY_MAX = 50;
  */
 export const SUBAGENT_KIND = 'subagent';
 
-/** `interrupted`: a write subagent whose page closed while it ran, read back on Continue; it was not run again. */
-export type SubagentStatus = 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted';
+/**
+ * `interrupted`: a write subagent whose page closed while it ran, read back on Continue; it was not run
+ * again. `unreceived`: a subagent of a reply run on a server runner that ended on the page before its
+ * result came (it may have finished there).
+ */
+export type SubagentStatus = 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted' | 'unreceived';
 
 /** One file a write subagent's file tool changed, from that call's successful result. */
 export interface SubagentChange {

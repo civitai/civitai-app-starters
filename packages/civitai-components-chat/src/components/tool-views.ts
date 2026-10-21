@@ -99,6 +99,7 @@ const SUBAGENT_STATUS: Record<SubagentStatus | 'calling' | 'refused', string> = 
   stopped: 'Stopped',
   error: 'Failed',
   interrupted: 'Interrupted',
+  unreceived: 'Result not received',
   refused: 'Not started',
 };
 
