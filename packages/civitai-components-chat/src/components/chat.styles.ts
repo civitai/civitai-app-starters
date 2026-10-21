@@ -869,6 +869,19 @@ civitai-chat-panel {
   font-size: 14px;
 }
 
+.cvt-instructions-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
 .cvt-instructions-actions {
   display: flex;
   gap: 8px;

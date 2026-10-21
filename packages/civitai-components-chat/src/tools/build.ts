@@ -129,7 +129,7 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
     }),
     execute: async (input) =>
       proposedInstructions(input)
-        ? { shown: true, note: 'A card shows the new instructions. They apply from the next reply only if the user presses Save; until then, do not say they are in effect.' }
+        ? { shown: true, note: 'A card shows the new instructions; the user can edit them there and they apply from the next reply only if the user presses Save. Do not say they are in effect. If the user asks to change them, call update_instructions again with the changed text.' }
         : { error: `instructions must be 1 to ${CUSTOM_INSTRUCTIONS_MAX} characters.`, note: 'Nothing was shown. Shorten or fill in the text and call again.' },
   });
 

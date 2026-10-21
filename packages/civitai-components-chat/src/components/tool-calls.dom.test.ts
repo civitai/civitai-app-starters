@@ -261,7 +261,7 @@ describe('new instructions the assistant proposes', () => {
     const el = await turnWith([PROPOSAL], { latest: true });
     const changes: unknown[] = [];
     el.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
-    expect(el.querySelector('.cvt-instructions-card blockquote')?.textContent).toBe('Be Civ-chan: playful and fierce.');
+    expect(el.querySelector<HTMLTextAreaElement>('.cvt-instructions-text')?.value).toBe('Be Civ-chan: playful and fierce.');
     const button = (label: string) => [...el.querySelectorAll<HTMLElement>('.cvt-instructions-card civitai-button')].find((b) => b.textContent?.trim() === label);
     button('Save')!.click();
     expect(changes).toEqual([{ customInstructions: 'Be Civ-chan: playful and fierce.' }]);
@@ -272,9 +272,14 @@ describe('new instructions the assistant proposes', () => {
     expect(el.querySelector('.cvt-instructions-state')?.textContent).toContain('Saved.');
   });
 
-  it('cannot be saved from an older reply', async () => {
-    const el = await turnWith([PROPOSAL], { latest: false });
-    expect(el.querySelector('.cvt-instructions-card civitai-button')).toBeNull();
-    expect(el.querySelector('.cvt-instructions-state')?.textContent).toBe('Not saved.');
+  it('can be edited before saving, also once the chat has moved on', async () => {
+    const el = await turnWith([{ ...PROPOSAL, toolCallId: 'i2' } as TurnPart], { latest: false });
+    const changes: unknown[] = [];
+    el.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    const box = el.querySelector<HTMLTextAreaElement>('.cvt-instructions-text')!;
+    box.value = 'Be Civ-chan, and meow now and then.';
+    box.dispatchEvent(new Event('input'));
+    [...el.querySelectorAll<HTMLElement>('.cvt-instructions-card civitai-button')].find((b) => b.textContent?.trim() === 'Save')!.click();
+    expect(changes).toEqual([{ customInstructions: 'Be Civ-chan, and meow now and then.' }]);
   });
 });

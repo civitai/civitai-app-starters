@@ -9,6 +9,7 @@ import type { PanelManager } from '../panels/panel.js';
 import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { UPDATE_INSTRUCTIONS, proposedInstructions } from '../tools/instructions.js';
+import { CUSTOM_INSTRUCTIONS_MAX } from '../config.js';
 import type { ModelDirectory } from '../store/models.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { JOB_TOOLS } from '../tools/catalog.js';
@@ -86,34 +87,57 @@ const post: ToolView = {
   },
 };
 
-// "Not now" only hides the buttons until a reload; nothing is saved either way.
+// The viewer's edits and "Not now" last until a reload; nothing is saved without Save.
+const edited = new Map<string, string>();
 const declined = new Set<string>();
 
 const instructions: ToolView = {
   activity: 'Writing new instructions…',
   render(part, ctx) {
-    const text = proposedInstructions(part.input);
-    if (!text || part.state !== 'done') return undefined;
-    const saved = ctx.instructions?.trim() === text;
-    const open = !saved && ctx.latest && !ctx.live && !declined.has(part.toolCallId);
-    const state = saved ? 'Saved. They apply from the next reply; change them any time in Settings.' : open ? '' : 'Not saved.';
+    const proposed = proposedInstructions(part.input);
+    if (!proposed || part.state !== 'done') return undefined;
+    const text = edited.get(part.toolCallId) ?? proposed;
+    const rerender = () => (ctx.host as HTMLElement & { requestUpdate(): void }).requestUpdate();
+    if (ctx.instructions?.trim() === text.trim()) {
+      return html`<section class="cvt-instructions-card" aria-label="New instructions">
+        <h3>New instructions for every chat</h3>
+        <blockquote>${text}</blockquote>
+        <p class="cvt-instructions-state">Saved. They apply from the next reply; change them any time in Settings.</p>
+      </section>`;
+    }
+    if (declined.has(part.toolCallId)) {
+      return html`<section class="cvt-instructions-card" aria-label="New instructions">
+        <h3>New instructions for every chat</h3>
+        <blockquote>${text}</blockquote>
+        <p class="cvt-instructions-state">Not saved.</p>
+      </section>`;
+    }
     return html`<section class="cvt-instructions-card" aria-label="New instructions">
       <h3>New instructions for every chat</h3>
-      <blockquote>${text}</blockquote>
-      ${open
-        ? html`<div class="cvt-instructions-actions">
-            <civitai-button size="sm" @click=${() => emit(ctx.host, 'cvt-settings-change', { customInstructions: text })}>Save</civitai-button>
-            <civitai-button
-              size="sm"
-              variant="subtle"
-              @click=${() => {
-                declined.add(part.toolCallId);
-                (ctx.host as HTMLElement & { requestUpdate(): void }).requestUpdate();
-              }}
-              >Not now</civitai-button
-            >
-          </div>`
-        : html`<p class="cvt-instructions-state">${state}</p>`}
+      <textarea
+        class="cvt-instructions-text"
+        aria-label="New instructions"
+        maxlength=${CUSTOM_INSTRUCTIONS_MAX}
+        rows="5"
+        .value=${text}
+        @input=${(event: Event) => edited.set(part.toolCallId, (event.currentTarget as HTMLTextAreaElement).value)}
+        @change=${rerender}
+      ></textarea>
+      <div class="cvt-instructions-actions">
+        <civitai-button size="sm" @click=${() => {
+          const value = (edited.get(part.toolCallId) ?? proposed).trim();
+          if (value) emit(ctx.host, 'cvt-settings-change', { customInstructions: value });
+        }}>Save</civitai-button>
+        <civitai-button
+          size="sm"
+          variant="subtle"
+          @click=${() => {
+            declined.add(part.toolCallId);
+            rerender();
+          }}
+          >Not now</civitai-button
+        >
+      </div>
     </section>`;
   },
 };
