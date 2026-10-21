@@ -223,7 +223,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       // Only the latest turn can be replying.
       if (turn !== conversation.turns.at(-1)) return false;
       turn.assistant = { messages: [], status: 'streaming' };
-      const run = this.#begin(conversationId, turn);
+      const started = Date.parse(summary.startedAt);
+      const run = this.#begin(conversationId, turn, { reattached: true, ...(Number.isFinite(started) ? { startedAt: started } : {}) });
       run.runId = summary.runId;
       // Everything up to now is rebuilt from the replay, but the page already heard of it: not announced again.
       const heard = Number(summary.lastEventId);
@@ -253,14 +254,15 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     if (run.wakeWait) run.wakeWait();
     else if (run.connection && Date.now() - run.lastMessageAt > RUN_KEEPALIVE_MS) {
       run.reconnectNow = true;
+      this.#reconnecting(run, true);
       run.connection.abort();
     }
   }
 
-  #begin(conversationId: string, turn: Turn): Run {
+  #begin(conversationId: string, turn: Turn, live: Pick<LiveTurn, 'startedAt' | 'reattached'> = {}): Run {
     const run: Run = { conversationId, turn, stopRequested: false, closed: false, lastMessageAt: Date.now(), resyncs: 0 };
     this.#run = run;
-    this.#live = { seq: turn.seq, parts: [] };
+    this.#live = { seq: turn.seq, parts: [], startedAt: Date.now(), ...live };
     run.unsubscribe = this.#deps.wake?.(() => this.wake());
     this.#emit();
     return run;
@@ -291,6 +293,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (run.closed) return;
         // No answer, or the runner is down for now: the run may have started, so the same start (same key) is asked again.
         if (!retryable(error)) return this.#refused(run, error);
+        this.#reconnecting(run, true);
         await this.#pause(run, failures);
         if (run.closed) return;
       }
@@ -307,7 +310,11 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       try {
         const response = await this.#deps.client.events(run.runId!, run.lastEventId, connection.signal);
         if (!response.body) throw new Error('The run sent no event stream.');
-        const alive = () => (run.lastMessageAt = Date.now());
+        const alive = () => {
+          run.lastMessageAt = Date.now();
+          // Anything from the runner, its keep-alive included: the stream is up again.
+          this.#reconnecting(run, false);
+        };
         for await (const message of readSse(response.body, this.#deps.idleMs ?? RUN_IDLE_MS, alive)) {
           if (run.closed) return;
           failures = 0;
@@ -335,6 +342,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         run.reconnectNow = false;
         continue;
       }
+      // The stream dropped, went quiet past its keep-alives, or could not be opened: down until it is open again.
+      this.#reconnecting(run, true);
       await this.#pause(run, failures++);
     }
   }
@@ -563,6 +572,14 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       const timer = setTimeout(done, ms);
       run.wakeWait = done;
     });
+  }
+
+  /** Whether the run's connection is down (shown on the reply's status line); a change only when it is one. */
+  #reconnecting(run: Run, down: boolean): void {
+    const live = this.#live;
+    if (this.#run !== run || run.closed || !live || Boolean(live.reconnecting) === down) return;
+    live.reconnecting = down;
+    this.#emit();
   }
 
   #close(run: Run): void {

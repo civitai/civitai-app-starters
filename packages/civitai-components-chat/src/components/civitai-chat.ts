@@ -176,6 +176,7 @@ export class CivitaiChat extends LitElement {
     mcpServers: { attribute: false },
     holdReason: { attribute: 'hold-reason' },
     beforeToolCall: { attribute: false },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     subagents: { attribute: false },
     scope: {},
     // Every set is a request to open it, even of the same id: the viewer may have left that chat since.
@@ -269,6 +270,13 @@ export class CivitaiChat extends LitElement {
    * reported as a `tool-result` event.
    */
   declare beforeToolCall?: ChatToolGate;
+  /**
+   * Set by a page that asks the viewer to approve calls outside the chat (its own approval cards, a
+   * `beforeToolCall` that waits for a click, or a server runner's gate the page draws cards for):
+   * while it is `true` and a reply is live, the reply's status line says "Waiting for your approval"
+   * instead of "Working". Set it back to `false` once nothing waits. Has no effect between replies.
+   */
+  declare awaitingApproval: boolean;
   /**
    * Subagents: when set, the assistant gets a `dispatch_agent` tool that starts another assistant on one
    * research task, with only the tools `tools` allows, and gets back a short summary. With `write` set, it
@@ -404,6 +412,7 @@ export class CivitaiChat extends LitElement {
     this.mcp = {};
     this.fullPage = false;
     this.dockPanels = false;
+    this.awaitingApproval = false;
     this.layout = 'auto';
     this.canSignOut = false;
     this.voiceConversation = false;
@@ -1900,7 +1909,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>

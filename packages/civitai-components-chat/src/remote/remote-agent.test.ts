@@ -265,6 +265,53 @@ describe('RemoteAgent, against a runner', () => {
     expect(turn.assistant.status).toBe('done');
   });
 
+  it('says the stream is down while it is opened again, and up again once anything arrives from the runner', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Working' }]);
+    // Up from the start: a reply that was never cut does not say it reconnects.
+    expect(down.some(Boolean)).toBe(false);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    runner.knobs.failEvents = 2;
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(down).toContain(true));
+    // Two opens get no answer: still down meanwhile, and up once the third one's first bytes came.
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down.at(-1)).toBe(false);
+    // Down once per cut, not once per failed open: one change to down, one back up.
+    expect(down.filter((d, i) => d !== undefined && d !== down[i - 1])).toEqual([true, false]);
+    // A reconnect is not a new reply: what was shown stays.
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    expect(agent.live!.reattached).toBeUndefined();
+    agent.leave();
+  });
+
+  it('says it is reconnecting while a start whose answer never came is asked again', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    runner.knobs.failStarts = 2;
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down).toContain(true);
+    agent.leave();
+  });
+
+  it('dates a reply from when it started on the page', async () => {
+    const { agent, runner } = setup();
+    const before = Date.now();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(agent.live!.startedAt).toBeGreaterThanOrEqual(before);
+    expect(agent.live!.startedAt).toBeLessThanOrEqual(Date.now());
+    agent.leave();
+  });
+
   it('asks again for a start whose answer never came, with the same key, so the run starts once', async () => {
     const { agent, runner } = setup();
     runner.knobs.failStarts = 2;
@@ -337,6 +384,9 @@ describe('RemoteAgent, against a runner', () => {
     );
     // Read from the journal's start: no event id to resume after.
     expect(first.runner.eventOpens('r1')[opensBefore]!.headers['last-event-id']).toBeUndefined();
+    // Followed, not started, here: dated from when the run started on the runner.
+    expect(agent.live!.reattached).toBe(true);
+    expect(agent.live!.startedAt).toBe(Date.parse('2026-10-19T00:00:00Z'));
     expect(agent.live!.seq).toBe(1);
     expect(made.store.current!.turns[0]!.assistant.status).toBe('streaming');
     first.runner.push('r1', ended([{ role: 'assistant', content: 'Built.' }]));

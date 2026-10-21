@@ -2,6 +2,7 @@ import { html, nothing, type PropertyDeclarations, type PropertyValues, type Tem
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
+import type { LiveTurn } from '../agent/core.js';
 import type { TurnPart } from '../agent/parts.js';
 import type { SubagentTracker } from '../agent/subagents.js';
 import { groupToolCalls } from '../agent/tool-groups.js';
@@ -14,6 +15,7 @@ import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
 import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
+import type { ReplyStatusState } from './civitai-chat-reply-status.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
 import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
@@ -33,6 +35,8 @@ export class CivitaiChatTurn extends LightElement {
     turn: { attribute: false, hasChanged: () => true },
     parts: { attribute: false, hasChanged: () => true },
     live: { type: Boolean },
+    liveTurn: { attribute: false },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     latest: { type: Boolean },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     jobs: { attribute: false },
@@ -53,6 +57,10 @@ export class CivitaiChatTurn extends LightElement {
   declare turn: Turn;
   declare parts: TurnPart[];
   declare live: boolean;
+  /** The reply running now, while this turn is it: how its status line reads. */
+  declare liveTurn: LiveTurn | null;
+  /** The page says the reply waits for the viewer to approve a call (`<civitai-chat>`'s `awaitingApproval`). */
+  declare awaitingApproval: boolean;
   /** Only the newest turn's choices can still be picked. */
   declare latest: boolean;
   /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
@@ -97,6 +105,8 @@ export class CivitaiChatTurn extends LightElement {
     super();
     this.parts = [];
     this.live = false;
+    this.liveTurn = null;
+    this.awaitingApproval = false;
     this.latest = false;
     this.canRetry = false;
     this.files = () => [];
@@ -191,10 +201,18 @@ export class CivitaiChatTurn extends LightElement {
     };
   }
 
-  // Between steps the finished tool shows nothing and the next reply has not started streaming.
-  #waiting(): boolean {
-    const last = this.parts.at(-1);
-    return !last || (last.kind === 'tool' && last.state !== 'calling');
+  /** When this turn was first drawn live, for a reply that does not say when it started. */
+  #liveSince?: number;
+
+  /**
+   * The live reply's status line. It shows for as long as the reply is live, whatever its last part is:
+   * words (the model may be writing a long call it has not sent yet), a call still running (whose own
+   * view may show nothing that moves), or a call that finished (the next step not started yet).
+   */
+  #status(): TemplateResult {
+    const live = this.liveTurn;
+    const state: ReplyStatusState = live?.reconnecting ? 'reconnecting' : this.awaitingApproval ? 'approval' : live?.reattached ? 'server' : 'working';
+    return html`<civitai-chat-reply-status class="cvt-reply-status" state=${state} .since=${live?.startedAt ?? this.#liveSince ?? Date.now()}></civitai-chat-reply-status>`;
   }
 
   /** Draws the turn again once a reply that may still be running elsewhere stops counting as live. */
@@ -218,6 +236,12 @@ export class CivitaiChatTurn extends LightElement {
       </div>`;
     }
     return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+  }
+
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (!this.live) this.#liveSince = undefined;
+    else this.#liveSince ??= Date.now();
   }
 
   protected override updated(changed: PropertyValues): void {
@@ -245,7 +269,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #footer(): TemplateResult | typeof nothing {
     const { status, error, errorDetail, errorTrace } = this.turn.assistant;
-    if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
+    if (this.live) return this.#status();
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     // A reply the page ended reads like one that ran out of steps, in the page's words.
     const { ranOut, stopped } = this.turn.assistant;

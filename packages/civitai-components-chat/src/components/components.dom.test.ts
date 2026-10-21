@@ -746,7 +746,7 @@ describe('civitai-chat-thread', () => {
     const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'find_services', input: {}, state: 'done', output: 'x' }] };
     const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
-    expect(thread.querySelector('.cvt-typing')).not.toBeNull();
+    expect(thread.querySelector('civitai-chat-reply-status')).not.toBeNull();
   });
 
   it('keeps the latest message in view while pictures above it load, until the reader scrolls away', async () => {

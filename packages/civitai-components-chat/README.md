@@ -664,6 +664,33 @@ a call that was already running finishes. Each call that did not run is reported
 with `stopped: true`. Stop still works as before: a reply the viewer stopped is stopped, whatever the
 gate answers.
 
+#### The reply's status line
+
+While a reply is live it shows a status line under what it has said so far, from the moment it starts
+until it ends, with how long it has run: *Working · 0:42*. It reads *Reconnecting…* while the
+connection the reply comes over is down (a dropped model stream asked for again; with
+`runner="remote"`, the runner's event stream opened again), and *Still working on the server* for a
+reply a server runner was already running when the page opened its chat (a reload, another device). It
+is a polite `role="status"`: a screen reader hears it when its state changes, never the seconds.
+
+A page that asks the viewer to approve calls itself (a `beforeToolCall` that waits for a click, or
+approval cards it draws for a server runner's gate) sets `awaitingApproval` while a call waits, and the
+line reads *Waiting for your approval* until it is set back to `false`:
+
+```ts
+chat.beforeToolCall = async (name, input, { signal }) => {
+  if (!needsApproval(name)) return { allow: true };
+  chat.awaitingApproval = true;
+  try {
+    return (await askViewer(name, input, signal)) ? { allow: true } : { refuse: 'The viewer said no.' };
+  } finally {
+    chat.awaitingApproval = false;
+  }
+};
+```
+
+`awaiting-approval` is its attribute. It has no effect between replies.
+
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.
 
