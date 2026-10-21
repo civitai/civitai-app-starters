@@ -39,8 +39,7 @@ export const RUN_QUIET_MS = RUN_KEEPALIVE_MS + 5_000;
 export const REREAD_TIMEOUT_MS = 15_000;
 
 /** Run events that do not show the run moving on after a model retry (see `#apply`). */
-// MUTANT (to be reverted): a step taken back counts as progress.
-const NOT_PROGRESS: ReadonlySet<string> = new Set(['network-retry', 'error', 'run-started']);
+const NOT_PROGRESS: ReadonlySet<string> = new Set(['network-retry', 'error', 'parts-truncate', 'run-started']);
 
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
