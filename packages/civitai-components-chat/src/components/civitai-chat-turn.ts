@@ -269,11 +269,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #footer(): TemplateResult | typeof nothing {
     const { status, error, errorDetail, errorTrace } = this.turn.assistant;
-    // MUTANT (to be reverted): the pre-fix gating, shown only with no parts or a finished call last.
-    if (this.live) {
-      const last = this.parts.at(-1);
-      return !last || (last.kind === 'tool' && last.state !== 'calling') ? this.#status() : nothing;
-    }
+    if (this.live) return this.#status();
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     // A reply the page ended reads like one that ran out of steps, in the page's words.
     const { ranOut, stopped } = this.turn.assistant;
