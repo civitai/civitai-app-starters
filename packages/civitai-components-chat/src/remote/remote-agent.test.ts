@@ -338,6 +338,28 @@ describe('RemoteAgent, against a runner', () => {
     agent.leave();
   });
 
+  it('takes any event of the run moving on as the end of a model retry, not only words', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const retry: RunEvent = { type: 'network-retry', attempt: 1, trace: { stage: 'stream', step: 1, msIntoStep: 5, message: 'terminated' } };
+    const progress: RunEvent[] = [
+      { type: 'subagent-progress', toolCallId: 't9', progress: { task: 'look', steps: 1, toolCalls: 0 } },
+      { type: 'tool-reported', result: { name: 'sandbox__run_command', input: {}, output: 'ok', isError: false } },
+      // A later protocol's event, unknown here.
+      { type: 'reasoning-delta', text: 'thinking' } as unknown as RunEvent,
+    ];
+    for (const event of progress) {
+      await pushAll(runner, 'r1', [retry]);
+      await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(true));
+      await pushAll(runner, 'r1', [{ type: 'error', message: 'still down', trace: retry.trace } as RunEvent]);
+      expect(agent.live!.reconnecting).toBe(true);
+      await pushAll(runner, 'r1', [event]);
+      await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    }
+    agent.leave();
+  });
+
   it('says it is reconnecting while a stream that went quiet as the page slept is opened again on wake', async () => {
     const { agent, runner } = setup();
     const down: (boolean | undefined)[] = [];

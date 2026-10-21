@@ -691,7 +691,7 @@ chat.beforeToolCall = async (name, input, { signal }) => {
 };
 ```
 
-`awaiting-approval` is its attribute. It goes back to `false` by itself when the reply it was set during ends (a page that missed setting it back, after a Stop say, does not start the next reply on it); set while no reply is live, it applies to the next one.
+`awaiting-approval` is its attribute. It goes back to `false` by itself when the reply it was set during ends or another takes its place (a page that missed setting it back, after a Stop say, does not start the next reply on it); set while no reply is live, it applies to the next one. A page that binds it from its own state (a framework's property binding, say) rather than setting it at each change must set it again after that reset: when the viewer switches chats or reopens one whose reply still runs, the element's value may be `false` while the page's own still says `true`, and a binding that only writes on a change of the page's value will not write it again.
 
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.

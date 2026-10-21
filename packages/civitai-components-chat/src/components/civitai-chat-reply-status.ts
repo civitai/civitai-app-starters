@@ -2,6 +2,9 @@ import { html, type PropertyDeclarations, type PropertyValues, type TemplateResu
 
 import { LightElement } from './light.js';
 
+/** How long the status region is on the page, empty, before a first state other than working goes in. */
+const ANNOUNCE_AFTER_MS = 100;
+
 /** What a live reply is doing, as its status line says it. */
 export type ReplyStatusState = 'working' | 'reconnecting' | 'approval' | 'server';
 
@@ -26,9 +29,11 @@ export function formatElapsed(ms: number): string {
  * whatever it is doing: what state it is in, and for how long it has run. It is its own element so its
  * once-a-second tick redraws only itself, not the reply above it.
  *
- * Its polite `role="status"` region is empty as the line appears (the thread already says a reply
- * started) and says each later change of state once. The visible words can be read but are not
- * live; the dots and seconds are hidden, so a screen reader never hears the seconds.
+ * Its polite `role="status"` region carries the state for a screen reader; the visible words, dots and
+ * seconds are hidden from it, so it never hears the seconds. As the line appears the region is empty: a
+ * line that starts as working says nothing (the thread already says a reply started), and one that
+ * starts in another state (a reply followed again, a call waiting for approval) says it a moment later,
+ * once the region is on the page. Each later change of state is said once.
  */
 export class CivitaiChatReplyStatus extends LightElement {
   static override properties: PropertyDeclarations = {
@@ -59,11 +64,28 @@ export class CivitaiChatReplyStatus extends LightElement {
     super.disconnectedCallback();
     clearInterval(this.#tick);
     this.#tick = undefined;
+    clearTimeout(this.#first);
   }
+
+  #first?: ReturnType<typeof setTimeout>;
 
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
-    if (this.hasUpdated && changed.has('state')) this.#announcement = this.#label();
+    if (this.hasUpdated && changed.has('state')) {
+      clearTimeout(this.#first);
+      this.#announcement = this.#label();
+    }
+  }
+
+  protected override firstUpdated(changed: PropertyValues): void {
+    super.firstUpdated(changed);
+    if (this.state === 'working') return;
+    const state = this.state;
+    this.#first = setTimeout(() => {
+      if (this.state !== state || this.#announcement !== '') return;
+      this.#announcement = this.#label();
+      this.requestUpdate();
+    }, ANNOUNCE_AFTER_MS);
   }
 
   #label(): string {
@@ -72,7 +94,7 @@ export class CivitaiChatReplyStatus extends LightElement {
 
   override render(): TemplateResult {
     return html`<span class="cvt-reply-status-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-      <span class="cvt-reply-status-label">${this.#label()}</span>
+      <span class="cvt-reply-status-label" aria-hidden="true">${this.#label()}</span>
       <span class="cvt-reply-status-time" aria-hidden="true">· ${formatElapsed(Date.now() - this.since)}</span>
       <span class="cvt-visually-hidden" role="status" aria-live="polite">${this.#announcement}</span>`;
   }

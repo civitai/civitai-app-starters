@@ -38,6 +38,9 @@ export const RUN_QUIET_MS = RUN_KEEPALIVE_MS + 5_000;
 /** The longest the agent stays `running` while the chat's head is read again after a run: a read that hangs lets go then. */
 export const REREAD_TIMEOUT_MS = 15_000;
 
+/** Run events that do not show the run moving on after a model retry (see `#apply`). */
+const NOT_PROGRESS: ReadonlySet<string> = new Set(['network-retry', 'error', 'parts-truncate', 'run-started']);
+
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
 
@@ -393,6 +396,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
 
   #apply(run: Run, event: RunEvent, heard: boolean, known: boolean): boolean {
     const live = this.#live;
+    // The run moves on after the runner asked its model again: any event but the retry itself, an error,
+    // a step taken back or the run's start (as the page's own loop takes any part but `start` or `error`).
+    if (!NOT_PROGRESS.has(event.type)) this.#down(run, { retry: false });
     switch (event.type) {
       case 'run-started':
       case 'text-delta':
@@ -401,8 +407,6 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       case 'tool-error':
       case 'parts-truncate':
         if (!live || !applyRunEvent(live.parts, event)) return false;
-        // The model answers again after a retry (a step taken back is not an answer).
-        if (event.type !== 'run-started' && event.type !== 'parts-truncate') this.#down(run, { retry: false });
         this.#emit();
         return true;
       case 'subagent-progress':

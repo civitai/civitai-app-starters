@@ -101,6 +101,8 @@ describe('the live reply status line, by what the reply shows last', () => {
     const threadRegion = [...el.querySelectorAll('[aria-live="polite"]')].find((node) => !node.closest('civitai-chat-reply-status'));
     expect(threadRegion!.textContent).toBe('Assistant is replying…');
     expect(status.hasAttribute('role')).toBe(false);
+    // The region carries the state: the visible words are not read as well.
+    expect(status.querySelector('.cvt-reply-status-label')!.getAttribute('aria-hidden')).toBe('true');
     expect(status.querySelector('.cvt-reply-status-time')!.getAttribute('aria-hidden')).toBe('true');
     expect(status.querySelector('.cvt-reply-status-dots')!.getAttribute('aria-hidden')).toBe('true');
     const redraw = async () => {
@@ -119,6 +121,25 @@ describe('the live reply status line, by what the reply shows last', () => {
     status.requestUpdate();
     await status.updateComplete;
     expect(region()[0]!.textContent).toBe('Working');
+  });
+
+  it('says a first state other than working a moment after the line appears, and a first "Working" not at all', async () => {
+    const working = await thread({ seq: 1, parts: [], startedAt: Date.now() });
+    const followed = document.createElement('civitai-chat-thread');
+    Object.assign(followed, { turns: [turn()], live: { seq: 1, parts: [], startedAt: Date.now(), reattached: true }, jobs, views });
+    document.body.append(followed);
+    await followed.updateComplete;
+    const region = (root: ParentNode) => line(root)!.querySelector('[role="status"]')!;
+    // Empty as it appears, so the words go into a region already on the page.
+    expect(region(followed).textContent).toBe('');
+    await vi.waitFor(() => expect(region(followed).textContent).toBe('Still working on the server'));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(region(working).textContent).toBe('');
+  });
+
+  it('says a first "Waiting for your approval" too', async () => {
+    const el = await thread({ seq: 1, parts: [], startedAt: Date.now() }, { awaitingApproval: true });
+    await vi.waitFor(() => expect(line(el)!.querySelector('[role="status"]')!.textContent).toBe('Waiting for your approval'));
   });
 
   it('holds its dots still for a viewer who asked for less motion', () => {
