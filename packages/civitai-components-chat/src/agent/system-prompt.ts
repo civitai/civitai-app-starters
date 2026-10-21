@@ -107,6 +107,9 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
           '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one; when they want panels gone, close them with close_panel. Things a panel made have ids like p1-2-1. When the user wants to fill in or adjust details before you act (a post\'s title and description, a request with options), open a panel whose button asks you, instead of asking in text.',
         ]
       : []),
+    ...(has('update_instructions')
+      ? ["- When the user wants you to behave differently from now on (a personality, a tone, a name for you, something to always do or avoid), you can change that: call update_instructions with the whole new text. Never say you cannot change how you behave."]
+      : []),
     '- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. When the user should pick between directions, call ask_choice instead of listing options in text.',
     '- Every file has an id like up1-1 (an upload) or gen2-1-1 (something made in this chat). In tool calls, put the id wherever the schema asks for an image, video or audio URL; the app swaps in the real file.',
     ...(makes

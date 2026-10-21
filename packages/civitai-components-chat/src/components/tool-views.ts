@@ -8,6 +8,7 @@ import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
+import { UPDATE_INSTRUCTIONS, proposedInstructions } from '../tools/instructions.js';
 import type { ModelDirectory } from '../store/models.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { JOB_TOOLS } from '../tools/catalog.js';
@@ -37,6 +38,8 @@ export interface ToolViewContext {
   subagents?: SubagentTracker;
   /** Which disclosures in the turn are open. */
   rows?: Pick<CallRowState, 'isOpen' | 'wasOpened' | 'toggle'>;
+  /** The viewer's saved custom instructions, so a proposal already saved reads as saved. */
+  instructions?: string;
 }
 
 /** `render` returning `undefined` leaves the call to the default: its activity while it runs, nothing after. */
@@ -80,6 +83,38 @@ const post: ToolView = {
   render(part, ctx) {
     const found = ctx.posts.get(part.toolCallId);
     return found ? html`<civitai-chat-post-card .post=${found}></civitai-chat-post-card>` : undefined;
+  },
+};
+
+// "Not now" only hides the buttons until a reload; nothing is saved either way.
+const declined = new Set<string>();
+
+const instructions: ToolView = {
+  activity: 'Writing new instructions…',
+  render(part, ctx) {
+    const text = proposedInstructions(part.input);
+    if (!text || part.state !== 'done') return undefined;
+    const saved = ctx.instructions?.trim() === text;
+    const open = !saved && ctx.latest && !ctx.live && !declined.has(part.toolCallId);
+    const state = saved ? 'Saved. They apply from the next reply; change them any time in Settings.' : open ? '' : 'Not saved.';
+    return html`<section class="cvt-instructions-card" aria-label="New instructions">
+      <h3>New instructions for every chat</h3>
+      <blockquote>${text}</blockquote>
+      ${open
+        ? html`<div class="cvt-instructions-actions">
+            <civitai-button size="sm" @click=${() => emit(ctx.host, 'cvt-settings-change', { customInstructions: text })}>Save</civitai-button>
+            <civitai-button
+              size="sm"
+              variant="subtle"
+              @click=${() => {
+                declined.add(part.toolCallId);
+                (ctx.host as HTMLElement & { requestUpdate(): void }).requestUpdate();
+              }}
+              >Not now</civitai-button
+            >
+          </div>`
+        : html`<p class="cvt-instructions-state">${state}</p>`}
+    </section>`;
   },
 };
 
@@ -180,6 +215,7 @@ export const BUILT_IN_VIEWS: Record<string, ToolView> = {
   ...Object.fromEntries([...JOB_TOOLS].map((name) => [name, job])),
   [OPEN_PANEL]: { activity: 'Setting up the controls…', render: renderPanel },
   [UPDATE_PANEL]: { activity: 'Changing the controls…', render: renderPanel },
+  [UPDATE_INSTRUCTIONS]: instructions,
   [CLOSE_PANEL]: { activity: 'Closing…', render: () => nothing },
   [POST_TOOL]: post,
   [ASK_CHOICE]: choice,

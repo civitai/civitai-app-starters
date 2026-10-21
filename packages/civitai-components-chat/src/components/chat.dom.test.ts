@@ -548,3 +548,29 @@ describe("civitai-chat's viewer name", () => {
     expect(headers.get('authorization')).toBe('Bearer oauth-access-token');
   });
 });
+
+describe("civitai-chat's instructions card", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps what Save sends as the viewer's custom instructions for every chat", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp() as never;
+    document.body.append(chat);
+    // The card sits in the thread, inside the chat's main area; an empty chat shows the welcome there instead.
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')).not.toBeNull());
+
+    chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')!.dispatchEvent(
+      new CustomEvent('cvt-settings-change', { bubbles: true, composed: true, detail: { customInstructions: 'Be Civ-chan.' } }),
+    );
+
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').customInstructions).toBe('Be Civ-chan.');
+  });
+});

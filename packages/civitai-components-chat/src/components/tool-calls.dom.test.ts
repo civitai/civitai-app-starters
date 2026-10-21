@@ -253,3 +253,28 @@ describe('a failed call the assistant fixed itself', () => {
     expect([...el.querySelectorAll('.cvt-step-failed code')].map((code) => code.textContent)).toEqual(['No such file']);
   });
 });
+
+describe('new instructions the assistant proposes', () => {
+  const PROPOSAL: TurnPart = { kind: 'tool', toolCallId: 'i1', toolName: 'update_instructions', input: { instructions: 'Be Civ-chan: playful and fierce.' }, state: 'done', output: { shown: true } };
+
+  it('are saved for every chat only when the viewer presses Save, and then read as saved', async () => {
+    const el = await turnWith([PROPOSAL], { latest: true });
+    const changes: unknown[] = [];
+    el.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    expect(el.querySelector('.cvt-instructions-card blockquote')?.textContent).toBe('Be Civ-chan: playful and fierce.');
+    const button = (label: string) => [...el.querySelectorAll<HTMLElement>('.cvt-instructions-card civitai-button')].find((b) => b.textContent?.trim() === label);
+    button('Save')!.click();
+    expect(changes).toEqual([{ customInstructions: 'Be Civ-chan: playful and fierce.' }]);
+
+    el.instructions = 'Be Civ-chan: playful and fierce.';
+    await el.updateComplete;
+    expect(button('Save')).toBeUndefined();
+    expect(el.querySelector('.cvt-instructions-state')?.textContent).toContain('Saved.');
+  });
+
+  it('cannot be saved from an older reply', async () => {
+    const el = await turnWith([PROPOSAL], { latest: false });
+    expect(el.querySelector('.cvt-instructions-card civitai-button')).toBeNull();
+    expect(el.querySelector('.cvt-instructions-state')?.textContent).toBe('Not saved.');
+  });
+});
