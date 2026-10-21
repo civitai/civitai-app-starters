@@ -242,3 +242,14 @@ describe('tool calls with tool-calls="details": a lone row that becomes a group 
     expect(document.activeElement).toBe(rowHead);
   });
 });
+
+describe('a failed call the assistant fixed itself', () => {
+  it('shows no failure once the same tool worked later in the reply, and still shows one that was never fixed', async () => {
+    const el = await turnWith([
+      { kind: 'tool', toolCallId: 'f1', toolName: 'search_models', input: { query: 1 }, state: 'done', output: { error: 'query must be a string' } },
+      { kind: 'tool', toolCallId: 'f2', toolName: 'search_models', input: { query: 'cats' }, state: 'done', output: { items: [] } },
+      { kind: 'tool', toolCallId: 'f3', toolName: 'sandbox__read_file', input: { path: '/x' }, state: 'error', error: 'No such file' },
+    ]);
+    expect([...el.querySelectorAll('.cvt-step-failed code')].map((code) => code.textContent)).toEqual(['No such file']);
+  });
+});

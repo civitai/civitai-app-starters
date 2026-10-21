@@ -120,6 +120,7 @@ export class CivitaiChatTurn extends LightElement {
   #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
+    if (failure && this.#recovered(part)) return failedNote ? nothing : undefined;
     if (failure && !view?.ownsFailure?.(part, this.#context())) {
       if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
@@ -127,6 +128,12 @@ export class CivitaiChatTurn extends LightElement {
     }
     const rendered = view?.render?.(part, this.#context());
     return rendered !== undefined ? rendered : modelCards(part, this.models);
+  }
+
+  /** The assistant fixed the call itself: the same tool worked later in the reply, so the viewer has nothing to act on. */
+  #recovered(part: ToolPart): boolean {
+    const later = this.parts.slice(this.parts.indexOf(part) + 1);
+    return later.some((next) => next.kind === 'tool' && next.toolName === part.toolName && next.state === 'done' && !failureOf(next));
   }
 
   #tool(part: ToolPart): unknown {
