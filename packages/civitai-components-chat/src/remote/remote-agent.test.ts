@@ -639,3 +639,115 @@ describe('RemoteAgent, against a runner', () => {
     expect(errors[0]).toEqual({ kind: 'assistant_unavailable', message, trace });
   });
 });
+
+/** A v3 head as the runner saves it while its reply to turn 1 still runs: nothing finished yet. */
+function runningHead(conversationId: string): Workflow {
+  return workflow({
+    id: `head-${conversationId}`,
+    tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+    metadata: {
+      v: 3,
+      app: 'chat-cvt',
+      conversationId,
+      title: 'Go',
+      titleSource: 'first-message',
+      createdAt: '2026-10-19T00:00:00Z',
+      updatedAt: '2026-10-19T00:00:00Z',
+      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [], status: 'running', savedAt: '2026-10-19T00:00:01Z' } }],
+    },
+  });
+}
+
+describe('RemoteAgent, a reply ended on the page without run-ended', () => {
+  /** A run that showed some words and a finished tool call, then one still running, with the head saved still running. */
+  async function partway(extra: Partial<RemoteAgentDeps> = {}) {
+    const made = setup([runningHead('c1')], extra);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Working on it.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't1', output: { exitCode: 0 } },
+      { type: 'tool-call', index: 2, toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(3));
+    return made;
+  }
+
+  /** What the open chat's turn 1 shows now, as the thread draws it. */
+  const shown = (store: ThreadStore) => partsFromMessages(store.current!.turns[0]!.assistant.messages);
+
+  const kept = [
+    { kind: 'text', text: 'Working on it.' },
+    { kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' }, state: 'done', output: { exitCode: 0 } },
+    { kind: 'tool', toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' }, state: 'error' },
+  ];
+
+  it('keeps what the reply showed when the runner refuses Stop', async () => {
+    const { agent, runner, store, rereads } = await partway();
+    runner.knobs.refuseStop = { status: 403 };
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  it('keeps what the reply showed when the run does not say it stopped in time', async () => {
+    const { agent, store, rereads } = await partway({ stopGraceMs: 30 });
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  it.each([401, 403])('keeps what the reply showed when the runner refuses the viewer (%i) mid-reply', async (status) => {
+    const { agent, runner, store, rereads } = await partway();
+    runner.knobs.refuseEvents = { status, times: 1_000_000 };
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  it('still takes a head whose reply finished meanwhile over what the page kept', async () => {
+    const { agent, runner, store, heads } = await partway();
+    heads.splice(0, 1, head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'All built.' }], status: 'done' } }]));
+    runner.knobs.refuseStop = { status: 403 };
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(store.current!.turns[0]!.assistant.status).toBe('done');
+    expect(shown(store)).toEqual([{ kind: 'text', text: 'All built.' }]);
+  });
+});
+
+describe('RemoteAgent, a chat the page left and came back to while its lookup was on its way', () => {
+  it('looks the chat up again, and follows its live run', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.holdLookups = true;
+    await runner.fetch(`${RUNNER_URL}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ v: 1, idempotencyKey: 'other', conversationId: 'c1', turn: { seq: 1, user: { content: 'hi', attachments: [] } }, model: 'm', settings: {} }),
+    });
+    // Open A: its lookup is held.
+    await store.open('c1');
+    const first = agent.reattach('c1');
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs?conversationId=c1')).toHaveLength(1));
+    // To B and back to A, as openConversation does (leave, then look up the chat opened).
+    agent.leave();
+    await store.open('c2');
+    agent.leave();
+    await store.open('c1');
+    expect(await agent.reattach('c1')).toBe(false);
+    runner.knobs.holdLookups = false;
+    runner.releaseLookups();
+    expect(await first).toBe(false);
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(agent.running).toBe(true);
+    expect(agent.live?.seq).toBe(1);
+    agent.leave();
+  });
+});
+
