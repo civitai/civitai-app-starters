@@ -196,8 +196,12 @@ chat.backend = {
   stops to edit the text or sends it at once; `Escape` or the cancel button throws the recording away,
   and a recording stops by itself after two minutes. The text is never streamed as it is spoken:
   each phrase's words show once `transcribe` resolves.
-- **A failure** (a rejection, or anything but `{ text: string }`) shows the viewer that the recording
-  could not be turned into text; words that came back from other phrases still go in the box.
+- **A failure** (a rejection, or anything but `{ text: string }`) shows the viewer a toast. One the
+  chat can classify, e.g. by a `status` (or `statusCode`) on the error, gets the wording a failed
+  reply on a backend gets, which never names Civitai or Buzz: a `429` says "The assistant is busy
+  right now", a `401` or `403` "Your sign-in wasn't accepted", a `502` or `503` "The assistant isn't
+  available right now". One it cannot classify says the recording could not be turned into text.
+  Words that came back from other phrases still go in the box.
 - **Only dictation.** A spoken conversation ([`voice-conversation`](#talking-with-the-assistant))
   needs Civitai's live speech services, so it is never offered on a backend, with `transcribe` or
   without. Without `transcribe` there is no microphone.

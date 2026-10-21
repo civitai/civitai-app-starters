@@ -209,6 +209,28 @@ describe('<civitai-chat> dictation through a host backend', () => {
     expect(chat.draft).toBe('keep me');
   });
 
+  // A failure the chat can classify by its status is worded for a host, never as Civitai's: the
+  // Civitai wording of each of these names Civitai, so a toast without it is the host's.
+  for (const [status, words] of [
+    [429, 'The assistant is busy right now. Wait a moment and try again.'],
+    [401, "Your sign-in wasn't accepted. Please sign in again."],
+    [503, "The assistant isn't available right now. Try again in a minute."],
+  ] as const) {
+    it(`words a ${status} from transcribe for the host, not for Civitai`, async () => {
+      fakeMicrophone();
+      noNetwork();
+      const transcribe = vi.fn(async () => {
+        throw Object.assign(new Error(`speech-to-text answered ${status}`), { status });
+      });
+      const chat = await mount((c) => (c.backend = backendOf(transcribe)));
+
+      await dictate(chat);
+      await vi.waitFor(() => expect(toastText(chat)).toContain(words));
+      expect(toastText(chat)).not.toContain('Civitai');
+      expect(chat.draft).toBe('');
+    });
+  }
+
   it('refuses an answer that is not { text }', async () => {
     fakeMicrophone();
     noNetwork();
