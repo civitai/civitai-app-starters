@@ -108,7 +108,7 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
         ]
       : []),
     ...(has('update_instructions')
-      ? ["- When the user wants you to behave differently from now on (a personality, a tone, a name for you, something to always do or avoid), you can change that: call update_instructions with the whole new text. Never say you cannot change how you behave."]
+      ? ["- When the user wants you to behave differently from now on (a personality, a tone, a name for you, something to always do or avoid), you can change that: call update_instructions with the whole new text. When they want to see or edit them themselves, call it with the current text: the card it shows is editable, so never build a panel for this. Never say you cannot change how you behave."]
       : []),
     '- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. When the user should pick between directions, call ask_choice instead of listing options in text.',
     '- Every file has an id like up1-1 (an upload) or gen2-1-1 (something made in this chat). In tool calls, put the id wherever the schema asks for an image, video or audio URL; the app swaps in the real file.',

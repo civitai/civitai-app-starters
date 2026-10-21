@@ -848,6 +848,8 @@ civitai-chat-panel {
 .cvt-instructions-card {
   display: grid;
   gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
   max-width: 640px;
   padding: 14px 16px;
   border: 1px solid var(--civitai-color-border);
