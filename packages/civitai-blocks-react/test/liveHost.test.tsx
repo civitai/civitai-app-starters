@@ -3033,6 +3033,33 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     expect(logged.filter((m) => m.includes('uploadImageBytesResult'))).toHaveLength(0);
   });
 
+  it("a `purpose: 'trainingData'` upload is answered as a cancel, and the log names the TRAINING mock option", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-train', purpose: 'trainingData' });
+    const payload = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+    expect(payload.requestId).toBe('r-train');
+    expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    // The WHOLE message, so a reword that drops the option name fails here.
+    expect(logged).toContain(
+      "[createLiveHost] OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+        'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+        'Test the training flow against the real site, or use ' +
+        'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+    );
+    expect(logged.filter((m) => m.includes('cannedImageUpload'))).toHaveLength(0);
+  });
+
   it('a `useUploadImageBytes()` upload rejects with the no-image error, never hangs', async () => {
     // dev:live has no bytes branch: the `bytes` variant gets the same DISMISSED
     // reply as the picker path, and the hook (which has no "dismissed" outcome)
