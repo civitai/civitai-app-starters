@@ -6,7 +6,7 @@ import { DISPATCH_AGENT, isSubagentOutput, subagentResultOf, type SubagentStatus
 import type { SubagentTracker } from '../agent/subagents.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
-import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import type { ModelDirectory } from '../store/models.js';
 import { ASK_CHOICE } from '../tools/build.js';
@@ -180,6 +180,7 @@ export const BUILT_IN_VIEWS: Record<string, ToolView> = {
   ...Object.fromEntries([...JOB_TOOLS].map((name) => [name, job])),
   [OPEN_PANEL]: { activity: 'Setting up the controls…', render: renderPanel },
   [UPDATE_PANEL]: { activity: 'Changing the controls…', render: renderPanel },
+  [CLOSE_PANEL]: { activity: 'Closing…', render: () => nothing },
   [POST_TOOL]: post,
   [ASK_CHOICE]: choice,
   find_services: { activity: 'Checking what fits best…' },

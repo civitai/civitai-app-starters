@@ -7,7 +7,7 @@ import type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
 import type { ChatToolResult } from './tools/gate.js';
 import { ChatSession, type McpServerErrorDetail } from './session.js';
 import { fakeMcpServers, type FakeTool } from './test-support/fake-mcp.js';
-import { flush } from './test-support/fakes.js';
+import { flush, imageStep, workflow } from './test-support/fakes.js';
 
 describe('ChatSession', () => {
   it('offers no tools from a server the embedding page switched off, without contacting it', async () => {
@@ -497,5 +497,81 @@ describe('ChatSession host controls', () => {
     // The job tool keeps what it is: its own description and type, behind the same gate.
     expect(set.run_step!.description).toContain('Runs in the background');
     expect(set.run_step!.type).toBe('dynamic');
+  });
+});
+
+describe('a reopened chat', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("brings back a post of a panel's picture, with its draft", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
+    const conversationId = 'C1';
+    const head = {
+      id: 'head-C1',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+      metadata: {
+        v: 2,
+        app: 'chat-cvt',
+        conversationId,
+        title: 'Saved',
+        titleSource: 'llm',
+        createdAt: '2026-10-21T00:00:00Z',
+        updatedAt: '2026-10-21T00:00:00Z',
+        panels: {
+          p1: {
+            v: 1,
+            id: 'P1',
+            handle: 'p1',
+            seq: 1,
+            toolCallId: 'call-panel',
+            versions: [{ title: 'Your picture', inputs: {}, run: { stepType: 'imageGen', input: { prompt: 'a lighthouse' } } }],
+            values: {},
+            runs: [{ job: 'p1-1', version: 1, values: {} }],
+          },
+        },
+        posts: { 'call-post': { state: 'drafted', postId: 5, url: 'https://civitai.com/posts/5' } },
+        turns: [
+          { seq: 1, createdAt: '2026-10-21T00:00:00Z', user: { content: 'make a picture', attachments: [] }, assistant: { messages: [], status: 'done' } },
+          {
+            seq: 2,
+            createdAt: '2026-10-21T00:01:00Z',
+            user: { content: 'Post this picture to Civitai.', attachments: [], refs: ['p1-1-1'] },
+            assistant: {
+              status: 'done',
+              messages: [
+                { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-post', toolName: 'post_to_civitai', input: { files: ['p1-1-1'] } }] },
+                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-post', toolName: 'post_to_civitai', output: { type: 'json', value: { status: 'awaiting_user' } } }] },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const run = workflow({
+      id: '7-1',
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:job', `cvt:conv:${conversationId}`],
+      metadata: { v: 1, app: 'chat-cvt', conversationId, seq: 1, job: 'p1-1', toolCallId: 'panel:p1:p1-1', tool: 'run_step', panel: 'p1' },
+      steps: [imageStep([{ id: 'b1', url: 'https://x/b1' }])] as never,
+    });
+    const saved = [head, run];
+    const app = {
+      getToken: async () => 'token',
+      site: {},
+      orchestration: {
+        queryWorkflows: vi.fn(async (query: { tags: string[] }) => ({ items: saved.filter((w) => query.tags.every((tag) => w.tags.includes(tag))), next: '' })),
+      },
+    } as never;
+    const session = new ChatSession(app, { mcp: () => ({ orchestration: false, site: false }) });
+
+    await session.openConversation(conversationId);
+
+    const post = session.posts.get('call-post');
+    expect(post?.items.map((item) => item.id)).toEqual(['p1-1-1']);
+    expect(post?.state).toBe('drafted');
   });
 });

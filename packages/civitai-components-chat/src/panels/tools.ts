@@ -5,9 +5,10 @@ import { checkPanelSpec, mergeSpec, normalizeValues } from './spec.js';
 
 export const OPEN_PANEL = 'open_panel';
 export const UPDATE_PANEL = 'update_panel';
+export const CLOSE_PANEL = 'close_panel';
 
 export function isPanelTool(name: string): boolean {
-  return name === OPEN_PANEL || name === UPDATE_PANEL;
+  return name === OPEN_PANEL || name === UPDATE_PANEL || name === CLOSE_PANEL;
 }
 
 export interface PanelToolContext {
@@ -83,7 +84,7 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
     }),
     [UPDATE_PANEL]: dynamicTool({
       description:
-        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), or change the run. The panel moves to the end of the chat with its runs. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one.',
+        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), or change the run. The panel moves to the end of the chat with its runs, and a closed one opens again. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one. Never use it to close or remove a panel: that is close_panel.',
       inputSchema: jsonSchema({
         type: 'object',
         properties: {
@@ -111,6 +112,22 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
         panel.apply({ spec: changesDefinition ? checked.spec : undefined, values, toolCallId });
         panel.price = probe.price;
         return panel.summary();
+      },
+    }),
+    [CLOSE_PANEL]: dynamicTool({
+      description: 'Close panels the user no longer wants, when they ask to close, remove, cancel or get rid of them. Each folds to one line in the chat, with what it made kept, and the user can reopen it.',
+      inputSchema: jsonSchema({
+        type: 'object',
+        properties: { panels: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Their handles, e.g. ["p1", "p2"]' } },
+        required: ['panels'],
+      }),
+      execute: async (input) => {
+        const handles = ((input ?? {}) as { panels?: unknown }).panels;
+        const found = (Array.isArray(handles) ? handles : []).map((handle) => ctx.panels.get(String(handle)));
+        const missing = (Array.isArray(handles) ? handles : []).filter((_, index) => !found[index]);
+        if (missing.length || found.length === 0) return { error: `There is no panel ${missing.join(', ') || '(none given)'}.`, note: 'Use the handles of panels in this chat.' };
+        for (const panel of found) panel!.close();
+        return { closed: found.map((panel) => panel!.handle), note: 'They are closed. Say so in one short sentence.' };
       },
     }),
   };
