@@ -4,8 +4,12 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
+import * as clients from './mcp/clients.js';
+import * as result from './mcp/result.js';
 import { fakeMcpServers } from './test-support/fake-mcp.js';
+import * as extra from './tools/extra.js';
 import { extraToolSet } from './tools/extra.js';
+import * as host from './tools/host.js';
 
 /**
  * `@civitai/components-chat/core` and `/runner-protocol` are what a server-side runner imports, so
@@ -82,7 +86,7 @@ describe('the import-graph walk itself', () => {
   });
 
   it('follows re-exports into the modules behind them', () => {
-    expect(runtimeGraph('core.ts').files).toEqual(expect.arrayContaining(['agent/core.ts', 'agent/subagents.ts', 'store/thread-store.ts', 'tools/gate.ts']));
+    expect(runtimeGraph('core.ts').files).toEqual(expect.arrayContaining(['agent/core.ts', 'agent/subagents.ts', 'store/thread-store.ts', 'tools/gate.ts', 'tools/host.ts', 'store/attachments.ts', 'mcp/clients.ts', 'mcp/result.ts']));
   });
 });
 
@@ -123,6 +127,28 @@ describe('the headless entries in plain Node', () => {
     expect(text).toBe(`${'a'.repeat(2_000)}\n…(1234 characters omitted)…\n${'c'.repeat(6_000)}`);
     expect(onError).not.toHaveBeenCalled();
     pool.close();
+  });
+
+  it("hand a server runner the chat's own MCP connection, result trimming and host-tool helpers, not copies", async () => {
+    const core = (await import('./core.js')) as unknown as Record<string, unknown>;
+    const internals: Record<string, Record<string, unknown>> = {
+      createMcpConnection: clients,
+      McpConnectionClosedError: clients,
+      McpStreamLostError: clients,
+      mcpResultToText: result,
+      keepEnds: extra,
+      hostToolSet: host,
+      MEDIA_NOTE: host,
+      HOST_TOOL_FAILED_NOTE: host,
+    };
+    for (const [name, module] of Object.entries(internals)) {
+      expect(core[name], name).toBeDefined();
+      expect(core[name], name).toBe(module[name]);
+    }
+    // Literal values, so a reworded note is a deliberate change here too.
+    expect(core.MEDIA_NOTE).toBe(' Pass attachment ids (like up1-1 or gen2-1-1) for files from this chat.');
+    expect(core.HOST_TOOL_FAILED_NOTE).toBe('This did not work. Tell the user in plain words; do not retry it this turn.');
+    expect((core.keepEnds as (text: string, head: number, tail: number) => string)('aaXXbbb', 2, 3)).toBe('aa\n…(2 characters omitted)…\nbbb');
   });
 
   it('are published as their own subpaths, built from these sources', () => {

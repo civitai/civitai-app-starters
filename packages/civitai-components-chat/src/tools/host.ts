@@ -61,8 +61,10 @@ export interface HostToolDeps {
 }
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
-const MEDIA_NOTE = ' Pass attachment ids (like up1-1 or gen2-1-1) for files from this chat.';
-const FAILED_NOTE = 'This did not work. Tell the user in plain words; do not retry it this turn.';
+/** Appended to every host tool's description. */
+export const MEDIA_NOTE = ' Pass attachment ids (like up1-1 or gen2-1-1) for files from this chat.';
+/** The note on a host tool's failed call (an added MCP server's tool gets a different one). */
+export const HOST_TOOL_FAILED_NOTE = 'This did not work. Tell the user in plain words; do not retry it this turn.';
 
 /** Host tools as the assistant sees them; a built-in tool of the same name wins. */
 export function hostToolSet(tools: Record<string, ChatTool>, builtIn: ToolSet, deps: HostToolDeps): ToolSet {
@@ -88,7 +90,7 @@ export function hostToolSet(tools: Record<string, ChatTool>, builtIn: ToolSet, d
           const result = await hostTool.execute(resolved, { signal: abortSignal ?? new AbortController().signal, conversationId: deps.conversationId, files: fresh });
           return result === undefined ? { ok: true } : result;
         } catch (error) {
-          return { error: error instanceof Error ? error.message : String(error), note: FAILED_NOTE };
+          return { error: error instanceof Error ? error.message : String(error), note: HOST_TOOL_FAILED_NOTE };
         }
       },
     });
