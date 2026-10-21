@@ -641,7 +641,7 @@ describe('RemoteAgent, against a runner', () => {
 });
 
 /** A v3 head as the runner saves it while its reply to turn 1 still runs: nothing finished yet. */
-function runningHead(conversationId: string): Workflow {
+function runningHead(conversationId: string, messages: ModelMessage[] = []): Workflow {
   return workflow({
     id: `head-${conversationId}`,
     tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
@@ -653,10 +653,13 @@ function runningHead(conversationId: string): Workflow {
       titleSource: 'first-message',
       createdAt: '2026-10-19T00:00:00Z',
       updatedAt: '2026-10-19T00:00:00Z',
-      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [], status: 'running', savedAt: '2026-10-19T00:00:01Z' } }],
+      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages, status: 'running', savedAt: '2026-10-19T00:00:01Z' } }],
     },
   });
 }
+
+/** What a reply ended on the page shows for a call whose result never reached it: the call may still have finished on the runner. */
+const NOT_RECEIVED = "This call's result wasn't received here. It may have finished; reload to see it.";
 
 describe('RemoteAgent, a reply ended on the page without run-ended', () => {
   /** A run that showed some words and a finished tool call, then one still running, with the head saved still running. */
@@ -680,7 +683,7 @@ describe('RemoteAgent, a reply ended on the page without run-ended', () => {
   const kept = [
     { kind: 'text', text: 'Working on it.' },
     { kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' }, state: 'done', output: { exitCode: 0 } },
-    { kind: 'tool', toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' }, state: 'error' },
+    { kind: 'tool', toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' }, state: 'error', error: JSON.stringify(NOT_RECEIVED) },
   ];
 
   it('keeps what the reply showed when the runner refuses Stop', async () => {
@@ -710,6 +713,63 @@ describe('RemoteAgent, a reply ended on the page without run-ended', () => {
     expect(rereads).toEqual(['c1']);
     expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
     expect(shown(store)).toMatchObject(kept);
+  });
+
+  /** A run that showed words and one call still running, ended on the page by a 401, with `saved` as the head the runner had written by then. */
+  async function deniedWith(saved: ModelMessage[]) {
+    const made = setup([runningHead('c1', saved)]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Testing.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(2));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.rereads).toEqual(['c1']);
+    return made;
+  }
+  const call = { type: 'tool-call' as const, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } };
+  const result = { type: 'tool-result' as const, toolCallId: 't1', toolName: 'sandbox__run_command', output: { type: 'json' as const, value: { exitCode: 0 } } };
+
+  it("takes the head when it holds as many parts but has the real result of a call the page never got", async () => {
+    // The runner finished t1 and saved that step while the page was reconnecting.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] }, { role: 'tool', content: [result] }]);
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'done', output: { exitCode: 0 } },
+    ]);
+  });
+
+  it('takes the head when it holds strictly more parts', async () => {
+    const { store } = await deniedWith([
+      { role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] },
+      { role: 'tool', content: [result] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Tests pass.' }] },
+    ]);
+    expect(shown(store)).toMatchObject([{ kind: 'text', text: 'Testing.' }, { kind: 'tool', toolCallId: 't1', state: 'done' }, { kind: 'text', text: 'Tests pass.' }]);
+  });
+
+  it('keeps the page copy, and how it ended, when the head holds the same parts and no result the page lacks', async () => {
+    // The head saved the call as it started, with no result: read back, it is closed as interrupted, as the page closed it.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] }]);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+    ]);
+  });
+
+  it('keeps the page copy, and how it ended, when the head holds less', async () => {
+    // The head saved only the words: the call the page saw start is not in it.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }] }]);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+    ]);
   });
 
   it('still takes a head whose reply finished meanwhile over what the page kept', async () => {
