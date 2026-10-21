@@ -503,8 +503,9 @@ export class ChatSession extends EventTarget {
 
   #restore(opened: OpenedConversation, catalog: ToolCatalog | null): void {
     this.#rebuildJobs(opened, catalog);
-    this.#rebuildPosts(opened);
+    // Panels first: their runs make pictures a post may show.
     this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
+    this.#rebuildPosts(opened);
   }
 
   /** Remote mode on a host's store, where `stopRunBeforeDelete` has something to do. */

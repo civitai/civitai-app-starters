@@ -73,11 +73,18 @@ export class CivitaiChatPanel extends LightElement {
     const panel = this.panel;
     if (!panel) return nothing;
     const { spec } = panel;
+    if (panel.closed) {
+      return html`<div class="cvt-panel-closed">
+        <span>“${spec.title}” closed</span>
+        <civitai-button part="reopen" size="sm" variant="subtle" @click=${() => panel.reopen()}>Reopen</civitai-button>
+      </div>`;
+    }
     return html`<section class="cvt-panel" aria-label=${spec.title}>
       <header class="cvt-panel-head">
         <h3>${spec.title}</h3>
         ${panel.version > 1 ? html`<civitai-badge size="sm" variant="light">v${panel.version}</civitai-badge>` : nothing}
         ${this.canShare ? this.#share.button(this, panel, 'cvt-panel-share') : nothing}
+        <button type="button" class="cvt-panel-close" aria-label=${`Close ${spec.title}`} @click=${() => panel.close()}>×</button>
         ${spec.description ? html`<p>${spec.description}</p>` : nothing}
       </header>
       ${panelFields(panel, this.files)}

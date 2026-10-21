@@ -826,6 +826,33 @@ civitai-chat-panel {
   margin-left: auto;
 }
 
+.cvt-panel-close {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cvt-panel-share + .cvt-panel-close {
+  margin-left: 0;
+}
+
+.cvt-panel-close:hover {
+  color: var(--civitai-color-text);
+}
+
+.cvt-panel-closed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-panel-head p {
   flex-basis: 100%;
   margin: 0;

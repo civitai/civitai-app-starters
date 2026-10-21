@@ -2,7 +2,7 @@ import type { JSONValue, ModelMessage, ToolModelMessage } from 'ai';
 
 import { contextBudget } from '../config.js';
 import { DISPATCH_AGENT, subagentResultOf } from './subagent-result.js';
-import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL } from '../posting/post.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { isJobTool } from '../tools/catalog.js';
@@ -21,7 +21,7 @@ export const RESULT_LEFT_OUT = '(Left out to save room. If you still need it and
  * left out: calling one of these tools again would do it again, and some spend Buzz.
  */
 function keepsResult(toolName: string): boolean {
-  return isJobTool(toolName) || toolName === POST_TOOL || toolName === OPEN_PANEL || toolName === UPDATE_PANEL || toolName === ASK_CHOICE;
+  return isJobTool(toolName) || toolName === POST_TOOL || toolName === OPEN_PANEL || toolName === UPDATE_PANEL || toolName === CLOSE_PANEL || toolName === ASK_CHOICE;
 }
 /** At most this share of the budget goes to messages kept from turns that are otherwise left out. */
 export const PINNED_SHARE = 0.25;
