@@ -845,6 +845,56 @@ civitai-chat-panel {
   color: var(--civitai-color-text);
 }
 
+.cvt-instructions-card {
+  display: grid;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 640px;
+  padding: 14px 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-instructions-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cvt-instructions-card blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--civitai-color-border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.cvt-instructions-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.cvt-instructions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cvt-instructions-state {
+  margin: 0;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-panel-closed {
   display: flex;
   align-items: center;

@@ -40,6 +40,7 @@ export class CivitaiChatTurn extends LightElement {
     panels: { attribute: false },
     files: { attribute: false },
     canShare: { type: Boolean, attribute: 'can-share' },
+    instructions: { attribute: false },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
@@ -61,6 +62,7 @@ export class CivitaiChatTurn extends LightElement {
   declare panels?: PanelManager;
   declare files: () => Attachment[];
   declare canShare: boolean;
+  declare instructions: string | undefined;
   /** Panels show in the page beside the chat; the thread only points at them. */
   declare dockPanels: boolean;
   declare models: ModelDirectory;
@@ -179,6 +181,7 @@ export class CivitaiChatTurn extends LightElement {
       files: this.files,
       canShare: this.canShare,
       dockPanels: this.dockPanels,
+      ...(this.instructions ? { instructions: this.instructions } : {}),
       latest: this.latest,
       live: this.live,
       models: this.models,

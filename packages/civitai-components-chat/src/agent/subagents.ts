@@ -1,6 +1,7 @@
 import { dynamicTool, jsonSchema, type LanguageModel, type ModelMessage, type Tool, type ToolSet } from 'ai';
 
 import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import { UPDATE_INSTRUCTIONS } from '../tools/instructions.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { isErrorOutput } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
@@ -109,7 +110,7 @@ export const SUBAGENT_DEFAULTS = { maxLive: 3, maxPerReply: 8, maxSteps: 30, max
 const BOUNDS = { maxLive: [1, 10], maxPerReply: [1, 50], maxSteps: [2, 200], maxToolCalls: [1, 500] } as const;
 
 /** Never given to a subagent, whatever the allowlist says: no recursion, and nothing that waits for the viewer. */
-export const NEVER_FOR_SUBAGENTS: ReadonlySet<string> = new Set([DISPATCH_AGENT, ASK_CHOICE, OPEN_PANEL, UPDATE_PANEL, CLOSE_PANEL]);
+export const NEVER_FOR_SUBAGENTS: ReadonlySet<string> = new Set([DISPATCH_AGENT, ASK_CHOICE, OPEN_PANEL, UPDATE_PANEL, CLOSE_PANEL, UPDATE_INSTRUCTIONS]);
 
 const ARG_MAX = 80;
 /** A subagent's own retry budget for a dropped connection: a cut step with no tool call is asked again once. */
