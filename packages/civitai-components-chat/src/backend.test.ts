@@ -215,7 +215,6 @@ describe('ChatSession on a host backend', () => {
 
   it("uses a chat's own model only when the backend names it", async () => {
     const { session, sent } = setup({ models: [{ id: 'host/big', label: 'Big' }], replies: Array.from({ length: 8 }, () => () => textReply('ok')) });
-    session.updateSettings({ assistantModel: 'civitai/viewer-default' });
     session.newConversation();
     await session.send('one');
     await session.setChatModel('host/big');
@@ -223,7 +222,6 @@ describe('ChatSession on a host backend', () => {
     await session.setChatModel('somewhere/else');
     await session.send('three');
     const replies = sent.filter((request) => (request.body as { stream?: boolean }).stream === true);
-    // The viewer's stored default is Civitai's setting: a backend's chat never follows it.
     expect(replies.map((request) => request.body.model)).toEqual(['host/default-model', 'host/big', 'host/default-model']);
     expect(session.modelChoices().map((entry) => entry.id)).toEqual(['host/default-model', 'host/big']);
   });
@@ -303,7 +301,6 @@ describe('ChatSession without a backend (the default)', () => {
     );
     const app = { getToken: async () => 'viewer-token', site: {}, orchestration: { submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })), queryWorkflows: vi.fn(async () => ({ items: [], next: '' })) } } as never;
     const session = new ChatSession(app, { mcp: () => ({ orchestration: false, site: false }) });
-    session.updateSettings({ assistantTier: 'paid' });
     session.newConversation();
     await session.send('hi');
     expect(bodies[0]).toMatchObject({ url: 'https://orchestration.civitai.com/v1/chat/completions', auth: 'Bearer viewer-token', body: { chat_template_kwargs: { enable_thinking: false } } });

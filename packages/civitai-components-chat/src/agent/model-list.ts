@@ -116,6 +116,8 @@ export function buildModelList({
   const priced: ChatModelEntry[] = [];
   for (const model of dataOf(openRouter) as OpenRouterModel[]) {
     if (typeof model?.id !== 'string' || !routable.has(model.id)) continue;
+    // A batch variant answers hours later, never within a chat reply.
+    if (model.id.endsWith(':batch')) continue;
     const input = perMillion(model.pricing?.prompt);
     const output = perMillion(model.pricing?.completion);
     if (input === undefined || output === undefined || output > MAX_PRICE_PER_MILLION) continue;

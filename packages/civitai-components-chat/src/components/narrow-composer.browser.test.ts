@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
+import { chatConfig, configureChat } from '../config.js';
 import { defineElements } from './define.js';
 
 /**
@@ -25,8 +26,11 @@ const CASES: Case[] = [
   { viewport: 320, chat: 286, label: 'a long name', model: LONG_MODEL },
 ];
 
+const PAGE_MODEL = chatConfig.model;
+
 beforeAll(() => defineElements());
 afterEach(() => {
+  configureChat({ model: PAGE_MODEL });
   document.body.replaceChildren();
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -34,7 +38,7 @@ afterEach(() => {
 });
 
 async function mountSignedIn(width: number, model?: string): Promise<ShadowRoot> {
-  if (model) localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: model }));
+  if (model) configureChat({ model });
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const app = {

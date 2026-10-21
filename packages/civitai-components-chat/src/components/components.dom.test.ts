@@ -326,6 +326,20 @@ describe('civitai-chat-generation-card', () => {
     expect(asked).toHaveLength(1);
   });
 
+  it('offers to unlock a blurred mature result, and to get Buzz when unlocking needs more', async () => {
+    const job = new FakeJob('succeeded', { results: [{ id: 'gen1-1-1', kind: 'image', url: 'https://x/a.png' }] });
+    Object.assign(job, { locked: true, unlock: vi.fn(async () => undefined) });
+    const card = await mount('civitai-chat-generation-card', { job });
+    card.shadowRoot!.querySelector<HTMLElement>('[part=unlock]')!.click();
+    expect((job as unknown as { unlock: () => void }).unlock).toHaveBeenCalled();
+
+    Object.assign(job, { unlockError: { message: "You don't have enough Buzz to unlock this." } });
+    job.dispatchEvent(new Event('change'));
+    await card.updateComplete;
+    expect(card.shadowRoot!.querySelector('[part=unlock-error]')?.textContent).toContain("You don't have enough Buzz to unlock this.");
+    expect(card.shadowRoot!.querySelector<HTMLAnchorElement>('[part=unlock-error] [part=buy]')?.href).toBe('https://civitai.com/purchase/buzz');
+  });
+
   it('offers to try again after a failure, in the words the job gave', async () => {
     const job = new FakeJob('failed', { error: { message: 'That request was blocked by the safety filter.' } });
     const card = await mount('civitai-chat-generation-card', { job });
@@ -391,86 +405,15 @@ describe('civitai-chat-post-card for a draft', () => {
 });
 
 describe('civitai-chat-settings-dialog', () => {
-  const settingsDialog = async (freeAllowance: { left: number; resetAt?: Date } | null) => {
-    const dialog = await mount('civitai-chat-settings-dialog', {
-      open: true,
-      settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
-      models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
-      freeAllowance,
-    });
+  const settingsDialog = async () => {
+    const dialog = await mount('civitai-chat-settings-dialog', { open: true, settings: { theme: 'system', allowMature: false, autoRunLimit: 100 } });
     const changes: unknown[] = [];
     dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
-    const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
-    const pick = async (value: string) => {
-      select.value = value;
-      select.dispatchEvent(new Event('change'));
-      await dialog.updateComplete;
-    };
-    return { dialog, changes, select, pick };
+    return { dialog, changes };
   };
 
-  it('offers free replies first, free only, or always paid, with what is left', async () => {
-    const { changes, select, pick } = await settingsDialog({ left: 198 });
-    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'civitai/qwen3.8 · default', 'Smart', 'Custom…']);
-    expect(select.value).toBe('auto');
-    expect(select.getAttribute('description')).toBe('Free replies while they last (198 left), then about 1 Buzz a reply.');
-
-    await pick('free');
-    await pick('');
-    expect(changes).toEqual([
-      { assistantModel: undefined, assistantTier: 'free' },
-      { assistantModel: undefined, assistantTier: 'paid' },
-    ]);
-  });
-
-  it("names the default option by the model list's name for the default model, never the bare word Default", async () => {
-    const dialog = await mount('civitai-chat-settings-dialog', {
-      open: true,
-      settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
-      models: [],
-      freeAllowance: null,
-      defaultModelName: 'Lumen Six',
-    });
-    const select = dialog.querySelector<HTMLInputElement & { data: { value: string; label: string }[] }>('civitai-select[label=Assistant]')!;
-    expect(select.data.map((option) => option.label)).toEqual(['Lumen Six · default', 'Custom…']);
-    expect(select.data[0]!.value).toBe('');
-  });
-
-  it('lets the viewer pick a listed model or type any model id, and drops the free options when there are none', async () => {
-    const { dialog, changes, select, pick } = await settingsDialog(null);
-    expect(select.data.map((option) => option.label)).toEqual(['civitai/qwen3.8 · default', 'Smart', 'Custom…']);
-
-    await pick('z-ai/glm-5.3-flash');
-    expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash', assistantTier: 'auto' }]);
-
-    await pick('custom');
-    const id = dialog.querySelector<HTMLInputElement>('civitai-text-input[label="Model id"]')!;
-    id.value = ' z-ai/glm-5.3-prime ';
-    id.dispatchEvent(new Event('change'));
-    expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime', assistantTier: 'auto' });
-  });
-
-  it('shows a stored Free choice as unavailable when there are no free replies, and lets the viewer leave it', async () => {
-    const dialog = await mount('civitai-chat-settings-dialog', {
-      open: true,
-      settings: { theme: 'system', allowMature: false, autoRunLimit: 100, assistantTier: 'free' },
-      models: [],
-      freeAllowance: null,
-    });
-    const changes: unknown[] = [];
-    dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
-    const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
-    expect(select.data.map((option) => option.label)).toEqual(['Free (unavailable)', 'civitai/qwen3.8 · default', 'Custom…']);
-    expect(select.value).toBe('free');
-    expect(select.getAttribute('description')).toContain('replies are refused');
-
-    select.value = '';
-    select.dispatchEvent(new Event('change'));
-    expect(changes).toEqual([{ assistantModel: undefined, assistantTier: 'paid' }]);
-  });
-
   it('sets the longest reply step within 1,024 to 32,768, showing 16,384 until the viewer picks one', async () => {
-    const { dialog, changes } = await settingsDialog(null);
+    const { dialog, changes } = await settingsDialog();
     const field = dialog.querySelector<HTMLInputElement>('civitai-number-input[label="Longest reply step"]')!;
     expect(field.value).toBe('16384');
     expect([field.getAttribute('min'), field.getAttribute('max')]).toEqual(['1024', '32768']);
@@ -576,16 +519,12 @@ describe('civitai-chat-model-picker: the default by name', () => {
   const chipName = (picker: Element) => [...picker.querySelectorAll('.cvt-model-chip-name, .cvt-model-chip-marker')].map((span) => span.textContent).join('');
   const rowName = (picker: Element) => picker.querySelector('.cvt-model-options [role=option] .cvt-model-name')!.textContent;
 
-  it("shows the followed default by its name with the marker, and the viewer's own default the same way", async () => {
+  it('shows the followed default by its name with the marker', async () => {
     const page = await mount('civitai-chat-model-picker', { models, value: 'urn:air:page:pm', own: false });
     expect(chipName(page)).toBe('Page Model · default');
-    document.body.replaceChildren();
-    // The viewer set their own default in Settings: the chat follows that, by its name.
-    const viewer = await mount('civitai-chat-model-picker', { models, value: 'v/violet', own: false, defaultModel: 'v/violet' });
-    expect(chipName(viewer)).toBe('Violet 7 · default');
-    viewer.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
-    await viewer.updateComplete;
-    expect(rowName(viewer)).toBe('Violet 7 · default');
+    page.querySelector<HTMLButtonElement>('.cvt-model-chip')!.click();
+    await page.updateComplete;
+    expect(rowName(page)).toBe('Page Model · default');
     document.body.replaceChildren();
     // A chat that picked a model of its own shows that model, unmarked.
     const own = await mount('civitai-chat-model-picker', { models, value: 'v/violet', own: true });

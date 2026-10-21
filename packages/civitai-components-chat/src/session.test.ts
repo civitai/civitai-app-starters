@@ -97,29 +97,24 @@ describe("ChatSession's model and output cap, as the reply request carries them"
     return { session, replies };
   }
 
-  it("asks with the chat's own model, else the viewer's default, else the page's, from the next reply", async () => {
+  it("asks with the chat's own model, else the page's, from the next reply", async () => {
     const { session, replies } = setup();
     session.newConversation();
     await session.send('one');
-    session.updateSettings({ assistantModel: ' viewer/default-model ' });
-    await session.send('two');
     await session.setChatModel('chat/own-model');
-    await session.send('three');
+    await session.send('two');
     await session.setChatModel(undefined);
-    await session.send('four');
-    session.newConversation();
-    await session.send('five');
-    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'viewer/default-model', 'chat/own-model', 'viewer/default-model', 'viewer/default-model']);
+    await session.send('three');
+    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'chat/own-model', chatConfig.model]);
   });
 
   it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
     const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
-    session.updateSettings({ assistantModel: 'viewer/default-model' });
     await session.openConversation('PICKED');
     await session.send('again');
     await session.openConversation('OLD');
     await session.send('again');
-    expect(replies.map((reply) => reply.model)).toEqual(['saved/chat-model', 'viewer/default-model']);
+    expect(replies.map((reply) => reply.model)).toEqual(['saved/chat-model', chatConfig.model]);
   });
 
   it("sends the viewer's output cap as max_tokens, 16,384 when unset, and a stale stored value kept within range", async () => {

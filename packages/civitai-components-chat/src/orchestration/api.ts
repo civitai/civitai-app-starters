@@ -27,6 +27,8 @@ export interface OrchestrationApi {
   getWorkflow(workflowId: string, opts?: ReadOptions & { wait?: number; until?: 'completion' | 'change' }): Promise<Workflow>;
   watchWorkflow(workflowId: string, opts?: ReadOptions): AsyncGenerator<Workflow, void, undefined>;
   updateWorkflow(workflowId: string, patch: { metadata?: unknown; tags?: string[] }, opts?: SendOptions): Promise<void>;
+  /** Pays for a workflow's mature results with Buzz that covers them, refunding what it was paid with; a 400 when the viewer has too little. */
+  allowMatureContent(workflowId: string, opts?: SendOptions): Promise<void>;
   addTag(workflowId: string, tag: string, opts?: SendOptions): Promise<void>;
   removeTag(workflowId: string, tag: string, opts?: SendOptions): Promise<void>;
   deleteWorkflow(workflowId: string, opts?: SendOptions): Promise<void>;
@@ -99,6 +101,9 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
     watchWorkflow,
     async updateWorkflow(workflowId, patch, opts) {
       await json('PUT', `v2/consumer/workflows/${encodeURIComponent(workflowId)}`, { ...opts, body: patch });
+    },
+    async allowMatureContent(workflowId, opts) {
+      await json('PUT', `v2/consumer/workflows/${encodeURIComponent(workflowId)}`, { ...opts, body: { allowMatureContent: true } });
     },
     async addTag(workflowId, tag, opts) {
       await json('POST', `v2/consumer/workflows/${encodeURIComponent(workflowId)}/tags`, { ...opts, body: tag });

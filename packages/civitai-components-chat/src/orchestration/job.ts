@@ -33,7 +33,7 @@ export interface JobToolInfo {
 }
 
 export interface JobDeps {
-  api: Pick<OrchestrationApi, 'getWorkflow' | 'watchWorkflow' | 'addTag' | 'updateWorkflow'>;
+  api: Pick<OrchestrationApi, 'getWorkflow' | 'watchWorkflow' | 'addTag' | 'updateWorkflow' | 'allowMatureContent'>;
   cancelWorkflow(workflowId: string): Promise<void>;
   mcp: Pick<McpConnection, 'callTool'>;
   resolveArgs(args: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -95,6 +95,10 @@ export function stepTypeOf(args: Record<string, unknown>): string | undefined {
   return typeof last?.$type === 'string' ? last.$type : undefined;
 }
 
+const MATURE_LEVELS = new Set(['r', 'x', 'xxx']);
+// Long enough for the card's images to be requested: the first read of a locked result tries to unlock it.
+const LOCK_RECHECK_MS = 3_000;
+
 const BLOCKING_TIMEOUT_MS = 10 * 60_000;
 // The MCP gives up on a slow submit after 30 s while the orchestrator carries on and charges.
 const RECOVER_WINDOW_MS = 90_000;
@@ -119,8 +123,12 @@ export class GenerationJob extends EventTarget {
   queued: number | null = null;
   error?: HumanError;
   media: ResultMedia[] = [];
+  unlocking = false;
+  unlockError?: HumanError;
 
   #deps: JobDeps;
+  #lockRechecked = false;
+  #disposed = false;
   #run?: AbortController;
   #settledSent = false;
   #refusedAtQuote = false;
@@ -152,6 +160,33 @@ export class GenerationJob extends EventTarget {
 
   get settled(): boolean {
     return SETTLED.has(this.state);
+  }
+
+  /** Its mature results are shown blurred. Never for a viewer who hides mature content. */
+  get locked(): boolean {
+    return (
+      this.state === 'succeeded' &&
+      !this.#deps.hideMatureContent() &&
+      (this.workflow as { allowMatureContent?: boolean | null } | undefined)?.allowMatureContent === false &&
+      this.media.some((media) => MATURE_LEVELS.has(media.nsfwLevel?.toLowerCase() ?? ''))
+    );
+  }
+
+  async unlock(): Promise<void> {
+    const workflowId = this.workflowId;
+    if (!workflowId || this.unlocking || !this.locked) return;
+    this.unlocking = true;
+    this.unlockError = undefined;
+    this.#emit();
+    try {
+      await this.#deps.api.allowMatureContent(workflowId);
+      this.apply(await this.#deps.api.getWorkflow(workflowId, { hideMatureContent: false }));
+    } catch (error) {
+      this.unlockError = isInsufficientBuzz(error) ? { ...humanize(error), message: "You don't have enough Buzz to unlock this." } : humanize(error);
+    } finally {
+      this.unlocking = false;
+      this.#emit();
+    }
   }
 
   /** A blocking MCP call has no workflow id until it returns, so it cannot be stopped. */
@@ -306,6 +341,7 @@ export class GenerationJob extends EventTarget {
   }
 
   dispose(): void {
+    this.#disposed = true;
     this.#run?.abort();
   }
 
@@ -341,6 +377,20 @@ export class GenerationJob extends EventTarget {
         break;
       default:
         this.#set(isTerminal(workflow) ? 'failed' : 'running');
+    }
+    if (this.locked && !this.#lockRechecked) {
+      this.#lockRechecked = true;
+      setTimeout(() => void this.#recheckLock(), LOCK_RECHECK_MS);
+    }
+  }
+
+  async #recheckLock(): Promise<void> {
+    const workflowId = this.workflowId;
+    if (this.#disposed || !workflowId || !this.locked) return;
+    try {
+      this.apply(await this.#deps.api.getWorkflow(workflowId, { hideMatureContent: this.#deps.hideMatureContent() }));
+    } catch {
+      // The Unlock button stays; pressing it reads the workflow again.
     }
   }
 
@@ -485,6 +535,10 @@ export class GenerationJob extends EventTarget {
   #emit(): void {
     this.dispatchEvent(new Event('change'));
   }
+}
+
+function isInsufficientBuzz(error: unknown): boolean {
+  return (error as { status?: unknown } | null)?.status === 400 && /buzz/i.test(String((error as { message?: unknown }).message ?? ''));
 }
 
 function isHumanError(value: unknown): value is HumanError {

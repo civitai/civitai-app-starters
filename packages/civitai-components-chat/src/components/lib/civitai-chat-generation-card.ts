@@ -51,6 +51,11 @@ export interface CardJob extends EventTarget {
   readonly results: CardResult[];
   readonly cancelable: boolean;
   readonly workflowId?: string;
+  /** Its mature results are shown blurred until it is paid for with Buzz that covers them. */
+  readonly locked?: boolean;
+  readonly unlocking?: boolean;
+  readonly unlockError?: { message: string };
+  unlock?(): Promise<void>;
   confirm(): Promise<void>;
   decline(): void;
   cancel(): Promise<void>;
@@ -295,7 +300,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
       case 'running':
         return this.#running(job);
       case 'succeeded':
-        return html`${this.#gallery(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
+        return html`${this.#gallery(job)}${this.#unlock(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
       case 'rejected':
         return html`<civitai-alert color="warning" part="error">
           You don't have enough Buzz for this${job.price ? html` (about ${job.price.total})` : nothing}.
@@ -313,6 +318,20 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
           <div class="row"><civitai-button size="sm" variant="light" @click=${() => void job.retry()}>Try again</civitai-button></div>
         </civitai-alert>`;
     }
+  }
+
+  #unlock(job: CardJob): TemplateResult | typeof nothing {
+    if (!job.locked || !job.unlock) return nothing;
+    return html`<div class="status">Blurred: the Buzz it was paid with doesn't cover mature content.</div>
+      <div class="row">
+        <civitai-button part="unlock" size="sm" ?loading=${job.unlocking === true} ?disabled=${job.unlocking === true} @click=${() => void job.unlock!()}>Unlock</civitai-button>
+      </div>
+      ${job.unlockError
+        ? html`<civitai-alert color="warning" part="unlock-error">
+            ${job.unlockError.message}
+            <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a></div>
+          </civitai-alert>`
+        : nothing}`;
   }
 
   /** Asks the page to show what this job is making, before there is anything to open. */

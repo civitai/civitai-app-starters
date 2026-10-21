@@ -865,7 +865,7 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 ```
 
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
-"Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings,
+"Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in each chat's model list,
 each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
 label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
@@ -875,10 +875,8 @@ one reply may take; default 10, kept within 2 to 1,000; every step re-sends the 
 untrimmed, so with a large value a long reply can outgrow the model's context window and fail before
 its last step) are the settings. A reply's last allowed step
 cannot call tools and must say where things stand; a reply that used every step ends with **Continue**,
-which asks the assistant to carry on. In Settings the viewer picks their default
-model from the default, `models`, or any model id the orchestrator's chat endpoint serves (Custom),
-and may set their own **Longest reply step** (`maxOutputTokens`), which wins over the page's;
-conversation titles always use the default model.
+which asks the assistant to carry on. In Settings the viewer may set their own **Longest reply step**
+(`maxOutputTokens`), which wins over the page's; conversation titles always use the default model.
 
 Each chat has its own model. The button beside the add-file button shows it and opens a searchable
 list: the default, `models`, the orchestrator's own models, and the OpenRouter models the
@@ -892,8 +890,7 @@ and the chat's current model always stay. The list
 comes from OpenRouter's public `GET https://openrouter.ai/api/v1/models` and the orchestrator's
 `GET /v1/models` (as the viewer), loaded once per session when the list is first opened; if either
 cannot be reached the list still offers the default, `models` and any typed model id. A reply uses
-the chat's own model, else the viewer's default from Settings, else `model`. A chat that never
-picked one follows the viewer's default, and the pick is saved with the chat.
+the chat's own model, else `model`, and the pick is saved with the chat.
 
 `contextBudgetTokens` (default 24,000, by the estimate of 3.5 characters a token) is about how much
 earlier conversation a reply sends; raise it for a model with a large context window. The latest
@@ -905,15 +902,9 @@ their place. The chat's first message (its task) and every answer to a set of op
 user message even then, within a quarter of the budget: the task first (cut to fit if it must be),
 then the latest answers.
 
-Settings' Assistant choice also sets how replies are paid for, when the orchestrator has a free daily
-allowance for the default model (`GET /v2/consumer/free-tier`; free requests carry
-`X-Civitai-Tier: free`): **Auto** (the default) uses free replies while they last and then Buzz, and
-also Buzz when a free reply has not started after 12 seconds (free work waits behind paid work);
-**Free** uses only free replies, and once they are used up a reply says until when and offers
-**Continue with Buzz**, which switches to Auto and runs it again; **Default** always uses Buzz. A
-listed or custom model uses its own free allowance first if it has one. With **Free**, a model that
-has no free replies is never sent paid: the reply says the model isn't free and nothing is charged.
-Without a free tier the choice is the model alone.
+When the orchestrator has a free daily allowance for a model (`GET /v2/consumer/free-tier`; free
+requests carry `X-Civitai-Tier: free`), replies use it while it lasts and then Buzz, and also Buzz
+when a free reply has not started after 12 seconds (free work waits behind paid work).
 
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches this chat's model
