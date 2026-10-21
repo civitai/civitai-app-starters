@@ -269,7 +269,8 @@ const rigged = pickModel(snapshot, 'fbx', 'riggedFbxModel');
 `WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
 run on images the viewer uploaded through the host, mirroring the host's
 `blockTrainingBodySchema` (civitai/civitai#5434, #6461). Its dataset is `items: [{ air, caption }]`
-(`BlockTrainingDatasetItem`, 1–50, captions up to 8,192 characters, one blob at most once). There is no `maxBuzz` and no timeout — the
+(`BlockTrainingDatasetItem`; at most `BLOCK_TRAINING_DATASET_MAX_ITEMS` items and
+`BLOCK_TRAINING_CAPTION_MAX_CHARS` caption characters, one blob at most once). There is no `maxBuzz` and no timeout — the
 `estimate` reply carries `snapshot.trainingQuote` (`quoteId`, `total`, `imageCount`,
 `expiresAt`), and the run starts only through the `RUN_TRAINING` bridge, after the viewer
 confirms that price in Civitai's own dialog. A confirmed run may exceed the token's per-call
