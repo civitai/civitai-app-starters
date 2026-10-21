@@ -625,7 +625,17 @@ function messagesFromParts(parts: readonly TurnPart[], progressOf: (id: string) 
 
 /** A subagent whose result never reached the page, with how far it was last seen to have got. */
 export function unreceivedSubagent(progress: RunSubagentProgress | undefined): SubagentResult {
-  return { kind: SUBAGENT_KIND, status: 'unreceived', summary: '', steps: progress?.steps ?? 0, toolCalls: progress?.toolCalls ?? 0, activity: [], error: RESULT_NOT_RECEIVED };
+  return {
+    kind: SUBAGENT_KIND,
+    status: 'unreceived',
+    summary: '',
+    steps: progress?.steps ?? 0,
+    toolCalls: progress?.toolCalls ?? 0,
+    activity: [],
+    error: RESULT_NOT_RECEIVED,
+    // A write subagent keeps its edits as last seen: their count, since their paths never reached the page.
+    ...(progress?.mode === 'write' ? { mode: 'write' as const, changed: [], changedCount: progress.changed ?? 0, ranCommands: progress.ranCommands ?? 0 } : {}),
+  };
 }
 
 /**

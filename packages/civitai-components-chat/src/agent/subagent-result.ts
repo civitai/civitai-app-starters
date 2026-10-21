@@ -54,6 +54,11 @@ export interface SubagentResult {
   changed?: SubagentChange[];
   /** A write subagent's calls to the page's command tools that ran; what they changed is not in `changed`. */
   ranCommands?: number;
+  /**
+   * Set only on an `unreceived` write subagent: how many files it had changed when last seen. Their
+   * paths never reached the page, so `changed` is empty.
+   */
+  changedCount?: number;
 }
 
 /** A `dispatch_agent` call the chat refused: nothing ran. */
