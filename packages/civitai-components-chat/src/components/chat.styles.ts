@@ -625,13 +625,22 @@ civitai-chat-turn {
   animation: cvt-pulse 1.2s ease-in-out infinite;
 }
 
-.cvt-typing {
+/* The live reply's status line (civitai-chat-reply-status): always there while the reply is. */
+civitai-chat-reply-status {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
   padding: 8px 0;
+  font-size: 12px;
+  color: var(--civitai-color-text-dimmed);
 }
 
-.cvt-typing span {
+.cvt-reply-status-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cvt-reply-status-dots span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -639,12 +648,34 @@ civitai-chat-turn {
   animation: cvt-pulse 1.2s ease-in-out infinite;
 }
 
-.cvt-typing span:nth-child(2) {
+.cvt-reply-status-dots span:nth-child(2) {
   animation-delay: 0.15s;
 }
 
-.cvt-typing span:nth-child(3) {
+.cvt-reply-status-dots span:nth-child(3) {
   animation-delay: 0.3s;
+}
+
+civitai-chat-reply-status[state='reconnecting'] .cvt-reply-status-dots span,
+civitai-chat-reply-status[state='approval'] .cvt-reply-status-dots span {
+  background: var(--civitai-color-warning);
+}
+
+civitai-chat-reply-status[state='reconnecting'],
+civitai-chat-reply-status[state='approval'] {
+  color: var(--civitai-color-text);
+}
+
+.cvt-reply-status-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Still dots, at full strength, for a viewer who asked for less motion: the words and time say it is live. */
+@media (prefers-reduced-motion: reduce) {
+  .cvt-reply-status-dots span {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 @keyframes cvt-pulse {

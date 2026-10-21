@@ -62,9 +62,14 @@ function setup(responses: Response[]) {
     ask: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ shown: true, awaitsUser: true }) }),
   };
   const changes: { running: boolean; parts: TurnPart[] | null }[] = [];
+  /** `live.reconnecting` at each change, while a reply shows. */
+  const down: (boolean | undefined)[] = [];
   const core: AgentCore = new AgentCore({
     describeError: (error) => ({ kind: 'unknown', message: `shown: ${(error as Error).message}` }),
-    change: () => changes.push({ running: core.running, parts: core.live ? structuredClone(core.live.parts) : null }),
+    change: () => {
+      changes.push({ running: core.running, parts: core.live ? structuredClone(core.live.parts) : null });
+      if (core.live) down.push(core.live.reconnecting);
+    },
   });
   const history: ModelMessage[] = [{ role: 'user', content: 'draw a lighthouse' }];
   const run = (extra: Partial<AgentCoreRun> = {}): Promise<AgentCoreOutcome | undefined> =>
@@ -74,7 +79,7 @@ function setup(responses: Response[]) {
       request: () => ({ model, system: 'You draw.', history, maxOutputTokens: 512, networkRetryDelaysMs: [0, 0] }),
       ...extra,
     });
-  return { core, run, prompts, sketch, changes };
+  return { core, run, prompts, sketch, changes, down };
 }
 
 describe('AgentCore', () => {
@@ -143,6 +148,25 @@ describe('AgentCore', () => {
     expect(sketch).toHaveBeenCalledTimes(1);
     expect(prompts).toHaveLength(3);
     expect(outcome!.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
+  });
+
+  it('says it is reconnecting while a step the network cut is asked for again, and not once the model answers', async () => {
+    const { core, run, down } = setup([toolCall('sketch', { subject: 'lighthouse' }), new TypeError('Failed to fetch'), text('All done.')]);
+    const before = Date.now();
+    let startedAt: number | undefined;
+    const outcome = await run({ settled: () => (startedAt = core.live?.startedAt) });
+    expect(outcome).toMatchObject({ status: 'done' });
+    // Up, then down for the cut step's wait, then up again for the rest of the reply.
+    expect(down.filter((d, i) => d !== undefined && d !== down[i - 1])).toEqual([true, false]);
+    expect(down.at(-1)).toBe(false);
+    expect(startedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('never says it is reconnecting for a reply the network did not cut', async () => {
+    const { run, down } = setup([toolCall('sketch', { subject: 'lighthouse' }), text('Done.')]);
+    await run();
+    expect(down.length).toBeGreaterThan(2);
+    expect(down.every((d) => !d)).toBe(true);
   });
 
   it('fails a reply on an error that is not a dropped connection, with where to carry on from', async () => {

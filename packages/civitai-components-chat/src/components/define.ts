@@ -2,6 +2,7 @@ import type { CivitaiChatChoiceCard } from './civitai-chat-choice-card.js';
 import type { CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatGenerationDetails } from './civitai-chat-generation-details.js';
 import type { CivitaiChatPanel } from './civitai-chat-panel.js';
+import type { CivitaiChatReplyStatus } from './civitai-chat-reply-status.js';
 import { defineCivitaiChatStudio } from './civitai-chat-studio.js';
 import type { CivitaiChatSettingsDialog } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatSidebar } from './civitai-chat-sidebar.js';
@@ -29,5 +30,6 @@ declare global {
     'civitai-chat-generation-details': CivitaiChatGenerationDetails;
     'civitai-chat-settings-dialog': CivitaiChatSettingsDialog;
     'civitai-chat-panel': CivitaiChatPanel;
+    'civitai-chat-reply-status': CivitaiChatReplyStatus;
   }
 }

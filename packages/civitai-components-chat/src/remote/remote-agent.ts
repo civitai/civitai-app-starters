@@ -29,8 +29,17 @@ import { readSse, type SseMessage } from './sse.js';
 /** An event stream that sent nothing (not even its keep-alive comment) for this long is taken as dead and opened again. */
 export const RUN_IDLE_MS = 3 * RUN_KEEPALIVE_MS;
 
+/**
+ * An event stream that sent nothing for this long has missed a keep-alive: the reply's status line says
+ * it is reconnecting (the stream is left open, and taken as dead only at {@link RUN_IDLE_MS}).
+ */
+export const RUN_QUIET_MS = RUN_KEEPALIVE_MS + 5_000;
+
 /** The longest the agent stays `running` while the chat's head is read again after a run: a read that hangs lets go then. */
 export const REREAD_TIMEOUT_MS = 15_000;
+
+/** Run events that do not show the run moving on after a model retry (see `#apply`). */
+const NOT_PROGRESS: ReadonlySet<string> = new Set(['network-retry', 'error', 'parts-truncate', 'run-started']);
 
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
@@ -71,6 +80,8 @@ export interface RemoteAgentDeps {
   wake?(listener: () => void): () => void;
   newKey?(): string;
   idleMs?: number;
+  /** {@link RUN_QUIET_MS} unless set. */
+  quietMs?: number;
   /** {@link STOP_GRACE_MS} unless set. */
   stopGraceMs?: number;
 }
@@ -104,6 +115,12 @@ interface Run {
   unreceived?: Set<string>;
   /** Ends the wait before the next reconnect, while one waits. */
   wakeWait?: () => void;
+  /** The event stream is down: it dropped, went quiet past a keep-alive, or is being opened again. */
+  streamDown?: boolean;
+  /** The runner's own connection to the model was cut and the step is asked for again (`network-retry`), until the next part. */
+  modelRetrying?: boolean;
+  /** Fires once the open stream has been quiet for {@link RUN_QUIET_MS}. */
+  quiet?: ReturnType<typeof setTimeout>;
   unsubscribe?: () => void;
 }
 
@@ -223,7 +240,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       // Only the latest turn can be replying.
       if (turn !== conversation.turns.at(-1)) return false;
       turn.assistant = { messages: [], status: 'streaming' };
-      const run = this.#begin(conversationId, turn);
+      const started = Date.parse(summary.startedAt);
+      const run = this.#begin(conversationId, turn, { reattached: true, ...(Number.isFinite(started) ? { startedAt: started } : {}) });
       run.runId = summary.runId;
       // Everything up to now is rebuilt from the replay, but the page already heard of it: not announced again.
       const heard = Number(summary.lastEventId);
@@ -253,14 +271,15 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     if (run.wakeWait) run.wakeWait();
     else if (run.connection && Date.now() - run.lastMessageAt > RUN_KEEPALIVE_MS) {
       run.reconnectNow = true;
+      this.#down(run, { stream: true });
       run.connection.abort();
     }
   }
 
-  #begin(conversationId: string, turn: Turn): Run {
+  #begin(conversationId: string, turn: Turn, live: Pick<LiveTurn, 'startedAt' | 'reattached'> = {}): Run {
     const run: Run = { conversationId, turn, stopRequested: false, closed: false, lastMessageAt: Date.now(), resyncs: 0 };
     this.#run = run;
-    this.#live = { seq: turn.seq, parts: [] };
+    this.#live = { seq: turn.seq, parts: [], startedAt: Date.now(), ...live };
     run.unsubscribe = this.#deps.wake?.(() => this.wake());
     this.#emit();
     return run;
@@ -291,6 +310,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (run.closed) return;
         // No answer, or the runner is down for now: the run may have started, so the same start (same key) is asked again.
         if (!retryable(error)) return this.#refused(run, error);
+        this.#down(run, { stream: true });
         await this.#pause(run, failures);
         if (run.closed) return;
       }
@@ -307,7 +327,18 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       try {
         const response = await this.#deps.client.events(run.runId!, run.lastEventId, connection.signal);
         if (!response.body) throw new Error('The run sent no event stream.');
-        const alive = () => (run.lastMessageAt = Date.now());
+        const quietMs = this.#deps.quietMs ?? RUN_QUIET_MS;
+        const listen = () => {
+          clearTimeout(run.quiet);
+          run.quiet = setTimeout(() => this.#down(run, { stream: true }), quietMs);
+        };
+        listen();
+        const alive = () => {
+          listen();
+          run.lastMessageAt = Date.now();
+          // Anything from the runner, its keep-alive included: the stream is up again.
+          this.#down(run, { stream: false });
+        };
         for await (const message of readSse(response.body, this.#deps.idleMs ?? RUN_IDLE_MS, alive)) {
           if (run.closed) return;
           failures = 0;
@@ -318,11 +349,13 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
           if (run.closed) return;
         }
       } catch (error) {
+        clearTimeout(run.quiet);
         if (run.closed) return;
         // The runner no longer knows the run, or refuses this viewer; any other refusal is asked again (a replica catching up).
         if (error instanceof RunnerHttpError && (error.status === 404 || error.status === 410)) return this.#lost(run);
         if (error instanceof RunnerHttpError && (error.status === 401 || error.status === 403)) return this.#denied(run, error);
       }
+      clearTimeout(run.quiet);
       if (run.closed) return;
       // An event that did not fit what is shown: the whole journal is read again, from `run-started`
       // (after the usual wait, so a runner whose journal never fits is not asked in a tight loop).
@@ -335,6 +368,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         run.reconnectNow = false;
         continue;
       }
+      // The stream dropped, went quiet past its keep-alives, or could not be opened: down until it is open again.
+      this.#down(run, { stream: true });
       await this.#pause(run, failures++);
     }
   }
@@ -361,6 +396,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
 
   #apply(run: Run, event: RunEvent, heard: boolean, known: boolean): boolean {
     const live = this.#live;
+    // The run moves on after the runner asked its model again: any event but the retry itself, an error,
+    // a step taken back or the run's start (as the page's own loop takes any part but `start` or `error`).
+    if (!NOT_PROGRESS.has(event.type)) this.#down(run, { retry: false });
     switch (event.type) {
       case 'run-started':
       case 'text-delta':
@@ -379,6 +417,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (!heard) this.#deps.onToolResult?.(event.result);
         return true;
       case 'network-retry':
+        this.#down(run, { retry: true });
         if (!known) (run.turn.assistant.networkRetries ??= []).push(event.trace);
         if (!heard) this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt: event.attempt, trace: event.trace } }));
         return true;
@@ -565,6 +604,20 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     });
   }
 
+  /**
+   * Notes the event stream (`stream`) or the runner's model connection (`retry`) down or up; the reply's
+   * status line says it is reconnecting while either is down. Emits only when that changes.
+   */
+  #down(run: Run, change: { stream?: boolean; retry?: boolean }): void {
+    if (change.stream !== undefined) run.streamDown = change.stream;
+    if (change.retry !== undefined) run.modelRetrying = change.retry;
+    const live = this.#live;
+    const down = Boolean(run.streamDown || run.modelRetrying);
+    if (this.#run !== run || run.closed || !live || Boolean(live.reconnecting) === down) return;
+    live.reconnecting = down;
+    this.#emit();
+  }
+
   #close(run: Run): void {
     this.#teardown(run);
     this.#release(run);
@@ -574,6 +627,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #teardown(run: Run): void {
     if (run.closed) return;
     run.closed = true;
+    clearTimeout(run.quiet);
     run.connection?.abort();
     run.wakeWait?.();
     run.unsubscribe?.();
