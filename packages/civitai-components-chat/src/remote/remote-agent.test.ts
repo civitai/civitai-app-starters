@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Agent } from '../agent/agent.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
+import { SubagentTracker } from '../agent/subagents.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { createPartsDiffer, type RunEvent } from '../runner-protocol.js';
 import { ThreadStore, type ThreadStoreDeps } from '../store/thread-store.js';
@@ -768,13 +769,14 @@ describe('RemoteAgent, a reply ended on the page without run-ended', () => {
       runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Delegating.' }, { type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } }] }], {
         d1: { mode: 'write', steps: 2, toolCalls: 3, changed: [{ path: 'game/scene.ts', op: 'write' }], activity: [], ranCommands: 0 },
       }),
-    ]);
+    ], { progress: new SubagentTracker() });
     void made.agent.send('go');
     await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
     await pushAll(made.runner, 'r1', [
       { type: 'text-delta', index: 0, text: 'Delegating.' },
       { type: 'tool-call', index: 1, toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } },
-      { type: 'subagent-progress', toolCallId: 'd1', progress: { task: 'Split the scene', steps: 2, toolCalls: 3, mode: 'write', changed: 1, ranCommands: 0 } },
+      // Counts all distinct, and from the head's: the result must carry these, as the page last saw them.
+      { type: 'subagent-progress', toolCallId: 'd1', progress: { task: 'Split the scene', steps: 4, toolCalls: 7, mode: 'write', changed: 3, ranCommands: 2 } },
     ]);
     await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(2));
     made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
@@ -785,7 +787,7 @@ describe('RemoteAgent, a reply ended on the page without run-ended', () => {
     expect(made.store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
     expect(shown(made.store)).toMatchObject([
       { kind: 'text', text: 'Delegating.' },
-      { kind: 'tool', toolCallId: 'd1', state: 'done', output: { kind: 'subagent', status: 'unreceived', error: NOT_RECEIVED } },
+      { kind: 'tool', toolCallId: 'd1', state: 'done', output: { kind: 'subagent', status: 'unreceived', error: NOT_RECEIVED, steps: 4, toolCalls: 7, mode: 'write', changedCount: 3, ranCommands: 2 } },
     ]);
   });
 

@@ -624,7 +624,7 @@ function messagesFromParts(parts: readonly TurnPart[], progressOf: (id: string) 
 }
 
 /** A subagent whose result never reached the page, with how far it was last seen to have got. */
-function unreceivedSubagent(progress: RunSubagentProgress | undefined): SubagentResult {
+export function unreceivedSubagent(progress: RunSubagentProgress | undefined): SubagentResult {
   return { kind: SUBAGENT_KIND, status: 'unreceived', summary: '', steps: progress?.steps ?? 0, toolCalls: progress?.toolCalls ?? 0, activity: [], error: RESULT_NOT_RECEIVED };
 }
 
