@@ -12,7 +12,7 @@ import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from 
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommand, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
-import { humanize, RETRYABLE_ERRORS } from '../ux/humanize.js';
+import { humanize, humanizeHost, RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatMcpOptions, ChatMcpServer } from '../mcp/servers.js';
@@ -321,7 +321,8 @@ export class CivitaiChat extends LitElement {
   declare placeholder?: string;
   /**
    * Offers a hands-free spoken conversation: the viewer talks, and each reply is read aloud. Nothing
-   * for it loads until the viewer starts one. Not offered with a host backend.
+   * for it loads until the viewer starts one. Not offered with a host backend, even one that has its
+   * own `transcribe`: it runs on Civitai's live speech services.
    */
   declare voiceConversation: boolean;
   declare userName: string;
@@ -1255,7 +1256,8 @@ export class CivitaiChat extends LitElement {
 
   #conversationStart(): void {
     const session = this.#session;
-    if (!session || this.#talk) return;
+    // Only Civitai's live speech services hold a conversation; a host's `transcribe` is dictation only.
+    if (!session || this.#talk || session.dictation !== 'civitai') return;
     this.#voiceCancel();
     this.conversation = { state: 'starting', heard: '', level: 0 };
     let talk: Promise<{ end(): void } | undefined> | undefined;
@@ -1313,7 +1315,8 @@ export class CivitaiChat extends LitElement {
     this.transcribing = false;
     this.heard = '';
     if (voice.error) {
-      const why = humanize(voice.error);
+      // A host's own speech-to-text failed in its words, not Civitai's (no Buzz, no Civitai sign-in).
+      const why = (session.backend ? humanizeHost : humanize)(voice.error);
       this.#toast(words ? "Part of what you said couldn't be turned into text; check it before sending." : why.kind === 'unknown' ? 'Could not turn your recording into text. Try again, or type it.' : why.message, voice.error);
     } else if (!words) {
       this.#toast("Didn't catch any words. Try again a little closer to the microphone.");
@@ -1805,8 +1808,9 @@ export class CivitaiChat extends LitElement {
       if (failed && failed.source === this.#source()) return html`<div class="cvt-starting cvt-start-error" role="alert">${failed.message}</div>`;
       return this.#signsIn && !this.app ? this.#signedOut() : html`<div class="cvt-starting"><civitai-loader></civitai-loader></div>`;
     }
-    // On a host backend: no files, voice, Buzz, posting or sign-in, so none of it is shown.
+    // On a host backend: no files, Buzz, posting or sign-in, so none of it is shown; the microphone only with the backend's own `transcribe`.
     const hosted = Boolean(session.backend);
+    const dictation = session.dictation;
     const conversation = session.store.current;
     const boxed = this.lightbox;
     const details = boxed?.attachment ? session.detailsFor(boxed.attachment) : boxed?.job ? session.jobDetails(boxed.job) : null;
@@ -1911,8 +1915,9 @@ export class CivitaiChat extends LitElement {
             .holdReason=${this.#held(session)}
             .uploads=${this.uploads}
             .refs=${this.refs}
-            ?voice=${!hosted}
-            ?talk=${this.voiceConversation && !hosted}
+            ?voice=${dictation !== null}
+            ?host-voice=${dictation === 'host'}
+            ?talk=${this.voiceConversation && dictation === 'civitai'}
             .conversation=${this.conversation}
             .placeholder=${this.placeholder ?? (hosted ? 'Ask anything' : DEFAULT_PLACEHOLDER)}
             ?no-files=${hosted}

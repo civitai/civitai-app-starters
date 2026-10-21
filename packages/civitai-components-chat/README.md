@@ -122,8 +122,8 @@ object, even an equal one, starts a new session (the open chat is reloaded from 
 With `backend` set the chat starts at once, with no `app` and no sign-in (`app` and `signIn` are
 then ignored), and it never sends a request to Civitai or to OpenRouter. Everything that runs on
 Civitai's services is off and not shown: the built-in orchestration and Civitai search tools (so
-`mcp` has no effect), generations, panels and their studio, file uploads, the microphone, posting,
-Buzz prices, spend and the free-reply choice, sign-in and sign-out, and the welcome's examples. What
+`mcp` has no effect), generations, panels and their studio, file uploads, the microphone (unless the
+backend brings its own [`transcribe`](#your-own-speech-to-text)), spoken conversations, posting, Buzz prices, spend and the free-reply choice, sign-in and sign-out, and the welcome's examples. What
 keeps working: `mcpServers`, `tools`, `toolViews`, `beforeToolCall`, `instructions`, `systemPrompt`,
 `commands`, `scope`, `layout` and `full-page`, the chat list, rename, delete and export, and in
 Settings the theme (full-page), **Longest reply step** and custom instructions. Set
@@ -137,6 +137,7 @@ Settings the theme (full-page), **Longest reply step** and custom instructions. 
 | `models` | Optional `{ id, label, note? }[]` the viewer may pick for a chat, by the button beside the message box or `/model <label>`. Without any, the button and `/model` are gone. Only these ids are ever sent: a chat saved with another model uses `model`. |
 | `newChatModel` | Optional: the model a new chat starts on, e.g. the one the viewer picked last (keep it from [`model-change`](#the-model-a-new-chat-starts-on)). Only one of `models`; otherwise new chats start on `model`. |
 | `store` | Where conversations are kept: see below. |
+| `transcribe` | Optional `(audio: Blob, { language?, signal? }) => Promise<{ text: string }>`: the host's own speech-to-text. With it the microphone is offered; see [Your own speech-to-text](#your-own-speech-to-text). |
 
 #### The model a new chat starts on
 
@@ -162,6 +163,51 @@ chat.addEventListener('model-change', (e) => {
   saveLastPick(backend.newChatModel);
 });
 ```
+
+#### Your own speech-to-text
+
+Give the backend a `transcribe` function and the chat offers the microphone, as it does on Civitai,
+with the host turning speech into text (type `ChatTranscribe`):
+
+```ts
+chat.backend = {
+  url: '/api/llm',
+  fetch: send,
+  model: 'assistant-default',
+  store,
+  transcribe: async (audio, { language, signal }) => {
+    const body = new FormData();
+    body.append('file', audio, audio.type.includes('mp4') ? 'speech.mp4' : 'speech.webm');
+    if (language) body.append('language', language);
+    const response = await ok(await send('/api/speech-to-text', { method: 'POST', body, signal }));
+    return { text: (await response.json()).text };
+  },
+} satisfies ChatBackend;
+```
+
+- **What it is called with.** `audio` is a playable recording, `audio/webm` (or `audio/mp4` in a
+  browser that records only that), of one phrase: the chat cuts the recording at the viewer's pauses
+  and calls `transcribe` for each phrase as it ends, so one recording can make several calls, some at
+  once. The words of every phrase go into the message box in the order spoken. `language` is the code
+  (`'en'`, `'de'`, …) the viewer chose with the chip beside the microphone, else the first of the
+  browser's languages that chip offers, else `'en'`. `signal` is aborted when the viewer cancels the recording or
+  stops the transcription; whatever `transcribe` returns after that is ignored.
+- **The same dictation as on Civitai, without live words.** The viewer records, sees the level, and
+  stops to edit the text or sends it at once; `Escape` or the cancel button throws the recording away,
+  and a recording stops by itself after two minutes. The text is never streamed as it is spoken:
+  each phrase's words show once `transcribe` resolves.
+- **A failure** (a rejection, or anything but `{ text: string }`) shows the viewer a toast. One the
+  chat can classify, e.g. by a `status` (or `statusCode`) on the error, gets the wording a failed
+  reply on a backend gets, which never names Civitai or Buzz: a `429` says "The assistant is busy
+  right now", a `401` or `403` "Your sign-in wasn't accepted", a `502` or `503` "The assistant isn't
+  available right now". One it cannot classify says the recording could not be turned into text.
+  Words that came back from other phrases still go in the box.
+- **Only dictation.** A spoken conversation ([`voice-conversation`](#talking-with-the-assistant))
+  needs Civitai's live speech services, so it is never offered on a backend, with `transcribe` or
+  without. Without `transcribe` there is no microphone.
+- It works the same in a [store-only backend](#a-hosts-own-conversation-store) with `runner="remote"`:
+  the page records and calls `transcribe`, and the words go in the message box; the runner is not
+  involved.
 
 ### The model endpoint
 
@@ -350,7 +396,7 @@ reopened from storage groups the same as it did live.
 | `full-page` | Only for a chat that is the whole page: it then sets the theme, takes Ctrl+K and Ctrl+Shift+O, and picks up after a redirect. Embedded, the page keeps all of these. |
 | `can-sign-out` | Shows Sign out in settings (with `full-page`); the chat then emits `cvt-sign-out`. |
 | `examples` | What an empty chat offers to start from, in place of the built-in ones (property only). On a host `backend` only these show, never the built-in ones. See [The empty chat](#the-empty-chat). |
-| `voice-conversation` | Offers a hands-free spoken conversation (also `voiceConversation`); see [Talking with the assistant](#talking-with-the-assistant). Off by default, and never offered with a host `backend`. |
+| `voice-conversation` | Offers a hands-free spoken conversation (also `voiceConversation`); see [Talking with the assistant](#talking-with-the-assistant). Off by default, and never offered with a host `backend` (even one with its own `transcribe`). |
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
@@ -467,8 +513,9 @@ without reaching into the chat's shadow root:
   away). That takes in the recording, the moment after they stop while the recorder hands over their
   last words, and turning it all into text. Meanwhile the box is hidden behind the recording or
   transcribing bar (but for that moment) and `draft` is what it held before; once `dictating` is
-  `false` again the words are in `draft`. A chat on a host `backend` has no microphone, so it is
-  always `false` there, as it is signed out.
+  `false` again the words are in `draft`. A chat on a host `backend` without
+  [`transcribe`](#your-own-speech-to-text) has no microphone, so it is always `false` there, as it is
+  signed out.
 
 ```ts
 // Keep what the viewer was writing when the page navigates away, unless words are still on their way.
@@ -944,7 +991,9 @@ box. A chip next to the microphone sets the language spoken (the model cannot de
 whatever it is told); it defaults to the first of the browser's languages the model knows.
 Browsers without audio worklets cut the recording into phrases at pauses and transcribe each with
 `transcribe_audio` (about 1 Buzz a phrase). Stop puts the text in the message box to edit; the arrow
-sends it once the last words are back. Recordings stop by themselves after two minutes.
+sends it once the last words are back. Recordings stop by themselves after two minutes. On a host
+`backend`, phrases go to its own [`transcribe`](#your-own-speech-to-text) instead, and only with one
+is the microphone offered.
 
 ### Talking with the assistant
 
@@ -1160,8 +1209,9 @@ chat.backend = {
   page never calls `store.save`, so the runner saves each turn into the host's store itself. A title or
   model the viewer sets after a chat's first turn goes to the runner as a patch
   (`POST /conversations/<id>/patch`), and so does a rename of a chat that is not open.
-- What a host backend turns off stays off: Civitai's built-in tools, files, voice, Buzz, posting and
-  sign-in.
+- What a host backend turns off stays off: Civitai's built-in tools, files, spoken conversations,
+  Buzz, posting and sign-in. The microphone works through the backend's own `transcribe`, as in the
+  browser (see [Your own speech-to-text](#your-own-speech-to-text)).
 - **Deleting a chat stops its live run first, and waits for it to end.** The chat asks the runner for
   the chat's run (`GET /runs?conversationId=`), stops it (`POST /runs/<id>/stop`; a `404` means it had
   already ended), and asks again every 250 ms until no run is live: a run saves its final state before

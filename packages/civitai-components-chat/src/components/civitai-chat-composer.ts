@@ -34,6 +34,7 @@ export class CivitaiChatComposer extends LightElement {
     placeholder: {},
     commands: { attribute: false },
     voice: { type: Boolean },
+    hostVoice: { type: Boolean, attribute: 'host-voice' },
     noFiles: { type: Boolean, attribute: 'no-files' },
     transcribing: { type: Boolean },
     heard: {},
@@ -57,6 +58,11 @@ export class CivitaiChatComposer extends LightElement {
   declare commands: ChatCommands;
   /** Offers the microphone; the chat transcribes each `cvt-voice-phrase` and shows the text in `heard`. */
   declare voice: boolean;
+  /**
+   * The host transcribes `voice`: the recording is always cut into phrases (`cvt-voice-phrase`), never
+   * streamed live, and no Buzz price is shown.
+   */
+  declare hostVoice: boolean;
   /** Takes no files: no add-file button, and nothing can be dropped or pasted in. */
   declare noFiles: boolean;
   declare transcribing: boolean;
@@ -85,6 +91,7 @@ export class CivitaiChatComposer extends LightElement {
     this.placeholder = DEFAULT_PLACEHOLDER;
     this.text = '';
     this.voice = false;
+    this.hostVoice = false;
     this.noFiles = false;
     this.transcribing = false;
     this.heard = '';
@@ -120,6 +127,12 @@ export class CivitaiChatComposer extends LightElement {
     return this.uploads.some((upload) => !upload.attachment && !upload.error);
   }
 
+  /** Whether the microphone can be offered: `voice`, and a browser that can record the way it is transcribed. */
+  get #canDictate(): boolean {
+    if (!this.voice) return false;
+    return this.hostVoice ? canRecord() : canStreamPcm() || canRecord();
+  }
+
   get #canSend(): boolean {
     const hasContent = this.text.trim() !== '' || this.uploads.some((u) => u.attachment) || this.refs.length > 0;
     return hasContent && !this.running && !this.disabled && !this.holdReason && !this.#uploading && !this.transcribing;
@@ -145,7 +158,8 @@ export class CivitaiChatComposer extends LightElement {
     const onLimit = () => void this.#finish(false);
     try {
       let live = false;
-      if (canStreamPcm()) {
+      // Live streaming goes to Civitai's transcription; a host's takes recorded phrases only.
+      if (!this.hostVoice && canStreamPcm()) {
         try {
           this.#recorder = await PcmRecorder.start({ onLevel, onAudio: (pcm) => emit(this, 'cvt-voice-audio', { pcm }), onLimit });
           live = true;
@@ -344,9 +358,9 @@ export class CivitaiChatComposer extends LightElement {
               </button>`}
           ${this.modelPicker ?? nothing}
           <span id="cvt-composer-hint" class="cvt-hint">Enter to send, Shift+Enter for a new line</span>
-          ${this.voice && (canStreamPcm() || canRecord()) && !this.running ? this.#languagePicker() : nothing}
-          ${this.voice && (canStreamPcm() || canRecord()) && !this.running
-            ? html`<button class="cvt-icon-button" type="button" aria-label="Talk instead of typing" title="Talk instead of typing (about 2 Buzz)" ?disabled=${this.disabled} @click=${() => void this.#record()}>
+          ${this.#canDictate && !this.running ? this.#languagePicker() : nothing}
+          ${this.#canDictate && !this.running
+            ? html`<button class="cvt-icon-button" type="button" aria-label="Talk instead of typing" title=${this.hostVoice ? 'Talk instead of typing' : 'Talk instead of typing (about 2 Buzz)'} ?disabled=${this.disabled} @click=${() => void this.#record()}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
               </button>`
             : nothing}
