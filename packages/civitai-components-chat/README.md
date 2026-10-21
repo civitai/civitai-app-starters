@@ -714,14 +714,20 @@ subagent's transcript:
 ```ts
 {
   kind: 'subagent',    // on every output of the chat's own dispatch_agent, a refusal ({ kind, error, note }) included
-  status: 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted', // 'interrupted': a write subagent only, see below
+  status: 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted' | 'unreceived', // 'interrupted': a write subagent only, see below; 'unreceived': see "Server runner"
   summary: string,     // its final words, cut to 4,000 characters
   steps: number,       // model requests it made
   toolCalls: number,
   activity: { tool: string; arg: string }[], // each call's tool and a short argument (a path, a query), at most 50, no outputs
   error?: string,      // status 'error'
+  changedCount?: number, // status 'unreceived', a write subagent: files changed when last seen
 }
 ```
+
+`'unreceived'` is the page's own result for a subagent of a reply run on a server runner
+(`runner="remote"`) that ended on the page before the subagent's result came: Stop was refused or not
+answered in time, or the runner refused the viewer. It may have finished on the runner (reload to see
+it); its card reads "Result not received", with the counts last seen.
 
 **Telling a subagent's calls from the reply's own.** A subagent's calls go through `beforeToolCall` and
 fire `tool-result` like any other, with the reply's own `reply` number, and carry `subagent`: the

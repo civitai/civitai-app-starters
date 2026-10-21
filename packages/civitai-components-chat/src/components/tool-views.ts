@@ -158,6 +158,7 @@ const SUBAGENT_STATUS: Record<SubagentStatus | 'calling' | 'refused', string> = 
   stopped: 'Stopped',
   error: 'Failed',
   interrupted: 'Interrupted',
+  unreceived: 'Result not received',
   refused: 'Not started',
 };
 
@@ -192,7 +193,8 @@ function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | 
   const problem = result?.error ?? (part.state === 'error' ? part.error : refusal) ?? '';
   const writes = result ? result.mode === 'write' : live?.mode === 'write';
   const changed = result?.changed ?? [];
-  const files = result ? new Set(changed.map((change) => change.path)).size : (live?.changed ?? 0);
+  // An `unreceived` result has no paths, only how many there were when last seen.
+  const files = result ? (result.changedCount ?? new Set(changed.map((change) => change.path)).size) : (live?.changed ?? 0);
   const commands = (result ? result.ranCommands : live?.ranCommands) ?? 0;
   return html`<div class="cvt-subagent" data-status=${status} data-call=${part.toolCallId}>
     <button type="button" class="cvt-subagent-head" aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows?.toggle(key)}>

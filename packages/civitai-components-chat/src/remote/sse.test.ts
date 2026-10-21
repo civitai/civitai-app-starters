@@ -30,6 +30,10 @@ describe('readSse', () => {
     expect(await read(body(['id: 1\ndata: a\n\nid: 2\ndata: b']))).toEqual([{ id: '1', data: 'a' }]);
   });
 
+  it('reads a last event ended by a bare CR blank line (CR CR) at the end of the stream', async () => {
+    expect(await read(body(['id: 1\rdata: a\r\r']))).toEqual([{ id: '1', data: 'a' }]);
+  });
+
   it('calls alive for a keep-alive comment, and gives up on a stream that sends nothing for too long', async () => {
     let alive = 0;
     await expect(read(body([': keep-alive\n\n'], false), 30, () => alive++)).rejects.toBeInstanceOf(SseIdleError);
