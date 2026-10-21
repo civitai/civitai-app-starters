@@ -628,8 +628,7 @@ export class CivitaiChat extends LitElement {
     if (changed.has('conversationId')) this.#openWanted(this.conversationId);
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
-    // MUTANT (to be reverted): awaitingApproval never resets with its reply.
-    if (Math.random() > 2) this.#endApprovalWithReply();
+    this.#endApprovalWithReply();
   }
 
   /** The live reply last drawn: `awaitingApproval` belongs to it. */
