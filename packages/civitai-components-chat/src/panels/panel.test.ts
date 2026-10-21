@@ -5,7 +5,7 @@ import { toolInfo } from '../orchestration/job.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { controllable, flush, imageStep, toolResult, workflow } from '../test-support/fakes.js';
 import { PanelManager, type SavedPanel } from './panel.js';
-import { OPEN_PANEL, UPDATE_PANEL, panelTools } from './tools.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL, panelTools } from './tools.js';
 
 const RUN_STEP_SCHEMA = { properties: { stepType: {}, input: {}, whatif: {}, waitForCompletion: {}, tags: {}, metadataJson: {} } };
 
@@ -57,6 +57,24 @@ function setup({ refuse = false } = {}) {
 }
 
 describe('panels', () => {
+  it('closes the panels the assistant names, out of what it is told, and keeps them closed after a reload until changed', async () => {
+    const { panels, saved, call } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } }, 'call_1');
+    await call(OPEN_PANEL, { ...LOGO, title: 'Second logo', values: { brand: 'Owl' } }, 'call_2');
+
+    expect(await call(CLOSE_PANEL, { panels: ['p1', 'p2'] })).toMatchObject({ closed: ['p1', 'p2'] });
+    expect(panels.all().map((panel) => panel.closed)).toEqual([true, true]);
+    expect(panels.context()).toBeUndefined();
+
+    const reloaded = setup();
+    reloaded.panels.restore('C1', { p1: saved.filter((panel) => panel.handle === 'p1').at(-1)! }, new Map());
+    expect(reloaded.panels.get('p1')!.closed).toBe(true);
+
+    await reloaded.call(UPDATE_PANEL, { panel: 'p1', values: { brand: 'Lark' } }, 'call_3');
+    expect(reloaded.panels.get('p1')!.closed).toBe(false);
+    expect(reloaded.panels.context()).toContain('"brand":"Lark"');
+  });
+
   it('opens a panel once a free price check accepts it, and tells the assistant its handle and price', async () => {
     const { panels, calls, saved, call } = setup();
     const result = await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } });

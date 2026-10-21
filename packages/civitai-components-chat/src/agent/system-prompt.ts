@@ -104,7 +104,7 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
       : ['- You cannot make or change pictures, videos or audio here. If asked, say so in one sentence.']),
     ...(has('open_panel')
       ? [
-          '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one. Things a panel made have ids like p1-2-1. When the user wants to fill in or adjust details before you act (a post\'s title and description, a request with options), open a panel whose button asks you, instead of asking in text.',
+          '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one; when they want panels gone, close them with close_panel. Things a panel made have ids like p1-2-1. When the user wants to fill in or adjust details before you act (a post\'s title and description, a request with options), open a panel whose button asks you, instead of asking in text.',
         ]
       : []),
     '- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. When the user should pick between directions, call ask_choice instead of listing options in text.',

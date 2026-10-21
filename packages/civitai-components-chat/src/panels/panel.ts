@@ -31,6 +31,7 @@ export interface SavedPanel {
   runs: PanelRunRecord[];
   /** The panel this one was copied from, through a share link. */
   forkedFrom?: { id: string; version: number };
+  closed?: boolean;
 }
 
 export interface PanelDeps {
@@ -79,6 +80,8 @@ export class Panel extends EventTarget {
   values: PanelValues;
   runs: PanelRunRecord[];
   readonly forkedFrom?: { id: string; version: number };
+  /** Folded to one line in the chat, its runs kept; out of what the assistant is told. */
+  closed: boolean;
   /** The run whose card is shown; the newest one unless the user picked another. */
   selected?: string;
   price: Price | null = null;
@@ -104,6 +107,7 @@ export class Panel extends EventTarget {
     this.values = normalizeValues(this.spec, saved.values);
     this.runs = saved.runs;
     this.forkedFrom = saved.forkedFrom;
+    this.closed = saved.closed === true;
     this.selected = saved.runs.at(-1)?.job;
   }
 
@@ -156,6 +160,21 @@ export class Panel extends EventTarget {
     this.#saveSoon();
   }
 
+  close(): void {
+    this.#setClosed(true);
+  }
+
+  reopen(): void {
+    this.#setClosed(false);
+  }
+
+  #setClosed(closed: boolean): void {
+    if (this.closed === closed) return;
+    this.closed = closed;
+    this.#emit();
+    this.#save();
+  }
+
   select(job: string): void {
     this.selected = job;
     this.#emit();
@@ -164,6 +183,7 @@ export class Panel extends EventTarget {
   /** A new definition becomes a new version; values carry over where they still fit. */
   apply(change: { spec?: PanelSpec; values?: Record<string, unknown>; toolCallId: string }): void {
     if (change.spec) this.versions = [...this.versions, change.spec];
+    this.closed = false;
     this.values = normalizeValues(this.spec, { ...this.values, ...change.values });
     this.toolCallId = change.toolCallId;
     this.#emit();
@@ -316,6 +336,7 @@ export class Panel extends EventTarget {
       values: this.values,
       runs: this.runs,
       ...(this.forkedFrom ? { forkedFrom: this.forkedFrom } : {}),
+      ...(this.closed ? { closed: true } : {}),
     };
   }
 
@@ -425,7 +446,8 @@ export class PanelManager extends EventTarget {
 
   /** What the assistant is told about every panel, or nothing when there are none. */
   context(): string | undefined {
-    return this.#panels.size ? this.all().map((panel) => panel.context()).join('\n') : undefined;
+    const open = this.all().filter((panel) => !panel.closed);
+    return open.length ? open.map((panel) => panel.context()).join('\n') : undefined;
   }
 
   clear(): void {

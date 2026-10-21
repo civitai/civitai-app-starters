@@ -880,6 +880,19 @@ describe('civitai-chat-panel', () => {
     return { el, panel, submitted, runButton };
   };
 
+  it('closes to one line from its × and opens again from Reopen', async () => {
+    const { el, panel } = await setup();
+    el.querySelector<HTMLButtonElement>('.cvt-panel-close')!.click();
+    await el.updateComplete;
+    expect(panel.closed).toBe(true);
+    expect(el.querySelector('.cvt-panel')).toBeNull();
+    expect(el.querySelector('.cvt-panel-closed')?.textContent).toContain('“Lo-fi beat” closed');
+
+    el.querySelector<HTMLElement>('[part=reopen]')!.click();
+    await el.updateComplete;
+    expect(el.querySelector('.cvt-panel')).not.toBeNull();
+  });
+
   it('shows its controls and the price on Run, and waits for required inputs', async () => {
     const { el, runButton } = await setup();
     expect(el.querySelector('h3')?.textContent).toBe('Lo-fi beat');
