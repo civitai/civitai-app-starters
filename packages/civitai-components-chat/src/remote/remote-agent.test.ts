@@ -641,7 +641,7 @@ describe('RemoteAgent, against a runner', () => {
 });
 
 /** A v3 head as the runner saves it while its reply to turn 1 still runs: nothing finished yet. */
-function runningHead(conversationId: string, messages: ModelMessage[] = []): Workflow {
+function runningHead(conversationId: string, messages: ModelMessage[] = [], subagents?: Record<string, unknown>): Workflow {
   return workflow({
     id: `head-${conversationId}`,
     tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
@@ -653,7 +653,7 @@ function runningHead(conversationId: string, messages: ModelMessage[] = []): Wor
       titleSource: 'first-message',
       createdAt: '2026-10-19T00:00:00Z',
       updatedAt: '2026-10-19T00:00:00Z',
-      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages, status: 'running', savedAt: '2026-10-19T00:00:01Z' } }],
+      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages, status: 'running', savedAt: '2026-10-19T00:00:01Z', ...(subagents ? { subagents } : {}) } }],
     },
   });
 }
@@ -753,13 +753,74 @@ describe('RemoteAgent, a reply ended on the page without run-ended', () => {
   });
 
   it('keeps the page copy, and how it ended, when the head holds the same parts and no result the page lacks', async () => {
-    // The head saved the call as it started, with no result: read back, it is closed as interrupted, as the page closed it.
+    // The head saved the call as it started, with no result: read back, it gets the placeholder "interrupted" result, and the page's copy holds as much.
     const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] }]);
     expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
     expect(shown(store)).toMatchObject([
       { kind: 'text', text: 'Testing.' },
       { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
     ]);
+  });
+
+  it("keeps the page copy when the head's only result for a call is the placeholder made for a write subagent saved mid-run", async () => {
+    // The page saw a write subagent start; the head saved its dispatch_agent call and the subagent's progress, no result.
+    const made = setup([
+      runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Delegating.' }, { type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } }] }], {
+        d1: { mode: 'write', steps: 2, toolCalls: 3, changed: [{ path: 'game/scene.ts', op: 'write' }], activity: [], ranCommands: 0 },
+      }),
+    ]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Delegating.' },
+      { type: 'tool-call', index: 1, toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } },
+      { type: 'subagent-progress', toolCallId: 'd1', progress: { task: 'Split the scene', steps: 2, toolCalls: 3, mode: 'write', changed: 1, ranCommands: 0 } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(2));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.rereads).toEqual(['c1']);
+    // Still the page's: the sign-in error, and the subagent's result marked as not received here, not as interrupted.
+    expect(made.store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(made.store)).toMatchObject([
+      { kind: 'text', text: 'Delegating.' },
+      { kind: 'tool', toolCallId: 'd1', state: 'done', output: { kind: 'subagent', status: 'unreceived', error: NOT_RECEIVED } },
+    ]);
+  });
+
+  it('counts only the head result of the very call the page lacks: another call answered in both does not make the head win', async () => {
+    const made = setup([runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call, { ...call, toolCallId: 't2' }] }, { role: 'tool', content: [{ ...result, toolCallId: 't2' }] }])]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Testing.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-call', index: 2, toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't2', output: { exitCode: 0 } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(3));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(made.store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+      { kind: 'tool', toolCallId: 't2', state: 'done', output: { exitCode: 0 } },
+    ]);
+  });
+
+  it('takes the head when it holds as many parts but its last words go further', async () => {
+    const made = setup([runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Testing. All tests pass.' }] }])]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Testing.' }]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(1));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(shown(made.store)).toEqual([{ kind: 'text', text: 'Testing. All tests pass.' }]);
   });
 
   it('keeps the page copy, and how it ended, when the head holds less', async () => {

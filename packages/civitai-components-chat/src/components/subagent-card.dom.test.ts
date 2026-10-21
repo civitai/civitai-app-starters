@@ -132,6 +132,22 @@ describe('a write subagent’s card', () => {
     expect([...card.querySelectorAll('[data-subagent="changed"] li')].map(text)).toEqual(['write game/scene.ts', 'write game/hud.ts', 'edit game/scene.ts']);
   });
 
+  it('shows a write subagent whose result never reached the page (a remote reply ended on the page) as not received, not as failed or not started', async () => {
+    const unreceived: TurnPart = {
+      kind: 'tool',
+      toolCallId: 'd8',
+      toolName: 'dispatch_agent',
+      input: { task: 'Split the scene', mode: 'write' },
+      state: 'done',
+      output: { kind: 'subagent', mode: 'write', status: 'unreceived', summary: '', steps: 2, toolCalls: 3, activity: [], changed: [], ranCommands: 0, error: "This call's result wasn't received here. It may have finished; reload to see it." },
+    };
+    const el = await turnWith([unreceived]);
+    const card = el.querySelector('.cvt-subagent')!;
+    expect(card.getAttribute('data-status')).toBe('unreceived');
+    expect(text(card.querySelector('[data-subagent="status"]'))).toBe('Result not received');
+    expect(text(card.querySelector('[data-subagent="counts"]'))).toBe('2 steps · 3 tool calls');
+  });
+
   it('shows an interrupted write subagent as interrupted, with what it had changed', async () => {
     const el = await turnWith([part('interrupted')]);
     const card = el.querySelector('.cvt-subagent')!;
