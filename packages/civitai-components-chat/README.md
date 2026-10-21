@@ -674,22 +674,24 @@ reply a server runner was already running when the page opened its chat (a reloa
 is a polite `role="status"`: a screen reader hears it when its state changes, never the seconds.
 
 A page that asks the viewer to approve calls itself (a `beforeToolCall` that waits for a click, or
-approval cards it draws for a server runner's gate) sets `awaitingApproval` while a call waits, and the
-line reads *Waiting for your approval* until it is set back to `false`:
+approval cards it draws for a server runner's gate) sets `awaitingApproval` while any call waits, and the
+line reads *Waiting for your approval* until it is set back to `false`. Several calls can wait at once,
+so keep a count rather than a flag:
 
 ```ts
+let waiting = 0;
 chat.beforeToolCall = async (name, input, { signal }) => {
   if (!needsApproval(name)) return { allow: true };
-  chat.awaitingApproval = true;
+  chat.awaitingApproval = ++waiting > 0;
   try {
     return (await askViewer(name, input, signal)) ? { allow: true } : { refuse: 'The viewer said no.' };
   } finally {
-    chat.awaitingApproval = false;
+    chat.awaitingApproval = --waiting > 0;
   }
 };
 ```
 
-`awaiting-approval` is its attribute. It has no effect between replies.
+`awaiting-approval` is its attribute. It goes back to `false` by itself when the reply it was set during ends (a page that missed setting it back, after a Stop say, does not start the next reply on it); set while no reply is live, it applies to the next one.
 
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.

@@ -1,4 +1,4 @@
-import { html, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { html, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 
 import { LightElement } from './light.js';
 
@@ -26,8 +26,9 @@ export function formatElapsed(ms: number): string {
  * whatever it is doing: what state it is in, and for how long it has run. It is its own element so its
  * once-a-second tick redraws only itself, not the reply above it.
  *
- * It is the reply's `role="status"` (polite): a screen reader hears the state when it changes, never the
- * seconds, which are hidden from it.
+ * Its polite `role="status"` region is empty as the line appears (the thread already says a reply
+ * started) and says each later change of state once. The visible words can be read but are not
+ * live; the dots and seconds are hidden, so a screen reader never hears the seconds.
  */
 export class CivitaiChatReplyStatus extends LightElement {
   static override properties: PropertyDeclarations = {
@@ -40,6 +41,8 @@ export class CivitaiChatReplyStatus extends LightElement {
   declare since: number;
 
   #tick?: ReturnType<typeof setInterval>;
+  /** What the status region says: the state, once it changed after the line appeared. */
+  #announcement = '';
 
   constructor() {
     super();
@@ -49,8 +52,6 @@ export class CivitaiChatReplyStatus extends LightElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this.setAttribute('role', 'status');
-    this.setAttribute('aria-live', 'polite');
     this.#tick = setInterval(() => this.requestUpdate(), 1000);
   }
 
@@ -60,9 +61,19 @@ export class CivitaiChatReplyStatus extends LightElement {
     this.#tick = undefined;
   }
 
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (this.hasUpdated && changed.has('state')) this.#announcement = this.#label();
+  }
+
+  #label(): string {
+    return REPLY_STATUS_LABEL[this.state] ?? REPLY_STATUS_LABEL.working;
+  }
+
   override render(): TemplateResult {
     return html`<span class="cvt-reply-status-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-      <span class="cvt-reply-status-label">${REPLY_STATUS_LABEL[this.state] ?? REPLY_STATUS_LABEL.working}</span>
-      <span class="cvt-reply-status-time" aria-hidden="true">· ${formatElapsed(Date.now() - this.since)}</span>`;
+      <span class="cvt-reply-status-label">${this.#label()}</span>
+      <span class="cvt-reply-status-time" aria-hidden="true">· ${formatElapsed(Date.now() - this.since)}</span>
+      <span class="cvt-visually-hidden" role="status" aria-live="polite">${this.#announcement}</span>`;
   }
 }

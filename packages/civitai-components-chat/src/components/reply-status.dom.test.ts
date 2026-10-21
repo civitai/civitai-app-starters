@@ -9,6 +9,7 @@ import type { CivitaiChat } from './civitai-chat.js';
 import type { CivitaiChatReplyStatus } from './civitai-chat-reply-status.js';
 import { formatElapsed } from './civitai-chat-reply-status.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
+import { chatStyles } from './chat.styles.js';
 import { defineElements } from './define.js';
 
 /** The live reply's status line: there from the moment a reply starts until it ends, whatever it shows. */
@@ -88,13 +89,44 @@ describe('the live reply status line, by what the reply shows last', () => {
     expect(line(el)).toBeNull();
   });
 
-  it('is a polite status whose seconds a screen reader does not hear', async () => {
-    const el = await thread({ seq: 1, parts: [], startedAt: Date.now() });
+  it('is a polite status that says nothing as the reply starts (the thread does) and each later change once, never the seconds', async () => {
+    const live: LiveTurn = { seq: 1, parts: [], startedAt: Date.now() };
+    const el = await thread(live);
     const status = line(el)!;
-    expect(status.getAttribute('role')).toBe('status');
-    expect(status.getAttribute('aria-live')).toBe('polite');
+    const region = () => status.querySelectorAll('[role="status"]');
+    // One live region, polite, empty as the line appears: the start is said once, by the thread.
+    expect(region()).toHaveLength(1);
+    expect(region()[0]!.getAttribute('aria-live')).toBe('polite');
+    expect(region()[0]!.textContent).toBe('');
+    const threadRegion = [...el.querySelectorAll('[aria-live="polite"]')].find((node) => !node.closest('civitai-chat-reply-status'));
+    expect(threadRegion!.textContent).toBe('Assistant is replying…');
+    expect(status.hasAttribute('role')).toBe(false);
     expect(status.querySelector('.cvt-reply-status-time')!.getAttribute('aria-hidden')).toBe('true');
     expect(status.querySelector('.cvt-reply-status-dots')!.getAttribute('aria-hidden')).toBe('true');
+    const redraw = async () => {
+      el.live = live;
+      await el.updateComplete;
+      await el.querySelector('civitai-chat-turn')!.updateComplete;
+      await status.updateComplete;
+    };
+    live.reconnecting = true;
+    await redraw();
+    expect(region()[0]!.textContent).toBe('Reconnecting…');
+    live.reconnecting = false;
+    await redraw();
+    expect(region()[0]!.textContent).toBe('Working');
+    // The tick redraws the line but says nothing new.
+    status.requestUpdate();
+    await status.updateComplete;
+    expect(region()[0]!.textContent).toBe('Working');
+  });
+
+  it('holds its dots still for a viewer who asked for less motion', () => {
+    const css = chatStyles.cssText.replace(/\s+/g, ' ');
+    const blocks = css.split('@media (prefers-reduced-motion: reduce)').slice(1);
+    const own = blocks.find((block) => block.includes('.cvt-reply-status-dots span'));
+    expect(own).toBeDefined();
+    expect(own!.slice(own!.indexOf('.cvt-reply-status-dots span'))).toMatch(/^\.cvt-reply-status-dots span \{ animation: none; opacity: 1; \}/);
   });
 });
 
@@ -228,5 +260,30 @@ describe('<civitai-chat runner="remote">: the status line through a whole reply'
     runner.push('r1', { type: 'text-delta', index: 2, text: 'Done.' });
     runner.push('r1', { type: 'run-ended', status: 'done', messages: [{ role: 'assistant', content: 'Let me check. Done.' }], steps: 2 });
     await vi.waitFor(() => expect(line(chat.shadowRoot!)).toBeNull());
+  });
+
+  it('starts the next reply on "Working" when the page left awaitingApproval set as a reply ended', async () => {
+    const { chat, runner } = await remoteChat([0]);
+    void chat.send('hello');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    // A call waits for the viewer, and the reply ends (Stop, say) without the page setting it back.
+    chat.awaitingApproval = true;
+    await vi.waitFor(() => expect(chatLabel(chat)).toBe('Waiting for your approval'));
+    runner.push('r1', { type: 'run-ended', status: 'stopped', messages: [], steps: 1 });
+    await vi.waitFor(() => expect(line(chat.shadowRoot!)).toBeNull());
+    await vi.waitFor(() => expect(chat.awaitingApproval).toBe(false));
+    void chat.send('again');
+    await vi.waitFor(() => expect(runner.openStreams('r2')).toBe(1), { timeout: 20_000 });
+    await vi.waitFor(() => expect(chatLabel(chat)).toBe('Working'));
+  }, 30_000);
+
+  it('applies awaitingApproval set while no reply is live to the next reply', async () => {
+    const { chat, runner } = await remoteChat([0]);
+    chat.awaitingApproval = true;
+    await chat.updateComplete;
+    void chat.send('hello');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await vi.waitFor(() => expect(chatLabel(chat)).toBe('Waiting for your approval'));
+    expect(chat.awaitingApproval).toBe(true);
   });
 });

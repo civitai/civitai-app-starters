@@ -670,6 +670,14 @@ civitai-chat-reply-status[state='approval'] {
   font-variant-numeric: tabular-nums;
 }
 
+/* Still dots, at full strength, for a viewer who asked for less motion: the words and time say it is live. */
+@media (prefers-reduced-motion: reduce) {
+  .cvt-reply-status-dots span {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 @keyframes cvt-pulse {
   0%,
   100% {

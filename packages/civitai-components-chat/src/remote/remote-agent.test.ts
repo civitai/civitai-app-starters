@@ -6,13 +6,13 @@ import { Agent } from '../agent/agent.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import { SubagentTracker } from '../agent/subagents.js';
 import { JobManager } from '../orchestration/jobs.js';
-import { createPartsDiffer, type RunEvent } from '../runner-protocol.js';
+import { createPartsDiffer, RUN_KEEPALIVE_MS, type RunEvent } from '../runner-protocol.js';
 import { ThreadStore, type ThreadStoreDeps } from '../store/thread-store.js';
 import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import { workflow } from '../test-support/fakes.js';
 import { scriptedModel, text, toolCall } from '../test-support/scripted-model.js';
 import type { ChatToolResult } from '../tools/gate.js';
-import { RemoteAgent, RUN_ACTIVE, type RemoteAgentDeps } from './remote-agent.js';
+import { RemoteAgent, RUN_ACTIVE, RUN_IDLE_MS, RUN_QUIET_MS, type RemoteAgentDeps } from './remote-agent.js';
 import { RunnerClient } from './runner-client.js';
 
 const SETTINGS = { maxOutputTokens: 4096, tier: 'auto', allowMature: false, autoRunLimit: 10, spokenReplies: false } as const;
@@ -84,6 +84,7 @@ async function pushAll(runner: ReturnType<typeof fakeRunner>, runId: string, eve
 const ended = (messages: ModelMessage[], status: 'done' | 'stopped' | 'error' | 'ran_out' = 'done', extra: Partial<Extract<RunEvent, { type: 'run-ended' }>> = {}): RunEvent => ({ type: 'run-ended', status, messages, steps: 1, ...extra });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -287,6 +288,73 @@ describe('RemoteAgent, against a runner', () => {
     // A reconnect is not a new reply: what was shown stays.
     expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
     expect(agent.live!.reattached).toBeUndefined();
+    agent.leave();
+  });
+
+  it('says it is reconnecting once the open stream missed a keep-alive, without dropping it, and not after the next byte', async () => {
+    // A keep-alive missed, and well before the stream is taken as dead.
+    expect(RUN_QUIET_MS).toBeGreaterThan(RUN_KEEPALIVE_MS);
+    expect(RUN_QUIET_MS).toBeLessThan(RUN_IDLE_MS);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    runner.push('r1', { type: 'text-delta', index: 0, text: 'Working' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    await vi.advanceTimersByTimeAsync(RUN_QUIET_MS - 1_000);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(agent.live!.reconnecting).toBe(true);
+    // Shown, not acted on: the same stream stays open.
+    expect(runner.eventOpens('r1')).toHaveLength(1);
+    expect(runner.openStreams('r1')).toBe(1);
+    // A byte from the runner (here an event; a keep-alive counts the same) and it is up again.
+    runner.push('r1', { type: 'text-delta', index: 0, text: ' on it' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agent.live!.reconnecting).toBe(false);
+    // And the quiet clock starts over from that byte.
+    await vi.advanceTimersByTimeAsync(RUN_QUIET_MS - 1_000);
+    expect(agent.live!.reconnecting).toBe(false);
+    agent.leave();
+  });
+
+  it('says it is reconnecting while the runner asks the model again (network-retry), until the model answers', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Half' }]);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    await pushAll(runner, 'r1', [
+      { type: 'parts-truncate', length: 0 },
+      { type: 'network-retry', attempt: 1, trace: { stage: 'stream', step: 1, msIntoStep: 5, message: 'terminated' } },
+    ]);
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(true));
+    // Bytes on the stream are not the model answering: still reconnecting after a step taken back.
+    await pushAll(runner, 'r1', [{ type: 'parts-truncate', length: 0 }]);
+    expect(agent.live!.reconnecting).toBe(true);
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Whole' }]);
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    agent.leave();
+  });
+
+  it('says it is reconnecting while a stream that went quiet as the page slept is opened again on wake', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Working' }]);
+    const opens = runner.eventOpens('r1').length;
+    // The page wakes after longer than a keep-alive with nothing read.
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + RUN_KEEPALIVE_MS + 1_000);
+    agent.wake();
+    expect(agent.live!.reconnecting).toBe(true);
+    await vi.waitFor(() => expect(runner.eventOpens('r1').length).toBe(opens + 1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down.filter((d, i) => d !== undefined && d !== down[i - 1])).toEqual([true, false]);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
     agent.leave();
   });
 

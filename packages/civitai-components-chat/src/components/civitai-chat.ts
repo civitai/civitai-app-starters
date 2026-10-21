@@ -5,6 +5,7 @@ import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValu
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
+import type { LiveTurn } from '../agent/core.js';
 import { backendModels, type ChatBackend, type ChatStoreBackend } from '../backend.js';
 import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
@@ -274,7 +275,9 @@ export class CivitaiChat extends LitElement {
    * Set by a page that asks the viewer to approve calls outside the chat (its own approval cards, a
    * `beforeToolCall` that waits for a click, or a server runner's gate the page draws cards for):
    * while it is `true` and a reply is live, the reply's status line says "Waiting for your approval"
-   * instead of "Working". Set it back to `false` once nothing waits. Has no effect between replies.
+   * instead of "Working". Set it back to `false` once nothing waits (keep a count: several calls can
+   * wait at once). It goes back to `false` by itself when the reply it was set during ends; set while
+   * no reply is live, it applies to the next one.
    */
   declare awaitingApproval: boolean;
   /**
@@ -625,6 +628,21 @@ export class CivitaiChat extends LitElement {
     if (changed.has('conversationId')) this.#openWanted(this.conversationId);
     // While a new session starts this reaches the old one, whose closed pool ignores it.
     if (changed.has('mcpServers')) this.#session?.syncMcpServers();
+    this.#endApprovalWithReply();
+  }
+
+  /** The live reply last drawn: `awaitingApproval` belongs to it. */
+  #approvalReply: LiveTurn | null = null;
+
+  /**
+   * `awaitingApproval` ends with the reply it was set during (it ended, was stopped, or another took its
+   * place), so a page that never set it back (a Stop while a call waited) does not start the next reply
+   * on "Waiting for your approval". Set while no reply is live, it waits for the next one.
+   */
+  #endApprovalWithReply(): void {
+    const live = this.#session?.agent.live ?? null;
+    if (this.#approvalReply !== null && live !== this.#approvalReply) this.awaitingApproval = false;
+    this.#approvalReply = live;
   }
 
   // Each change `canSend` reads either re-renders the chat (the session starting, `holdReason`, a reply
