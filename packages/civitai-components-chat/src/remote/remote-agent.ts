@@ -1,8 +1,10 @@
+import type { JSONValue, ModelMessage, ToolResultPart } from 'ai';
 import { ulid } from 'ulid';
 
 import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
 import type { ChatAgent } from '../agent/chat-agent.js';
 import type { LiveTurn } from '../agent/core.js';
+import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import type { ErrorTrace } from '../agent/error-trace.js';
 import {
   applyRunEvent,
@@ -16,7 +18,7 @@ import {
   type StartRunRequest,
 } from '../runner-protocol.js';
 import type { ConversationStore } from '../store/conversation-store.js';
-import { CUT_OFF } from '../store/thread-store.js';
+import { CUT_OFF, INTERRUPTED_CALL } from '../store/thread-store.js';
 import type { ChatToolResult } from '../tools/gate.js';
 import type { Attachment, Turn } from '../types.js';
 import type { ErrorKind } from '../ux/humanize.js';
@@ -226,7 +228,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       this.#attaching = undefined;
       const next = this.#attachNext;
       this.#attachNext = undefined;
-      if (next !== undefined && next !== conversationId && !this.#disposed && this.#deps.store.current?.id === next) void this.reattach(next);
+      // The chat asked for meanwhile; the same chat too when the page left it and came back while this lookup was on its way (its answer was dropped).
+      const again = next !== undefined && (next !== conversationId || generation !== this.#generation);
+      if (again && !this.#disposed && this.#deps.store.current?.id === next) void this.reattach(next);
     }
   }
 
@@ -413,6 +417,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   async #finish(run: Run, headWins: boolean): Promise<void> {
     this.#teardown(run);
     if (this.#run === run) {
+      // Ended on the page, with no `run-ended` to say what it kept: what it showed is kept as the turn's messages.
+      if (headWins && this.#live?.parts.length) run.turn.assistant.messages = messagesFromParts(this.#live.parts);
       this.#live = null;
       this.#emit();
     }
@@ -445,7 +451,15 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     const fresh = conversation?.id === run.conversationId ? conversation.turns.find((turn) => turn.seq === settled.seq) : undefined;
     if (!fresh || fresh === settled) return;
     const unfinished = fresh.assistant.status === 'streaming' || (fresh.assistant.status === 'error' && fresh.assistant.error === CUT_OFF);
-    if (headWins && !unfinished) return;
+    if (headWins) {
+      // Ended on the page: only a head whose reply finished, or that holds strictly more of it, replaces what the page kept.
+      const more = partsFromMessages(fresh.assistant.messages).length > partsFromMessages(settled.assistant.messages).length;
+      if (unfinished && !more) {
+        fresh.assistant = settled.assistant;
+        this.#emit();
+      }
+      return;
+    }
     if (fresh.assistant.status !== settled.assistant.status) fresh.assistant = settled.assistant;
     else {
       const { errorDetail, errorKind: kind, errorTrace, networkRetries, resume } = settled.assistant;
@@ -563,6 +577,31 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #emit(): void {
     this.dispatchEvent(new Event('change'));
   }
+}
+
+/**
+ * A reply's parts as the messages a turn keeps: its words and calls in order, then each call's result.
+ * A call that never got one is closed as interrupted, as a reply read back unfinished closes it.
+ */
+function messagesFromParts(parts: readonly TurnPart[]): ModelMessage[] {
+  const said: Exclude<Extract<ModelMessage, { role: 'assistant' }>['content'], string> = [];
+  const results: ToolResultPart[] = [];
+  for (const part of parts) {
+    if (part.kind === 'text') {
+      if (part.text.trim()) said.push({ type: 'text', text: part.text });
+      continue;
+    }
+    said.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+    const output: ToolResultPart['output'] =
+      part.state === 'done'
+        ? typeof part.output === 'string'
+          ? { type: 'text', value: part.output }
+          : { type: 'json', value: (part.output ?? null) as JSONValue }
+        : { type: 'error-text', value: part.state === 'error' ? (part.error ?? '') : INTERRUPTED_CALL };
+    results.push({ type: 'tool-result', toolCallId: part.toolCallId, toolName: part.toolName, output });
+  }
+  if (said.length === 0) return [];
+  return [{ role: 'assistant', content: said }, ...(results.length ? [{ role: 'tool' as const, content: results }] : [])];
 }
 
 /** Whether a failed call is worth making again: no answer came, or the runner is down or busy for now. */
