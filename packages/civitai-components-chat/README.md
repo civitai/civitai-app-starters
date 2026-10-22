@@ -1288,6 +1288,11 @@ Every request and response carries `v: 1`. The events are `run-started`, the par
 `AgentCore.live.parts` with `createPartsDiffer()` every 100 ms or so, and the page applies them with
 `applyRunEvent()`, so the parts it shows are the parts the server's reply showed.
 
+A `POST /runs` that gets no answer, or a 5xx, 408 or 429, is asked again with the same
+`idempotencyKey` after 1, 2, 5, 10 and 30 s, for at most a minute from the first ask (`START_GIVE_UP_MS`).
+Past that the reply fails with Retry, and the start is stopped by its key (`POST /runs/stop`) in case
+an earlier ask did start a run. Any other refusal fails the reply at once.
+
 ### Running the loop in Node
 
 `@civitai/components-chat/core` is the reply loop without the page: `AgentCore`, the parts, the model

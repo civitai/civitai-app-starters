@@ -59,6 +59,18 @@ export const STOP_GRACE_MS = 10_000;
 /** The most times a stop that had no answer is sent again, at the reconnect waits, after the reply ended on the page. */
 export const STOP_ATTEMPTS = 20;
 
+/**
+ * How long a start that keeps failing with no answer, or with the runner down for now (5xx, 408, 429),
+ * is asked again: no ask is made later than this after the first. On the reconnect waits
+ * (1, 2, 5, 10, 30 s) that is the ladder once, six asks over 48 s; a start whose asks hang until the
+ * request timeout stops after fewer asks, and at most one timeout past this. Past it the turn fails
+ * with Retry, which asks afresh: a spinner that never ends tells the viewer nothing.
+ */
+export const START_GIVE_UP_MS = 60_000;
+
+/** What a turn shows when its start was asked again for {@link START_GIVE_UP_MS} and no run started. */
+export const START_GAVE_UP = "Couldn't start the reply: the assistant's server isn't reachable right now. Try again in a minute.";
+
 /** What a turn shows when the chat already had a reply running (from another tab or device). */
 export const RUN_ACTIVE = 'Another reply is still running in this chat. Wait for it to finish, then send again.';
 
@@ -299,6 +311,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       settings: this.#deps.settings(),
       ...(page ? { page } : {}),
     };
+    const firstAsked = Date.now();
     for (let failures = 0; ; failures++) {
       try {
         const { runId } = await this.#deps.client.start(request);
@@ -310,6 +323,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (run.closed) return;
         // No answer, or the runner is down for now: the run may have started, so the same start (same key) is asked again.
         if (!retryable(error)) return this.#refused(run, error);
+        // Until the next ask would come later than START_GIVE_UP_MS after the first: then the turn fails, with Retry.
+        if (Date.now() + this.#delay(failures) - firstAsked > START_GIVE_UP_MS) return this.#gaveUp(run, error);
         this.#down(run, { stream: true });
         await this.#pause(run, failures);
         if (run.closed) return;
@@ -589,10 +604,39 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     this.#close(run);
   }
 
+  /**
+   * A start still failing (no answer, or the runner down for now) after {@link START_GIVE_UP_MS}: the
+   * turn fails with an error the chat offers Retry for, and a Retry starts asking afresh. An earlier
+   * start may have reached the runner and started a run whose id the page never learned, so it is
+   * stopped by its key, best effort, as Stop does then: a Retry is not refused as a second run.
+   */
+  #gaveUp(run: Run, error: unknown): void {
+    const http = error instanceof RunnerHttpError ? error : undefined;
+    const kind: ErrorKind = !http ? 'network' : http.status === 429 ? 'rate_limit' : 'unavailable';
+    const trace = localTrace(error instanceof Error ? error.message : String(error), http?.status, error instanceof Error ? error.name : undefined);
+    Object.assign(run.turn.assistant, {
+      status: 'error',
+      error: START_GAVE_UP,
+      errorKind: kind,
+      errorTrace: trace,
+      // No run id was ever learned, so no step of it reached the page: asking again starts the reply over.
+      resume: { messages: [], steps: 0, at: Date.now() },
+    });
+    this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { kind, message: START_GAVE_UP, trace } }));
+    this.#close(run);
+    const key = run.key!;
+    void this.#stopRemotely(run.conversationId, () => this.#deps.client.stopByKey(key, run.conversationId));
+  }
+
+  /** The reconnect delay for the `failures`-th failure in a row. */
+  #delay(failures: number): number {
+    const delays = this.#deps.client.options.reconnectDelaysMs ?? RECONNECT_DELAYS_MS;
+    return delays.length ? delays[Math.min(failures, delays.length - 1)]! : 0;
+  }
+
   /** Waits the reconnect delay for the `failures`-th failure in a row; the page waking ends the wait. */
   #pause(run: Run, failures: number): Promise<void> {
-    const delays = this.#deps.client.options.reconnectDelaysMs ?? RECONNECT_DELAYS_MS;
-    const ms = delays.length ? delays[Math.min(failures, delays.length - 1)]! : 0;
+    const ms = this.#delay(failures);
     return new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);
