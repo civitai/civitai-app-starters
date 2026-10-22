@@ -6,6 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { AgentCore, type AgentCoreOutcome } from '../agent/core.js';
 import type { McpConnection } from '../mcp/clients.js';
+import type { ChatMcpResultLimit } from '../mcp/servers.js';
 import { extraToolSet } from './extra.js';
 
 /**
@@ -40,11 +41,11 @@ const URL = 'https://sandbox.example/mcp';
 const server = { id: 'sandbox', url: URL, label: 'your app', token: () => 'tok' };
 
 /** The sandbox's tools over a fake connection: each call answers with the next of `replies`. */
-function sandboxTools(replies: CallToolResult[], names = ['preview_check', 'read_file']): ToolSet {
+function sandboxTools(replies: CallToolResult[], names = ['preview_check', 'read_file'], resultLimit?: ChatMcpResultLimit): ToolSet {
   const queue = [...replies];
   const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => queue.shift() ?? { content: [{ type: 'text', text: 'ok' }] }) } as unknown as McpConnection;
   const tools = names.map((name) => ({ name: `sandbox__${name}`, tool: { name, inputSchema: { type: 'object' } } }));
-  return extraToolSet([{ server, connection, tools }], { taken: {} });
+  return extraToolSet([{ server: { ...server, ...(resultLimit !== undefined ? { resultLimit } : {}) }, connection, tools }], { taken: {} });
 }
 
 /** One reply through `AgentCore`: every prompt the model was asked with, what each save would have held, and how it ended. */
@@ -272,6 +273,28 @@ describe('an added server’s tool that answers with an image', () => {
     expect(shape(prompts[2]!).at(-1)).toBe('tool[result:call_1]');
     expect(resultText(prompts[3]!, 'call_2')).toBe('[image/jpeg image not shown: images cannot be sent to you here]');
     expect(JSON.stringify(prompts.slice(2))).not.toMatch(/"type":"file"/);
+  });
+
+  it('cuts only the text to the server’s resultLimit: the image still goes, its note is whole, and no image data counts', async () => {
+    const log = `start-${'x'.repeat(200)}-end`;
+    const withImage = sandboxTools([{ content: [{ type: 'text', text: log }, { type: 'image', data: PNG, mimeType: 'image/png' }] } as CallToolResult], undefined, { head: 6, tail: 4 });
+    const { prompts } = await reply([calls(['call_1', 'sandbox__preview_check']), says('Ok.')], withImage);
+
+    expect(resultText(prompts[1]!, 'call_1')).toBe(`start-\n…(${log.length - 10} characters omitted)…\n-end\n${SHOWN('image/png')}`);
+    expect(shape(prompts[1]!).at(-1)).toBe(`user[text:Returned by sandbox__preview_check (call_1): | image/png=${PNG}]`);
+
+    // The same reply with no image is cut exactly as before.
+    const textOnly = sandboxTools([{ content: [{ type: 'text', text: log }] } as CallToolResult], undefined, { head: 6, tail: 4 });
+    const plain = await reply([calls(['call_1', 'sandbox__preview_check']), says('Ok.')], textOnly);
+    expect(resultText(plain.prompts[1]!, 'call_1')).toBe(`start-\n…(${log.length - 10} characters omitted)…\n-end`);
+    expect(shape(plain.prompts[1]!).at(-1)).toBe('tool[result:call_1]');
+  });
+
+  it('a result with only an image under a resultLimit of nothing is its note alone, and the image still goes', async () => {
+    const tools = sandboxTools([{ content: [{ type: 'image', data: JPEG, mimeType: 'image/jpeg' }] } as CallToolResult], undefined, { head: 0, tail: 0 });
+    const { prompts } = await reply([calls(['call_1', 'sandbox__preview_check']), says('Ok.')], tools);
+    expect(resultText(prompts[1]!, 'call_1')).toBe(SHOWN('image/jpeg'));
+    expect(shape(prompts[1]!).at(-1)).toBe(`user[text:Returned by sandbox__preview_check (call_1): | image/jpeg=${JPEG}]`);
   });
 
   it('shows a GIF, and leaves out an image whose data is not base64', async () => {

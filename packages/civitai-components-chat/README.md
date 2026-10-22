@@ -931,6 +931,8 @@ chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }
   a binary resource) is left out with a note saying why. Each image shown costs the model's image
   tokens once. A model that takes no images refuses a request carrying one (a 400, 404, 413, 415 or
   422): that step is asked for once more without it, and no image is sent for the rest of the reply.
+  A server's `resultLimit` (see **Results**) cuts the reply's text only: each image's note comes
+  after the cut, whole, and no image data counts against the limit.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply, on a new connection,
