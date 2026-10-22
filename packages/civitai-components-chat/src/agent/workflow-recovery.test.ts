@@ -102,7 +102,20 @@ describe('workflowRecoveryFetch', () => {
     await drain(await send(URL_, free('{"e":5}')));
     await drain(await send(URL_, free('{"e":5}')));
     expect(log.filter((r) => r.method === 'GET')).toHaveLength(1);
+    // Read without `wait`: orchestration would hold a queued workflow's read for the whole wait first.
+    expect(log.find((r) => r.method === 'GET')!.url).toBe(`${BASE}/v2/consumer/workflows/wf-queued-free-5b27`);
     expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-queued-free-5b27`, body: CANCELED }]);
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
+  it('goes by the tier the cut request went out on, when the retry goes paid (the free replies ran out)', async () => {
+    const { send, inner, answers, log } = harness(() => Response.json({ status: 'scheduled' }));
+    answers.push(cutAnswer('wf-last-free-8d61'));
+    await drain(await send(URL_, { method: 'POST', body: '{"g":7}', headers: { 'X-Civitai-Tier': 'free' } }));
+    // Sent again with no tier header: the free-tier wrapper sends it paid.
+    await drain(await send(URL_, post('{"g":7}')));
+    expect(log.filter((r) => r.method === 'GET')).toHaveLength(1);
+    expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-last-free-8d61`, body: CANCELED }]);
     expect(inner).toHaveBeenCalledTimes(2);
   });
 
