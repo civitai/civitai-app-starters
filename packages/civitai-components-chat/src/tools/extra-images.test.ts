@@ -10,7 +10,7 @@ import { extraToolSet } from './extra.js';
 
 /**
  * An added server's tool that answers with an image (the sandbox's `preview_check` screenshot): the
- * model sees the image, as a user message right after the step's tool results (the OpenAI-compatible
+ * model sees the image once, as a user message right after the step's tool results (the OpenAI-compatible
  * chat API takes images only there), and the reply's saved messages hold only a text note in its place.
  */
 
@@ -91,7 +91,7 @@ function resultText(prompt: unknown[], toolCallId: string): unknown {
   return undefined;
 }
 
-const SHOWN = (type: string) => `[${type} image: shown to you after this step's tool results while this reply runs (the latest 4 at most); it is not saved]`;
+const SHOWN = (type: string) => `[${type} image: shown to you once, right after this step's tool results; it is not saved]`;
 
 describe('an added server’s tool that answers with an image', () => {
   it('a text-only reply reaches the model exactly as before: same words, same order, no message added', async () => {
@@ -128,23 +128,24 @@ describe('an added server’s tool that answers with an image', () => {
     expect(resultText(prompts[1]!, 'call_1')).toBe(`Page loaded.\n${SHOWN('image/png')}`);
   });
 
-  it('keeps showing it for the rest of the reply, after the results of the step that returned it', async () => {
+  it('shows it once: in the step right after the call, and in no later step of the reply', async () => {
     const tools = sandboxTools([
       { content: [{ type: 'image', data: JPEG, mimeType: 'image/jpeg' }] } as CallToolResult,
       { content: [{ type: 'text', text: 'export default App;' }] } as CallToolResult,
     ]);
     const { prompts } = await reply([calls(['call_1', 'sandbox__preview_check']), calls(['call_2', 'sandbox__read_file']), says('Fixed.')], tools);
 
+    expect(shape(prompts[1]!).at(-1)).toBe(`user[text:Returned by sandbox__preview_check (call_1): | image/jpeg=${JPEG}]`);
     expect(shape(prompts[2]!)).toEqual([
       'system',
       'user[text:does my app look right?]',
       'assistant[tool-call]',
       'tool[result:call_1]',
-      `user[text:Returned by sandbox__preview_check (call_1): | image/jpeg=${JPEG}]`,
       'assistant[tool-call]',
       'tool[result:call_2]',
     ]);
-    expect(resultText(prompts[2]!, 'call_2')).toBe('export default App;');
+    expect(JSON.stringify(prompts[2])).not.toContain(JPEG);
+    expect(resultText(prompts[2]!, 'call_1')).toBe(SHOWN('image/jpeg'));
   });
 
   it('puts the images of several calls in one step after all of that step’s results, in call order', async () => {
@@ -177,15 +178,6 @@ describe('an added server’s tool that answers with an image', () => {
     const images = shape(prompts[1]!).filter((line) => line.includes(`image/png=${PNG}`));
     expect(images).toHaveLength(1);
     expect(shape(prompts[1]!).slice(-2)).toEqual(['tool[result:call_1]', `user[text:Returned by sandbox__preview_check (call_1): | image/png=${PNG}]`]);
-  });
-
-  it('shows the latest 4 images of a reply at most', async () => {
-    const images = [1, 2, 3, 4, 5].map((n) => Buffer.from(`png-${n}`).toString('base64'));
-    const tools = sandboxTools(images.map((data) => ({ content: [{ type: 'image', data, mimeType: 'image/png' }] }) as CallToolResult));
-    const { prompts } = await reply([...[1, 2, 3, 4, 5].map((n) => calls([`call_${n}`, 'sandbox__preview_check'])), says('Done.')], tools);
-
-    const last = JSON.stringify(shape(prompts[5]!));
-    expect(images.map((data) => last.includes(`image/png=${data}`))).toEqual([false, true, true, true, true]);
   });
 
   it('leaves out other binary content, and images of other types, with a note saying so', async () => {

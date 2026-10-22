@@ -8,17 +8,13 @@ export const TOOL_IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png', '
 export const MAX_IMAGES_PER_RESULT = 2;
 /** The most bytes (decoded) one tool result's images may hold in all. */
 export const MAX_IMAGE_BYTES_PER_RESULT = 512 * 1024;
-/** The most images a reply shows at once: every step sends them again, so the oldest go first. */
-export const MAX_IMAGES_PER_REPLY = 4;
-
 /** One image a tool returned, as base64. */
 export interface ToolImage {
   mediaType: string;
   data: string;
 }
 
-const SHOWN = (type: string) =>
-  `[${type} image: shown to you after this step's tool results while this reply runs (the latest ${MAX_IMAGES_PER_REPLY} at most); it is not saved]`;
+const SHOWN = (type: string) => `[${type} image: shown to you once, right after this step's tool results; it is not saved]`;
 const NOT_SHOWN = (type: string) => `[${type} image not shown: this caller cannot show images to the assistant]`;
 const NOT_AN_IMAGE = (type: string) => `[${type} content left out: only JPEG, PNG, WebP and GIF images are shown]`;
 const TOO_BIG = (type: string, bytes: number) =>
@@ -75,64 +71,43 @@ export function toolImagesOf(result: CallToolResult, canShow: boolean): { images
  * The images one reply's tools returned, by tool call id: made by `AgentCore` for each reply and handed
  * to its tools as `experimental_context` (see {@link toolImagesIn}), so nothing outlives the reply or
  * reaches another. They never enter a tool's output, so the reply's messages, its saves and the parts
- * it shows hold only the note in their place.
+ * it shows hold only the note in their place. Each is shown once: in the step right after the one
+ * whose call returned it (a step asked for again after a dropped connection shows it again).
  */
 export class ToolImages {
   readonly #byCall = new Map<string, { toolName: string; images: ToolImage[] }>();
 
   add(toolCallId: string, toolName: string, images: ToolImage[]): void {
-    this.#byCall.delete(toolCallId);
-    if (images.length === 0) return;
-    this.#byCall.set(toolCallId, { toolName, images });
-    // The oldest images go first once the reply holds more than it shows.
-    let held = 0;
-    for (const entry of this.#byCall.values()) held += entry.images.length;
-    for (const [id, entry] of this.#byCall) {
-      if (held <= MAX_IMAGES_PER_REPLY) break;
-      const drop = Math.min(entry.images.length, held - MAX_IMAGES_PER_REPLY);
-      held -= drop;
-      if (drop === entry.images.length) this.#byCall.delete(id);
-      else entry.images = entry.images.slice(drop);
-    }
-  }
-
-  get size(): number {
-    return this.#byCall.size;
+    if (images.length === 0) this.#byCall.delete(toolCallId);
+    else this.#byCall.set(toolCallId, { toolName, images });
   }
 
   /**
-   * `messages` with, after each run of tool messages from `from` on, one user message holding the
-   * images their results returned, in call order: the OpenAI-compatible chat API takes images only in
-   * a user message. A call id used more than once gets them after its last result only. `undefined`
-   * when no result there has any, so the request goes exactly as it would have.
+   * `messages` with one user message after the tool messages they end on (the last step's results),
+   * holding the images those results returned, in call order: the OpenAI-compatible chat API takes
+   * images only in a user message. Results before that step, and before `from` (an earlier reply's,
+   * whose call may have had the same id), get none; a call id used twice in the step gets them after
+   * its last result only. `undefined` when none of those results has any, so the request goes exactly
+   * as it would have.
    */
   withImages(messages: ModelMessage[], from = 0): ModelMessage[] | undefined {
     if (this.#byCall.size === 0) return undefined;
-    // The last result of each call id that has images.
-    const lastAt = new Map<string, number>();
-    messages.forEach((message, index) => {
-      if (index < from || message.role !== 'tool') return;
-      for (const part of message.content) if (part.type === 'tool-result' && this.#byCall.has(part.toolCallId)) lastAt.set(part.toolCallId, index);
-    });
-    if (lastAt.size === 0) return undefined;
-    const out: ModelMessage[] = [];
-    let pending: Exclude<UserContent, string> = [];
-    messages.forEach((message, index) => {
-      out.push(message);
-      if (message.role === 'tool') {
-        for (const part of message.content) {
-          if (part.type !== 'tool-result' || lastAt.get(part.toolCallId) !== index) continue;
-          const { toolName, images } = this.#byCall.get(part.toolCallId)!;
-          pending.push({ type: 'text', text: `Returned by ${toolName} (${part.toolCallId}):` });
-          for (const image of images) pending.push({ type: 'image', image: image.data, mediaType: image.mediaType });
-        }
+    let first = messages.length;
+    while (first > from && messages[first - 1]!.role === 'tool') first--;
+    const seen = new Set<string>();
+    const shown: Exclude<UserContent, string> = [];
+    // From the end, so a call id used twice in the step is shown after its last result only.
+    for (const message of messages.slice(first).reverse()) {
+      if (message.role !== 'tool') continue;
+      for (const part of [...message.content].reverse()) {
+        if (part.type !== 'tool-result' || seen.has(part.toolCallId)) continue;
+        seen.add(part.toolCallId);
+        const entry = this.#byCall.get(part.toolCallId);
+        if (!entry) continue;
+        shown.unshift({ type: 'text', text: `Returned by ${entry.toolName} (${part.toolCallId}):` }, ...entry.images.map((image) => ({ type: 'image' as const, image: image.data, mediaType: image.mediaType })));
       }
-      if (pending.length > 0 && messages[index + 1]?.role !== 'tool') {
-        out.push({ role: 'user', content: pending });
-        pending = [];
-      }
-    });
-    return out;
+    }
+    return shown.length > 0 ? [...messages, { role: 'user', content: shown }] : undefined;
   }
 }
 

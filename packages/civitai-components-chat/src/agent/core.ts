@@ -191,7 +191,7 @@ export class AgentCore {
       const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
       if (ownSteps !== undefined) maxSteps = ownSteps;
       // The images this reply's tools return (an added server's screenshot): shown to the model after
-      // the results that returned them, in every step of this reply, and in nothing it keeps.
+      // the results that returned them, in the next step only, and in nothing it keeps.
       const toolImages = new ToolImages();
       const context: ToolImagesContext = { toolImages };
       const retryDelays = retry.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
