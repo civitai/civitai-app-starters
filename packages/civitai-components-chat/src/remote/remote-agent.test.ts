@@ -1029,12 +1029,12 @@ describe('RemoteAgent, a start that keeps failing', () => {
   const offersRetry = (assistant: { status: string; errorKind?: string; resume?: unknown }) => assistant.status === 'error' && assistant.resume !== undefined && RETRYABLE_ERRORS.has(assistant.errorKind ?? '');
 
   it.each([
-    ['no answer', () => 1_000_000, undefined, 'network'],
-    ['503', () => 0, { status: 503, body: { v: 1, error: 'unavailable', message: 'Down for now.' } }, 'unavailable'],
+    ['no answer', 1_000_000, undefined, 'network'],
+    ['503', 0, { status: 503, body: { v: 1, error: 'unavailable', message: 'Down for now.' } }, 'unavailable'],
   ] as const)('%s: stops after the ladder once (6 starts, ~48 s), failing the turn with Retry offered', async (_name, failStarts, refuseStart, kind) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const { agent, runner, store, errors } = setup([], {}, LADDER);
-    runner.knobs.failStarts = failStarts();
+    runner.knobs.failStarts = failStarts;
     if (refuseStart) runner.knobs.refuseStart = refuseStart;
     void agent.send('go');
     await vi.advanceTimersByTimeAsync(0);
