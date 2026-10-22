@@ -181,6 +181,18 @@ describe("a reply step cut by the network keeps the step's orchestration workflo
     expect(orchestration.allCancels()).toEqual([]);
   });
 
+  it('keeps waiting for a long answer still being written past 2 minutes, rather than canceling it and starting over', async () => {
+    const { orchestration, send, reply } = setup({
+      posts: [{ workflowId: 'wf-long-7e40', stream: 'cut' }, { workflowId: 'wf-paid-again-3c18', stream: { answer: 'A second, paid answer.' } }],
+      // About 5 minutes of reads (one a second here, as this fake answers at once) before it finishes.
+      reads: { 'wf-long-7e40': [...Array.from({ length: 300 }, () => withStatus('processing')), succeeded('The whole long answer.')] },
+    });
+    await send('write me the long version', 900_000);
+    expect(orchestration.replyPosts()).toHaveLength(1);
+    expect(orchestration.allCancels()).toEqual([]);
+    expect(JSON.stringify(reply().messages)).toContain('The whole long answer.');
+  });
+
   it('asks again once the workflow failed, without canceling a workflow that is over', async () => {
     const { orchestration, send, reply } = setup({
       posts: [{ workflowId: 'wf-gone-2f6a', stream: 'cut' }, { workflowId: 'wf-fresh-8c35', stream: { answer: 'Asked again: 7:40.' } }],
@@ -203,7 +215,7 @@ describe("a reply step cut by the network keeps the step's orchestration workflo
       posts: [{ workflowId: 'wf-stuck-9d3b', stream: 'cut' }, { workflowId: 'wf-fresh-0a52', stream: { answer: 'Asked again: 7:40.' } }],
       reads: { 'wf-stuck-9d3b': [withStatus('processing')] },
     });
-    await send('when is high tide?');
+    await send('when is high tide?', 900_000);
     const posts = orchestration.replyPosts();
     expect(posts).toHaveLength(2);
     const [cancel] = orchestration.cancels('wf-stuck-9d3b');

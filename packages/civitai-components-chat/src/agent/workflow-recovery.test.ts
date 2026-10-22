@@ -95,6 +95,17 @@ describe('workflowRecoveryFetch', () => {
     expect(log).toEqual([]);
   });
 
+  it('does not wait on a free request still queued: cancels it and sends again, so the free tier can fall back to paid', async () => {
+    const { send, inner, answers, log } = harness(() => Response.json({ status: 'scheduled' }));
+    const free = (body: string): RequestInit => ({ method: 'POST', body, headers: { 'X-Civitai-Tier': 'free' } });
+    answers.push(cutAnswer('wf-queued-free-5b27'));
+    await drain(await send(URL_, free('{"e":5}')));
+    await drain(await send(URL_, free('{"e":5}')));
+    expect(log.filter((r) => r.method === 'GET')).toHaveLength(1);
+    expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-queued-free-5b27`, body: CANCELED }]);
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels a cut workflow when Stop comes before the step is asked for again', async () => {
     const stop = new AbortController();
     const { send, inner, answers, log } = harness(() => Response.json({ status: 'processing' }));
