@@ -4,9 +4,12 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { McpStreamLostError, type McpCallOptions } from '../mcp/clients.js';
 import { mcpResultToText } from '../mcp/result.js';
-import type { ServerTools } from '../mcp/servers.js';
+import type { ChatMcpResultLimit, ServerTools } from '../mcp/servers.js';
 
-/** An added server's reply is kept to its start and end: a build or test run puts its errors last. */
+/**
+ * By default an added server's reply is kept to its start and end: a build or test run puts its errors
+ * last. A server's own `resultLimit` replaces these, or (`false`) passes its replies whole.
+ */
 export const RESULT_HEAD_CHARS = 2_000;
 export const RESULT_TAIL_CHARS = 6_000;
 
@@ -63,7 +66,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
             // would be wrong, and so would running it blindly again.
             return { error: `No reply from ${server.label?.trim() || server.id}; the ${tool.name} call may have finished.`, retryable: true, note: LOST_NOTE };
           }
-          const text = keepEnds(mcpResultToText(result, Infinity), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
+          const text = limitResult(mcpResultToText(result, Infinity), server.resultLimit);
           return result.isError ? { error: text, note: FAILED_NOTE } : text;
         },
       });
@@ -78,8 +81,26 @@ function objectSchema(schema: Record<string, unknown>): Record<string, unknown> 
   return { ...rest, type: 'object' };
 }
 
+/**
+ * A reply as the assistant gets it under a server's `resultLimit`: whole for `false`, else its ends
+ * (`RESULT_HEAD_CHARS` and `RESULT_TAIL_CHARS` unless set). A `head` or `tail` that is not a whole
+ * number of characters, zero or more, takes the default, with a console warning.
+ */
+export function limitResult(text: string, limit: ChatMcpResultLimit | undefined): string {
+  if (limit === false) return text;
+  return keepEnds(text, chars(limit?.head, RESULT_HEAD_CHARS, 'head'), chars(limit?.tail, RESULT_TAIL_CHARS, 'tail'));
+}
+
+function chars(value: unknown, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value;
+  console.warn(`[chat-cvt] resultLimit.${name} ${String(value)} is not a whole number of characters; ${fallback} is used`);
+  return fallback;
+}
+
 /** The first `head` and last `tail` characters, with how many were left out between them. */
 export function keepEnds(text: string, head: number, tail: number): string {
   if (text.length <= head + tail) return text;
-  return `${text.slice(0, head)}\n…(${text.length - head - tail} characters omitted)…\n${text.slice(-tail)}`;
+  // `slice(-0)` is the whole text, so a zero tail keeps nothing from the end.
+  return `${text.slice(0, head)}\n…(${text.length - head - tail} characters omitted)…\n${tail > 0 ? text.slice(-tail) : ''}`;
 }
