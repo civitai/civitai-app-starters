@@ -1851,6 +1851,7 @@ export class CivitaiChat extends LitElement {
           class="cvt-main-host"
           @media-action=${(e: CustomEvent<{ id: string; action: string }>) => void this.#mediaAction(e.detail.id, e.detail.action)}
           @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
+          @job-raise-limit=${(e: CustomEvent<{ limit: number }>) => this.#updateSettings({ autoRunLimit: e.detail.limit })}
           @media-retry=${(e: CustomEvent<{ id: string }>) => {
             const attachment = session.findAttachment(e.detail.id);
             if (attachment) void session.refreshUrl(attachment).then(this.#rerender);

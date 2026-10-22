@@ -5,6 +5,8 @@ import type { PanelSpec, PanelValues } from './spec.js';
 const CATEGORY: Record<string, string> = { imageGen: 'image', videoGen: 'video' };
 const ALTERNATIVES = 8;
 const CANDIDATES = 40;
+// Price checks queue on the server, so only a few go out at once.
+const BATCH = 4;
 const LISTED = 100;
 const IMAGE_KEY = /image|frame/i;
 const NOT_FIRST = /last|end|mask|reference/i;
@@ -41,32 +43,28 @@ export async function adjustPanel(
   const images = imagesIn(input);
   const services = await listServices(deps.mcp, stepType, operation, images.length > 0);
   const current = services.find((service) => describes(service.id, input));
-  const candidates = await Promise.all(
-    services
-      .filter((service) => service !== current)
-      .slice(0, CANDIDATES)
-      .map(async (service) => {
-        const found = await exampleInput(deps.mcp, service.id);
-        if (!found) return null;
-        const slot = images.length ? imageSlot(found.slots) : undefined;
-        if (images.length && !slot) return null;
-        const carried = slot ? { [slot.name]: slot.list ? images : images[0] } : {};
-        return { name: service.name, fullName: service.fullName, input: { ...found.example, ...carried, prompt: '{{prompt}}' } };
-      }),
-  );
-  const priced = await Promise.all(
-    [{ name: `${current?.name ?? modelOf(input)} (current)`, fullName: '', input: { ...input, prompt: '{{prompt}}' } }, ...candidates.flatMap((c) => (c ? [c] : []))].map(async (option) => ({
-      ...option,
-      price: await priceOf(deps, stepType, { ...option.input, prompt }),
-    })),
-  );
-  const [mine, ...others] = priced;
+  const candidate = async (service: Service) => {
+    const found = await exampleInput(deps.mcp, service.id);
+    if (!found) return null;
+    const slot = images.length ? imageSlot(found.slots) : undefined;
+    if (images.length && !slot) return null;
+    const carried = slot ? { [slot.name]: slot.list ? images : images[0] } : {};
+    const option = { name: service.name, fullName: service.fullName, input: { ...found.example, ...carried, prompt: '{{prompt}}' } };
+    const price = await priceOf(deps, stepType, { ...option.input, prompt });
+    return price === null ? null : { ...option, price };
+  };
+  const currentInput = { ...input, prompt: '{{prompt}}' };
+  const minePrice = priceOf(deps, stepType, { ...currentInput, prompt });
   // The services come ranked by how well they do; picking the cheapest instead would hide the popular ones.
-  const alternatives = others
-    .filter((option) => option.price !== null)
-    .slice(0, ALTERNATIVES)
-    .sort((a, b) => a.price! - b.price!);
-  const chosen = [mine!, ...alternatives];
+  const ranked = services.filter((service) => service !== current).slice(0, CANDIDATES);
+  const found: { name: string; fullName: string; input: Record<string, unknown>; price: number }[] = [];
+  for (let at = 0; at < ranked.length && found.length < ALTERNATIVES; at += BATCH) {
+    const batch = await Promise.all(ranked.slice(at, at + BATCH).map(candidate));
+    found.push(...batch.flatMap((option) => (option ? [option] : [])));
+  }
+  const mine = { name: `${current?.name ?? modelOf(input)} (current)`, fullName: '', input: currentInput, price: await minePrice };
+  const alternatives = found.slice(0, ALTERNATIVES).sort((a, b) => a.price - b.price);
+  const chosen = [mine, ...alternatives];
   const options = chosen.map((option) => {
     const shared = chosen.filter((other) => other.name === option.name).length > 1;
     return { label: optionLabel(shared && option.fullName ? option.fullName : option.name, option.price), input: option.input };
@@ -133,7 +131,20 @@ interface ImageSlot {
   list: boolean;
 }
 
-async function exampleInput(mcp: Pick<McpConnection, 'callTool'>, service: string): Promise<{ example: Record<string, unknown>; slots: ImageSlot[] } | null> {
+// A service's schema does not change while the chat is open, so each connection asks for it once.
+const examples = new WeakMap<object, Map<string, Promise<Example | null>>>();
+
+type Example = { example: Record<string, unknown>; slots: ImageSlot[] };
+
+function exampleInput(mcp: Pick<McpConnection, 'callTool'>, service: string): Promise<Example | null> {
+  let known = examples.get(mcp);
+  if (!known) examples.set(mcp, (known = new Map()));
+  let example = known.get(service);
+  if (!example) known.set(service, (example = fetchExample(mcp, service)));
+  return example;
+}
+
+async function fetchExample(mcp: Pick<McpConnection, 'callTool'>, service: string): Promise<Example | null> {
   try {
     const result = await mcp.callTool('get_input_schema', { service });
     if (result.isError) return null;

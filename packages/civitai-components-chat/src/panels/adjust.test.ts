@@ -99,6 +99,27 @@ describe('adjustPanel', () => {
     expect(ltx.args).toEqual({ stepType: 'videoGen', input: { engine: 'ltx2.5', operation: 'createVideo', images: ['up1-1'], prompt: 'it waddles' } });
   });
 
+  it('prices services in rank order only until it has enough, and asks for each schema once', async () => {
+    const many = Array.from({ length: 20 }, (_, n) => `## #${n + 1}: Model ${n + 1}\n  Service: image/comfy/m${n + 1} (stepType imageGen)\n`).join('\n');
+    const mcp = {
+      callTool: vi.fn(async (name: string, args: Record<string, unknown>) => {
+        if (name === 'find_services') return toolResult(undefined, `# image services\n\n${many}`);
+        if (name === 'get_input_schema') return toolResult(undefined, JSON.stringify({ example: { engine: 'comfy', model: String(args.service) } }));
+        return toolResult({ cost: { total: 5 } });
+      }),
+    };
+    const built = (await adjustPanel('run_step', request, { mcp, resolveArgs: async (args) => args }, 'Your picture'))!;
+    const model = built.spec.inputs.model;
+    expect(model?.kind === 'choice' && model.options.slice(1).map((label) => label.replace(/ · .*$/, ''))).toEqual(['Model 1', 'Model 2', 'Model 3', 'Model 4', 'Model 5', 'Model 6', 'Model 7', 'Model 8']);
+    const calls = (tool: string) => mcp.callTool.mock.calls.filter(([name]) => name === tool).length;
+    expect(calls('run_step')).toBeLessThanOrEqual(9);
+    expect(calls('get_input_schema')).toBeLessThanOrEqual(8);
+
+    mcp.callTool.mockClear();
+    await adjustPanel('run_step', request, { mcp, resolveArgs: async (args) => args }, 'Your picture');
+    expect(calls('get_input_schema')).toBe(0);
+  });
+
   it('leaves anything but one prompted step to the assistant', async () => {
     expect(await adjustPanel('run_workflow', { steps: [] }, deps(), 'x')).toBeNull();
     expect(await adjustPanel('run_step', { stepType: 'imageUpscaler', input: { image: 'gen1-1-1' } }, deps(), 'x')).toBeNull();

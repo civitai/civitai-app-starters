@@ -7,7 +7,7 @@ import type { TurnPart } from '../agent/parts.js';
 import type { SubagentTracker } from '../agent/subagents.js';
 import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import type { PanelManager } from '../panels/panel.js';
+import type { Panel, PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
 import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
@@ -132,14 +132,20 @@ export class CivitaiChatTurn extends LightElement {
   #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
-    if (failure && this.#recovered(part)) return failedNote ? nothing : undefined;
+    // The error is the assistant's to act on: say nothing while it may still fix the call, nor once it has.
+    if (failure && (this.live || this.#recovered(part))) return failedNote ? nothing : undefined;
     if (failure && !view?.ownsFailure?.(part, this.#context())) {
       if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
     const rendered = view?.render?.(part, this.#context());
-    return rendered !== undefined ? rendered : modelCards(part, this.models);
+    return rendered !== undefined ? rendered : modelCards(part, this.models, this.#modelPanel());
+  }
+
+  /** The newest open panel whose model choice a picked search result can join. */
+  #modelPanel(): Panel | undefined {
+    return this.panels?.all().filter((panel) => !panel.closed && panel.canFindModel).at(-1);
   }
 
   /** The assistant fixed the call itself: the same tool worked later in the reply, so the viewer has nothing to act on. */

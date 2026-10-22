@@ -1,7 +1,7 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 
-import { CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
+import { AUTO_RUN_STEPS, CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
@@ -10,10 +10,7 @@ export const NEVER_ASK = 1_000_000;
 
 const LIMITS = [
   { value: '0', label: 'Always ask' },
-  { value: '25', label: '25 Buzz' },
-  { value: '50', label: '50 Buzz' },
-  { value: '100', label: '100 Buzz' },
-  { value: '250', label: '250 Buzz' },
+  ...AUTO_RUN_STEPS.map((limit) => ({ value: String(limit), label: `${limit} Buzz` })),
   { value: String(NEVER_ASK), label: 'Never ask' },
 ];
 
@@ -114,7 +111,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
 
   override render(): TemplateResult {
     if (this.hosted) return this.#hosted();
-    const limit = LIMITS.some((option) => Number(option.value) === this.settings.autoRunLimit) ? String(this.settings.autoRunLimit) : '100';
+    const limit = LIMITS.some((option) => Number(option.value) === this.settings.autoRunLimit) ? String(this.settings.autoRunLimit) : '0';
     return html`<civitai-modal .open=${this.open} heading="Settings" with-close-button @close=${() => emit(this, 'cvt-close-settings')}>
       <div class="cvt-settings">
         ${this.canTheme ? this.#theme() : nothing}

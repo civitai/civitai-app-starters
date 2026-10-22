@@ -195,6 +195,14 @@ describe('GenerationJob', () => {
     expect(job.error?.kind).toBe('timeout');
   });
 
+  it('says what it was asked to make, from a run_step, the last step of a run_workflow, or an older tool', () => {
+    const request = (args: Record<string, unknown>) => new GenerationJob(setup().deps, { id: 'g', conversationId: 'C', seq: 1, toolCallId: 't', tool: MODERN, args }).request;
+    expect(request({ stepType: 'imageGen', input: { prompt: ' a cat ' } })).toBe('a cat');
+    expect(request({ steps: [{ $type: 'imageGen', input: { prompt: 'a frame' } }, { $type: 'videoGen', input: { prompt: 'it walks' } }] })).toBe('it walks');
+    expect(request({ stepType: 'aceStepAudio', input: { musicDescription: 'lo-fi rain' } })).toBe('lo-fi rain');
+    expect(request({ prompt: 'a red bike' })).toBe('a red bike');
+  });
+
   describe('a mature result paid with Buzz that does not cover it', () => {
     const blurred = (allowMatureContent: boolean) =>
       workflow({ id: 'w1', status: 'succeeded', allowMatureContent, steps: [imageStep([{ id: 'b', url: `https://x/b?unlocked=${allowMatureContent}`, nsfwLevel: 'x' } as never])] as never } as never);

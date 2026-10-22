@@ -96,6 +96,7 @@ export function stepTypeOf(args: Record<string, unknown>): string | undefined {
 }
 
 const MATURE_LEVELS = new Set(['r', 'x', 'xxx']);
+const REQUEST_FIELDS = ['prompt', 'musicDescription', 'text', 'lyrics'];
 // Long enough for the card's images to be requested: the first read of a locked result tries to unlock it.
 const LOCK_RECHECK_MS = 3_000;
 
@@ -151,6 +152,14 @@ export class GenerationJob extends EventTarget {
 
   get subject(): string {
     return LABELS[stepTypeOf(this.args) ?? '']?.[1] ?? 'Your request';
+  }
+
+  /** What it was asked to make, in the request's own words (a prompt, a song description, a script). */
+  get request(): string | undefined {
+    const steps = Array.isArray(this.args.steps) ? (this.args.steps as { input?: unknown }[]) : undefined;
+    const input = (this.args.input ?? steps?.at(-1)?.input ?? this.args) as Record<string, unknown>;
+    const text = REQUEST_FIELDS.map((field) => input[field]).find((value): value is string => typeof value === 'string' && value.trim() !== '');
+    return text?.trim();
   }
 
   /** The server refused the request before anything ran, almost always because the input was wrong. */

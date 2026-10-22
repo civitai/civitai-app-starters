@@ -179,7 +179,7 @@ describe('a page tool of its own named dispatch_agent', () => {
     const own: TurnPart = { kind: 'tool', toolCallId: 'p1', toolName: 'dispatch_agent', input: { task: 'Ship it' }, state: 'done', output: { status: 'done', steps: 3, summary: 'shipped', toolCalls: 0, activity: [] } };
     const failed: TurnPart = { kind: 'tool', toolCallId: 'p2', toolName: 'dispatch_agent', input: {}, state: 'done', output: { error: 'no truck' } };
     const running: TurnPart = { kind: 'tool', toolCallId: 'p3', toolName: 'dispatch_agent', input: {}, state: 'calling' };
-    const el = await turnWith([own, failed, running], { subagents: new SubagentTracker(), live: true });
+    const el = await turnWith([own, failed, running], { subagents: new SubagentTracker(), live: false });
     expect(el.querySelector('.cvt-subagent')).toBeNull();
     expect(text(el.querySelector('.cvt-step-failed summary'))).toBe("A step didn't work");
     expect(text(el.querySelector('.cvt-activity'))).toBe('Working on it…');

@@ -57,6 +57,41 @@ function setup({ refuse = false } = {}) {
 }
 
 describe('panels', () => {
+  it("adds a model the viewer asked for beside the panel's own, from the settings the assistant copied", async () => {
+    const PICTURE = {
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text', required: true },
+        model: {
+          kind: 'choice',
+          options: ['SDXL', 'Flux'],
+          map: { SDXL: { engine: 'sdcpp', ecosystem: 'sdxl', prompt: '{{prompt}}' }, Flux: { engine: 'flux2', prompt: '{{prompt}}' } },
+        },
+      },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    };
+    const { panels, calls, composed, call } = setup();
+    await call(OPEN_PANEL, { ...PICTURE, values: { prompt: 'a cat' } });
+    const panel = panels.get('p1')!;
+    expect(panels.context()).toContain('The selected model option puts: {"engine":"sdcpp","ecosystem":"sdxl","prompt":"{{prompt}}"}');
+
+    panel.promptForModel();
+    expect(composed.at(-1)?.message).toBe('Find another model for the "Your picture" panel (p1): ');
+
+    const catModel = { engine: 'sdcpp', ecosystem: 'sdxl', checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: '{{prompt}}' };
+    const result = await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Tower': catModel } }, values: { model: 'Cat Tower' } }, 'call_2');
+    expect(result).toMatchObject({ values: { model: 'Cat Tower' } });
+    expect(panel.spec.inputs.model).toMatchObject({ options: ['SDXL', 'Flux', 'Cat Tower'] });
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: 'a cat' }, whatif: true });
+
+    const longName = 'CAT - Citron Anime Treasure [Illustrious & NoobAI] for every cat';
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { [longName]: { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6' } } } }, 'call_long');
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6', prompt: 'a cat' } });
+
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Carrier': { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:3@4' } } } }, 'call_3');
+    expect(panel.values.model).toBe('Cat Carrier');
+  });
+
   it('closes the panels the assistant names, out of what it is told, and keeps them closed after a reload until changed', async () => {
     const { panels, saved, call } = setup();
     await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } }, 'call_1');
