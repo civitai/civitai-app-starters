@@ -931,7 +931,15 @@ chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }
   URL, so a third-party server never gets a link to the viewer's files.
 - **Results.** A reply goes back to the assistant as text. A long one keeps its first 2,000 and last
   6,000 characters with a note of how many were left out between, since a build or a test run prints
-  its errors last. (Civitai's own tools keep the first 4,000 characters, and `fetch_page` the first
+  its errors last. A server's `resultLimit` changes that for its own replies (and its errors):
+  `{ head, tail }` keeps those counts instead, and `false` passes every reply whole, for a server
+  that already caps what it returns. It is read at every call, so a change applies without
+  reconnecting:
+
+  ```ts
+  chat.mcpServers = [{ id: 'tools', url: '/api/mcp', fetch: send, resultLimit: false }]; // the server caps its own replies
+  ```
+ (Civitai's own tools keep the first 4,000 characters, and `fetch_page` the first
   17,000, which leaves the page server's own 16,000-character cut and its marker whole, each with a note of how many more were not shown. A page `fetch_page` already read in this
   chat is not fetched, or paid for, again: the assistant gets the same text, marked as already
   fetched, until the page reloads.)
@@ -1302,7 +1310,9 @@ import { createPartsDiffer, encodeRunEvent } from '@civitai/components-chat/runn
 
 To offer an MCP server's tools exactly as the page offers its `mcpServers`, use the page's own adapter.
 Each tool is named `${id}__${tool}` (a name the model's API cannot take is skipped), and a reply is cut
-to its first `RESULT_HEAD_CHARS` (2,000) and last `RESULT_TAIL_CHARS` (6,000) characters:
+to its first `RESULT_HEAD_CHARS` (2,000) and last `RESULT_TAIL_CHARS` (6,000) characters unless the
+server's `resultLimit` says otherwise (`{ head, tail }`, or `false` for whole replies; `limitResult`
+applies the same rule to any text):
 
 ```js
 import { McpServerPool, extraToolSet, gateToolSet } from '@civitai/components-chat/core';

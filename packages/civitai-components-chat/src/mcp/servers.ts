@@ -19,7 +19,17 @@ export interface ChatMcpServer {
   fetch?: typeof fetch;
   /** What the chat calls it while one of its tools runs, e.g. "Sandbox"; the id when omitted. */
   label?: string;
+  /**
+   * How much of each of its replies (an error's too) the assistant gets. Unset: the first 2,000 and
+   * last 6,000 characters, with a note of how many were left out between. `{ head, tail }`: those
+   * counts instead. `false`: the whole reply, for a server that already caps its own replies. Read at
+   * every call, so a change applies without reconnecting.
+   */
+  resultLimit?: ChatMcpResultLimit;
 }
+
+/** See {@link ChatMcpServer.resultLimit}. */
+export type ChatMcpResultLimit = { head?: number; tail?: number } | false;
 
 /** Which MCP servers the assistant may use. */
 export interface ChatMcpOptions {
