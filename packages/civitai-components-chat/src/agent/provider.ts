@@ -3,7 +3,7 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel } from 'ai';
 
 import { chatConfig, ORCH_URL } from '../config.js';
-import { withoutTrailingSlashes, workflowRecoveryFetch, type WorkflowRecoveryOptions } from './workflow-recovery.js';
+import { withoutTrailingSlashes, workflowRecoveryFetch } from './workflow-recovery.js';
 
 export const PROVIDER = 'civitai';
 
@@ -53,23 +53,14 @@ export function createAssistantModel(
     model?: string;
     fetch?: typeof fetch;
     wrap?: (inner: typeof fetch) => typeof fetch;
-    recoverWorkflows?: boolean | Pick<WorkflowRecoveryOptions, 'waitMs' | 'pollMs'>;
+    recoverWorkflows?: boolean;
   } = {},
 ): LanguageModel {
   const send = app ? authedFetch(app, doFetch) : (doFetch ?? ((input, init) => globalThis.fetch(input, init)));
   const root = withoutTrailingSlashes(baseUrl);
   // Under `wrap`, so it sees each request that actually goes out (a free start given up on and sent paid is two).
-  const tracked =
-    app && recoverWorkflows
-      ? workflowRecoveryFetch(send, { baseUrl: root, control: send, ...(typeof recoverWorkflows === 'object' ? recoverWorkflows : {}) })
-      : send;
+  const tracked = app && recoverWorkflows ? workflowRecoveryFetch(send, { baseUrl: root, control: send }) : send;
   // Civitai's closing usage carries what the call was charged (`chargeFetch`).
   const provider = createOpenAICompatible({ name: app ? PROVIDER : HOST_PROVIDER, baseURL: `${root}/v1`, fetch: wrap(tracked), ...(app ? { includeUsage: true } : {}) });
   return provider.chatModel(model);
-}
-
-function withoutTrailingSlashes(url: string): string {
-  let end = url.length;
-  while (end > 0 && url[end - 1] === '/') end--;
-  return url.slice(0, end);
 }

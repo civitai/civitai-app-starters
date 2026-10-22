@@ -163,7 +163,7 @@ describe('a cut step whose workflow answered with a tool call', () => {
       }
       return new Response('{}');
     });
-    const model = createAssistantModel({ getToken: async () => 'token' }, { baseUrl: 'https://orch.test', model: 'm', fetch: fetch as typeof globalThis.fetch, recoverWorkflows: { waitMs: 2_000, pollMs: 1_000 } });
+    const model = createAssistantModel({ getToken: async () => 'token' }, { baseUrl: 'https://orch.test', model: 'm', fetch: fetch as typeof globalThis.fetch, recoverWorkflows: true });
     const sketch = vi.fn(async ({ subject }: { subject: string }) => ({ sketched: subject }));
     const tools: ToolSet = { sketch: tool({ inputSchema: jsonSchema<{ subject: string }>({ type: 'object', properties: { subject: { type: 'string' } }, required: ['subject'] }), execute: sketch }) };
     const core = new AgentCore();
