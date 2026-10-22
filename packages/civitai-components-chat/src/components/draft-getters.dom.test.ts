@@ -363,3 +363,52 @@ describe('<civitai-chat> dictating', () => {
     expect(chat.draft).toBe('');
   });
 });
+
+/**
+ * A message `send()` cannot send now (the chat holds, or the viewer's Buzz grant is refused) is kept
+ * in an empty message box for the viewer to send later. Not while they dictate: the box is hidden
+ * behind the recording bar and what they say is joined to the end of it, so a message put there would
+ * end up glued to the front of their words.
+ */
+describe('<civitai-chat> send() kept back while the viewer dictates', () => {
+  const refusing = (chat: CivitaiChat) => (chat.app = { ...(fakeApp() as object), requestGrants: async () => false } as never);
+  const holding = (chat: CivitaiChat) => {
+    chat.app = fakeApp();
+    chat.holdReason = 'Your app is starting…';
+  };
+
+  /** Starts dictating into an empty box, then has the page send `text`. */
+  async function sendWhileDictating(chat: CivitaiChat, composer: CivitaiChatComposer, text: string): Promise<void> {
+    expect(chat.draft).toBe('');
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(chat.dictating).toBe(true));
+    await chat.send(text);
+    await composer.updateComplete;
+  }
+
+  for (const [name, set] of [['held', holding], ['grant refused', refusing]] as const) {
+    it(`${name}: leaves the box alone while dictating, so what they said is all that lands there`, async () => {
+      const finishRecording = fakeMicrophone();
+      const { answer } = fakeTranscription();
+      const { chat, composer } = await mount(set);
+
+      await sendWhileDictating(chat, composer, 'Looks good — build it.');
+      expect(chat.dictating).toBe(true);
+      expect(chat.draft).toBe('');
+
+      await press(composer, 'Stop and edit the text');
+      finishRecording();
+      await vi.waitFor(() => expect(composer.querySelector('.cvt-transcribing')).not.toBeNull());
+      answer('and a timer');
+      expect(await draftWhenDictatingEnds(chat)).toBe('and a timer');
+    });
+
+    it(`${name}: not dictating, the message is kept in the empty box as before`, async () => {
+      const { chat, composer } = await mount(set);
+      expect(chat.dictating).toBe(false);
+      await chat.send('Looks good — build it.');
+      await composer.updateComplete;
+      expect(chat.draft).toBe('Looks good — build it.');
+    });
+  }
+});
