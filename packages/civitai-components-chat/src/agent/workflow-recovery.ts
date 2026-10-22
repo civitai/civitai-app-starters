@@ -68,6 +68,8 @@ export interface WorkflowRecoveryOptions {
 interface Cut {
   id: string;
   at: number;
+  /** The cut request went out on the free tier (its retry may not: the free-tier wrapper sends it paid once the free replies run out). */
+  free: boolean;
 }
 
 /** The parts of a v2 workflow this reads (`GET /v2/consumer/workflows/{id}`). */
@@ -110,20 +112,21 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       .control(workflowUrl(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'canceled' }) })
       .catch(() => undefined);
 
-  const remember = (key: string, id: string) => {
+  const remember = (key: string, id: string, free: boolean) => {
     const now = Date.now();
     for (const [k, c] of cut) if (now - c.at > KEEP_MS) cut.delete(k);
     cut.delete(key);
-    cut.set(key, { id, at: now });
+    cut.set(key, { id, at: now, free });
     while (cut.size > KEEP_MAX) cut.delete(cut.keys().next().value!);
   };
 
   /** What the cut request's workflow gave: an answer to send instead, or `undefined` to ask again. Throws when the read could not be made (the network is still down) or `signal` aborted. */
   async function recover(id: string, signal: AbortSignal | undefined, free: boolean): Promise<Response | undefined> {
     const deadline = Date.now() + waitMs;
-    for (;;) {
+    for (let read = 0; ; read++) {
       const left = deadline - Date.now();
-      const wait = Math.max(0, Math.min(Math.ceil(pollMs / 1000), Math.floor(left / 1000)));
+      // A free request's first read asks for no `wait`: orchestration would hold a queued workflow's read for all of it.
+      const wait = free && read === 0 ? 0 : Math.max(0, Math.min(Math.ceil(pollMs / 1000), Math.floor(left / 1000)));
       let response: Response;
       try {
         response = await options.control(`${workflowUrl(id)}${wait > 0 ? `?wait=${wait}` : ''}`, { method: 'GET', ...(signal ? { signal } : {}) });
@@ -140,7 +143,8 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       if (!status || !LIVE.has(status)) return undefined;
       // Free work waits behind all paid work, and the free-tier wrapper above starts its wait for a
       // first answer (then sends it paid, when the viewer allows) only once this returns. Waiting here
-      // would hold that back, so a free request not started yet is asked for again at once.
+      // would hold that back, so a cut request that went out free and has not started is asked for
+      // again at once (by the tier it went out on, as the retry may be going paid).
       if (Date.now() >= deadline || (free && QUEUED.has(status))) {
         // Canceled before the step is asked for again, so the two never run at once.
         await cancel(id);
@@ -167,21 +171,22 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       cut.delete(key);
       let recovered: Response | undefined;
       try {
-        recovered = await recover(earlier.id, signal, new Headers(init?.headers).get(TIER_HEADER) === 'free');
+        recovered = await recover(earlier.id, signal, earlier.free);
       } catch (error) {
         // The read did not get through: kept for the next time this step is asked for.
-        if (!signal?.aborted) remember(key, earlier.id);
+        if (!signal?.aborted) remember(key, earlier.id, earlier.free);
         throw error;
       }
       if (recovered) return recovered;
     }
 
+    const free = new Headers(init?.headers).get(TIER_HEADER) === 'free';
     const response = await inner(input, init);
     const id = response.headers.get(WORKFLOW_ID_HEADER);
     if (!id || !response.body) return response;
     return track(response, id, signal, {
       dropped: () => {
-        remember(key, id);
+        remember(key, id, free);
         // Stopped before the step was asked for again (while waiting to retry): nothing will read it.
         signal?.addEventListener(
           'abort',
