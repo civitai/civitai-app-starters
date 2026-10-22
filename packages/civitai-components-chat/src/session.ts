@@ -11,8 +11,8 @@ import { ChatFund } from './agent/fund.js';
 import { viewerId } from './auth/viewer.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
 import { authedFetch, createAssistantModel } from './agent/provider.js';
-import { chatConfig, outputTokenCap } from './config.js';
-import { createMcpConnection, type McpConnection } from './mcp/clients.js';
+import { chatConfig, outputTokenCap, siteUrl } from './config.js';
+import { createMcpConnection, signedInOrAnonymous, type McpConnection } from './mcp/clients.js';
 import { McpServerPool, type ChatMcpOptions, type ChatMcpServer } from './mcp/servers.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
@@ -205,21 +205,21 @@ export class ChatSession extends EventTarget {
     this.settings = loadSettings(settingsKey(options.scope));
     this.api = createOrchestrationApi(app);
     this.freeTier = new FreeTier(() => (backend ? Promise.resolve({ enabled: false, models: [] }) : this.api.getFreeTier()));
-    this.fund = backend
-      ? undefined
-      : new ChatFund({ api: this.api, viewer: () =>
-            (this.#viewer ??= viewerId(app).catch((error: unknown) => {
-              this.#viewer = undefined;
-              throw error;
-            })), autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
+    const viewer = () =>
+      (this.#viewer ??= viewerId(app).catch((error: unknown) => {
+        this.#viewer = undefined;
+        throw error;
+      }));
+    this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
-    this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    // As the viewer, so what it finds can follow their own preferences; a host's backend has no Civitai token.
+    this.siteMcp = backend ? anonymousSite : signedInOrAnonymous(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }), anonymousSite);
     this.mcpServers = new McpServerPool({
       onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
       onListed: () => this.dispatchEvent(new Event('mcp-servers-change')),
     });
-    // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
-    const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
+    const poster = sitePoster(this.siteMcp, () => siteUrl(this.settings.allowMature));
     this.posts = new PostManager({
       host: backend ? null : postHostOf(app),
       site: () => (backend || this.#options.mcp?.().site === false ? null : poster),

@@ -13,7 +13,7 @@ import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js'
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
-import { TOP_UP_BUZZ } from '../config.js';
+import { onSite, TOP_UP_BUZZ } from '../config.js';
 import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { ReplyStatusState } from './civitai-chat-reply-status.js';
@@ -184,7 +184,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #assistantParts(): unknown {
     // A reply can stream a text part that is only whitespace so far: no empty bubble for it.
-    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`);
+    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(this.models ? onSite(text, this.models.siteUrl) : text))}</div>`);
     if (this.toolCalls === 'details') return this.#detailed(md);
     return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }

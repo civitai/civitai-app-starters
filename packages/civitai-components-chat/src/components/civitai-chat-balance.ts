@@ -80,7 +80,7 @@ export class CivitaiChatBalance extends LightElement {
         @keydown=${this.#onKey}
       >
         <span class="cvt-spend-pill" aria-hidden="true">
-          <svg class="cvt-balance-icon" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg>${pill}
+          <svg class="cvt-balance-icon" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg><span class="cvt-balance-text">${pill}</span>
         </span>
       </button>
       <div class="cvt-spend-panel cvt-balance-panel" id=${this.#panelId} role="region" aria-label="Your replies" tabindex="-1" ?hidden=${!this.open} @keydown=${this.#onKey}>

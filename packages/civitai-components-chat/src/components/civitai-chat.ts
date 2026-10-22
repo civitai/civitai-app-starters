@@ -1109,7 +1109,8 @@ export class CivitaiChat extends LitElement {
     const wanted = this.#wanted;
     this.#wanted = undefined;
     const target = resume?.conversationId ?? wanted ?? settings.lastConversationId;
-    if (target) await this.#open(target, target === wanted, target === wanted);
+    // Only a chat that is still saved: reopening a deleted one under its id would write into its deleted saves.
+    if (target) await this.#open(target, target === wanted, target === wanted || target === settings.lastConversationId);
     else session.newConversation();
     const shared = this.fullPage && !backend ? await takeSharedPanel() : null;
     if (shared) {
@@ -1737,6 +1738,33 @@ export class CivitaiChat extends LitElement {
     }
   }
 
+  async #deleteAll(): Promise<void> {
+    const dialog = this.renderRoot.querySelector<CivitaiConfirmDialog>('#cvt-delete-all-dialog');
+    const session = this.#session;
+    if (!dialog || !session || !(await dialog.ask())) return;
+    const store = session.store;
+    this.settingsOpen = false;
+    session.agent.abort();
+    try {
+      while (store.hasMore) await store.loadMore();
+    } catch (error) {
+      this.#toast('Could not load all your chats, so none were deleted.', error);
+      return;
+    }
+    const ids = new Set(store.summaries.map((summary) => summary.id));
+    if (store.current && store.isSaved(store.current.id)) ids.add(store.current.id);
+    this.newChat();
+    const queue = [...ids];
+    let failed = 0;
+    // A few at a time: each delete is a search and a delete per workflow the chat made.
+    await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        for (let id = queue.shift(); id !== undefined; id = queue.shift()) await store.remove(id).catch(() => failed++);
+      }),
+    );
+    if (failed) this.#toast(`Could not delete ${failed} of your ${ids.size} chats. Try again.`);
+  }
+
   #export(): void {
     const session = this.#session;
     const conversation = session?.store.current;
@@ -2027,12 +2055,14 @@ export class CivitaiChat extends LitElement {
         .settings=${session.settings}
         .userName=${this.userName}
         .canExport=${turns.length > 0}
+        .canDeleteAll=${!session.stopsRunBeforeDelete && (session.store.summaries.length > 0 || turns.length > 0)}
         .canSignOut=${this.canSignOut}
         .canTheme=${this.fullPage}
         .hosted=${hosted}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
         @cvt-export=${() => this.#export()}
+        @cvt-delete-all=${() => void this.#deleteAll()}
       ></civitai-chat-settings-dialog>
       <civitai-chat-lightbox
         .open=${boxed !== null}
@@ -2052,6 +2082,14 @@ export class CivitaiChat extends LitElement {
           : nothing}
       </civitai-chat-lightbox>
       <civitai-confirm-dialog id="cvt-delete-dialog" heading="Delete this chat?" confirm-label="Delete" cancel-label="Keep it" destructive></civitai-confirm-dialog>
+      <civitai-confirm-dialog
+        id="cvt-delete-all-dialog"
+        heading="Delete all your chats?"
+        message="Every chat and everything made in them will be removed. This can't be undone."
+        confirm-label="Delete all"
+        cancel-label="Keep them"
+        destructive
+      ></civitai-confirm-dialog>
       <civitai-toast-region></civitai-toast-region>`;
   }
 }

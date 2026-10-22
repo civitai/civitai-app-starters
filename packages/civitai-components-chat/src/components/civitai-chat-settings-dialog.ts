@@ -20,6 +20,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     settings: { attribute: false },
     userName: {},
     canExport: { type: Boolean },
+    canDeleteAll: { type: Boolean },
     canSignOut: { type: Boolean },
     canTheme: { type: Boolean },
     hosted: { type: Boolean },
@@ -29,6 +30,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
   declare settings: Settings;
   declare userName: string;
   declare canExport: boolean;
+  declare canDeleteAll: boolean;
   /** Inside civitai.com the site owns the session. */
   declare canSignOut: boolean;
   /** Only when the chat is the whole page; embedded, the page around it sets the theme. */
@@ -44,6 +46,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     this.open = false;
     this.userName = '';
     this.canExport = false;
+    this.canDeleteAll = false;
     this.canSignOut = true;
     this.canTheme = true;
     this.hosted = false;
@@ -103,7 +106,10 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ${this.#instructions()}
         <section>
           <h3>Your chats</h3>
-          <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+          <div class="cvt-settings-actions">
+            <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+            ${this.canDeleteAll ? html`<civitai-button size="sm" variant="subtle" color="error" @click=${() => emit(this, 'cvt-delete-all')}>Delete all chats</civitai-button>` : nothing}
+          </div>
         </section>
       </div>
     </civitai-modal>`;
@@ -132,7 +138,10 @@ export class CivitaiChatSettingsDialog extends LightElement {
         <section>
           <h3>Your chats</h3>
           <p>Chats are kept in your Civitai account for ${RETENTION_DAYS} days after your last message, and what you make for ${RETENTION_DAYS} days after it is made, so they follow you to any device.</p>
-          <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+          <div class="cvt-settings-actions">
+            <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+            ${this.canDeleteAll ? html`<civitai-button size="sm" variant="subtle" color="error" @click=${() => emit(this, 'cvt-delete-all')}>Delete all chats</civitai-button>` : nothing}
+          </div>
         </section>
         <section>
           <h3>Account</h3>

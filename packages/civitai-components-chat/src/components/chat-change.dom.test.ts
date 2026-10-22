@@ -92,6 +92,19 @@ describe('<civitai-chat> chat-change', () => {
     expect(chat.chatId).toBe('CONV1');
   });
 
+  it('starts a new chat under a new id when the last one was deleted, so its first message is not saved into the deleted chat', async () => {
+    stubFetch();
+    localStorage.setItem('cvt:settings', JSON.stringify({ lastConversationId: 'DELETED' }));
+    const { chat, seen } = await mount((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = fakeApp() as never;
+    });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await settle();
+    expect(chat.chatId).not.toBe('DELETED');
+    expect(seen).toEqual([chat.chatId]);
+  });
+
   it('names the fresh chat a first visit starts with', async () => {
     stubFetch();
     const { chat, seen } = await mount((c) => {

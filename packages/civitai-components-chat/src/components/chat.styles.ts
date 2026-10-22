@@ -1326,7 +1326,8 @@ civitai-chat-panel {
   justify-items: start;
 }
 
-.cvt-panel-runs > civitai-chat-generation-card {
+.cvt-panel-runs > civitai-chat-generation-card,
+civitai-chat-generation-card[audio] {
   justify-self: stretch;
 }
 
@@ -1339,7 +1340,9 @@ civitai-chat-composer {
 }
 
 .cvt-composer-hold {
-  margin: 0 0 6px;
+  max-width: 800px;
+  margin: 0 auto 6px;
+  padding: 0 12px;
   font-size: 13px;
   color: var(--civitai-color-text-dimmed);
 }
@@ -1776,6 +1779,19 @@ civitai-chat-balance {
 
 .cvt-balance-panel .cvt-spend-note {
   margin: 0;
+}
+
+/* On a phone the chat's title keeps the room; the figures are one tap away. */
+@container civitai-chat (max-width: 400px) {
+  .cvt-balance-text {
+    display: none;
+  }
+}
+
+.cvt-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .cvt-top-up-actions {

@@ -1,5 +1,12 @@
 export const ORCH_URL = 'https://orchestration.civitai.com';
 export const SITE_URL = 'https://civitai.com';
+/** civitai.com shows safe content only; the same site with mature content is civitai.red. */
+export const MATURE_SITE_URL = 'https://civitai.red';
+
+export const siteUrl = (allowMature: boolean): string => (allowMature ? MATURE_SITE_URL : SITE_URL);
+
+/** Points links to either Civitai site at `site`; other civitai.com hosts (mcp., orchestration.) are left alone. */
+export const onSite = (text: string, site: string): string => text.replace(/https?:\/\/(?:www\.)?civitai\.(?:com|red)(?![\w-]|\.\w)/g, site);
 export const BUY_BUZZ_URL = `${SITE_URL}/purchase/buzz`;
 
 export interface ChatModelOption {
