@@ -76,7 +76,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
           const sink = toolImagesIn(experimental_context);
           const { images, notes } = toolImagesOf(result, sink !== undefined);
           sink?.add(toolCallId, name, images);
-          if (notes.length > 0) text = [text, ...notes].filter(Boolean).join('\n');
+          if (notes.length > 0) text = limitResult([mcpResultToText(result, Infinity), ...notes].filter(Boolean).join('\n'), server.resultLimit);
           return result.isError ? { error: text, note: FAILED_NOTE } : text;
         },
       });
