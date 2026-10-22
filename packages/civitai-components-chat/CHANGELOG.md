@@ -1,5 +1,41 @@
 # @civitai/components-chat
 
+## 0.25.0
+
+### Minor Changes
+
+- 4581568: The chat now asks before every generation by default: `configureChat({ autoRunLimit })` defaults to 0 (was 100). A viewer who saved a limit keeps it. The confirmation offers **Yes, don't ask up to X Buzz** beside **Go ahead**, where X is the smallest Settings choice (25, 50, 100 or 250) that covers a fixed price: it runs the job and sets the viewer's limit to X. A variable price, or one above 250, still only offers Go ahead. `<civitai-chat-generation-card>` gains `raiseSteps` and the `job-raise-limit` event (`{ limit }`); the steps are exported as `AUTO_RUN_STEPS`.
+
+  The confirmation now says what it would make: the request in its own words (a prompt, a song description, a script) under the title, up to three lines, so "Make it?" and **Adjust** refer to something on screen. `GenerationJob.request` and the card's optional `CardJob.request` carry it.
+
+- 4581568: A panel's model list can grow past what it offered. A panel with a `model` choice (every **Adjust** panel) ends that choice with **Find another model…**, which starts the request in the message box for the viewer to finish and send; model cards from a search get **Generate with**, which asks it to add that model (by AIR) and select it, instead of only linking to the site. `update_panel` gains `addOptions` (`{ "<input>": { "<label>": settings } }`), which adds choice options and keeps the existing ones, and the panel context shows the settings behind each choice's selected option so the assistant can copy them with the new model swapped in. Before, asked to add a model, the assistant could only replace the whole choice and said it had added one when the list was unchanged. `<civitai-chat-model-card>` gains `action` and the `model-use` event.
+
+  A LoRA goes on top of the picked model instead of standing in for one: a panel's run input can spread blocks of settings in turn (`"input": {"...": ["{{model}}", "{{lora}}"]}`), so a **LoRA** choice (with **None**) applies to whichever model is selected, and the assistant is told to set panels up that way.
+
+- f358018: - A reopened chat brings back the post card for a picture a panel made. Panels are now restored before posts, so a post of a panel's run finds its picture; before, the card was silently left out.
+  - Panels can be closed: a × on the panel, and a `close_panel` tool for when the viewer asks the assistant. A closed panel folds to one line with **Reopen**, keeps what it made, stays closed after a reload, and is left out of what the assistant is told until it is changed or reopened. `update_panel` no longer has to stand in for closing, which only moved the panel down.
+- c439b15: Server runner (`runner="remote"`): a reply that ends on the page without the run saying so (the runner refused Stop, Stop's 10-second grace ran out, or the runner refused the viewer the reply's events) now keeps what it had shown, instead of going blank when the chat is read again; only a saved reply that finished, or holds more, replaces it. A chat the page left and came back to while its live-run lookup was on its way is now looked up again and followed. An event stream that ends its last event with a bare CR blank line delivers that event.
+
+  **Type change:** `ChatSubagentStatus` (a subagent result's `status`) gains `'unreceived'`: a subagent of such a reply whose result never reached the page (its card reads "Result not received"), with the new optional `changedCount` for a write subagent's files changed when last seen. A page that maps every status (e.g. a `Record<ChatSubagentStatus, string>`) needs an entry for it; this is a minor for that reason, as `'interrupted'` came in a minor (0.20.0).
+
+- d655999: A live reply now shows a status line under it from the moment it starts until it ends, with how long it has run: _Working · 0:42_. Before, the busy dots showed only before the first words and between a finished call and the next step, so a reply went blank, looking frozen, while the model wrote words or a long call it had not sent yet, and while a call whose own card shows nothing moving ran. The line reads _Reconnecting…_ while the connection is down (a dropped model stream asked for again; with `runner="remote"`, the runner's event stream silent past a missed keep-alive (20 s) or opened again, or the runner asking its model again after a drop) and _Still working on the server_ for a server-runner reply the page found running when it opened the chat (a reload, another device), counting from when that run started. Its polite `role="status"` region says each change of state once (the start is said once, by the thread), never the seconds. With `prefers-reduced-motion: reduce` its dots hold still.
+
+  New: `awaitingApproval` (attribute `awaiting-approval`) on `<civitai-chat>`. A page that asks the viewer to approve calls itself (a `beforeToolCall` that waits for a click, or approval cards it draws for a server runner's gate) sets it while a call waits, and the line reads _Waiting for your approval_. It goes back to `false` by itself when the reply it was set during ends, so a Stop while a call waited does not start the next reply on it.
+
+  `LiveTurn` (the agent's `live`) gains the optional `startedAt`, `reconnecting` and `reattached`.
+
+- b8ebf7c: The assistant can change its own standing instructions when the viewer asks it to behave differently from now on (a personality, a tone, a name, something to always do or avoid). Its `update_instructions` tool proposes the complete new text on a card, where the viewer can edit it; **Save** writes it to Settings → Custom instructions, used in every chat from the next reply, and **Not now** leaves them as they were. Nothing changes without Save, so text the assistant reads elsewhere cannot rewrite its instructions on its own. The card stays saveable after later replies until it is saved or put aside; one already saved reads as saved.
+
+### Patch Changes
+
+- f455917: A failed tool call the assistant fixed itself (the same tool worked later in the reply) no longer shows "… didn't work" with the raw error; a failure nobody fixed still does.
+- 4581568: - An option added to a panel's choice without a value is selected, so the panel shows the model the viewer asked for.
+  - A choice option with a long label keeps its settings: labels, their settings' keys and a value picking one are cut to 60 characters alike. Before, a long model name lost its settings and the run sent the label as the input.
+  - A block choice used as a field inside another option's settings (`"loras": "{{lora}}"` in a model's settings) is refused with the spread to use, and the advice for an unused block choice is to spread it beside the model, not nest it.
+  - Failed tool calls show no note while the reply is still running (the assistant may yet fix them); one never fixed shows once the reply ends.
+  - **Adjust** prices other models in rank order, four at a time, until it has eight, and asks each service for its input schema once per session, instead of firing about eighty requests at once.
+  - The assistant is told to make one `run_step` per thing the viewer asked for, never two versions side by side.
+
 ## 0.24.0
 
 ### Minor Changes
