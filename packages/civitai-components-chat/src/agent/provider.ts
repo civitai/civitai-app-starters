@@ -3,7 +3,7 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel } from 'ai';
 
 import { chatConfig, ORCH_URL } from '../config.js';
-import { workflowRecoveryFetch, type WorkflowRecoveryOptions } from './workflow-recovery.js';
+import { withoutTrailingSlashes, workflowRecoveryFetch, type WorkflowRecoveryOptions } from './workflow-recovery.js';
 
 export const PROVIDER = 'civitai';
 

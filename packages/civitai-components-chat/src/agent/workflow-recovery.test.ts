@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AgentCore } from './core.js';
 import { createAssistantModel } from './provider.js';
-import { workflowRecoveryFetch, WORKFLOW_ID_HEADER } from './workflow-recovery.js';
+import { withoutTrailingSlashes, workflowRecoveryFetch, WORKFLOW_ID_HEADER } from './workflow-recovery.js';
 
 /**
  * `workflowRecoveryFetch` on its own, and under `AgentCore` for a step whose answer was a tool call.
@@ -120,6 +120,12 @@ describe('workflowRecoveryFetch', () => {
     await expect(send(URL_, post('{"c":3}', stop.signal))).rejects.toBeDefined();
     expect(inner).toHaveBeenCalledTimes(1);
     expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-waiting-4c90`, body: CANCELED }]);
+  });
+});
+
+describe('withoutTrailingSlashes', () => {
+  it('takes off every trailing slash and nothing else', () => {
+    expect(['https://o.test', 'https://o.test/', 'https://o.test/api///', '///', ''].map(withoutTrailingSlashes)).toEqual(['https://o.test', 'https://o.test', 'https://o.test/api', '', '']);
   });
 });
 

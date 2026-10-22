@@ -87,7 +87,7 @@ interface ChatOutput {
  * `…/chat/completions` with a string body is looked at; everything else passes through.
  */
 export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowRecoveryOptions): typeof fetch {
-  const base = options.baseUrl.replace(/\/+$/, '');
+  const base = withoutTrailingSlashes(options.baseUrl);
   const waitMs = options.waitMs ?? RECOVERY_WAIT_MS;
   const pollMs = options.pollMs ?? RECOVERY_POLL_MS;
   // Requests whose answer was cut, by what was sent: the same request sent again is the cut step asked for again.
@@ -262,6 +262,13 @@ function replay(id: string, workflow: WorkflowRead): Response | undefined {
   ];
   const sse = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`;
   return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream', [WORKFLOW_ID_HEADER]: id } });
+}
+
+/** `url` with any trailing `/` taken off; a loop, not `/\/+$/`, which backtracks on a long run of slashes. */
+export function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
 }
 
 function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
