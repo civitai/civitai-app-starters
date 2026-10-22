@@ -1089,8 +1089,11 @@ again and words already kept are not repeated; the cut step's words are replaced
 Asking again does not pay twice for the cut step. Orchestration names each model request's workflow
 in the `X-Civitai-Workflow-Id` header, and before the same request goes out again the chat reads that
 workflow back: one that succeeded gives the step its answer (words and tool calls) with no new
-request; one still running is waited for, at most 2 minutes; one that failed, has no answer, or is
-still running after that is canceled (when still running) and the step is asked for again. An answer
+request; one still running is waited for, at most 10 minutes (a GET shows only whether it finished,
+so a long answer still being written cannot be told from a stuck one sooner); one that failed, has
+no answer, or is still running after that is canceled (when still running) and the step is asked
+for again. A free request whose workflow has not started yet is canceled and asked for again at
+once, so the free tier's own wait can still send it paid. An answer
 with no such header is asked for again as before. Stop, or any model request given up on before its
 answer is complete, cancels that request's workflow, so the model stops working on it.
 The cut is the error that ended the reply: an earlier error the reply got past by itself does not

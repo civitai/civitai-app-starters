@@ -6,7 +6,8 @@
  * when the same request is sent again after its stream was cut, the workflow is read back
  * (`GET /v2/consumer/workflows/{id}`) instead:
  * - it succeeded: its answer is rebuilt as the stream the POST would have sent, and nothing is POSTed;
- * - it is still running: it is waited for, at most {@link RECOVERY_WAIT_MS};
+ * - it is still running: it is waited for, at most {@link RECOVERY_WAIT_MS} (a free request whose
+ *   workflow has not started is not waited for: canceled, and sent again at once);
  * - it failed, its answer cannot be rebuilt, or it outlived the wait: it is canceled when still
  *   running (`PUT /v2/consumer/workflows/{id}` with `{"status":"canceled"}`), and the request goes out
  *   as it would have.
@@ -30,11 +31,19 @@
 export const WORKFLOW_ID_HEADER = 'X-Civitai-Workflow-Id';
 
 /**
- * The longest a cut step waits for its workflow to finish before canceling it and asking again. The
- * answer was already being written when the stream was cut, so it usually finishes well inside this;
- * one that does not is stuck, and orchestration's own stream gives up on a silent worker after 2 minutes.
+ * The longest a cut step waits for its workflow to finish before canceling it and asking again: 10
+ * minutes, the longest orchestration's own stream waits for a first chunk (`StreamFirstChunkTimeout`,
+ * ChatCompletionsController.cs:51). A GET shows only the workflow's status, not whether tokens are still
+ * coming, so a long answer still being written cannot be told from a stuck one before then; asking
+ * again would start that answer over, and cost it again, rather than finish sooner.
  */
-export const RECOVERY_WAIT_MS = 120_000;
+export const RECOVERY_WAIT_MS = 600_000;
+
+/** The request header that sends a chat completion on the free tier (`free-tier.ts`). */
+const TIER_HEADER = 'X-Civitai-Tier';
+
+/** Not started yet: waiting behind other work. */
+const QUEUED = new Set(['unassigned', 'preparing', 'scheduled']);
 
 /** How long one read of the workflow asks orchestration to hold it for a final status (its `wait`), in ms. */
 export const RECOVERY_POLL_MS = 20_000;
@@ -110,7 +119,7 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
   };
 
   /** What the cut request's workflow gave: an answer to send instead, or `undefined` to ask again. Throws when the read could not be made (the network is still down) or `signal` aborted. */
-  async function recover(id: string, signal: AbortSignal | undefined): Promise<Response | undefined> {
+  async function recover(id: string, signal: AbortSignal | undefined, free: boolean): Promise<Response | undefined> {
     const deadline = Date.now() + waitMs;
     for (;;) {
       const left = deadline - Date.now();
@@ -129,7 +138,10 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       if (status === 'succeeded') return replay(id, workflow!);
       // Failed, expired or canceled: over, and nothing to rebuild.
       if (!status || !LIVE.has(status)) return undefined;
-      if (Date.now() >= deadline) {
+      // Free work waits behind all paid work, and the free-tier wrapper above starts its wait for a
+      // first answer (then sends it paid, when the viewer allows) only once this returns. Waiting here
+      // would hold that back, so a free request not started yet is asked for again at once.
+      if (Date.now() >= deadline || (free && QUEUED.has(status))) {
         // Canceled before the step is asked for again, so the two never run at once.
         await cancel(id);
         return undefined;
@@ -155,7 +167,7 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       cut.delete(key);
       let recovered: Response | undefined;
       try {
-        recovered = await recover(earlier.id, signal);
+        recovered = await recover(earlier.id, signal, new Headers(init?.headers).get(TIER_HEADER) === 'free');
       } catch (error) {
         // The read did not get through: kept for the next time this step is asked for.
         if (!signal?.aborted) remember(key, earlier.id);
