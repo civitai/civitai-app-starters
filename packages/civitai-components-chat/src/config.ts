@@ -42,10 +42,13 @@ export interface ChatConfig {
   conversationVoice: { speaker: string; instruct?: string };
 }
 
-/** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
 /** The limits a viewer may pick for spending without being asked, besides always asking and never. */
 export const AUTO_RUN_STEPS = [25, 50, 100, 250];
 
+/** What one top-up moves from the viewer's Buzz into their chat balance. */
+export const TOP_UP_BUZZ = 100;
+
+/** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
 export const OUTPUT_TOKENS_MIN = 1_024;
 export const OUTPUT_TOKENS_MAX = 32_768;
 export const DEFAULT_OUTPUT_TOKENS = 16_384;

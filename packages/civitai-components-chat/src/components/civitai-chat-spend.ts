@@ -85,8 +85,8 @@ export class CivitaiChatSpend extends LightElement {
         </dl>
         ${subagentSteps ? html`<p class="cvt-spend-note" data-spend="subagents">Including ${n(subagentSteps)} subagent ${subagentSteps === 1 ? 'step' : 'steps'}.</p>` : nothing}
         <p class="cvt-spend-note">
-          An estimate of the Buzz spent in this chat: what it made, plus the assistant's replies and saving the chat. Model searches and captions
-          aren't counted.
+          The Buzz spent in this chat: what it made, the assistant's replies as charged (free ones cost nothing), and saving the chat. Model searches
+          and captions aren't counted.
         </p>
       </div>`;
   }

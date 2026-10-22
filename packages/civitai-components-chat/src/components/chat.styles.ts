@@ -1744,8 +1744,45 @@ civitai-chat-model-picker {
 }
 
 /* Contents, so the breakdown is placed against the top bar (which is relative), inside the chat on a phone. */
-civitai-chat-spend {
+civitai-chat-spend,
+civitai-chat-balance {
   display: contents;
+}
+
+.cvt-spend svg.cvt-balance-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.cvt-balance-panel section {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--civitai-color-border);
+}
+
+.cvt-balance-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cvt-balance-panel civitai-button {
+  justify-self: start;
+}
+
+.cvt-balance-panel .cvt-spend-note {
+  margin: 0;
+}
+
+.cvt-top-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */

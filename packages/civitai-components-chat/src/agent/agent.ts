@@ -63,6 +63,7 @@ export interface AgentRetryDetail {
 export class Agent extends EventTarget implements ChatAgent {
   #deps: AgentDeps;
   #core: AgentCore;
+  #turn: Turn | undefined;
 
   constructor(deps: AgentDeps) {
     super();
@@ -77,6 +78,14 @@ export class Agent extends EventTarget implements ChatAgent {
 
   get running(): boolean {
     return this.#core.running;
+  }
+
+  /** Falls back to the last reply: the title call runs after the reply ends. */
+  charged(buzz: number): void {
+    const turn = this.#turn ?? this.#deps.store.current?.turns.at(-1);
+    if (!turn) return;
+    turn.assistant.buzz = (turn.assistant.buzz ?? 0) + buzz;
+    this.#emit();
   }
 
   async send(content: string, attachments: Attachment[] = [], refs: string[] = []): Promise<void> {
@@ -113,8 +122,8 @@ export class Agent extends EventTarget implements ChatAgent {
   async retry(): Promise<void> {
     const turn = this.#deps.store.current?.turns.at(-1);
     if (this.running || turn?.assistant.status !== 'error') return;
-    const from = turn.assistant.resume;
-    turn.assistant = { messages: [], status: 'streaming' };
+    const { resume: from, buzz } = turn.assistant;
+    turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
     await this.#run(turn, from);
   }
 
@@ -126,6 +135,7 @@ export class Agent extends EventTarget implements ChatAgent {
       // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
       if (from) this.#checkpoint(turn, from.messages);
     }
+    this.#turn = turn;
     const outcome = await this.#core.run({
       seq: turn.seq,
       ...(from ? { from } : {}),
@@ -163,6 +173,7 @@ export class Agent extends EventTarget implements ChatAgent {
       // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
       settled: (ended) => this.#settle(turn, ended),
     });
+    if (this.#turn === turn) this.#turn = undefined;
     if (!outcome) return;
 
     try {

@@ -1,6 +1,6 @@
 import type { CivitaiConfirmDialog } from '@civitai/components/civitai-confirm-dialog';
 import type { CivitaiToastRegion } from '@civitai/components/civitai-toast-region';
-import type { AppClient, BlockAppClient } from '@civitai/sdk';
+import type { AppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
@@ -9,7 +9,8 @@ import type { LiveTurn } from '../agent/core.js';
 import { backendModels, type ChatBackend, type ChatStoreBackend } from '../backend.js';
 import { usableModels, type ChatModelEntry } from '../agent/model-list.js';
 import { takeResume } from '../auth/resume.js';
-import { SCOPE_PATTERN, chatConfig, outputTokenCap, type ChatModelOption } from '../config.js';
+import { isBlockClient } from '../auth/viewer.js';
+import { SCOPE_PATTERN, TOP_UP_BUZZ, chatConfig, outputTokenCap, type ChatModelOption } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommand, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
@@ -34,6 +35,7 @@ import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { ConversationView } from '../voice/conversation/index.js';
 import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatThread, QueuedView } from './civitai-chat-thread.js';
+import type { BalanceView } from './civitai-chat-balance.js';
 import { chatStyles } from './chat.styles.js';
 import { mediaActions } from './media-actions.js';
 import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
@@ -365,6 +367,7 @@ export class CivitaiChat extends LitElement {
   #started: Promise<ChatSession>;
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
+  #toppingUp = false;
   #signInAbort?: AbortController;
   #focusedPanel?: Panel;
   #activePanel?: Panel;
@@ -1060,6 +1063,8 @@ export class CivitaiChat extends LitElement {
     // A server's tools carry its label in the thread once they are listed.
     session.addEventListener('mcp-servers-change', this.#rerender);
     session.freeTier.addEventListener('change', this.#rerender);
+    session.fund?.addEventListener('change', this.#rerender);
+    if (session.fund) void session.freeTier.refresh();
     session.addEventListener('tool-result', (event) => {
       if (this.#session !== session) return;
       this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: (event as CustomEvent<ChatToolResult>).detail, bubbles: true, composed: true }));
@@ -1374,6 +1379,38 @@ export class CivitaiChat extends LitElement {
     } catch (error) {
       this.#toast(`/${parsed.name} did not work.`, error);
     }
+  }
+
+  async #topUp(auto: boolean, retry: boolean): Promise<void> {
+    const session = this.#session;
+    if (!session?.fund) return;
+    if (auto) session.updateSettings({ autoTopUp: true });
+    this.#toppingUp = true;
+    this.requestUpdate();
+    try {
+      await session.fund.topUp();
+      if (retry) void session.agent.retry();
+    } catch (error) {
+      const human = humanize(error);
+      this.#toast(human.kind === 'insufficient_buzz' ? `You don't have ${TOP_UP_BUZZ} Buzz to top up with.` : 'Could not top up your chat balance.', error);
+    } finally {
+      this.#toppingUp = false;
+      this.requestUpdate();
+    }
+  }
+
+  #balanceView(session: ChatSession): BalanceView {
+    const free = session.freeTier.modelFor(session.assistantModel());
+    // The badge shows the balance once the free replies are gone, so it is read then rather than at start.
+    if (session.freeTier.loaded && (free?.remaining ?? 0) <= 0 && !session.fund?.loaded) void session.fund?.refresh();
+    const window = free?.windows.reduce((tightest, w) => (w.remaining < tightest.remaining ? w : tightest), free.windows[0]!);
+    return {
+      loaded: session.freeTier.loaded,
+      ...(free && window ? { free: { remaining: free.remaining, limit: window.limit, ...(window.resetAt ? { resetAt: window.resetAt } : {}) } } : {}),
+      ...(session.fund?.loaded ? { balance: session.fund.balance } : {}),
+      autoTopUp: session.settings.autoTopUp === true,
+      busy: this.#toppingUp,
+    };
   }
 
   #continuePaid(): void {
@@ -1907,6 +1944,17 @@ export class CivitaiChat extends LitElement {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
             </h1>
+            ${session.fund
+              ? html`<civitai-chat-balance
+                  .view=${this.#balanceView(session)}
+                  @cvt-balance-open=${() => {
+                    void session.freeTier.refresh();
+                    void session.fund?.refresh();
+                  }}
+                  @cvt-top-up=${() => void this.#topUp(false, false)}
+                  @cvt-auto-top-up=${(e: CustomEvent<{ on: boolean }>) => this.#updateSettings({ autoTopUp: e.detail.on })}
+                ></civitai-chat-balance>`
+              : nothing}
             ${hosted ? nothing : spendBadge(conversationSpend(conversation ?? null, session.jobs.all(), session.store.saveCost))}
             <button class="cvt-icon-button" aria-label="New chat" @click=${() => this.newChat()}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -1928,7 +1976,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>
@@ -2025,12 +2073,4 @@ function microphoneProblem(error: unknown): string {
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'The microphone is blocked. Allow it for this site in your browser to talk instead of typing.';
   if (name === 'NotFoundError') return 'No microphone was found.';
   return 'Could not start the microphone.';
-}
-
-/**
- * A client `initialize()` made inside a civitai.com page, told apart by the members only that kind
- * has. Whichever token it holds, the host's `viewer` names the person, so no API call is needed.
- */
-function isBlockClient(app: AppClient): app is BlockAppClient {
-  return 'host' in app && 'viewer' in app;
 }
