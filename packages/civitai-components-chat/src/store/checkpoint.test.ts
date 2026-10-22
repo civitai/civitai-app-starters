@@ -164,7 +164,7 @@ describe('a tool that answers with an image', () => {
     expect(written.some((head) => head.v === 3)).toBe(true);
     expect([written.at(-1)!.v, written.at(-1)!.turns[0]!.assistant?.status]).toEqual([2, 'done']);
     for (const write of heads.writes) expect(JSON.stringify(write)).not.toContain(PNG);
-    expect(JSON.stringify(written.at(-1))).toContain("[image/png image: shown to you once, right after this step's tool results; it is not saved]");
+    expect(JSON.stringify(written.at(-1))).toContain("[image/png image: sent to you once, with the next step if there is one and the model takes images; it is not saved]");
   });
 });
 

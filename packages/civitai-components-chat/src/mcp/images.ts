@@ -14,8 +14,10 @@ export interface ToolImage {
   data: string;
 }
 
-const SHOWN = (type: string) => `[${type} image: shown to you once, right after this step's tool results; it is not saved]`;
-const NOT_SHOWN = (type: string) => `[${type} image not shown: this caller cannot show images to the assistant]`;
+// Written when the tool returns, before anyone knows whether a next step runs or the model takes the
+// image, so it says what will be tried, never that it was seen.
+const SHOWN = (type: string) => `[${type} image: sent to you once, with the next step if there is one and the model takes images; it is not saved]`;
+const NOT_SHOWN = (type: string) => `[${type} image not shown: images cannot be sent to you here]`;
 const NOT_AN_IMAGE = (type: string) => `[${type} content left out: only JPEG, PNG, WebP and GIF images are shown]`;
 const TOO_BIG = (type: string, bytes: number) =>
   `[${type} image left out: ${Math.ceil(bytes / 1024)} KiB is over the ${MAX_IMAGE_BYTES_PER_RESULT / 1024} KiB a tool result may show]`;
@@ -76,9 +78,21 @@ export function toolImagesOf(result: CallToolResult, canShow: boolean): { images
  */
 export class ToolImages {
   readonly #byCall = new Map<string, { toolName: string; images: ToolImage[] }>();
+  #refused = false;
+
+  /** The model refused a request that carried images: none is sent for the rest of the reply. */
+  refuse(): void {
+    this.#refused = true;
+    this.#byCall.clear();
+  }
+
+  /** Whether images can still be sent in this reply. */
+  get open(): boolean {
+    return !this.#refused;
+  }
 
   add(toolCallId: string, toolName: string, images: ToolImage[]): void {
-    if (images.length === 0) this.#byCall.delete(toolCallId);
+    if (images.length === 0 || this.#refused) this.#byCall.delete(toolCallId);
     else this.#byCall.set(toolCallId, { toolName, images });
   }
 
@@ -116,8 +130,8 @@ export interface ToolImagesContext {
   toolImages: ToolImages;
 }
 
-/** The reply's image store a tool was handed, if its caller has one. */
+/** The reply's image store a tool was handed, if its caller has one and it still sends images. */
 export function toolImagesIn(context: unknown): ToolImages | undefined {
   const images = (context as Partial<ToolImagesContext> | null | undefined)?.toolImages;
-  return images instanceof ToolImages ? images : undefined;
+  return images instanceof ToolImages && images.open ? images : undefined;
 }

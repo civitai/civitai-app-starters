@@ -1,4 +1,4 @@
-import type { ModelMessage, ToolSet } from 'ai';
+import { APICallError, type ModelMessage, type ToolSet } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -48,12 +48,20 @@ function sandboxTools(replies: CallToolResult[], names = ['preview_check', 'read
 }
 
 /** One reply through `AgentCore`: every prompt the model was asked with, what each save would have held, and how it ended. */
-async function reply(steps: StreamPart[][], tools: ToolSet, history: ModelMessage[] = [{ role: 'user', content: 'does my app look right?' }]) {
+async function reply(
+  steps: StreamPart[][],
+  tools: ToolSet,
+  history: ModelMessage[] = [{ role: 'user', content: 'does my app look right?' }],
+  { takesImages = true }: { takesImages?: boolean } = {},
+) {
   const prompts: unknown[][] = [];
   const queue = [...steps];
   const model = new MockLanguageModelV3({
     doStream: async (options) => {
       prompts.push(options.prompt as unknown[]);
+      // As a text-only model's API answers a request with an image in it.
+      if (!takesImages && JSON.stringify(options.prompt).includes('"type":"file"'))
+        throw new APICallError({ message: 'No endpoints found that support image input', url: 'https://models.example/v1/chat/completions', requestBodyValues: {}, statusCode: 404, isRetryable: false });
       return { stream: convertArrayToReadableStream(queue.shift() ?? says('…')) as never };
     },
   });
@@ -91,7 +99,7 @@ function resultText(prompt: unknown[], toolCallId: string): unknown {
   return undefined;
 }
 
-const SHOWN = (type: string) => `[${type} image: shown to you once, right after this step's tool results; it is not saved]`;
+const SHOWN = (type: string) => `[${type} image: sent to you once, with the next step if there is one and the model takes images; it is not saved]`;
 
 describe('an added server’s tool that answers with an image', () => {
   it('a text-only reply reaches the model exactly as before: same words, same order, no message added', async () => {
@@ -247,6 +255,38 @@ describe('an added server’s tool that answers with an image', () => {
   it('called outside a reply that can show it, says the image was not shown', async () => {
     const tools = sandboxTools([{ content: [{ type: 'text', text: 'Page loaded.' }, { type: 'image', data: PNG, mimeType: 'image/png' }] } as CallToolResult]);
     const text = await tools.sandbox__preview_check!.execute!({}, { toolCallId: 'c', messages: [] });
-    expect(text).toBe('Page loaded.\n[image/png image not shown: this caller cannot show images to the assistant]');
+    expect(text).toBe('Page loaded.\n[image/png image not shown: images cannot be sent to you here]');
+  });
+
+  it('asks the step again without the image when the model takes none, and sends no image for the rest of the reply', async () => {
+    const tools = sandboxTools([
+      { content: [{ type: 'image', data: PNG, mimeType: 'image/png' }] } as CallToolResult,
+      { content: [{ type: 'image', data: JPEG, mimeType: 'image/jpeg' }] } as CallToolResult,
+    ]);
+    const { prompts, outcome } = await reply([calls(['call_1', 'sandbox__preview_check']), calls(['call_2', 'sandbox__preview_check']), says('Done.')], tools, undefined, { takesImages: false });
+
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(prompts).toHaveLength(4);
+    // Refused with the image, then the same step without it; the next call's image is never sent.
+    expect(JSON.stringify(prompts[1])).toContain(PNG);
+    expect(shape(prompts[2]!).at(-1)).toBe('tool[result:call_1]');
+    expect(resultText(prompts[3]!, 'call_2')).toBe('[image/jpeg image not shown: images cannot be sent to you here]');
+    expect(JSON.stringify(prompts.slice(2))).not.toMatch(/"type":"file"/);
+  });
+
+  it('shows a GIF, and leaves out an image whose data is not base64', async () => {
+    const GIF = Buffer.from('gif-fixture-six').toString('base64');
+    const tools = sandboxTools([
+      {
+        content: [
+          { type: 'image', data: GIF, mimeType: 'image/gif' },
+          { type: 'image', data: 'not base64!', mimeType: 'image/png' },
+        ],
+      } as CallToolResult,
+    ]);
+    const { prompts } = await reply([calls(['call_1', 'sandbox__preview_check']), says('Ok.')], tools);
+
+    expect(resultText(prompts[1]!, 'call_1')).toBe([SHOWN('image/gif'), '[image/png image left out: its data is not valid base64]'].join('\n'));
+    expect(shape(prompts[1]!).at(-1)).toBe(`user[text:Returned by sandbox__preview_check (call_1): | image/gif=${GIF}]`);
   });
 });
