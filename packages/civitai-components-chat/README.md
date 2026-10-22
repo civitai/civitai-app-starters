@@ -922,6 +922,17 @@ chat.mcpServers = [{ id: 'tools', url: '/api/mcp', label: 'Tools', fetch: send }
   rather than a failure: the call may have done its work, so the note tells it to check the effect
   before running it again. A stream the server made resumable (its events carry non-empty ids) is left to
   the MCP client, which reconnects for the reply.
+- **Images.** A JPEG, PNG, WebP or GIF image in a tool's result (a screenshot of the app, say) is
+  shown to the assistant once, in the next step, as a message right after that step's tool results:
+  the OpenAI-compatible chat API takes images only there. The result itself keeps a one-line note in
+  the image's place, and that note is all the conversation saves, so a later step, a later reply, a
+  reload or another device sees the note, not the image. A result shows at most 2 images and 512 KiB
+  (decoded) in all; any image past that, any other image type, and any other binary content (audio,
+  a binary resource) is left out with a note saying why. Each image shown costs the model's image
+  tokens once. A model that takes no images refuses a request carrying one (a 400, 404, 413, 415 or
+  422): that step is asked for once more without it, and no image is sent for the rest of the reply.
+  A server's `resultLimit` (see **Results**) cuts the reply's text only: each image's note comes
+  after the cut, whole, and no image data counts against the limit.
 - **Failures.** A server that cannot be reached, or does not list its tools within 15 s, adds no
   tools. The viewer sees a toast once while it stays down, as for the built-in servers, and the
   chat and every other server carry on. The chat tries again at the next reply, on a new connection,

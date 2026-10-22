@@ -3,6 +3,7 @@ import { dynamicTool, jsonSchema, type ToolSet } from 'ai';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { McpStreamLostError, type McpCallOptions } from '../mcp/clients.js';
+import { toolImagesIn, toolImagesOf } from '../mcp/images.js';
 import { mcpResultToText } from '../mcp/result.js';
 import type { ChatMcpResultLimit, ServerTools } from '../mcp/servers.js';
 
@@ -48,7 +49,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
       tools[name] = dynamicTool({
         description: `[${server.label?.trim() || server.id}] ${tool.description ?? ''}`.trim(),
         inputSchema: jsonSchema(objectSchema(tool.inputSchema)),
-        execute: async (input, { abortSignal }) => {
+        execute: async (input, { abortSignal, toolCallId, experimental_context }) => {
           const args = (input ?? {}) as Record<string, unknown>;
           const options: McpCallOptions = {
             signal: abortSignal,
@@ -66,7 +67,16 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
             // would be wrong, and so would running it blindly again.
             return { error: `No reply from ${server.label?.trim() || server.id}; the ${tool.name} call may have finished.`, retryable: true, note: LOST_NOTE };
           }
-          const text = limitResult(mcpResultToText(result, Infinity), server.resultLimit);
+          // The server's `resultLimit` cuts the reply's text only. Images are read from the result itself,
+          // never from that text, and their notes go after the cut, so a note is never cut and no image
+          // data counts against the limit.
+          let text = limitResult(mcpResultToText(result, Infinity), server.resultLimit);
+          // An image goes to the model beside the result (see `ToolImages`), never in it: the output is
+          // what the conversation saves and shows, so it keeps only a note in the image's place.
+          const sink = toolImagesIn(experimental_context);
+          const { images, notes } = toolImagesOf(result, sink !== undefined);
+          sink?.add(toolCallId, name, images);
+          if (notes.length > 0) text = [text, ...notes].filter(Boolean).join('\n');
           return result.isError ? { error: text, note: FAILED_NOTE } : text;
         },
       });
