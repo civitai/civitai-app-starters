@@ -43,6 +43,9 @@ export interface ChatConfig {
 }
 
 /** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
+/** The limits a viewer may pick for spending without being asked, besides always asking and never. */
+export const AUTO_RUN_STEPS = [25, 50, 100, 250];
+
 export const OUTPUT_TOKENS_MIN = 1_024;
 export const OUTPUT_TOKENS_MAX = 32_768;
 export const DEFAULT_OUTPUT_TOKENS = 16_384;
@@ -52,7 +55,7 @@ export const chatConfig: ChatConfig = {
   model: 'civitai/qwen3.8',
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
-  autoRunLimit: 100,
+  autoRunLimit: 0,
   maxOutputTokens: DEFAULT_OUTPUT_TOKENS,
   models: [],
   conversationVoice: { speaker: 'vivian', instruct: 'Speak quickly, at a brisk and energetic pace.' },

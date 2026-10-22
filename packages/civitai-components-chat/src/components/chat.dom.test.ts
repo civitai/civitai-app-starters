@@ -574,3 +574,26 @@ describe("civitai-chat's instructions card", () => {
     expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').customInstructions).toBe('Be Civ-chan.');
   });
 });
+
+describe("civitai-chat's spending limit", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps a limit raised from a confirmation as the viewer\'s own', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp() as never;
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')).not.toBeNull());
+
+    chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')!.dispatchEvent(new CustomEvent('job-raise-limit', { bubbles: true, composed: true, detail: { limit: 50 } }));
+
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').autoRunLimit).toBe(50);
+  });
+});

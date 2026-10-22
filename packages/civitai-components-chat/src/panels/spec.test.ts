@@ -142,4 +142,49 @@ describe('panel definitions', () => {
     });
     expect(inBlocks.errors).toBeUndefined();
   });
+
+  it('applies a LoRA on top of whichever model is picked, and none for None', () => {
+    const checked = checkPanelSpec({
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text' },
+        model: { kind: 'choice', options: ['SDXL', 'Pony'], map: { SDXL: { engine: 'sdcpp', ecosystem: 'sdxl', prompt: '{{prompt}}' }, Pony: { engine: 'sdcpp', ecosystem: 'pony', prompt: '{{prompt}}' } } },
+        lora: { kind: 'choice', label: 'LoRA', options: ['None', 'Cat'], map: { None: {}, Cat: { loras: { 'urn:air:sdxl:lora:civitai:1@2': 0.8 } } } },
+      },
+      run: { stepType: 'imageGen', input: { '...': ['{{model}}', '{{lora}}'] } },
+    });
+    expect(checked.errors).toBeUndefined();
+    const spec = checked.spec!;
+    expect(renderRun(spec, { prompt: 'a cat', model: 'Pony', lora: 'Cat' }).args).toEqual({
+      stepType: 'imageGen',
+      input: { engine: 'sdcpp', ecosystem: 'pony', prompt: 'a cat', loras: { 'urn:air:sdxl:lora:civitai:1@2': 0.8 } },
+    });
+    expect(renderRun(spec, { prompt: 'a cat', model: 'SDXL', lora: 'None' }).args).toEqual({ stepType: 'imageGen', input: { engine: 'sdcpp', ecosystem: 'sdxl', prompt: 'a cat' } });
+  });
+
+  it("refuses a LoRA choice put in a field of the model's settings, where its own field would nest inside it", () => {
+    const checked = checkPanelSpec({
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text' },
+        model: { kind: 'choice', options: ['SDXL', 'Pony'], map: { SDXL: { engine: 'comfy', prompt: '{{prompt}}', loras: '{{lora}}' }, Pony: { engine: 'sdcpp', prompt: '{{prompt}}', loras: '{{lora}}' } } },
+        lora: { kind: 'choice', options: ['None', 'Detail'], map: { None: {}, Detail: { loras: { 'urn:air:sdxl:lora:civitai:122359@135867': 0.8 } } } },
+      },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    });
+    expect(checked.errors?.some((error) => error.startsWith('{{lora}} stands for a whole input') && error.includes('"...": ["{{model}}", "{{lora}}"]'))).toBe(true);
+  });
+
+  it('says to spread a LoRA choice the run leaves out, not to nest it in the model blocks', () => {
+    const checked = checkPanelSpec({
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text' },
+        model: { kind: 'choice', options: ['SDXL', 'Pony'], map: { SDXL: { engine: 'comfy', prompt: '{{prompt}}' }, Pony: { engine: 'sdcpp', prompt: '{{prompt}}' } } },
+        lora: { kind: 'choice', options: ['None', 'Detail'], map: { None: {}, Detail: { loras: { 'urn:air:sdxl:lora:civitai:1@2': 0.8 } } } },
+      },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    });
+    expect(checked.errors).toEqual(['Inputs lora are not used in run. Each is a block of settings, so spread it beside {{model}}: "input": {"...": ["{{model}}", "{{lora}}"]}.']);
+  });
 });

@@ -274,13 +274,30 @@ class FakeJob extends EventTarget implements CardJob {
 describe('civitai-chat-generation-card', () => {
   const text = (el: Element) => (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
 
-  it('asks before spending above the limit and runs on Go ahead', async () => {
-    const job = new FakeJob('awaiting_confirmation');
+  it('asks before spending above the limit, saying what it would make, and runs on Go ahead', async () => {
+    const job = new FakeJob('awaiting_confirmation', { request: 'a cat on a windowsill' } as Partial<FakeJob>);
     const card = await mount('civitai-chat-generation-card', { job });
     expect(text(card)).toContain('Costs about 44 Buzz. Make it?');
+    expect(card.shadowRoot!.querySelector('[part=request]')?.textContent).toBe('“a cat on a windowsill”');
     expect(card.shadowRoot!.querySelector('[part=label]')?.textContent).toBe('Your picture');
     card.shadowRoot!.querySelector<HTMLElement>('[part=confirm]')!.click();
     expect(job.confirm).toHaveBeenCalled();
+  });
+
+  it("offers to stop asking up to the smallest limit that covers the price, and runs the job when picked", async () => {
+    const job = new FakeJob('awaiting_confirmation', { price: { total: 44, variable: false } });
+    const card = await mount('civitai-chat-generation-card', { job, raiseSteps: [25, 50, 100, 250] });
+    const raised: unknown[] = [];
+    card.addEventListener('job-raise-limit', (e) => raised.push((e as CustomEvent).detail));
+    const button = card.shadowRoot!.querySelector<HTMLElement>('[part=confirm-raise]')!;
+    expect(button.textContent?.trim()).toBe("Yes, don't ask up to 50 Buzz");
+    button.click();
+    expect(raised).toEqual([{ limit: 50 }]);
+    expect(job.confirm).toHaveBeenCalled();
+
+    document.body.replaceChildren();
+    const variable = await mount('civitai-chat-generation-card', { job: new FakeJob('awaiting_confirmation', { price: { total: 44, variable: true } }), raiseSteps: [25, 50, 100, 250] });
+    expect(variable.shadowRoot!.querySelector('[part=confirm-raise]')).toBeNull();
   });
 
   it('shows the wait in plain words and follows the job as it changes', async () => {
@@ -879,6 +896,33 @@ describe('civitai-chat-panel', () => {
     const runButton = () => [...el.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.startsWith('Run'))!;
     return { el, panel, submitted, runButton };
   };
+
+  it('starts a request for another model in the message box from the Model menu, and uses one picked from search results', async () => {
+    const { PanelManager } = await import('../panels/panel.js');
+    const { JobManager } = await import('../orchestration/jobs.js');
+    const asked: string[] = [];
+    const composed: string[] = [];
+    const panels = new PanelManager({ jobs: new JobManager({} as never), toolInfo: () => undefined, save: vi.fn(), ask: (message: string) => asked.push(message), compose: (message: string) => composed.push(message) });
+    const panel = panels.open({
+      conversationId: 'C1',
+      seq: 1,
+      toolCallId: 'c1',
+      spec: { title: 'Your picture', inputs: { model: { kind: 'choice', options: ['SDXL', 'Flux'], map: { SDXL: { engine: 'sdcpp' }, Flux: { engine: 'flux2' } } } }, run: { stepType: 'imageGen', input: '{{model}}' } },
+    });
+    const el = await mount('civitai-chat-panel', { panel });
+    const select = el.querySelector<HTMLInputElement & { data: { value: string; label: string }[] }>('civitai-select')!;
+    const find = select.data.at(-1)!;
+    expect(find.label).toBe('Find another model…');
+    select.value = find.value;
+    select.dispatchEvent(new Event('change'));
+    expect(composed).toEqual(['Find another model for the "Your picture" panel (p1): ']);
+    expect(panel.values.model).toBe('SDXL');
+
+    const card = await mount('civitai-chat-model-card', { name: 'Cat Tower', action: 'Generate with' });
+    card.addEventListener('model-use', () => panel.useModel({ name: 'Cat Tower', air: 'urn:air:sdxl:checkpoint:civitai:1@2', id: 1 }));
+    card.shadowRoot!.querySelector<HTMLElement>('[part=action]')!.click();
+    expect(asked.at(-1)).toBe('Use "Cat Tower" (urn:air:sdxl:checkpoint:civitai:1@2) in the "Your picture" panel (p1).');
+  });
 
   it('closes to one line from its × and opens again from Reopen', async () => {
     const { el, panel } = await setup();

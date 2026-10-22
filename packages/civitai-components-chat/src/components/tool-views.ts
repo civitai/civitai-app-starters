@@ -4,8 +4,9 @@ import { until } from 'lit/directives/until.js';
 import type { TurnPart } from '../agent/parts.js';
 import { DISPATCH_AGENT, isSubagentOutput, subagentResultOf, type SubagentStatus } from '../agent/subagent-result.js';
 import type { SubagentTracker } from '../agent/subagents.js';
+import { AUTO_RUN_STEPS } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import type { PanelManager } from '../panels/panel.js';
+import type { Panel, PanelManager } from '../panels/panel.js';
 import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { UPDATE_INSTRUCTIONS, proposedInstructions } from '../tools/instructions.js';
@@ -57,7 +58,7 @@ const job: ToolView = {
     const output = part.output as { job?: string } | undefined;
     const found = ctx.jobs.byToolCall(part.toolCallId) ?? (output?.job ? ctx.jobs.get(output.job) : undefined);
     if (!found) return undefined;
-    return html`<civitai-chat-generation-card .job=${found} ?adjustable=${found.tool.name === 'run_step' && !found.panel} .actions=${mediaActions(ctx.posts)}></civitai-chat-generation-card>`;
+    return html`<civitai-chat-generation-card .job=${found} ?adjustable=${found.tool.name === 'run_step' && !found.panel} .actions=${mediaActions(ctx.posts)} .raiseSteps=${AUTO_RUN_STEPS}></civitai-chat-generation-card>`;
   },
 };
 
@@ -277,18 +278,19 @@ function recommended(part: ToolPart): ModelRecommendation[] | undefined {
 }
 
 /** A tool without a view of its own that answered with model recommendations shows them as cards. */
-export function modelCards(part: ToolPart, models: ModelDirectory): TemplateResult | undefined {
+export function modelCards(part: ToolPart, models: ModelDirectory, panel?: Panel): TemplateResult | undefined {
   const found = recommended(part);
   if (!found) return undefined;
+  const use = (model: ModelRecommendation) => (panel ? { action: 'Generate with', onUse: () => panel.useModel(model) } : { action: '', onUse: () => undefined });
   return html`<div class="cvt-models">
     ${found.slice(0, 8).map(
       (model) =>
         html`${until(
           models.get(model.id).then(
             (details) =>
-              html`<civitai-chat-model-card .name=${model.name} .creator=${details.creator ?? ''} .image=${details.image ?? ''} .href=${details.href} .kind=${details.kind ?? ''}></civitai-chat-model-card>`,
+              html`<civitai-chat-model-card .name=${model.name} .creator=${details.creator ?? ''} .image=${details.image ?? ''} .href=${details.href} .kind=${details.kind ?? ''} .action=${use(model).action} @model-use=${use(model).onUse}></civitai-chat-model-card>`,
           ),
-          html`<civitai-chat-model-card .name=${model.name}></civitai-chat-model-card>`,
+          html`<civitai-chat-model-card .name=${model.name} .action=${use(model).action} @model-use=${use(model).onUse}></civitai-chat-model-card>`,
         )}`,
     )}
   </div>`;

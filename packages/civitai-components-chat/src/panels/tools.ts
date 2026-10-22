@@ -84,7 +84,7 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
     }),
     [UPDATE_PANEL]: dynamicTool({
       description:
-        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), or change the run. The panel moves to the end of the chat with its runs, and a closed one opens again. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one. Never use it to close or remove a panel: that is close_panel.',
+        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), add options to a choice (addOptions keeps the ones it has), or change the run. The panel moves to the end of the chat with its runs, and a closed one opens again. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one. Never use it to close or remove a panel: that is close_panel.',
       inputSchema: jsonSchema({
         type: 'object',
         properties: {
@@ -96,6 +96,11 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
           run: { type: 'object', description: `Replaces what the button does. ${RUN_DESCRIPTION}` },
           button: BUTTON_SCHEMA,
           values: { type: 'object', description: 'Values to set by input name' },
+          addOptions: {
+            type: 'object',
+            description: 'New options for choices, keeping the current ones: {"<input name>": {"<option label>": what it puts in the run}}. For a model, copy the settings the selected option puts (in the panel context) and swap in the new model. Label it with the model\'s name only: never a price, which the Run button quotes from the service. A LoRA goes in its own lora choice, not the model one.',
+            additionalProperties: { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'object' }] } },
+          },
         },
         required: ['panel'],
       }),
@@ -103,10 +108,17 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
         const raw = (input ?? {}) as Record<string, unknown>;
         const panel = ctx.panels.get(String(raw.panel));
         if (!panel) return { error: `There is no panel ${String(raw.panel)}.`, note: 'Use the handle of a panel in this chat, or open_panel for a new one.' };
-        const changesDefinition = ['title', 'description', 'inputs', 'layout', 'run', 'button'].some((key) => raw[key] !== undefined);
+        const changesDefinition = ['title', 'description', 'inputs', 'layout', 'run', 'button', 'addOptions'].some((key) => raw[key] !== undefined);
         const checked = changesDefinition ? checkPanelSpec(mergeSpec(panel.spec, raw)) : { spec: panel.spec };
         if (checked.errors) return { error: checked.errors.join(' '), note: 'The panel was not changed. Fix it and call again.' };
-        const values = normalizeValues(checked.spec, { ...panel.values, ...(raw.values as Record<string, unknown> | undefined) });
+        // An option added for the viewer is the one they want next, unless the call picks another.
+        const added = Object.fromEntries(
+          Object.entries((raw.addOptions ?? {}) as Record<string, unknown>).flatMap(([key, options]) => {
+            const first = options && typeof options === 'object' ? Object.keys(options)[0] : undefined;
+            return first === undefined ? [] : [[key, first]];
+          }),
+        );
+        const values = normalizeValues(checked.spec, { ...panel.values, ...added, ...(raw.values as Record<string, unknown> | undefined) });
         const probe = await panel.probe(checked.spec, values);
         if (refused(probe)) return { error: probe.error?.detail ?? probe.error?.message, note: 'The panel was not changed: the service refused the run with these settings. Check run against get_input_schema and call again.' };
         panel.apply({ spec: changesDefinition ? checked.spec : undefined, values, toolCallId });

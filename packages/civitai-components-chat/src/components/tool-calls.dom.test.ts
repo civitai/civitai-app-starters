@@ -283,3 +283,24 @@ describe('new instructions the assistant proposes', () => {
     expect(changes).toEqual([{ customInstructions: 'Be Civ-chan, and meow now and then.' }]);
   });
 });
+
+describe('a failed call while the reply runs', () => {
+  it('shows nothing until the reply ends, then only what was never fixed', async () => {
+    const failed: TurnPart = { kind: 'tool', toolCallId: 'l1', toolName: 'sandbox__read_file', input: { path: '/x' }, state: 'error', error: 'No such file' };
+    const el = await turnWith([failed], { live: true });
+    expect(el.querySelector('.cvt-step-failed')).toBeNull();
+    el.live = false;
+    await el.updateComplete;
+    expect(el.querySelector('.cvt-step-failed code')?.textContent).toBe('No such file');
+  });
+});
+
+describe('a reply still running', () => {
+  it('keeps showing that it is working after its words, until it ends', async () => {
+    const el = await turnWith([{ kind: 'text', text: 'Let me fix the run call format.' }], { live: true });
+    expect(el.querySelector('.cvt-typing')).not.toBeNull();
+    el.live = false;
+    await el.updateComplete;
+    expect(el.querySelector('.cvt-typing')).toBeNull();
+  });
+});
