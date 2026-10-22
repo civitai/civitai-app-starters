@@ -1,6 +1,7 @@
 import { stepCountIs, streamText, type AssistantModelMessage, type JSONValue, type LanguageModel, type ToolResultPart, type ModelMessage, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
 
 import { stepLimit } from '../config.js';
+import { ToolImages, type ToolImagesContext } from '../mcp/images.js';
 import type { ResumePoint } from '../types.js';
 import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
@@ -189,6 +190,10 @@ export class AgentCore {
       toolsBuilt = true;
       const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
       if (ownSteps !== undefined) maxSteps = ownSteps;
+      // The images this reply's tools return (an added server's screenshot): shown to the model after
+      // the results that returned them, in every step of this reply, and in nothing it keeps.
+      const toolImages = new ToolImages();
+      const context: ToolImagesContext = { toolImages };
       const retryDelays = retry.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       const retryCap = retry.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
       // Retries of the drop now being recovered from (reset once a step finishes, i.e. the connection
@@ -260,8 +265,15 @@ export class AgentCore {
             maxOutputTokens,
             temperature: 0.7,
             providerOptions: PROVIDER_OPTIONS,
-            // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none', system: `${system}\n\n${lastStep}` } : undefined),
+            experimental_context: context,
+            prepareStep: ({ stepNumber, messages }) => {
+              // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
+              const last = before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none' as const, system: `${system}\n\n${lastStep}` } : undefined;
+              // The step's request with the reply's tool images in it; only this reply's own results get
+              // them, as an earlier reply's call may have had the same id.
+              const shown = toolImages.withImages(messages, history.length);
+              return shown ? { ...last, messages: shown } : last;
+            },
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
               recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
