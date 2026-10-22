@@ -76,7 +76,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
           const sink = toolImagesIn(experimental_context);
           const { images, notes } = toolImagesOf(result, sink !== undefined);
           sink?.add(toolCallId, name, images);
-          if (notes.length > 0) text = [text, ...notes].filter(Boolean).join('\n');
+          if (notes.length > 0) text = [text, ...notes, ...images.map((image) => image.data)].filter(Boolean).join('\n');
           return result.isError ? { error: text, note: FAILED_NOTE } : text;
         },
       });
