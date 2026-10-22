@@ -463,8 +463,9 @@ export class AgentCore {
 }
 
 /**
- * The provider refused the request itself (not the network, the account or a limit): what a model
- * that takes no images, or a request too large for it, answers.
+ * The provider refused the request with a client-error status: what a model that takes no images, or
+ * a request too large for it, answers. Not only that: a used-up free allowance is a 400 too, so a step
+ * that carried images and hit it is asked once more without them and fails again, as it would have.
  */
 function refusedRequest(error: unknown): boolean {
   const cause = RetryError.isInstance(error) ? error.lastError : error;
