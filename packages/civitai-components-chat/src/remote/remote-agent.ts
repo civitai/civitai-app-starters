@@ -1,8 +1,11 @@
+import type { JSONValue, ModelMessage, ToolResultPart } from 'ai';
 import { ulid } from 'ulid';
 
 import type { AgentErrorDetail, AgentRetryDetail } from '../agent/agent.js';
 import type { ChatAgent } from '../agent/chat-agent.js';
 import type { LiveTurn } from '../agent/core.js';
+import { partsFromMessages, type TurnPart } from '../agent/parts.js';
+import { DISPATCH_AGENT, isSubagentOutput, SUBAGENT_KIND, type SubagentResult } from '../agent/subagent-result.js';
 import type { ErrorTrace } from '../agent/error-trace.js';
 import {
   applyRunEvent,
@@ -26,11 +29,26 @@ import { readSse, type SseMessage } from './sse.js';
 /** An event stream that sent nothing (not even its keep-alive comment) for this long is taken as dead and opened again. */
 export const RUN_IDLE_MS = 3 * RUN_KEEPALIVE_MS;
 
+/**
+ * An event stream that sent nothing for this long has missed a keep-alive: the reply's status line says
+ * it is reconnecting (the stream is left open, and taken as dead only at {@link RUN_IDLE_MS}).
+ */
+export const RUN_QUIET_MS = RUN_KEEPALIVE_MS + 5_000;
+
 /** The longest the agent stays `running` while the chat's head is read again after a run: a read that hangs lets go then. */
 export const REREAD_TIMEOUT_MS = 15_000;
 
+/** Run events that do not show the run moving on after a model retry (see `#apply`). */
+const NOT_PROGRESS: ReadonlySet<string> = new Set(['network-retry', 'error', 'parts-truncate', 'run-started']);
+
 /** What a turn shows when its run could no longer be found and its chat could not be read again. */
 export const RUN_LOST = 'Lost track of this reply. Open the chat again to see how it ended.';
+
+/**
+ * What a reply ended on the page (Stop refused or not answered in time, the viewer refused, the run
+ * lost) shows for a call whose result never reached it: the call may well have finished on the runner.
+ */
+export const RESULT_NOT_RECEIVED = "This call's result wasn't received here. It may have finished; reload to see it.";
 
 /** What a turn shows when the runner refuses the viewer on the run's events (401/403): the run itself goes on. */
 export const RUN_DENIED = "The assistant's server did not accept your sign-in, so this reply cannot be followed here. Reload the page to see it.";
@@ -55,13 +73,15 @@ export interface RemoteAgentDeps {
   /** Reads the chat's head again (the runner wrote it) once a run ended: the session's `reloadConversation`. */
   reread(conversationId: string): Promise<void>;
   /** The session's subagent cards. */
-  progress?: { set(id: string, progress: RunSubagentProgress | undefined): void };
+  progress?: { set(id: string, progress: RunSubagentProgress | undefined): void; get?(id: string): RunSubagentProgress | undefined };
   /** A tool call finished, as the runner's gate reported it. */
   onToolResult?(result: ChatToolResult): void;
   /** Calls `listener` whenever the page wakes (shown again, back online, restored); returns how to stop. */
   wake?(listener: () => void): () => void;
   newKey?(): string;
   idleMs?: number;
+  /** {@link RUN_QUIET_MS} unless set. */
+  quietMs?: number;
   /** {@link STOP_GRACE_MS} unless set. */
   stopGraceMs?: number;
 }
@@ -91,8 +111,16 @@ interface Run {
   appliedThrough?: number;
   /** Journal re-reads in a row (an event that did not fit), for their waits: not reset by the events that do fit. */
   resyncs: number;
+  /** The calls whose result never reached the page, when the reply ended on the page: a head's real result for one of them is more than the page has. */
+  unreceived?: Set<string>;
   /** Ends the wait before the next reconnect, while one waits. */
   wakeWait?: () => void;
+  /** The event stream is down: it dropped, went quiet past a keep-alive, or is being opened again. */
+  streamDown?: boolean;
+  /** The runner's own connection to the model was cut and the step is asked for again (`network-retry`), until the next part. */
+  modelRetrying?: boolean;
+  /** Fires once the open stream has been quiet for {@link RUN_QUIET_MS}. */
+  quiet?: ReturnType<typeof setTimeout>;
   unsubscribe?: () => void;
 }
 
@@ -212,7 +240,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       // Only the latest turn can be replying.
       if (turn !== conversation.turns.at(-1)) return false;
       turn.assistant = { messages: [], status: 'streaming' };
-      const run = this.#begin(conversationId, turn);
+      const started = Date.parse(summary.startedAt);
+      const run = this.#begin(conversationId, turn, { reattached: true, ...(Number.isFinite(started) ? { startedAt: started } : {}) });
       run.runId = summary.runId;
       // Everything up to now is rebuilt from the replay, but the page already heard of it: not announced again.
       const heard = Number(summary.lastEventId);
@@ -226,7 +255,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       this.#attaching = undefined;
       const next = this.#attachNext;
       this.#attachNext = undefined;
-      if (next !== undefined && next !== conversationId && !this.#disposed && this.#deps.store.current?.id === next) void this.reattach(next);
+      // The chat asked for meanwhile; the same chat too when the page left it and came back while this lookup was on its way (its answer was dropped).
+      const again = next !== undefined && (next !== conversationId || generation !== this.#generation);
+      if (again && !this.#disposed && this.#deps.store.current?.id === next) void this.reattach(next);
     }
   }
 
@@ -240,14 +271,15 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     if (run.wakeWait) run.wakeWait();
     else if (run.connection && Date.now() - run.lastMessageAt > RUN_KEEPALIVE_MS) {
       run.reconnectNow = true;
+      this.#down(run, { stream: true });
       run.connection.abort();
     }
   }
 
-  #begin(conversationId: string, turn: Turn): Run {
+  #begin(conversationId: string, turn: Turn, live: Pick<LiveTurn, 'startedAt' | 'reattached'> = {}): Run {
     const run: Run = { conversationId, turn, stopRequested: false, closed: false, lastMessageAt: Date.now(), resyncs: 0 };
     this.#run = run;
-    this.#live = { seq: turn.seq, parts: [] };
+    this.#live = { seq: turn.seq, parts: [], startedAt: Date.now(), ...live };
     run.unsubscribe = this.#deps.wake?.(() => this.wake());
     this.#emit();
     return run;
@@ -278,6 +310,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (run.closed) return;
         // No answer, or the runner is down for now: the run may have started, so the same start (same key) is asked again.
         if (!retryable(error)) return this.#refused(run, error);
+        this.#down(run, { stream: true });
         await this.#pause(run, failures);
         if (run.closed) return;
       }
@@ -294,7 +327,18 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       try {
         const response = await this.#deps.client.events(run.runId!, run.lastEventId, connection.signal);
         if (!response.body) throw new Error('The run sent no event stream.');
-        const alive = () => (run.lastMessageAt = Date.now());
+        const quietMs = this.#deps.quietMs ?? RUN_QUIET_MS;
+        const listen = () => {
+          clearTimeout(run.quiet);
+          run.quiet = setTimeout(() => this.#down(run, { stream: true }), quietMs);
+        };
+        listen();
+        const alive = () => {
+          listen();
+          run.lastMessageAt = Date.now();
+          // Anything from the runner, its keep-alive included: the stream is up again.
+          this.#down(run, { stream: false });
+        };
         for await (const message of readSse(response.body, this.#deps.idleMs ?? RUN_IDLE_MS, alive)) {
           if (run.closed) return;
           failures = 0;
@@ -305,11 +349,13 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
           if (run.closed) return;
         }
       } catch (error) {
+        clearTimeout(run.quiet);
         if (run.closed) return;
         // The runner no longer knows the run, or refuses this viewer; any other refusal is asked again (a replica catching up).
         if (error instanceof RunnerHttpError && (error.status === 404 || error.status === 410)) return this.#lost(run);
         if (error instanceof RunnerHttpError && (error.status === 401 || error.status === 403)) return this.#denied(run, error);
       }
+      clearTimeout(run.quiet);
       if (run.closed) return;
       // An event that did not fit what is shown: the whole journal is read again, from `run-started`
       // (after the usual wait, so a runner whose journal never fits is not asked in a tight loop).
@@ -322,6 +368,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         run.reconnectNow = false;
         continue;
       }
+      // The stream dropped, went quiet past its keep-alives, or could not be opened: down until it is open again.
+      this.#down(run, { stream: true });
       await this.#pause(run, failures++);
     }
   }
@@ -348,6 +396,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
 
   #apply(run: Run, event: RunEvent, heard: boolean, known: boolean): boolean {
     const live = this.#live;
+    // The run moves on after the runner asked its model again: any event but the retry itself, an error,
+    // a step taken back or the run's start (as the page's own loop takes any part but `start` or `error`).
+    if (!NOT_PROGRESS.has(event.type)) this.#down(run, { retry: false });
     switch (event.type) {
       case 'run-started':
       case 'text-delta':
@@ -366,6 +417,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         if (!heard) this.#deps.onToolResult?.(event.result);
         return true;
       case 'network-retry':
+        this.#down(run, { retry: true });
         if (!known) (run.turn.assistant.networkRetries ??= []).push(event.trace);
         if (!heard) this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt: event.attempt, trace: event.trace } }));
         return true;
@@ -413,6 +465,12 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   async #finish(run: Run, headWins: boolean): Promise<void> {
     this.#teardown(run);
     if (this.#run === run) {
+      // Ended on the page, with no `run-ended` to say what it kept: what it showed is kept as the turn's messages.
+      if (headWins && this.#live?.parts.length) {
+        const kept = messagesFromParts(this.#live.parts, (id) => this.#deps.progress?.get?.(id));
+        run.turn.assistant.messages = kept.messages;
+        run.unreceived = kept.unreceived;
+      }
       this.#live = null;
       this.#emit();
     }
@@ -445,7 +503,14 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     const fresh = conversation?.id === run.conversationId ? conversation.turns.find((turn) => turn.seq === settled.seq) : undefined;
     if (!fresh || fresh === settled) return;
     const unfinished = fresh.assistant.status === 'streaming' || (fresh.assistant.status === 'error' && fresh.assistant.error === CUT_OFF);
-    if (headWins && !unfinished) return;
+    if (headWins) {
+      // Ended on the page: only a head whose reply finished, or that holds more of it, replaces what the page kept.
+      if (unfinished && !holdsMore(partsFromMessages(fresh.assistant.messages), partsFromMessages(settled.assistant.messages), run.unreceived ?? new Set())) {
+        fresh.assistant = settled.assistant;
+        this.#emit();
+      }
+      return;
+    }
     if (fresh.assistant.status !== settled.assistant.status) fresh.assistant = settled.assistant;
     else {
       const { errorDetail, errorKind: kind, errorTrace, networkRetries, resume } = settled.assistant;
@@ -539,6 +604,20 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     });
   }
 
+  /**
+   * Notes the event stream (`stream`) or the runner's model connection (`retry`) down or up; the reply's
+   * status line says it is reconnecting while either is down. Emits only when that changes.
+   */
+  #down(run: Run, change: { stream?: boolean; retry?: boolean }): void {
+    if (change.stream !== undefined) run.streamDown = change.stream;
+    if (change.retry !== undefined) run.modelRetrying = change.retry;
+    const live = this.#live;
+    const down = Boolean(run.streamDown || run.modelRetrying);
+    if (this.#run !== run || run.closed || !live || Boolean(live.reconnecting) === down) return;
+    live.reconnecting = down;
+    this.#emit();
+  }
+
   #close(run: Run): void {
     this.#teardown(run);
     this.#release(run);
@@ -548,6 +627,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #teardown(run: Run): void {
     if (run.closed) return;
     run.closed = true;
+    clearTimeout(run.quiet);
     run.connection?.abort();
     run.wakeWait?.();
     run.unsubscribe?.();
@@ -563,6 +643,68 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #emit(): void {
     this.dispatchEvent(new Event('change'));
   }
+}
+
+/**
+ * A reply's parts as the messages a turn keeps: its words and calls in order, then each call's result.
+ * A call whose result never reached the page gets {@link RESULT_NOT_RECEIVED} (a subagent's, a result
+ * with status `unreceived`, for its card): it may have finished on the runner. Also says which calls those were.
+ */
+function messagesFromParts(parts: readonly TurnPart[], progressOf: (id: string) => RunSubagentProgress | undefined): { messages: ModelMessage[]; unreceived: Set<string> } {
+  const unreceived = new Set<string>();
+  const said: Exclude<Extract<ModelMessage, { role: 'assistant' }>['content'], string> = [];
+  const results: ToolResultPart[] = [];
+  for (const part of parts) {
+    if (part.kind === 'text') {
+      if (part.text.trim()) said.push({ type: 'text', text: part.text });
+      continue;
+    }
+    said.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+    if (part.state === 'calling') unreceived.add(part.toolCallId);
+    const output: ToolResultPart['output'] =
+      part.state === 'done'
+        ? typeof part.output === 'string'
+          ? { type: 'text', value: part.output }
+          : { type: 'json', value: (part.output ?? null) as JSONValue }
+        : part.state === 'error'
+          ? { type: 'error-text', value: part.error ?? '' }
+          : part.toolName === DISPATCH_AGENT
+            ? { type: 'json', value: unreceivedSubagent(progressOf(part.toolCallId)) as unknown as JSONValue }
+            : { type: 'error-text', value: RESULT_NOT_RECEIVED };
+    results.push({ type: 'tool-result', toolCallId: part.toolCallId, toolName: part.toolName, output });
+  }
+  if (said.length === 0) return { messages: [], unreceived };
+  return { messages: [{ role: 'assistant', content: said }, ...(results.length ? [{ role: 'tool' as const, content: results }] : [])], unreceived };
+}
+
+/** A subagent whose result never reached the page, with how far it was last seen to have got. */
+export function unreceivedSubagent(progress: RunSubagentProgress | undefined): SubagentResult {
+  return {
+    kind: SUBAGENT_KIND,
+    status: 'unreceived',
+    summary: '',
+    steps: progress?.steps ?? 0,
+    toolCalls: progress?.toolCalls ?? 0,
+    activity: [],
+    error: RESULT_NOT_RECEIVED,
+    // A write subagent keeps its edits as last seen: their count, since their paths never reached the page.
+    ...(progress?.mode === 'write' ? { mode: 'write' as const, changed: [], changedCount: progress.changed ?? 0, ranCommands: progress.ranCommands ?? 0 } : {}),
+  };
+}
+
+/**
+ * Whether a saved reply holds more than the page kept of the same one. Both are a start of one event
+ * stream, and the head saves whole steps, so it holds more when it has more parts, or as many with the
+ * real result of a call the page never got (`unreceived`, by id), or the last words written further. A
+ * result made up when the head was read back (the placeholder a write subagent saved mid-run gets) is not one.
+ */
+function holdsMore(head: readonly TurnPart[], kept: readonly TurnPart[], unreceived: ReadonlySet<string>): boolean {
+  if (head.length !== kept.length) return head.length > kept.length;
+  const placeholder = (output: unknown) => isSubagentOutput(output) && (output as { status?: unknown }).status === 'interrupted';
+  const answered = head.some((saved) => saved.kind === 'tool' && unreceived.has(saved.toolCallId) && saved.state === 'done' && !placeholder(saved.output));
+  const [headLast, keptLast] = [head.at(-1), kept.at(-1)];
+  const furtherWords = headLast?.kind === 'text' && keptLast?.kind === 'text' && headLast.text.length > keptLast.text.length;
+  return answered || furtherWords;
 }
 
 /** Whether a failed call is worth making again: no answer came, or the runner is down or busy for now. */

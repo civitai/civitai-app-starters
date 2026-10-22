@@ -45,6 +45,7 @@ export class CivitaiChatThread extends LightElement {
     mcpServerIds: { attribute: false },
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     queued: { attribute: false },
     atBottom: { state: true },
     announcement: { state: true },
@@ -71,6 +72,8 @@ export class CivitaiChatThread extends LightElement {
   declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  /** The live reply waits for the viewer to approve a call: its status line says so. */
+  declare awaitingApproval: boolean;
   declare queued: QueuedView | null;
   declare atBottom: boolean;
   declare announcement: string;
@@ -91,6 +94,7 @@ export class CivitaiChatThread extends LightElement {
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
     this.canRetry = false;
+    this.awaitingApproval = false;
     this.queued = null;
     this.turns = [];
     this.live = null;
@@ -205,6 +209,8 @@ export class CivitaiChatThread extends LightElement {
                 .turn=${turn}
                 .parts=${this.#partsOf(turn)}
                 ?live=${this.live?.seq === turn.seq}
+                .liveTurn=${this.live?.seq === turn.seq ? this.live : null}
+                ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
                 .jobs=${this.jobs}

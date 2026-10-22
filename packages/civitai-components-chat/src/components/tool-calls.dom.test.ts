@@ -295,12 +295,3 @@ describe('a failed call while the reply runs', () => {
   });
 });
 
-describe('a reply still running', () => {
-  it('keeps showing that it is working after its words, until it ends', async () => {
-    const el = await turnWith([{ kind: 'text', text: 'Let me fix the run call format.' }], { live: true });
-    expect(el.querySelector('.cvt-typing')).not.toBeNull();
-    el.live = false;
-    await el.updateComplete;
-    expect(el.querySelector('.cvt-typing')).toBeNull();
-  });
-});

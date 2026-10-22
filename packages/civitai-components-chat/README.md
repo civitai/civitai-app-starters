@@ -664,6 +664,35 @@ a call that was already running finishes. Each call that did not run is reported
 with `stopped: true`. Stop still works as before: a reply the viewer stopped is stopped, whatever the
 gate answers.
 
+#### The reply's status line
+
+While a reply is live it shows a status line under what it has said so far, from the moment it starts
+until it ends, with how long it has run: *Working · 0:42*. It reads *Reconnecting…* while the
+connection the reply comes over is down (a dropped model stream asked for again; with
+`runner="remote"`, the runner's event stream opened again), and *Still working on the server* for a
+reply a server runner was already running when the page opened its chat (a reload, another device). It
+is a polite `role="status"`: a screen reader hears it when its state changes, never the seconds.
+
+A page that asks the viewer to approve calls itself (a `beforeToolCall` that waits for a click, or
+approval cards it draws for a server runner's gate) sets `awaitingApproval` while any call waits, and the
+line reads *Waiting for your approval* until it is set back to `false`. Several calls can wait at once,
+so keep a count rather than a flag:
+
+```ts
+let waiting = 0;
+chat.beforeToolCall = async (name, input, { signal }) => {
+  if (!needsApproval(name)) return { allow: true };
+  chat.awaitingApproval = ++waiting > 0;
+  try {
+    return (await askViewer(name, input, signal)) ? { allow: true } : { refuse: 'The viewer said no.' };
+  } finally {
+    chat.awaitingApproval = --waiting > 0;
+  }
+};
+```
+
+`awaiting-approval` is its attribute. It goes back to `false` by itself when the reply it was set during ends or another takes its place (a page that missed setting it back, after a Stop say, does not start the next reply on it); set while no reply is live, it applies to the next one. A page that binds it from its own state (a framework's property binding, say) rather than setting it at each change must set it again after that reset: when the viewer switches chats or reopens one whose reply still runs, the element's value may be `false` while the page's own still says `true`, and a binding that only writes on a change of the page's value will not write it again.
+
 Give the chat a height, as for any panel. Theming stays with the page: the chat reads the
 `--civitai-*` tokens and follows `data-theme` on the page.
 
@@ -714,14 +743,20 @@ subagent's transcript:
 ```ts
 {
   kind: 'subagent',    // on every output of the chat's own dispatch_agent, a refusal ({ kind, error, note }) included
-  status: 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted', // 'interrupted': a write subagent only, see below
+  status: 'done' | 'ran_out' | 'stopped' | 'error' | 'interrupted' | 'unreceived', // 'interrupted': a write subagent only, see below; 'unreceived': see "Server runner"
   summary: string,     // its final words, cut to 4,000 characters
   steps: number,       // model requests it made
   toolCalls: number,
   activity: { tool: string; arg: string }[], // each call's tool and a short argument (a path, a query), at most 50, no outputs
   error?: string,      // status 'error'
+  changedCount?: number, // status 'unreceived', a write subagent: files changed when last seen
 }
 ```
+
+`'unreceived'` is the page's own result for a subagent of a reply run on a server runner
+(`runner="remote"`) that ended on the page before the subagent's result came: Stop was refused or not
+answered in time, or the runner refused the viewer. It may have finished on the runner (reload to see
+it); its card reads "Result not received", with the counts last seen.
 
 **Telling a subagent's calls from the reply's own.** A subagent's calls go through `beforeToolCall` and
 fire `tool-result` like any other, with the reply's own `reply` number, and carry `subagent`: the

@@ -33,6 +33,12 @@ const LAST_STEP =
 export interface LiveTurn {
   seq: number;
   parts: TurnPart[];
+  /** When the reply started (ms since the epoch): the reply's status line counts its time from it. */
+  startedAt?: number;
+  /** The connection the reply comes over is down and being made again (a dropped model stream asked for again, a runner's event stream opened again). */
+  reconnecting?: boolean;
+  /** A reply a server runner was already running when this page opened its chat (a reload, another device): followed, not started, here. */
+  reattached?: boolean;
 }
 
 /** What one reply asks the model with, built once its tools are. */
@@ -155,7 +161,7 @@ export class AgentCore {
     const from = run.from;
     const controller = new AbortController();
     this.#abort = controller;
-    this.#live = { seq: run.seq, parts: from ? partsFromMessages(from.messages) : [] };
+    this.#live = { seq: run.seq, parts: from ? partsFromMessages(from.messages) : [], startedAt: Date.now() };
     this.#emit();
 
     let completed: ModelMessage[] = from ? [...from.messages] : [];
@@ -263,6 +269,11 @@ export class AgentCore {
             },
           });
           for await (const part of result.fullStream) {
+            // The model answers again (not the stream's own start, nor another error): the reply is back.
+            if (this.#live?.reconnecting && part.type !== 'start' && part.type !== 'error') {
+              this.#live.reconnecting = false;
+              this.#emit();
+            }
             if (part.type === 'start-step') {
               stepText = '';
               stepCalls = [];
@@ -350,6 +361,8 @@ export class AgentCore {
         streaming = false;
         stepText = '';
         stepOpen = false;
+        // Down until the step asked for again sends its first part.
+        if (this.#live) this.#live.reconnecting = true;
         this.#emit();
         await pauseBeforeRetry(wait, controller.signal);
         if (controller.signal.aborted) break;

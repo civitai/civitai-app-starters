@@ -4,14 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Agent } from '../agent/agent.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
+import { SubagentTracker } from '../agent/subagents.js';
 import { JobManager } from '../orchestration/jobs.js';
-import { createPartsDiffer, type RunEvent } from '../runner-protocol.js';
+import { createPartsDiffer, RUN_KEEPALIVE_MS, type RunEvent } from '../runner-protocol.js';
 import { ThreadStore, type ThreadStoreDeps } from '../store/thread-store.js';
 import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import { workflow } from '../test-support/fakes.js';
 import { scriptedModel, text, toolCall } from '../test-support/scripted-model.js';
 import type { ChatToolResult } from '../tools/gate.js';
-import { RemoteAgent, RUN_ACTIVE, type RemoteAgentDeps } from './remote-agent.js';
+import { RemoteAgent, RUN_ACTIVE, RUN_IDLE_MS, RUN_QUIET_MS, type RemoteAgentDeps } from './remote-agent.js';
 import { RunnerClient } from './runner-client.js';
 
 const SETTINGS = { maxOutputTokens: 4096, tier: 'auto', allowMature: false, autoRunLimit: 10, spokenReplies: false } as const;
@@ -83,6 +84,7 @@ async function pushAll(runner: ReturnType<typeof fakeRunner>, runId: string, eve
 const ended = (messages: ModelMessage[], status: 'done' | 'stopped' | 'error' | 'ran_out' = 'done', extra: Partial<Extract<RunEvent, { type: 'run-ended' }>> = {}): RunEvent => ({ type: 'run-ended', status, messages, steps: 1, ...extra });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -264,6 +266,142 @@ describe('RemoteAgent, against a runner', () => {
     expect(turn.assistant.status).toBe('done');
   });
 
+  it('says the stream is down while it is opened again, and up again once anything arrives from the runner', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Working' }]);
+    // Up from the start: a reply that was never cut does not say it reconnects.
+    expect(down.some(Boolean)).toBe(false);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    runner.knobs.failEvents = 2;
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(down).toContain(true));
+    // Two opens get no answer: still down meanwhile, and up once the third one's first bytes came.
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down.at(-1)).toBe(false);
+    // Down once per cut, not once per failed open: one change to down, one back up.
+    expect(down.filter((d, i) => d !== undefined && d !== down[i - 1])).toEqual([true, false]);
+    // A reconnect is not a new reply: what was shown stays.
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    expect(agent.live!.reattached).toBeUndefined();
+    agent.leave();
+  });
+
+  it('says it is reconnecting once the open stream missed a keep-alive, without dropping it, and not after the next byte', async () => {
+    // A keep-alive missed, and well before the stream is taken as dead.
+    expect(RUN_QUIET_MS).toBeGreaterThan(RUN_KEEPALIVE_MS);
+    expect(RUN_QUIET_MS).toBeLessThan(RUN_IDLE_MS);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    runner.push('r1', { type: 'text-delta', index: 0, text: 'Working' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    await vi.advanceTimersByTimeAsync(RUN_QUIET_MS - 1_000);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(agent.live!.reconnecting).toBe(true);
+    // Shown, not acted on: the same stream stays open.
+    expect(runner.eventOpens('r1')).toHaveLength(1);
+    expect(runner.openStreams('r1')).toBe(1);
+    // A byte from the runner (here an event; a keep-alive counts the same) and it is up again.
+    runner.push('r1', { type: 'text-delta', index: 0, text: ' on it' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agent.live!.reconnecting).toBe(false);
+    // And the quiet clock starts over from that byte.
+    await vi.advanceTimersByTimeAsync(RUN_QUIET_MS - 1_000);
+    expect(agent.live!.reconnecting).toBe(false);
+    agent.leave();
+  });
+
+  it('says it is reconnecting while the runner asks the model again (network-retry), until the model answers', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Half' }]);
+    expect(agent.live!.reconnecting).toBeFalsy();
+    await pushAll(runner, 'r1', [
+      { type: 'parts-truncate', length: 0 },
+      { type: 'network-retry', attempt: 1, trace: { stage: 'stream', step: 1, msIntoStep: 5, message: 'terminated' } },
+    ]);
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(true));
+    // Bytes on the stream are not the model answering: still reconnecting after a step taken back.
+    await pushAll(runner, 'r1', [{ type: 'parts-truncate', length: 0 }]);
+    expect(agent.live!.reconnecting).toBe(true);
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Whole' }]);
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    agent.leave();
+  });
+
+  it('takes any event of the run moving on as the end of a model retry, not only words', async () => {
+    const { agent, runner } = setup();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    const retry: RunEvent = { type: 'network-retry', attempt: 1, trace: { stage: 'stream', step: 1, msIntoStep: 5, message: 'terminated' } };
+    const progress: RunEvent[] = [
+      { type: 'subagent-progress', toolCallId: 't9', progress: { task: 'look', steps: 1, toolCalls: 0 } },
+      { type: 'tool-reported', result: { name: 'sandbox__run_command', input: {}, output: 'ok', isError: false } },
+      // A later protocol's event, unknown here.
+      { type: 'reasoning-delta', text: 'thinking' } as unknown as RunEvent,
+    ];
+    for (const event of progress) {
+      await pushAll(runner, 'r1', [retry]);
+      await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(true));
+      await pushAll(runner, 'r1', [{ type: 'error', message: 'still down', trace: retry.trace } as RunEvent]);
+      expect(agent.live!.reconnecting).toBe(true);
+      await pushAll(runner, 'r1', [event]);
+      await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    }
+    agent.leave();
+  });
+
+  it('says it is reconnecting while a stream that went quiet as the page slept is opened again on wake', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await pushAll(runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Working' }]);
+    const opens = runner.eventOpens('r1').length;
+    // The page wakes after longer than a keep-alive with nothing read.
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + RUN_KEEPALIVE_MS + 1_000);
+    agent.wake();
+    expect(agent.live!.reconnecting).toBe(true);
+    await vi.waitFor(() => expect(runner.eventOpens('r1').length).toBe(opens + 1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down.filter((d, i) => d !== undefined && d !== down[i - 1])).toEqual([true, false]);
+    expect(agent.live!.parts).toEqual([{ kind: 'text', text: 'Working' }]);
+    agent.leave();
+  });
+
+  it('says it is reconnecting while a start whose answer never came is asked again', async () => {
+    const { agent, runner } = setup();
+    const down: (boolean | undefined)[] = [];
+    agent.addEventListener('change', () => agent.live && down.push(agent.live.reconnecting));
+    runner.knobs.failStarts = 2;
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    await vi.waitFor(() => expect(agent.live!.reconnecting).toBe(false));
+    expect(down).toContain(true);
+    agent.leave();
+  });
+
+  it('dates a reply from when it started on the page', async () => {
+    const { agent, runner } = setup();
+    const before = Date.now();
+    void agent.send('go');
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(agent.live!.startedAt).toBeGreaterThanOrEqual(before);
+    expect(agent.live!.startedAt).toBeLessThanOrEqual(Date.now());
+    agent.leave();
+  });
+
   it('asks again for a start whose answer never came, with the same key, so the run starts once', async () => {
     const { agent, runner } = setup();
     runner.knobs.failStarts = 2;
@@ -336,6 +474,9 @@ describe('RemoteAgent, against a runner', () => {
     );
     // Read from the journal's start: no event id to resume after.
     expect(first.runner.eventOpens('r1')[opensBefore]!.headers['last-event-id']).toBeUndefined();
+    // Followed, not started, here: dated from when the run started on the runner.
+    expect(agent.live!.reattached).toBe(true);
+    expect(agent.live!.startedAt).toBe(Date.parse('2026-10-19T00:00:00Z'));
     expect(agent.live!.seq).toBe(1);
     expect(made.store.current!.turns[0]!.assistant.status).toBe('streaming');
     first.runner.push('r1', ended([{ role: 'assistant', content: 'Built.' }]));
@@ -639,3 +780,237 @@ describe('RemoteAgent, against a runner', () => {
     expect(errors[0]).toEqual({ kind: 'assistant_unavailable', message, trace });
   });
 });
+
+/** A v3 head as the runner saves it while its reply to turn 1 still runs: nothing finished yet. */
+function runningHead(conversationId: string, messages: ModelMessage[] = [], subagents?: Record<string, unknown>): Workflow {
+  return workflow({
+    id: `head-${conversationId}`,
+    tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+    metadata: {
+      v: 3,
+      app: 'chat-cvt',
+      conversationId,
+      title: 'Go',
+      titleSource: 'first-message',
+      createdAt: '2026-10-19T00:00:00Z',
+      updatedAt: '2026-10-19T00:00:00Z',
+      turns: [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages, status: 'running', savedAt: '2026-10-19T00:00:01Z', ...(subagents ? { subagents } : {}) } }],
+    },
+  });
+}
+
+/** What a reply ended on the page shows for a call whose result never reached it: the call may still have finished on the runner. */
+const NOT_RECEIVED = "This call's result wasn't received here. It may have finished; reload to see it.";
+
+describe('RemoteAgent, a reply ended on the page without run-ended', () => {
+  /** A run that showed some words and a finished tool call, then one still running, with the head saved still running. */
+  async function partway(extra: Partial<RemoteAgentDeps> = {}) {
+    const made = setup([runningHead('c1')], extra);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Working on it.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't1', output: { exitCode: 0 } },
+      { type: 'tool-call', index: 2, toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(3));
+    return made;
+  }
+
+  /** What the open chat's turn 1 shows now, as the thread draws it. */
+  const shown = (store: ThreadStore) => partsFromMessages(store.current!.turns[0]!.assistant.messages);
+
+  const kept = [
+    { kind: 'text', text: 'Working on it.' },
+    { kind: 'tool', toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' }, state: 'done', output: { exitCode: 0 } },
+    { kind: 'tool', toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm run build' }, state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+  ];
+
+  it('keeps what the reply showed when the runner refuses Stop', async () => {
+    const { agent, runner, store, rereads } = await partway();
+    runner.knobs.refuseStop = { status: 403 };
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  it('keeps what the reply showed when the run does not say it stopped in time', async () => {
+    const { agent, store, rereads } = await partway({ stopGraceMs: 30 });
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant.status).toBe('aborted');
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  it.each([401, 403])('keeps what the reply showed when the runner refuses the viewer (%i) mid-reply', async (status) => {
+    const { agent, runner, store, rereads } = await partway();
+    runner.knobs.refuseEvents = { status, times: 1_000_000 };
+    runner.dropStreams('r1');
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(rereads).toEqual(['c1']);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject(kept);
+  });
+
+  /** A run that showed words and one call still running, ended on the page by a 401, with `saved` as the head the runner had written by then. */
+  async function deniedWith(saved: ModelMessage[]) {
+    const made = setup([runningHead('c1', saved)]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Testing.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(2));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.rereads).toEqual(['c1']);
+    return made;
+  }
+  const call = { type: 'tool-call' as const, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } };
+  const result = { type: 'tool-result' as const, toolCallId: 't1', toolName: 'sandbox__run_command', output: { type: 'json' as const, value: { exitCode: 0 } } };
+
+  it("takes the head when it holds as many parts but has the real result of a call the page never got", async () => {
+    // The runner finished t1 and saved that step while the page was reconnecting.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] }, { role: 'tool', content: [result] }]);
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'done', output: { exitCode: 0 } },
+    ]);
+  });
+
+  it('takes the head when it holds strictly more parts', async () => {
+    const { store } = await deniedWith([
+      { role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] },
+      { role: 'tool', content: [result] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Tests pass.' }] },
+    ]);
+    expect(shown(store)).toMatchObject([{ kind: 'text', text: 'Testing.' }, { kind: 'tool', toolCallId: 't1', state: 'done' }, { kind: 'text', text: 'Tests pass.' }]);
+  });
+
+  it('keeps the page copy, and how it ended, when the head holds the same parts and no result the page lacks', async () => {
+    // The head saved the call as it started, with no result: read back, it gets the placeholder "interrupted" result, and the page's copy holds as much.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call] }]);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+    ]);
+  });
+
+  it("keeps the page copy when the head's only result for a call is the placeholder made for a write subagent saved mid-run", async () => {
+    // The page saw a write subagent start; the head saved its dispatch_agent call and the subagent's progress, no result.
+    const made = setup([
+      runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Delegating.' }, { type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } }] }], {
+        d1: { mode: 'write', steps: 2, toolCalls: 3, changed: [{ path: 'game/scene.ts', op: 'write' }], activity: [], ranCommands: 0 },
+      }),
+    ], { progress: new SubagentTracker() });
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Delegating.' },
+      { type: 'tool-call', index: 1, toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' } },
+      // Counts all distinct, and from the head's: the result must carry these, as the page last saw them.
+      { type: 'subagent-progress', toolCallId: 'd1', progress: { task: 'Split the scene', steps: 4, toolCalls: 7, mode: 'write', changed: 3, ranCommands: 2 } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(2));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.rereads).toEqual(['c1']);
+    // Still the page's: the sign-in error, and the subagent's result marked as not received here, not as interrupted.
+    expect(made.store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(made.store)).toMatchObject([
+      { kind: 'text', text: 'Delegating.' },
+      { kind: 'tool', toolCallId: 'd1', state: 'done', output: { kind: 'subagent', status: 'unreceived', error: NOT_RECEIVED, steps: 4, toolCalls: 7, mode: 'write', changedCount: 3, ranCommands: 2 } },
+    ]);
+  });
+
+  it('counts only the head result of the very call the page lacks: another call answered in both does not make the head win', async () => {
+    const made = setup([runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }, call, { ...call, toolCallId: 't2' }] }, { role: 'tool', content: [{ ...result, toolCallId: 't2' }] }])]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [
+      { type: 'text-delta', index: 0, text: 'Testing.' },
+      { type: 'tool-call', index: 1, toolCallId: 't1', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-call', index: 2, toolCallId: 't2', toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+      { type: 'tool-result', toolCallId: 't2', output: { exitCode: 0 } },
+    ]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(3));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(made.store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(made.store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+      { kind: 'tool', toolCallId: 't2', state: 'done', output: { exitCode: 0 } },
+    ]);
+  });
+
+  it('takes the head when it holds as many parts but its last words go further', async () => {
+    const made = setup([runningHead('c1', [{ role: 'assistant', content: [{ type: 'text', text: 'Testing. All tests pass.' }] }])]);
+    void made.agent.send('go');
+    await vi.waitFor(() => expect(made.runner.openStreams('r1')).toBe(1));
+    await pushAll(made.runner, 'r1', [{ type: 'text-delta', index: 0, text: 'Testing.' }]);
+    await vi.waitFor(() => expect(made.agent.live?.parts).toHaveLength(1));
+    made.runner.knobs.refuseEvents = { status: 401, times: 1_000_000 };
+    made.runner.dropStreams('r1');
+    await vi.waitFor(() => expect(made.agent.running).toBe(false));
+    expect(shown(made.store)).toEqual([{ kind: 'text', text: 'Testing. All tests pass.' }]);
+  });
+
+  it('keeps the page copy, and how it ended, when the head holds less', async () => {
+    // The head saved only the words: the call the page saw start is not in it.
+    const { store } = await deniedWith([{ role: 'assistant', content: [{ type: 'text', text: 'Testing.' }] }]);
+    expect(store.current!.turns[0]!.assistant).toMatchObject({ status: 'error', errorKind: 'auth' });
+    expect(shown(store)).toMatchObject([
+      { kind: 'text', text: 'Testing.' },
+      { kind: 'tool', toolCallId: 't1', state: 'error', error: JSON.stringify(NOT_RECEIVED) },
+    ]);
+  });
+
+  it('still takes a head whose reply finished meanwhile over what the page kept', async () => {
+    const { agent, runner, store, heads } = await partway();
+    heads.splice(0, 1, head('c1', [{ seq: 1, createdAt: '2026-10-19T00:00:00Z', user: { content: 'go', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'All built.' }], status: 'done' } }]));
+    runner.knobs.refuseStop = { status: 403 };
+    agent.abort();
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(store.current!.turns[0]!.assistant.status).toBe('done');
+    expect(shown(store)).toEqual([{ kind: 'text', text: 'All built.' }]);
+  });
+});
+
+describe('RemoteAgent, a chat the page left and came back to while its lookup was on its way', () => {
+  it('looks the chat up again, and follows its live run', async () => {
+    const { agent, runner, store } = setup();
+    runner.knobs.holdLookups = true;
+    await runner.fetch(`${RUNNER_URL}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ v: 1, idempotencyKey: 'other', conversationId: 'c1', turn: { seq: 1, user: { content: 'hi', attachments: [] } }, model: 'm', settings: {} }),
+    });
+    // Open A: its lookup is held.
+    await store.open('c1');
+    const first = agent.reattach('c1');
+    await vi.waitFor(() => expect(runner.requests.filter((request) => request.path === 'runs?conversationId=c1')).toHaveLength(1));
+    // To B and back to A, as openConversation does (leave, then look up the chat opened).
+    agent.leave();
+    await store.open('c2');
+    agent.leave();
+    await store.open('c1');
+    expect(await agent.reattach('c1')).toBe(false);
+    runner.knobs.holdLookups = false;
+    runner.releaseLookups();
+    expect(await first).toBe(false);
+    await vi.waitFor(() => expect(runner.openStreams('r1')).toBe(1));
+    expect(agent.running).toBe(true);
+    expect(agent.live?.seq).toBe(1);
+    agent.leave();
+  });
+});
+
