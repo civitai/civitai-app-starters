@@ -169,6 +169,16 @@ describe("a reply step cut by the network keeps the step's orchestration workflo
     expect(orchestration.allCancels()).toEqual([]);
   });
 
+  it("counts what the kept workflow cost on the reply, as the step's own closing usage would have", async () => {
+    const { orchestration, send, reply } = setup({
+      posts: [{ workflowId: 'wf-charged-2d95', stream: 'cut' }],
+      reads: { 'wf-charged-2d95': [{ ...succeeded('High tide is at 7:40.'), cost: { base: 13, tips: { civitai: 0, creators: 0 }, total: 13 } }] },
+    });
+    await send('when is high tide?');
+    expect(orchestration.replyPosts()).toHaveLength(1);
+    expect(reply().buzz).toBe(13);
+  });
+
   it('waits for a workflow still running, then uses its answer, with no second POST', async () => {
     const { orchestration, send, reply } = setup({
       posts: [{ workflowId: 'wf-slow-4b8d', stream: 'cut' }, { workflowId: 'wf-paid-again-1e77', stream: { answer: 'A second, paid answer.' } }],

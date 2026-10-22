@@ -95,28 +95,24 @@ describe('workflowRecoveryFetch', () => {
     expect(log).toEqual([]);
   });
 
-  it('does not wait on a free request still queued: cancels it and sends again, so the free tier can fall back to paid', async () => {
-    const { send, inner, answers, log } = harness(() => Response.json({ status: 'scheduled' }));
+  it('waits for a queued free workflow like any other: sent again, it would only queue again at the back', async () => {
+    let reads = 0;
+    const { send, inner, answers, log } = harness(() => {
+      reads++;
+      if (reads < 3) return Response.json({ status: 'scheduled' });
+      return Response.json({
+        status: 'succeeded',
+        steps: [{ $type: 'chatCompletion', output: { id: 'c', created: 1, model: 'm', choices: [{ index: 0, message: { role: 'assistant', content: 'Free, and kept.' }, finishReason: 'stop' }] } }],
+      });
+    });
     const free = (body: string): RequestInit => ({ method: 'POST', body, headers: { 'X-Civitai-Tier': 'free' } });
     answers.push(cutAnswer('wf-queued-free-5b27'));
     await drain(await send(URL_, free('{"e":5}')));
-    await drain(await send(URL_, free('{"e":5}')));
-    expect(log.filter((r) => r.method === 'GET')).toHaveLength(1);
-    // Read without `wait`: orchestration would hold a queued workflow's read for the whole wait first.
-    expect(log.find((r) => r.method === 'GET')!.url).toBe(`${BASE}/v2/consumer/workflows/wf-queued-free-5b27`);
-    expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-queued-free-5b27`, body: CANCELED }]);
-    expect(inner).toHaveBeenCalledTimes(2);
-  });
-
-  it('goes by the tier the cut request went out on, when the retry goes paid (the free replies ran out)', async () => {
-    const { send, inner, answers, log } = harness(() => Response.json({ status: 'scheduled' }));
-    answers.push(cutAnswer('wf-last-free-8d61'));
-    await drain(await send(URL_, { method: 'POST', body: '{"g":7}', headers: { 'X-Civitai-Tier': 'free' } }));
-    // Sent again with no tier header: the free-tier wrapper sends it paid.
-    await drain(await send(URL_, post('{"g":7}')));
-    expect(log.filter((r) => r.method === 'GET')).toHaveLength(1);
-    expect(log.filter((r) => r.method === 'PUT')).toEqual([{ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf-last-free-8d61`, body: CANCELED }]);
-    expect(inner).toHaveBeenCalledTimes(2);
+    const kept = await (await send(URL_, free('{"e":5}'))).text();
+    expect(kept).toContain('Free, and kept.');
+    expect(log.filter((r) => r.method === 'GET')).toHaveLength(3);
+    expect(log.filter((r) => r.method === 'PUT')).toEqual([]);
+    expect(inner).toHaveBeenCalledTimes(1);
   });
 
   it('cancels a cut workflow when Stop comes before the step is asked for again', async () => {
