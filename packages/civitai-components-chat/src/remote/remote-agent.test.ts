@@ -1089,6 +1089,57 @@ describe('RemoteAgent, a start that keeps failing', () => {
     agent.leave();
   });
 
+  it('a start that did reach the runner: given up without stopping its run, and Retry sends the same start again, so that run is followed rather than refused as run-active', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    let keys = 0;
+    const { agent, runner, store } = setup([], { newKey: () => `key-${++keys}` }, LADDER);
+    // Every ask reaches the runner (the first starts the run, the rest find it by its key), and no answer comes back.
+    runner.knobs.refuseConcurrent = true;
+    runner.knobs.loseStartAnswers = 6;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(48_000);
+    expect(starts(runner)).toBe(6);
+    expect(agent.running).toBe(false);
+    expect(offersRetry(store.current!.turns[0]!.assistant)).toBe(true);
+    // The run is the runner's, as after leave(): nothing asks to stop it.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(runner.requests.filter((request) => request.path.endsWith('stop'))).toEqual([]);
+    expect(runner.runs.get('r1')!.live).toBe(true);
+
+    // Retry (pressed, or the chat's own ask as the page comes back online): the very same start, key and all.
+    void agent.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    const bodies = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs').map((request) => JSON.stringify(request.body));
+    expect(bodies).toHaveLength(7);
+    expect(new Set(bodies).size).toBe(1);
+    expect(runner.runs.size).toBe(1);
+    expect(store.current!.turns[0]!.assistant.status).toBe('streaming');
+    expect(runner.openStreams('r1')).toBe(1);
+    agent.leave();
+  });
+
+  it('a page that slept while its start kept failing: the minute counts again from when it woke, not from the first ask', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { agent, runner } = setup([], {}, LADDER);
+    runner.knobs.failStarts = 1_000_000;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(18_000);
+    expect(starts(runner)).toBe(5);
+    // Ten minutes asleep: the clock moves on, the timers do not. Waking ends the wait.
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    agent.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts(runner)).toBe(6);
+    expect(agent.running).toBe(true);
+    // Then a minute from the wake, as from a first ask: again at 30 s and 60 s, then given up.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(starts(runner)).toBe(7);
+    expect(agent.running).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(starts(runner)).toBe(8);
+    expect(agent.running).toBe(false);
+  });
+
   it.each([400, 403, 422])('a refusal (%i) still fails at once, with no wait and no second start', async (status) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const { agent, runner, store, errors } = setup([], {}, LADDER);
