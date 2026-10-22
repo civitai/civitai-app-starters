@@ -7,6 +7,8 @@ import { DISPATCH_AGENT, dispatchAgentTool, resolveSubagents } from '../agent/su
 import { gateToolSet } from '../tools/gate.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { fakeHeads, fakeLocks, tabStorage } from '../test-support/fake-heads.js';
+import type { McpConnection } from '../mcp/clients.js';
+import { extraToolSet } from '../tools/extra.js';
 import type { Turn } from '../types.js';
 import { CUT_OFF, INTERRUPTED_CALL, ThreadStore, replyElsewhere } from './thread-store.js';
 
@@ -59,8 +61,11 @@ function tab(
 ) {
   const ran: string[] = [];
   let asked = 0;
+  /** What the model was asked with, step by step. */
+  const prompts: unknown[] = [];
   const model = new MockLanguageModelV3({
-    doStream: async () => {
+    doStream: async ({ prompt }) => {
+      prompts.push(prompt);
       asked++;
       const step = asked;
       await vi.waitFor(() => expect(results(heads.writes.at(-1) && headOf(heads.writes.at(-1)!)).length).toBeGreaterThanOrEqual(step - 1));
@@ -91,7 +96,7 @@ function tab(
   const store = new ThreadStore({ orchestration: heads.orchestration, api: heads.api, hideMatureContent: () => true, now: options.now ?? at(NOW), newId: () => 'CONV1', ownReplies: own, locks: options.locks ?? null });
   const agent = new Agent({ model: () => model, titleModel: () => model, store, jobs: new JobManager({} as never), toolSet: async () => tools, attachments: () => [] });
   agent.addEventListener('error', () => undefined);
-  return { heads, store, agent, ran, own };
+  return { heads, store, agent, ran, own, prompts };
 }
 
 describe('checkpoint as the reply runs', () => {
@@ -134,6 +139,32 @@ describe('checkpoint as the reply runs', () => {
     const last = headOf(heads.writes.at(-1)!);
     expect([last.v, last.turns[0]!.assistant?.status]).toEqual([2, 'error']);
     expect(roles(last)).toEqual(['assistant', 'tool']);
+  });
+});
+
+describe('a tool that answers with an image', () => {
+  it('is saved with a note in the image’s place: no checkpoint, nor the saved end, holds the image', async () => {
+    const PNG = Buffer.from('checkpoint-png-fixture').toString('base64');
+    const connection = {
+      url: 'https://sandbox.example/mcp',
+      listTools: vi.fn(),
+      close: vi.fn(),
+      callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'Page loaded.' }, { type: 'image', data: PNG, mimeType: 'image/png' }] })),
+    } as unknown as McpConnection;
+    const tools = extraToolSet(
+      [{ server: { id: 'sandbox', url: connection.url, label: 'your app' }, connection, tools: [{ name: 'sandbox__preview_check', tool: { name: 'preview_check', inputSchema: { type: 'object' } } }] }],
+      { taken: {} },
+    );
+    const { heads, agent, prompts } = tab(fakeHeads(), [callsTools(['call_1', 'sandbox__preview_check', 'look']), says('Looks right.')], { tools });
+    await agent.send('does it look right?');
+
+    // Positive control: the image reached the model in this reply, so a save could have taken it.
+    expect(JSON.stringify(prompts)).toContain(PNG);
+    const written = heads.writes.map(headOf);
+    expect(written.some((head) => head.v === 3)).toBe(true);
+    expect([written.at(-1)!.v, written.at(-1)!.turns[0]!.assistant?.status]).toEqual([2, 'done']);
+    for (const write of heads.writes) expect(JSON.stringify(write)).not.toContain(PNG);
+    expect(JSON.stringify(written.at(-1))).toContain('[image/png image: shown to you after this step');
   });
 });
 
