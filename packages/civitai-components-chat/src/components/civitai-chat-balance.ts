@@ -65,7 +65,7 @@ export class CivitaiChatBalance extends LightElement {
   };
 
   override render(): TemplateResult {
-    const { loaded, free, balance, autoTopUp, busy } = this.view;
+    const { loaded, free, balance } = this.view;
     const n = (value: number) => value.toLocaleString();
     const onFree = free !== undefined && free.remaining > 0;
     const pill = !loaded ? '…' : onFree ? `${n(free.remaining)} free` : balance === undefined ? '…' : `${n(balance)} left`;
@@ -80,34 +80,39 @@ export class CivitaiChatBalance extends LightElement {
         @keydown=${this.#onKey}
       >
         <span class="cvt-spend-pill" aria-hidden="true">
-          <svg class="cvt-balance-icon" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg><span class="cvt-balance-text">${pill}</span>
+          <svg class="cvt-balance-icon" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg>${pill}
         </span>
       </button>
       <div class="cvt-spend-panel cvt-balance-panel" id=${this.#panelId} role="region" aria-label="Your replies" tabindex="-1" ?hidden=${!this.open} @keydown=${this.#onKey}>
-        <section>
-          <h3>Free replies</h3>
-          ${!loaded ? html`<p class="cvt-spend-note">…</p>` : free ? this.#free(free) : html`<p class="cvt-spend-note">This model has no free replies.</p>`}
-        </section>
-        <section>
-          <h3>Chat balance</h3>
-          <dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>Left</dt><dd data-balance="fund">${balance === undefined ? '…' : `${n(balance)} Buzz`}</dd></div></dl>
-          <civitai-button size="sm" variant="light" ?disabled=${busy} @click=${() => emit(this, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
-          <civitai-switch
-            label="Top up when empty"
-            .checked=${autoTopUp}
-            @change=${(event: Event) => emit(this, 'cvt-auto-top-up', { on: (event.target as HTMLInputElement).checked })}
-          ></civitai-switch>
-        </section>
-        <p class="cvt-spend-note">Replies use your free ones first, then the chat balance (about 1 Buzz each). A balance unused for 7 days expires.</p>
+        ${balanceDetails(this.view, this)}
       </div>`;
   }
+}
 
-  #free(free: NonNullable<BalanceView['free']>): TemplateResult {
-    const used = Math.max(0, free.limit - free.remaining);
-    const reset = free.resetAt && used > 0 ? new Date(free.resetAt) : undefined;
-    return html`<dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>${used.toLocaleString()} of ${free.limit.toLocaleString()} used</dt><dd data-balance="free">${reset ? `Resets ${when(reset)}` : nothing}</dd></div></dl>
-      <civitai-progress size="sm" .value=${free.limit > 0 ? Math.round((used / free.limit) * 100) : 0} label="Free replies used"></civitai-progress>`;
-  }
+/** The free replies and the chat balance, with topping it up: the badge's details, and Settings' on a phone. Emits from `from`. */
+export function balanceDetails({ loaded, free, balance, autoTopUp, busy }: BalanceView, from: EventTarget): TemplateResult {
+  return html`<section>
+      <h3>Free replies</h3>
+      ${!loaded ? html`<p class="cvt-spend-note">…</p>` : free ? freeRows(free) : html`<p class="cvt-spend-note">This model has no free replies.</p>`}
+    </section>
+    <section>
+      <h3>Chat balance</h3>
+      <dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>Left</dt><dd data-balance="fund">${balance === undefined ? '…' : `${balance.toLocaleString()} Buzz`}</dd></div></dl>
+      <civitai-button size="sm" variant="light" ?disabled=${busy} @click=${() => emit(from, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+      <civitai-switch
+        label="Top up when empty"
+        .checked=${autoTopUp}
+        @change=${(event: Event) => emit(from, 'cvt-auto-top-up', { on: (event.target as HTMLInputElement).checked })}
+      ></civitai-switch>
+    </section>
+    <p class="cvt-spend-note">Replies use your free ones first, then the chat balance (about 1 Buzz each). A balance unused for 7 days expires.</p>`;
+}
+
+function freeRows(free: NonNullable<BalanceView['free']>): TemplateResult {
+  const used = Math.max(0, free.limit - free.remaining);
+  const reset = free.resetAt && used > 0 ? new Date(free.resetAt) : undefined;
+  return html`<dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>${used.toLocaleString()} of ${free.limit.toLocaleString()} used</dt><dd data-balance="free">${reset ? `Resets ${when(reset)}` : nothing}</dd></div></dl>
+    <civitai-progress size="sm" .value=${free.limit > 0 ? Math.round((used / free.limit) * 100) : 0} label="Free replies used"></civitai-progress>`;
 }
 
 function when(at: Date): string {

@@ -1781,9 +1781,9 @@ civitai-chat-balance {
   margin: 0;
 }
 
-/* On a phone the chat's title keeps the room; the figures are one tap away. */
+/* On a phone the title keeps the room; the same figures are in Settings. */
 @container civitai-chat (max-width: 400px) {
-  .cvt-balance-text {
+  civitai-chat-balance {
     display: none;
   }
 }

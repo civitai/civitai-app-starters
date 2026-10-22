@@ -1869,6 +1869,7 @@ export class CivitaiChat extends LitElement {
         this.historyOpen = false;
         this.settingsOpen = true;
         void this.#session?.freeTier.refresh();
+        void this.#session?.fund?.refresh();
       }}
     ></civitai-chat-sidebar>`;
   }
@@ -2055,6 +2056,9 @@ export class CivitaiChat extends LitElement {
         .settings=${session.settings}
         .userName=${this.userName}
         .canExport=${turns.length > 0}
+        .balance=${session.fund ? this.#balanceView(session) : undefined}
+        @cvt-top-up=${() => void this.#topUp(false, false)}
+        @cvt-auto-top-up=${(e: CustomEvent<{ on: boolean }>) => this.#updateSettings({ autoTopUp: e.detail.on })}
         .canDeleteAll=${!session.stopsRunBeforeDelete && (session.store.summaries.length > 0 || turns.length > 0)}
         .canSignOut=${this.canSignOut}
         .canTheme=${this.fullPage}

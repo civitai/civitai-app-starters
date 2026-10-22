@@ -3,6 +3,7 @@ import { live } from 'lit/directives/live.js';
 
 import { AUTO_RUN_STEPS, CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
 import type { Settings } from '../types.js';
+import { balanceDetails, type BalanceView } from './civitai-chat-balance.js';
 import { LightElement, emit } from './light.js';
 
 /** "Never ask" is stored as a number JSON can hold. */
@@ -21,6 +22,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     userName: {},
     canExport: { type: Boolean },
     canDeleteAll: { type: Boolean },
+    balance: { attribute: false },
     canSignOut: { type: Boolean },
     canTheme: { type: Boolean },
     hosted: { type: Boolean },
@@ -31,6 +33,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
   declare userName: string;
   declare canExport: boolean;
   declare canDeleteAll: boolean;
+  /** Free replies and the chat balance; none where replies are not Civitai's to bill. */
+  declare balance?: BalanceView;
   /** Inside civitai.com the site owns the session. */
   declare canSignOut: boolean;
   /** Only when the chat is the whole page; embedded, the page around it sets the theme. */
@@ -130,6 +134,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ></civitai-select>
         ${this.#outputTokens()}
         ${this.#instructions()}
+        ${this.balance ? html`<section class="cvt-balance-panel"><h3>Replies</h3>${balanceDetails(this.balance, this)}</section>` : nothing}
         <civitai-switch
           label="Show mature content"
           .checked=${this.settings.allowMature}
