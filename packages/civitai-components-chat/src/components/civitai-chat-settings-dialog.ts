@@ -3,6 +3,7 @@ import { live } from 'lit/directives/live.js';
 
 import { AUTO_RUN_STEPS, CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
 import type { Settings } from '../types.js';
+import { balanceDetails, type BalanceView } from './civitai-chat-balance.js';
 import { LightElement, emit } from './light.js';
 
 /** "Never ask" is stored as a number JSON can hold. */
@@ -20,6 +21,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
     settings: { attribute: false },
     userName: {},
     canExport: { type: Boolean },
+    canDeleteAll: { type: Boolean },
+    balance: { attribute: false },
     canSignOut: { type: Boolean },
     canTheme: { type: Boolean },
     hosted: { type: Boolean },
@@ -29,6 +32,9 @@ export class CivitaiChatSettingsDialog extends LightElement {
   declare settings: Settings;
   declare userName: string;
   declare canExport: boolean;
+  declare canDeleteAll: boolean;
+  /** Free replies and the chat balance; none where replies are not Civitai's to bill. */
+  declare balance?: BalanceView;
   /** Inside civitai.com the site owns the session. */
   declare canSignOut: boolean;
   /** Only when the chat is the whole page; embedded, the page around it sets the theme. */
@@ -44,6 +50,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
     this.open = false;
     this.userName = '';
     this.canExport = false;
+    this.canDeleteAll = false;
     this.canSignOut = true;
     this.canTheme = true;
     this.hosted = false;
@@ -103,7 +110,10 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ${this.#instructions()}
         <section>
           <h3>Your chats</h3>
-          <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+          <div class="cvt-settings-actions">
+            <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+            ${this.canDeleteAll ? html`<civitai-button size="sm" variant="subtle" color="error" @click=${() => emit(this, 'cvt-delete-all')}>Delete all chats</civitai-button>` : nothing}
+          </div>
         </section>
       </div>
     </civitai-modal>`;
@@ -124,6 +134,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ></civitai-select>
         ${this.#outputTokens()}
         ${this.#instructions()}
+        ${this.balance ? html`<section class="cvt-balance-panel"><h3>Replies</h3>${balanceDetails(this.balance, this)}</section>` : nothing}
         <civitai-switch
           label="Show mature content"
           .checked=${this.settings.allowMature}
@@ -132,7 +143,10 @@ export class CivitaiChatSettingsDialog extends LightElement {
         <section>
           <h3>Your chats</h3>
           <p>Chats are kept in your Civitai account for ${RETENTION_DAYS} days after your last message, and what you make for ${RETENTION_DAYS} days after it is made, so they follow you to any device.</p>
-          <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+          <div class="cvt-settings-actions">
+            <civitai-button size="sm" variant="light" ?disabled=${!this.canExport} @click=${() => emit(this, 'cvt-export')}>Save this chat as a file</civitai-button>
+            ${this.canDeleteAll ? html`<civitai-button size="sm" variant="subtle" color="error" @click=${() => emit(this, 'cvt-delete-all')}>Delete all chats</civitai-button>` : nothing}
+          </div>
         </section>
         <section>
           <h3>Account</h3>

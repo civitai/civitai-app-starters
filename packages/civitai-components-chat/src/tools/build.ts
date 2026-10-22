@@ -181,7 +181,8 @@ function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolC
     execute: async (input, { abortSignal }) => {
       const raw = (input ?? {}) as Record<string, unknown>;
       const call = async () => {
-        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal });
+        // Asking for progress keeps a call alive past the 60s timeout while its job waits in a queue.
+        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal, onProgress: () => undefined });
         return { result, text: mcpResultToText(result, textCapFor(mcpTool.name)) };
       };
       // A page read twice in one chat costs the viewer twice and tells the assistant nothing new.

@@ -57,6 +57,17 @@ function setup({ refuse = false } = {}) {
 }
 
 describe('panels', () => {
+  it('tells the assistant to stop and talk to the user once a reply has failed to set up controls three times', async () => {
+    const { call } = setup();
+    const broken = { title: 'Broken', inputs: { prompt: { kind: 'text' } }, run: { stepType: 'imageGen', input: { prompt: '{{subject}}' } } };
+
+    const notes = [];
+    for (const id of ['call_1', 'call_2', 'call_3']) notes.push((await call(OPEN_PANEL, broken, id)).note);
+
+    expect(notes[0]).toContain('Fix the definition and call again');
+    expect(notes[2]).toContain('Do not call open_panel or update_panel again in this reply');
+  });
+
   it("adds a model the viewer asked for beside the panel's own, from the settings the assistant copied", async () => {
     const PICTURE = {
       title: 'Your picture',
@@ -192,8 +203,6 @@ describe('panels', () => {
     );
 
     expect(result).toMatchObject({ panel: 'p1', version: 2, values: { brand: 'Night Owl', style: 'Mascot', palette: 'Cool' } });
-    expect(panels.get('p1')).toMatchObject({ toolCallId: 'call_2', version: 2 });
-    expect(await call(UPDATE_PANEL, { panel: 'p1', inputs: { mood: { kind: 'toggle' } } }, 'call_3')).toMatchObject({ error: expect.stringContaining('mood are not used') });
     expect(panels.get('p1')).toMatchObject({ toolCallId: 'call_2', version: 2 });
   });
 

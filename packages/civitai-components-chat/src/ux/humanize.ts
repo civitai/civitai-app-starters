@@ -1,6 +1,6 @@
 import { isNetworkDrop } from '../agent/network-retry.js';
 
-export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
+export type ErrorKind = 'free_tier_exhausted' | 'free_tier_not_free' | 'fund_empty' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
 
 /**
  * The failures a Retry is offered for: the connection was lost, or the service was busy or down for a
@@ -20,6 +20,7 @@ export interface HumanError {
 const WORDS: Record<ErrorKind, string> = {
   free_tier_exhausted: 'Your free replies are used up for now.',
   free_tier_not_free: "This model has no free replies, and you chose free replies only.",
+  fund_empty: 'Your chat balance is empty.',
   insufficient_buzz: "You don't have enough Buzz for this.",
   blocked: 'That request was blocked by the safety filter. Try wording it differently.',
   auth: "Civitai didn't accept your sign-in. Please sign in again.",
@@ -63,8 +64,8 @@ export const HOST_MESSAGE_MAX = 500;
 export function humanizeHost(error: unknown): HumanError {
   const inner = lastAttempt(error);
   const found = humanize(inner);
-  // A host's gateway has no free tier: those kinds would offer Civitai's "Continue with Buzz".
-  const human = found.kind === 'free_tier_exhausted' || found.kind === 'free_tier_not_free' ? { ...found, kind: 'unknown' as const } : found;
+  // A host's gateway has no free tier or chat balance: those kinds would offer Civitai's top-up.
+  const human = found.kind === 'free_tier_exhausted' || found.kind === 'free_tier_not_free' || found.kind === 'fund_empty' ? { ...found, kind: 'unknown' as const } : found;
   const said = hostMessage(inner);
   const status = (inner as { statusCode?: unknown } | null)?.statusCode;
   // A 5xx body never reaches the viewer, also not as `detail`: the AI SDK makes a JSON body's message
@@ -141,6 +142,7 @@ function kindOf(error: unknown, detail: string): ErrorKind {
   const text = detail.toLowerCase();
   if (/free allowance used up/.test(text)) return 'free_tier_exhausted';
   if (/model has no free replies|free replies could not be checked/.test(text)) return 'free_tier_not_free';
+  if (/chat balance is empty/.test(text)) return 'fund_empty';
   if (status === 402 || /insufficient|not enough buzz|balance/.test(text)) return 'insufficient_buzz';
   if (/blocked|prohibited|moderat|violat|not allowed|safety/.test(text)) return 'blocked';
   if (status === 401 || status === 403) return 'auth';

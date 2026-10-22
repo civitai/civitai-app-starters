@@ -55,6 +55,8 @@ export interface Turn {
     resume?: ResumePoint;
     ranOut?: boolean;
     stopped?: string;
+    /** What this reply's model calls were charged, as the orchestrator reported them; missing on replies saved before it did. */
+    buzz?: number;
     /**
      * On a reply read back from a save made before it ended (cut off): when that save was made (ISO).
      * The turn's start for a v2 save, the latest step's save for a v3 one. While it is recent the reply
@@ -203,6 +205,8 @@ export interface Settings {
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
   lastConversationId?: string;
+  /** Top up the chat balance by itself when a reply finds it empty. */
+  autoTopUp?: boolean;
 }
 
 export interface ModelRecommendation {
