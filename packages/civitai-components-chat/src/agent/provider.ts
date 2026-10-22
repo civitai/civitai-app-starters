@@ -58,7 +58,7 @@ export function createAssistantModel(
 ): LanguageModel {
   const send = app ? authedFetch(app, doFetch) : (doFetch ?? ((input, init) => globalThis.fetch(input, init)));
   const root = withoutTrailingSlashes(baseUrl);
-  // Under `wrap`, so it sees each request that actually goes out (a free start given up on and sent paid is two).
+  // Under `wrap`, so it sees each request that actually goes out (a reply billed to the chat balance after a 402 top-up is two).
   const tracked = app && recoverWorkflows ? workflowRecoveryFetch(send, { baseUrl: root, control: send }) : send;
   // Civitai's closing usage carries what the call was charged (`chargeFetch`).
   const provider = createOpenAICompatible({ name: app ? PROVIDER : HOST_PROVIDER, baseURL: `${root}/v1`, fetch: wrap(tracked), ...(app ? { includeUsage: true } : {}) });

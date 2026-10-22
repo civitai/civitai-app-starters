@@ -6,15 +6,15 @@
  * when the same request is sent again after its stream was cut, the workflow is read back
  * (`GET /v2/consumer/workflows/{id}`) instead:
  * - it succeeded: its answer is rebuilt as the stream the POST would have sent, and nothing is POSTed;
- * - it is still running: it is waited for, at most {@link RECOVERY_WAIT_MS} (a free request whose
- *   workflow has not started is not waited for: canceled, and sent again at once);
+ * - it is still running: it is waited for, at most {@link RECOVERY_WAIT_MS}, free or paid alike (sent
+ *   again, a free request would only go free again and queue at the back);
  * - it failed, its answer cannot be rebuilt, or it outlived the wait: it is canceled when still
  *   running (`PUT /v2/consumer/workflows/{id}` with `{"status":"canceled"}`), and the request goes out
  *   as it would have.
  * An answer with no workflow id (an orchestration from before the header) is passed through as it is.
  *
- * A request given up on while its answer was still coming (the viewer's Stop, a free start that was
- * too slow) cancels its workflow too, so the model stops working, and billing, for an answer no one reads;
+ * A request given up on while its answer was still coming (the viewer's Stop) cancels its workflow
+ * too, so the model stops working on an answer no one reads;
  * so does a stop that comes after a cut, before the step was asked for again (while waiting to retry).
  * A cut step that is never asked for again (the reply gave up: a tool had been called, or the retries
  * ran out) leaves its workflow to finish, as before.
@@ -24,7 +24,9 @@
  * one of `WorkflowStatus` (camelCase on v2); the step is `$type: "chatCompletion"`, and its `output` is
  * the OpenAI chat completion (`choices[].message` with `content`, `reasoning_content` and `tool_calls`,
  * `choices[].finishReason`, `usage.promptTokens`), rebuilt from the stream once it completed
- * (ChatCompletionHandler.cs:676-740, 786-900).
+ * (ChatCompletionHandler.cs:676-740, 786-900). A rebuilt answer's closing usage carries the
+ * workflow's `cost.total` as `usage.cost`, where the live stream carries what the call was charged
+ * (`charge.ts` reads it), so a kept step's Buzz is still counted on the reply.
  */
 
 /** The response header orchestration names a chat completion's workflow in. */
@@ -38,12 +40,6 @@ export const WORKFLOW_ID_HEADER = 'X-Civitai-Workflow-Id';
  * again would start that answer over, and cost it again, rather than finish sooner.
  */
 export const RECOVERY_WAIT_MS = 600_000;
-
-/** The request header that sends a chat completion on the free tier (`free-tier.ts`). */
-const TIER_HEADER = 'X-Civitai-Tier';
-
-/** Not started yet: waiting behind other work. */
-const QUEUED = new Set(['unassigned', 'preparing', 'scheduled']);
 
 /** How long one read of the workflow asks orchestration to hold it for a final status (its `wait`), in ms. */
 export const RECOVERY_POLL_MS = 20_000;
@@ -68,14 +64,14 @@ export interface WorkflowRecoveryOptions {
 interface Cut {
   id: string;
   at: number;
-  /** The cut request went out on the free tier (its retry may not: the free-tier wrapper sends it paid once the free replies run out). */
-  free: boolean;
 }
 
 /** The parts of a v2 workflow this reads (`GET /v2/consumer/workflows/{id}`). */
 interface WorkflowRead {
   status?: string;
   steps?: { $type?: string; output?: ChatOutput | null }[];
+  /** What the workflow cost, in Buzz. */
+  cost?: { total?: number } | null;
 }
 
 interface ChatOutput {
@@ -112,21 +108,20 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       .control(workflowUrl(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'canceled' }) })
       .catch(() => undefined);
 
-  const remember = (key: string, id: string, free: boolean) => {
+  const remember = (key: string, id: string) => {
     const now = Date.now();
     for (const [k, c] of cut) if (now - c.at > KEEP_MS) cut.delete(k);
     cut.delete(key);
-    cut.set(key, { id, at: now, free });
+    cut.set(key, { id, at: now });
     while (cut.size > KEEP_MAX) cut.delete(cut.keys().next().value!);
   };
 
   /** What the cut request's workflow gave: an answer to send instead, or `undefined` to ask again. Throws when the read could not be made (the network is still down) or `signal` aborted. */
-  async function recover(id: string, signal: AbortSignal | undefined, free: boolean): Promise<Response | undefined> {
+  async function recover(id: string, signal: AbortSignal | undefined): Promise<Response | undefined> {
     const deadline = Date.now() + waitMs;
-    for (let read = 0; ; read++) {
+    for (;;) {
       const left = deadline - Date.now();
-      // A free request's first read asks for no `wait`: orchestration would hold a queued workflow's read for all of it.
-      const wait = free && read === 0 ? 0 : Math.max(0, Math.min(Math.ceil(pollMs / 1000), Math.floor(left / 1000)));
+      const wait = Math.max(0, Math.min(Math.ceil(pollMs / 1000), Math.floor(left / 1000)));
       let response: Response;
       try {
         response = await options.control(`${workflowUrl(id)}${wait > 0 ? `?wait=${wait}` : ''}`, { method: 'GET', ...(signal ? { signal } : {}) });
@@ -141,11 +136,7 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       if (status === 'succeeded') return replay(id, workflow!);
       // Failed, expired or canceled: over, and nothing to rebuild.
       if (!status || !LIVE.has(status)) return undefined;
-      // Free work waits behind all paid work, and the free-tier wrapper above starts its wait for a
-      // first answer (then sends it paid, when the viewer allows) only once this returns. Waiting here
-      // would hold that back, so a cut request that went out free and has not started is asked for
-      // again at once (by the tier it went out on, as the retry may be going paid).
-      if (Date.now() >= deadline || (free && QUEUED.has(status))) {
+      if (Date.now() >= deadline) {
         // Canceled before the step is asked for again, so the two never run at once.
         await cancel(id);
         return undefined;
@@ -171,22 +162,21 @@ export function workflowRecoveryFetch(inner: typeof fetch, options: WorkflowReco
       cut.delete(key);
       let recovered: Response | undefined;
       try {
-        recovered = await recover(earlier.id, signal, earlier.free);
+        recovered = await recover(earlier.id, signal);
       } catch (error) {
         // The read did not get through: kept for the next time this step is asked for.
-        if (!signal?.aborted) remember(key, earlier.id, earlier.free);
+        if (!signal?.aborted) remember(key, earlier.id);
         throw error;
       }
       if (recovered) return recovered;
     }
 
-    const free = new Headers(init?.headers).get(TIER_HEADER) === 'free';
     const response = await inner(input, init);
     const id = response.headers.get(WORKFLOW_ID_HEADER);
     if (!id || !response.body) return response;
     return track(response, id, signal, {
       dropped: () => {
-        remember(key, id, free);
+        remember(key, id);
         // Stopped before the step was asked for again (while waiting to retry): nothing will read it.
         signal?.addEventListener(
           'abort',
@@ -264,14 +254,18 @@ function replay(id: string, workflow: WorkflowRead): Response | undefined {
   if (calls.length) {
     delta.tool_calls = calls.map((call, index) => ({ index, id: call.id, type: 'function', function: { name: call.function!.name, arguments: call.function!.arguments } }));
   }
-  const usage = output.usage
-    ? {
-        prompt_tokens: output.usage.promptTokens ?? 0,
-        completion_tokens: output.usage.completionTokens ?? 0,
-        total_tokens: output.usage.totalTokens ?? 0,
-        ...(output.usage.completionTokensDetails?.reasoningTokens != null ? { completion_tokens_details: { reasoning_tokens: output.usage.completionTokensDetails.reasoningTokens } } : {}),
-      }
-    : undefined;
+  const cost = workflow.cost?.total;
+  const charged = typeof cost === 'number' && Number.isFinite(cost) ? { cost } : {};
+  const usage =
+    output.usage || 'cost' in charged
+      ? {
+          prompt_tokens: output.usage?.promptTokens ?? 0,
+          completion_tokens: output.usage?.completionTokens ?? 0,
+          total_tokens: output.usage?.totalTokens ?? 0,
+          ...(output.usage?.completionTokensDetails?.reasoningTokens != null ? { completion_tokens_details: { reasoning_tokens: output.usage.completionTokensDetails.reasoningTokens } } : {}),
+          ...charged,
+        }
+      : undefined;
   const finish = choice.finishReason ?? (calls.length ? 'tool_calls' : 'stop');
   const events = [
     { ...head, choices: [{ index: 0, delta, finish_reason: null }] },

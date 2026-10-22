@@ -1092,8 +1092,7 @@ workflow back: one that succeeded gives the step its answer (words and tool call
 request; one still running is waited for, at most 10 minutes (a GET shows only whether it finished,
 so a long answer still being written cannot be told from a stuck one sooner); one that failed, has
 no answer, or is still running after that is canceled (when still running) and the step is asked
-for again. A free request whose workflow has not started yet is canceled and asked for again at
-once, so the free tier's own wait can still send it paid. An answer
+for again. A reused answer's Buzz is counted on the reply from what the workflow cost. An answer
 with no such header is asked for again as before. Stop, or any model request given up on before its
 answer is complete, cancels that request's workflow, so the model stops working on it.
 The cut is the error that ended the reply: an earlier error the reply got past by itself does not
