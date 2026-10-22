@@ -22,6 +22,7 @@ export { describeTrace, errorTrace, type ErrorTrace, type TraceContext } from '.
 export { isNetworkDrop, MAX_NETWORK_RETRIES_PER_REPLY, NETWORK_RETRY_DELAYS_MS, pauseBeforeRetry } from './agent/network-retry.js';
 export { stripToolMarkup } from './agent/tool-markup.js';
 export { authedFetch, createAssistantModel, PROVIDER, PROVIDER_OPTIONS } from './agent/provider.js';
+export { workflowRecoveryFetch, RECOVERY_POLL_MS, RECOVERY_WAIT_MS, WORKFLOW_ID_HEADER, type WorkflowRecoveryOptions } from './agent/workflow-recovery.js';
 export { FreeTier, freeTierFetch, type FreeTierChoice, type FreeTierModel, type FreeTierStatus, type FreeTierWindow } from './agent/free-tier.js';
 export {
   chatConfig,
