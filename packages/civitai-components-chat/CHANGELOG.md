@@ -1,5 +1,21 @@
 # @civitai/components-chat
 
+## 0.26.0
+
+### Minor Changes
+
+- c2a645d: Once a model's free replies are used up, replies draw from a prepaid chat balance instead of the viewer's Buzz. The chat says when the free replies come back and offers to top up 100 Buzz, once or whenever the balance runs out. A badge in the top bar shows the free replies left and the balance, and tops it up. A free reply that is slow to start no longer switches to a paid one.
+
+  The Buzz spent in a chat now counts each reply at what it was charged, read from the orchestrator's closing usage (`stream_options.include_usage`, `usage.cost` in Buzz), so a free reply counts 0 and a premium model its real price. Replies saved before this keep the old estimate of 1 per call. Needs orchestrator v2.48.8 or later; older ones report the provider's USD cost there.
+
+- 8408f83: Settings → Your chats has **Delete all chats**: after a warning that it can't be undone, it deletes every chat and what was made in it, also those not loaded into the list yet. Not offered where a host's runner must stop a reply before its chat can go.
+
+### Patch Changes
+
+- 8408f83: Links follow the viewer's "Show mature content" setting: with it on, model cards, the models a result was made with, a new post's link and the links in the assistant's replies go to civitai.red, where mature content is shown; with it off, to civitai.com.
+- 8408f83: A panel choice's text may hold placeholders of its own (`"Calm": "a calm {{voice}} voice"`): they are filled in when it runs, and count as using that input. An input the run never uses is left out of the panel, with a note to the assistant, instead of refusing the panel. After three refused panel calls in one reply, the assistant is told to stop and tell the user instead of trying again.
+- 8408f83: The Civitai MCP's browse tools (model and image search) are now called as the signed-in viewer, not anonymously, so what they find can follow the viewer's own preferences. If the server refuses the viewer's token, the chat carries on anonymously for the rest of the session.
+
 ## 0.25.0
 
 ### Minor Changes
