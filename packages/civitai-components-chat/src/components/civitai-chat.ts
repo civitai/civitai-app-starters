@@ -1529,7 +1529,7 @@ export class CivitaiChat extends LitElement {
   /**
    * Sends `text` as the viewer's. While the chat holds (`holdReason`, a chat opening, a new session
    * starting, a server listing its tools, another message on its way or waiting) it is kept in an
-   * empty message box. A page whose `before-send` calls `queue()` keeps it back, shown waiting.
+   * empty message box, unless the viewer is dictating (`#keepInEmptyBox`). A page whose `before-send` calls `queue()` keeps it back, shown waiting.
    */
   async #send(text: string): Promise<void> {
     const session = this.#session;
@@ -1539,8 +1539,7 @@ export class CivitaiChat extends LitElement {
     if (!session || this.#busy(session)) return;
     if (this.#held(session)) {
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
-      const composer = await this.#composer();
-      if (composer && !composer.draft) composer.draft = text;
+      await this.#keepInEmptyBox(text);
       return;
     }
     // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
@@ -1560,8 +1559,7 @@ export class CivitaiChat extends LitElement {
         return;
       }
       if (!granted) {
-        const composer = await this.#composer();
-        if (composer && !composer.draft) composer.draft = text;
+        await this.#keepInEmptyBox(text);
         this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
         return;
       }
@@ -1600,6 +1598,17 @@ export class CivitaiChat extends LitElement {
         this.requestUpdate();
       }
     }
+  }
+
+  /**
+   * Puts a message `#send` could not send now into the message box, when it is empty and the viewer is
+   * not dictating. While they dictate the box is hidden behind the recording or transcribing bar and
+   * what they say is joined to the end of it, so the message would land glued to the front of their
+   * words: it is left out, as it is when the box already holds something.
+   */
+  async #keepInEmptyBox(text: string): Promise<void> {
+    const composer = await this.#composer();
+    if (composer && !composer.draft && !this.dictating) composer.draft = text;
   }
 
   /** Adds files to the next message, uploading them right away. */
