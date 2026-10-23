@@ -290,7 +290,7 @@ export class CivitaiChatTurn extends LightElement {
     const kind = this.turn.assistant.errorKind;
     if (status === 'error' && (kind === 'free_tier_exhausted' || kind === 'fund_empty')) {
       return html`<civitai-alert color="info">
-        ${error} Top up ${TOP_UP_BUZZ} Buzz to keep going (about 1 per reply).
+        ${error} Top up ${TOP_UP_BUZZ} Buzz to keep going (each step the assistant takes uses about 1).
         ${this.latest
           ? html`<div class="cvt-top-up-actions">
               <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>

@@ -230,7 +230,7 @@ describe('Agent', () => {
     await agent.send('write me a haiku');
     const turn = store.current!.turns[0]!;
     expect(turn.assistant.errorKind).toBe('free_tier_exhausted');
-    expect(turn.assistant.error).toMatch(/^Your free replies are used up until /);
+    expect(turn.assistant.error).toMatch(/^Your free allowance is used up until /);
 
     await agent.retry();
 
