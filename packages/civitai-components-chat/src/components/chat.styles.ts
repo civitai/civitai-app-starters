@@ -508,6 +508,16 @@ civitai-chat-thread {
   padding: 24px 16px 32px;
 }
 
+/* The page's own content after the last message (slot="thread-end"), at the messages' width; nothing
+   slotted takes no space. */
+.cvt-thread-end {
+  display: block;
+  max-width: 800px;
+  margin: 0 auto;
+  padding-inline: 16px;
+  box-sizing: border-box;
+}
+
 .cvt-jump {
   position: absolute;
   bottom: 12px;
@@ -1332,6 +1342,13 @@ civitai-chat-generation-card[audio] {
 }
 
 /* ── composer ── */
+
+/* The page's own content just above the message box (slot="composer-top"), lined up with it like
+   .cvt-unsent; nothing slotted takes no space. */
+.cvt-composer-top {
+  display: block;
+  margin: 0 max(16px, calc((100% - 800px) / 2));
+}
 
 civitai-chat-composer {
   display: block;

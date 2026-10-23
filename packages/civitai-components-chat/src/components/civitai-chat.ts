@@ -2028,7 +2028,8 @@ export class CivitaiChat extends LitElement {
                       if (e.detail.wantsFile) composer.browse();
                       composer.focus();
                     })}
-                ></civitai-chat-welcome>`
+                ></civitai-chat-welcome>
+                <slot name="thread-end" class="cvt-thread-end"></slot>`
               : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
@@ -2040,6 +2041,7 @@ export class CivitaiChat extends LitElement {
               <civitai-button size="sm" variant="subtle" @click=${() => this.#dismissUnsent(unsent)}>Dismiss</civitai-button>
             </civitai-alert>`,
           )}
+          <slot name="composer-top" class="cvt-composer-top"></slot>
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}
