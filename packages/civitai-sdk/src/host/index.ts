@@ -1,6 +1,7 @@
 import { BridgeError } from '../core/errors.js';
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
+import { LOCAL_PREVIEW_STORAGE_SCOPES } from '../doc-store/local-preview.js';
 import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
 
 import type {
@@ -443,14 +444,18 @@ function asScanResult(value: unknown): ImageScanResult {
 }
 
 export interface HostSessionOptions {
-  /** Whether the document store is served locally (a dev-tunnel preview). Not wired yet. */
+  /**
+   * The document store is served by the in-tab local store (a dev-tunnel
+   * preview): the value `initialize()` latched from `isLocalPreviewStorage`.
+   * `requestGrants` then treats `LOCAL_PREVIEW_STORAGE_SCOPES` as held.
+   */
   localPreviewStorage?: boolean;
 }
 
 /** The token the host minted for this block, kept current as the host rotates it. */
 export function createHostSession(
   transport: BlockTransport,
-  _options: HostSessionOptions = {},
+  { localPreviewStorage = false }: HostSessionOptions = {},
 ): Session {
   return {
     async getToken({ fresh, signal }: TokenOptions = {}) {
@@ -459,7 +464,18 @@ export function createHostSession(
       const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
       return tokenFromWrapped(token).raw;
     },
-    requestGrants: (scopes, opts = {}) => requestGrants(transport, scopes, opts),
+    requestGrants: (scopes, opts = {}) =>
+      requestGrants(
+        transport,
+        // A preview token never carries a document-store scope and no grant can
+        // add one, so asking the host for it could only be refused — and the
+        // refusal would take the rest of the request down with it. The local
+        // store serves them; ask only for the rest. Nothing on the token changes.
+        localPreviewStorage
+          ? scopes.filter((scope) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(scope))
+          : scopes,
+        opts,
+      ),
   };
 }
 
