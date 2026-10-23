@@ -21,6 +21,9 @@ export const EXAMPLES: Example[] = [
   { title: 'Say it out loud', prompt: 'Read "Welcome aboard!" in a warm, friendly voice' },
 ];
 
+/** As the thread's: this close to the end counts as at the end. */
+const NEAR_END_PX = 48;
+
 export class CivitaiChatWelcome extends LightElement {
   static override properties: PropertyDeclarations = {
     userName: {},
@@ -48,6 +51,37 @@ export class CivitaiChatWelcome extends LightElement {
     this.userName = '';
     this.plain = false;
     this.threadEnd = false;
+  }
+
+  // The greeting is its own scroll. Content in thread-end that grows while the viewer is at the end
+  // is followed, as the thread follows it once there are messages.
+  #atEnd = true;
+  #endSlot?: HTMLSlotElement;
+  #resize = new ResizeObserver(() => {
+    if (this.#atEnd) this.scrollTop = this.scrollHeight;
+  });
+  #onScroll = (): void => {
+    this.#atEnd = this.scrollHeight - this.scrollTop - this.clientHeight < NEAR_END_PX;
+  };
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.addEventListener('scroll', this.#onScroll);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.removeEventListener('scroll', this.#onScroll);
+    this.#resize.disconnect();
+    this.#endSlot = undefined;
+  }
+
+  protected override updated(): void {
+    const slot = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]') ?? undefined;
+    if (slot === this.#endSlot) return;
+    if (this.#endSlot) this.#resize.unobserve(this.#endSlot);
+    this.#endSlot = slot;
+    if (slot) this.#resize.observe(slot);
   }
 
   #end(): TemplateResult | typeof nothing {

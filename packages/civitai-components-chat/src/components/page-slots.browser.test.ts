@@ -171,6 +171,21 @@ describe('<civitai-chat> page slots', () => {
     await vi.waitFor(() => expect(welcome.scrollTop + welcome.clientHeight).toBeGreaterThanOrEqual(welcome.scrollHeight - 1));
   });
 
+  it('with no messages yet, thread-end content that grows after it is put in is followed', async () => {
+    await page.viewport(1280, 900);
+    const chat = await mount(900, 420);
+    // Present from the start, empty, and filled later (as a page that renders into it asynchronously).
+    const end = slotted(chat, 'thread-end', 'Free up a slot', 0);
+    await vi.waitFor(() => expect(slotEl(chat, 'thread-end')?.assignedElements()).toEqual([end]));
+    const welcome = root(chat).querySelector<HTMLElement>('civitai-chat-welcome')!;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    end.style.height = '600px';
+    await vi.waitFor(() => {
+      expect(welcome.scrollHeight).toBeGreaterThan(welcome.clientHeight);
+      expect(welcome.scrollTop + welcome.clientHeight).toBeGreaterThanOrEqual(welcome.scrollHeight - 1);
+    });
+  });
+
   it('content assigned while the reader has scrolled up is still brought into view', async () => {
     await page.viewport(1280, 900);
     const chat = await mount(900, 360);
