@@ -48,7 +48,7 @@ describe('panel definitions', () => {
     expect(renderRun(logo, { ...values, reference: 'up1-1' }).args.input).toMatchObject({ images: ['up1-1'] });
   });
 
-  it('tells the assistant what to fix: unknown placeholders, unused inputs, bad controls, a run that is not run_step, run_workflow or an ask', () => {
+  it('tells the assistant what to fix: unknown placeholders, bad controls, a run that is not run_step, run_workflow or an ask', () => {
     const checked = checkPanelSpec({
       title: 'Broken',
       inputs: { mood: { kind: 'choice', options: ['Calm'] }, extra: { kind: 'toggle' }, tone: { kind: 'text' } },
@@ -58,11 +58,29 @@ describe('panel definitions', () => {
       'inputs.mood: a choice needs 2 to 12 distinct options.',
       'run uses {{tempo}}, but there is no input called tempo.',
       '{{tone.width}} only works on an aspect input.',
-      'Inputs extra are not used in run; put {{name}} where each value belongs, or remove them.',
     ]);
     expect(checkPanelSpec({ ...LOGO, run: { prompt: 'x' } }).errors).toContain(
       'run must be run_step arguments ({"stepType": ..., "input": {...}}), run_workflow arguments ({"steps": [...]}), or {"ask": "a message to you with {{name}} placeholders"}.',
     );
+  });
+
+  it("fills a placeholder inside a choice's mapped text, and leaves out an input run never uses instead of refusing", () => {
+    const checked = checkPanelSpec({
+      title: 'Narrator',
+      inputs: {
+        text: { kind: 'text' },
+        style: { kind: 'choice', options: ['Calm', 'Excited'], map: { Calm: 'a calm {{voice}} voice', Excited: 'an excited {{voice}} voice' } },
+        voice: { kind: 'choice', options: ['female', 'male'] },
+        extra: { kind: 'toggle' },
+      },
+      layout: [['text'], ['style', 'voice', 'extra']],
+      run: { stepType: 'textToSpeech', input: { text: '{{text}}', instruct: '{{style}}, clear' } },
+    });
+
+    expect(checked.dropped).toEqual(['extra']);
+    expect(Object.keys(checked.spec!.inputs)).toEqual(['text', 'style', 'voice']);
+    expect(checked.spec!.layout).toEqual([['text'], ['style', 'voice']]);
+    expect(renderRun(checked.spec!, { text: 'Hello', style: 'Excited', voice: 'male' }).args.input).toEqual({ text: 'Hello', instruct: 'an excited male voice, clear' });
   });
 
   it('keeps given values that fit, pulls numbers into range, and falls back to defaults otherwise', () => {

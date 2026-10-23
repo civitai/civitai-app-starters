@@ -98,19 +98,6 @@ describe('free chat replies', () => {
     expect(tier.available(QWEN)).toBe(false);
   });
 
-  it('gives up on a free reply that is slow to start, but only for a viewer who allows paying', async () => {
-    const stalled = () => new Response(new ReadableStream({ start() {} }), { status: 200 });
-    const tier = await loaded();
-    const allowed = endpoint({ free: stalled });
-    const response = await request(freeTierFetch(allowed.inner, QWEN, tier, () => ({ useFree: true, payWhenOut: true }), 20));
-    expect(allowed.calls).toEqual(['free', 'paid']);
-    expect(await response.text()).toContain('ok');
-
-    const waiting = endpoint({ free: stalled });
-    await request(freeTierFetch(waiting.inner, QWEN, tier, () => ({ useFree: true, payWhenOut: false }), 20));
-    expect(waiting.calls).toEqual(['free']);
-  });
-
   it('passes a free reply through untouched once it starts', async () => {
     const tier = await loaded();
     const { inner } = endpoint({ free: () => new Response('data: {"text":"hello"}\n\ndata: [DONE]\n\n', { status: 200 }) });

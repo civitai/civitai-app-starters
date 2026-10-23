@@ -772,7 +772,7 @@ function retryable(error: unknown): boolean {
   return unanswered(error);
 }
 
-const KINDS: ReadonlySet<string> = new Set<ErrorKind>(['free_tier_exhausted', 'free_tier_not_free', 'insufficient_buzz', 'blocked', 'auth', 'rate_limit', 'timeout', 'network', 'assistant_unavailable', 'unavailable', 'unknown']);
+const KINDS: ReadonlySet<string> = new Set<ErrorKind>(['free_tier_exhausted', 'free_tier_not_free', 'fund_empty', 'insufficient_buzz', 'blocked', 'auth', 'rate_limit', 'timeout', 'network', 'assistant_unavailable', 'unavailable', 'unknown']);
 
 function errorKind(kind: string | undefined): ErrorKind {
   return kind && KINDS.has(kind) ? (kind as ErrorKind) : 'unknown';

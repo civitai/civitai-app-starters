@@ -13,6 +13,7 @@ import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js'
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
+import { onSite, TOP_UP_BUZZ } from '../config.js';
 import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { ReplyStatusState } from './civitai-chat-reply-status.js';
@@ -183,7 +184,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #assistantParts(): unknown {
     // A reply can stream a text part that is only whitespace so far: no empty bubble for it.
-    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`);
+    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(this.models ? onSite(text, this.models.siteUrl) : text))}</div>`);
     if (this.toolCalls === 'details') return this.#detailed(md);
     return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }
@@ -286,10 +287,16 @@ export class CivitaiChatTurn extends LightElement {
       </div>`;
     }
     if (status === 'error' && error === CUT_OFF) return this.#cutOff();
-    if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
+    const kind = this.turn.assistant.errorKind;
+    if (status === 'error' && (kind === 'free_tier_exhausted' || kind === 'fund_empty')) {
       return html`<civitai-alert color="info">
-        ${error} You can keep going on Buzz (about 1 per reply).
-        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Continue with Buzz</civitai-button>` : nothing}
+        ${error} Top up ${TOP_UP_BUZZ} Buzz to keep going (about 1 per reply).
+        ${this.latest
+          ? html`<div class="cvt-top-up-actions">
+              <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+              <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-top-up', { auto: true })}>Always top up when empty</civitai-button>
+            </div>`
+          : nothing}
       </civitai-alert>`;
     }
     // Free only, and this model has no free replies (or they could not be checked). What a paid reply

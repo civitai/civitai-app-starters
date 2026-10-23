@@ -656,7 +656,7 @@ describe('civitai-chat-thread', () => {
     expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Browsing the catalog…');
   });
 
-  it('offers to continue on Buzz when the free replies are used up', async () => {
+  it('offers a top-up, once or whenever the balance runs out, when the free replies are used up', async () => {
     const turn = {
       seq: 1,
       createdAt: '',
@@ -666,11 +666,13 @@ describe('civitai-chat-thread', () => {
     const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     const asked: unknown[] = [];
-    thread.addEventListener('cvt-continue-paid', (e) => asked.push(e));
+    thread.addEventListener('cvt-top-up', (e) => asked.push((e as CustomEvent<{ auto: boolean }>).detail));
 
     expect(thread.textContent).toContain('Your free replies are used up until 4:55 PM.');
-    [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Continue with Buzz'))!.click();
-    expect(asked).toHaveLength(1);
+    const button = (text: string) => [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes(text))!;
+    button('Top up 100 Buzz').click();
+    button('Always top up when empty').click();
+    expect(asked).toEqual([{ auto: false }, { auto: true }]);
   });
 
   it("offers to allow paid replies, without naming a price, when the model has no free replies", async () => {

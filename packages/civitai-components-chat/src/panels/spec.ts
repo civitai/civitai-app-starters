@@ -51,11 +51,13 @@ const isObj = (value: unknown): value is Obj => typeof value === 'object' && val
 const isNum = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const optString = (value: unknown, max: number): string | undefined => (typeof value === 'string' && value.trim() ? value.slice(0, max) : undefined);
 
-export type Checked = { spec: PanelSpec; errors?: undefined } | { spec?: undefined; errors: string[] };
+export type Checked = { spec: PanelSpec; errors?: undefined; dropped?: string[] } | { spec?: undefined; errors: string[]; dropped?: undefined };
 
 /** Checks a definition written by the assistant; errors are worded for it to fix and call again. */
 export function checkPanelSpec(raw: unknown): Checked {
   const errors: string[] = [];
+  // Inputs run never reads: harmless, so left out of the panel rather than refused.
+  const dropped: string[] = [];
   if (!isObj(raw)) return { errors: ['The panel must be an object with title, inputs and run.'] };
   const title = typeof raw.title === 'string' ? raw.title.trim() : '';
   if (!title || title.length > 80) errors.push('title must be 1-80 characters.');
@@ -96,7 +98,8 @@ export function checkPanelSpec(raw: unknown): Checked {
     const used = new Set<string>();
     // A choice may stand for a whole block of inputs, whose own placeholders count as used.
     const mapped = Object.values(inputs).flatMap((input) => (input.kind === 'choice' ? Object.values(input.map ?? {}).filter(isObj) : []));
-    for (const { key, part } of placeholdersIn([run, ...mapped])) {
+    const mappedText = Object.values(inputs).flatMap((input) => (input.kind === 'choice' || input.kind === 'toggle' ? Object.values(input.map ?? {}).filter((text) => typeof text === 'string') : []));
+    for (const { key, part } of placeholdersIn([run, ...mapped, ...mappedText])) {
       used.add(key);
       const input = inputs[key];
       if (!input) {
@@ -119,11 +122,13 @@ export function checkPanelSpec(raw: unknown): Checked {
     } else if (unused.length && whole && blocks.includes(whole)) {
       errors.push(`Inputs ${unused.join(', ')} are not used in run. The input is {{${whole}}}, so put ${unused.map((key) => `{{${key}}}`).join(', ')} inside each of ${whole}'s option blocks.`);
     } else if (unused.length) {
-      errors.push(`Inputs ${unused.join(', ')} are not used in run; put {{name}} where each value belongs, or remove them.`);
+      dropped.push(...unused);
     }
   }
 
   if (errors.length) return { errors };
+  for (const key of dropped) delete inputs[key];
+  if (layout) layout = layout.map((row) => row.filter((key) => key in inputs)).filter((row) => row.length > 0);
   const description = optString(raw.description, 500);
   const button = optString(raw.button, 24);
   return {
@@ -135,6 +140,7 @@ export function checkPanelSpec(raw: unknown): Checked {
       run: ask ? { ask: (run as { ask: string }).ask } : (run as PanelRun),
       ...(button ? { button } : {}),
     },
+    ...(dropped.length ? { dropped } : {}),
   };
 }
 
@@ -368,10 +374,16 @@ export function renderRun(spec: PanelSpec, values: PanelValues): { tool: 'run_st
   const fill = (node: unknown, depth = 0): unknown => {
     if (typeof node === 'string') {
       const whole = WHOLE.exec(node);
-      if (!whole) return node.replace(PLACEHOLDER, (_, key: string, part?: string) => String(valueOf(key, part)));
+      if (!whole) {
+        // Mapped text may hold placeholders of its own ("a {{mood}} voice").
+        return node.replace(PLACEHOLDER, (_, key: string, part?: string) => {
+          const value = valueOf(key, part);
+          return String(typeof value === 'string' && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value);
+        });
+      }
       const value = valueOf(whole[1]!, whole[2]);
       // A mapped block is filled in turn; the depth cap ends a block that names its own choice.
-      return isObj(value) && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value;
+      return (isObj(value) || typeof value === 'string') && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value;
     }
     if (Array.isArray(node)) {
       // An optional input left empty drops out, and so does a list it emptied.

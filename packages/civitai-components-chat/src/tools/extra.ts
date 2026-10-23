@@ -3,10 +3,14 @@ import { dynamicTool, jsonSchema, type ToolSet } from 'ai';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { McpStreamLostError, type McpCallOptions } from '../mcp/clients.js';
+import { toolImagesIn, toolImagesOf } from '../mcp/images.js';
 import { mcpResultToText } from '../mcp/result.js';
-import type { ServerTools } from '../mcp/servers.js';
+import type { ChatMcpResultLimit, ServerTools } from '../mcp/servers.js';
 
-/** An added server's reply is kept to its start and end: a build or test run puts its errors last. */
+/**
+ * By default an added server's reply is kept to its start and end: a build or test run puts its errors
+ * last. A server's own `resultLimit` replaces these, or (`false`) passes its replies whole.
+ */
 export const RESULT_HEAD_CHARS = 2_000;
 export const RESULT_TAIL_CHARS = 6_000;
 
@@ -45,7 +49,7 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
       tools[name] = dynamicTool({
         description: `[${server.label?.trim() || server.id}] ${tool.description ?? ''}`.trim(),
         inputSchema: jsonSchema(objectSchema(tool.inputSchema)),
-        execute: async (input, { abortSignal }) => {
+        execute: async (input, { abortSignal, toolCallId, experimental_context }) => {
           const args = (input ?? {}) as Record<string, unknown>;
           const options: McpCallOptions = {
             signal: abortSignal,
@@ -63,7 +67,16 @@ export function extraToolSet(servers: ServerTools[], deps: ExtraToolDeps): ToolS
             // would be wrong, and so would running it blindly again.
             return { error: `No reply from ${server.label?.trim() || server.id}; the ${tool.name} call may have finished.`, retryable: true, note: LOST_NOTE };
           }
-          const text = keepEnds(mcpResultToText(result, Infinity), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
+          // The server's `resultLimit` cuts the reply's text only. Images are read from the result itself,
+          // never from that text, and their notes go after the cut, so a note is never cut and no image
+          // data counts against the limit.
+          let text = limitResult(mcpResultToText(result, Infinity), server.resultLimit);
+          // An image goes to the model beside the result (see `ToolImages`), never in it: the output is
+          // what the conversation saves and shows, so it keeps only a note in the image's place.
+          const sink = toolImagesIn(experimental_context);
+          const { images, notes } = toolImagesOf(result, sink !== undefined);
+          sink?.add(toolCallId, name, images);
+          if (notes.length > 0) text = [text, ...notes].filter(Boolean).join('\n');
           return result.isError ? { error: text, note: FAILED_NOTE } : text;
         },
       });
@@ -78,8 +91,26 @@ function objectSchema(schema: Record<string, unknown>): Record<string, unknown> 
   return { ...rest, type: 'object' };
 }
 
+/**
+ * A reply as the assistant gets it under a server's `resultLimit`: whole for `false`, else its ends
+ * (`RESULT_HEAD_CHARS` and `RESULT_TAIL_CHARS` unless set). A `head` or `tail` that is not a whole
+ * number of characters, zero or more, takes the default, with a console warning.
+ */
+export function limitResult(text: string, limit: ChatMcpResultLimit | undefined): string {
+  if (limit === false) return text;
+  return keepEnds(text, chars(limit?.head, RESULT_HEAD_CHARS, 'head'), chars(limit?.tail, RESULT_TAIL_CHARS, 'tail'));
+}
+
+function chars(value: unknown, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value;
+  console.warn(`[chat-cvt] resultLimit.${name} ${String(value)} is not a whole number of characters; ${fallback} is used`);
+  return fallback;
+}
+
 /** The first `head` and last `tail` characters, with how many were left out between them. */
 export function keepEnds(text: string, head: number, tail: number): string {
   if (text.length <= head + tail) return text;
-  return `${text.slice(0, head)}\n…(${text.length - head - tail} characters omitted)…\n${text.slice(-tail)}`;
+  // `slice(-0)` is the whole text, so a zero tail keeps nothing from the end.
+  return `${text.slice(0, head)}\n…(${text.length - head - tail} characters omitted)…\n${tail > 0 ? text.slice(-tail) : ''}`;
 }

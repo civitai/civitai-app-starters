@@ -1,6 +1,6 @@
 import type { SiteClient } from '@civitai/sdk';
 
-import { SITE_URL } from '../config.js';
+import { siteUrl } from '../config.js';
 
 export interface ModelDetails {
   href: string;
@@ -31,13 +31,18 @@ export class ModelDirectory {
     this.#allowMature = allowMature;
   }
 
+  /** The site links go to: civitai.red when the viewer sees mature content, else civitai.com. */
+  get siteUrl(): string {
+    return siteUrl(this.#allowMature());
+  }
+
   get(id: number): Promise<ModelDetails> {
     let pending = this.#cache.get(id);
     if (!pending) {
-      pending = this.#load(id).catch(() => ({ href: `${SITE_URL}/models/${id}` }));
+      pending = this.#load(id).catch(() => ({ href: '' }));
       this.#cache.set(id, pending);
     }
-    return pending;
+    return pending.then((details) => ({ ...details, href: `${this.siteUrl}/models/${id}` }));
   }
 
   async #load(id: number): Promise<ModelDetails> {
@@ -46,7 +51,7 @@ export class ModelDirectory {
     const image = version?.images?.find((img) => img.type !== 'video' && (this.#allowMature() || (img.nsfwLevel ?? 1) <= 1))?.url;
     const type = model.type ? (TYPE_WORDS[model.type] ?? model.type) : undefined;
     return {
-      href: `${SITE_URL}/models/${id}`,
+      href: '',
       name: model.name,
       versions: (model.modelVersions ?? []).flatMap((v) => (typeof v.id === 'number' && v.name ? [{ id: v.id, name: v.name }] : [])),
       image,
