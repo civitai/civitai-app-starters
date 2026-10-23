@@ -168,6 +168,24 @@ describe('ChatSession with added MCP servers', () => {
     expect(calls).toEqual([{ command: 'ls' }]);
   });
 
+  it("cuts a server's replies by its own resultLimit, read at every call", async () => {
+    const long = `${'a'.repeat(2_000)}${'b'.repeat(42_000)}${'c'.repeat(6_000)}`;
+    let list: ChatMcpServer[] = [{ id: 'own', url: SANDBOX, token: () => 'tok', resultLimit: false }];
+    const { session, servers } = setup({ [SANDBOX]: [{ name: 'read', run: () => ({ content: [{ type: 'text', text: long }] }) }] }, () => list);
+
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(long);
+
+    list = [{ id: 'own', url: SANDBOX, token: () => 'tok', resultLimit: { head: 10, tail: 20 } }];
+    session.syncMcpServers();
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(`${'a'.repeat(10)}\n…(49970 characters omitted)…\n${'c'.repeat(20)}`);
+
+    list = [{ id: 'own', url: SANDBOX, token: () => 'tok' }];
+    session.syncMcpServers();
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(`${'a'.repeat(2_000)}\n…(42000 characters omitted)…\n${'c'.repeat(6_000)}`);
+    // A changed limit is not a reason to reconnect.
+    expect(servers[SANDBOX]!.initializes).toBe(1);
+  });
+
   it("keeps a tool whose name a built-in tool or another server also uses apart, under its server's id", async () => {
     const ran: string[] = [];
     const tagged = (server: string, ...names: string[]): FakeTool[] =>

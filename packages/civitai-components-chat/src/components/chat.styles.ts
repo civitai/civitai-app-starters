@@ -1326,7 +1326,8 @@ civitai-chat-panel {
   justify-items: start;
 }
 
-.cvt-panel-runs > civitai-chat-generation-card {
+.cvt-panel-runs > civitai-chat-generation-card,
+civitai-chat-generation-card[audio] {
   justify-self: stretch;
 }
 
@@ -1339,7 +1340,9 @@ civitai-chat-composer {
 }
 
 .cvt-composer-hold {
-  margin: 0 0 6px;
+  max-width: 800px;
+  margin: 0 auto 6px;
+  padding: 0 12px;
   font-size: 13px;
   color: var(--civitai-color-text-dimmed);
 }
@@ -1744,8 +1747,58 @@ civitai-chat-model-picker {
 }
 
 /* Contents, so the breakdown is placed against the top bar (which is relative), inside the chat on a phone. */
-civitai-chat-spend {
+civitai-chat-spend,
+civitai-chat-balance {
   display: contents;
+}
+
+.cvt-spend svg.cvt-balance-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.cvt-balance-panel section {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--civitai-color-border);
+}
+
+.cvt-balance-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cvt-balance-panel civitai-button {
+  justify-self: start;
+}
+
+.cvt-balance-panel .cvt-spend-note {
+  margin: 0;
+}
+
+/* On a phone the title keeps the room; the same figures are in Settings. */
+@container civitai-chat (max-width: 400px) {
+  civitai-chat-balance {
+    display: none;
+  }
+}
+
+.cvt-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cvt-top-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */

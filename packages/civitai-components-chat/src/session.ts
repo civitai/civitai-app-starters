@@ -6,10 +6,13 @@ import type { ChatAgent } from './agent/chat-agent.js';
 import { absoluteUrl, backendModels, hasGatewayUrl, hasTranscribe, namesGateway, newChatModelOf, transcribeOnHost, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
+import { chargeFetch } from './agent/charge.js';
+import { ChatFund } from './agent/fund.js';
+import { viewerId } from './auth/viewer.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
 import { authedFetch, createAssistantModel } from './agent/provider.js';
-import { chatConfig, outputTokenCap } from './config.js';
-import { createMcpConnection, type McpConnection } from './mcp/clients.js';
+import { chatConfig, outputTokenCap, siteUrl } from './config.js';
+import { createMcpConnection, signedInOrAnonymous, type McpConnection } from './mcp/clients.js';
 import { McpServerPool, type ChatMcpOptions, type ChatMcpServer } from './mcp/servers.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
@@ -155,6 +158,8 @@ export class ChatSession extends EventTarget {
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
+  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend`. */
+  readonly fund: ChatFund | undefined;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
   /** The servers added through `mcp().mcpServers`. */
@@ -177,6 +182,7 @@ export class ChatSession extends EventTarget {
   #siteTools: Promise<McpTool[] | null> | null = null;
   #options: SessionOptions;
   #hostToolNames = new Set<string>();
+  #viewer: Promise<number | undefined> | undefined;
   #models = new Map<string, LanguageModel>();
   /** What the run tools can do, from the latest catalog; panels run through them. */
   #runTools = new Map<string, JobToolInfo>();
@@ -199,14 +205,21 @@ export class ChatSession extends EventTarget {
     this.settings = loadSettings(settingsKey(options.scope));
     this.api = createOrchestrationApi(app);
     this.freeTier = new FreeTier(() => (backend ? Promise.resolve({ enabled: false, models: [] }) : this.api.getFreeTier()));
+    const viewer = () =>
+      (this.#viewer ??= viewerId(app).catch((error: unknown) => {
+        this.#viewer = undefined;
+        throw error;
+      }));
+    this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
-    this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    // As the viewer, so what it finds can follow their own preferences; a host's backend has no Civitai token.
+    this.siteMcp = backend ? anonymousSite : signedInOrAnonymous(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }), anonymousSite);
     this.mcpServers = new McpServerPool({
       onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
       onListed: () => this.dispatchEvent(new Event('mcp-servers-change')),
     });
-    // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
-    const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
+    const poster = sitePoster(this.siteMcp, () => siteUrl(this.settings.allowMature));
     this.posts = new PostManager({
       host: backend ? null : postHostOf(app),
       site: () => (backend || this.#options.mcp?.().site === false ? null : poster),
@@ -361,7 +374,7 @@ export class ChatSession extends EventTarget {
     }
     if (!model) {
       const wrap = (inner: typeof fetch) =>
-        freeTierFetch(inner, id, this.freeTier, () => ({ useFree: true, payWhenOut: true }));
+        freeTierFetch(chargeFetch(inner, (buzz) => (this.agent as Partial<Agent>).charged?.(buzz)), id, this.freeTier, () => ({ useFree: true, payWhenOut: true }), this.fund);
       this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
     }
     return model;

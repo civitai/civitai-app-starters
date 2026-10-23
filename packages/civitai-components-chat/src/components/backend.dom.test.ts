@@ -69,6 +69,30 @@ async function useEverything(chat: CivitaiChat, sent: string): Promise<void> {
 }
 
 describe('<civitai-chat> on a host backend', () => {
+  it('deletes every chat, also those on later pages of the list, only once the viewer confirms', async () => {
+    spyOnRequests();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const saved = (id: string, day: number) => ({ id, title: id, titleSource: 'user' as const, createdAt: `2026-10-0${day}T00:00:00Z`, updatedAt: `2026-10-0${day}T00:00:00Z`, turns: [] });
+    const store = memoryStore([saved('A', 3), saved('B', 2), saved('C', 1)]);
+    const list = store.list.bind(store);
+    store.list = async (options) => {
+      const { items } = await list(options);
+      return options.cursor ? { items: items.slice(2) } : { items: items.slice(0, 2), next: 'page-2' };
+    };
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    const dialog = chat.shadowRoot!.querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-all-dialog')!;
+    const deleteAll = () => chat.shadowRoot!.querySelector('civitai-chat-settings-dialog')!.dispatchEvent(new CustomEvent('cvt-delete-all', { bubbles: true, composed: true }));
+
+    dialog.ask = async () => false;
+    deleteAll();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([...store.records.keys()]).toEqual(['A', 'B', 'C']);
+
+    dialog.ask = async () => true;
+    deleteAll();
+    await vi.waitFor(() => expect([...store.records.keys()]).toEqual([]));
+  });
+
   it('makes no request to Civitai or OpenRouter through a send, the model list, Settings and a reload', async () => {
     const urls = spyOnRequests();
     const store = memoryStore();

@@ -129,6 +129,19 @@ describe('the headless entries in plain Node', () => {
     pool.close();
   });
 
+  it("let a server runner pass a server's replies whole with resultLimit: false, through the same pool and adapter", async () => {
+    const core = (await import('./core.js')) as unknown as Record<string, unknown>;
+    const url = 'https://example.com/mcp';
+    const reply = `${'a'.repeat(2_000)}${'b'.repeat(42_000)}${'c'.repeat(6_000)}`;
+    const mcp = fakeMcpServers({ [url]: [{ name: 'search', run: () => ({ content: [{ type: 'text', text: reply }] }) }] });
+    const Pool = core.McpServerPool as new (deps: { onError(server: unknown, error: unknown): void }) => { sync(servers: unknown[]): void; tools(): Promise<unknown[]>; close(): void };
+    const pool = new Pool({ onError: vi.fn() });
+    pool.sync([{ id: 'docs', url, fetch: mcp.fetch, resultLimit: false }]);
+    const tools = (core.extraToolSet as typeof extraToolSet)((await pool.tools()) as never, { taken: {} });
+    expect(await tools.docs__search!.execute!({}, { toolCallId: 'c', messages: [] })).toBe(reply);
+    pool.close();
+  });
+
   it("hand a server runner the chat's own MCP connection, result trimming and host-tool helpers, not copies", async () => {
     const core = (await import('./core.js')) as unknown as Record<string, unknown>;
     const internals: Record<string, Record<string, unknown>> = {
@@ -137,6 +150,7 @@ describe('the headless entries in plain Node', () => {
       McpStreamLostError: clients,
       mcpResultToText: result,
       keepEnds: extra,
+      limitResult: extra,
       hostToolSet: host,
       MEDIA_NOTE: host,
       HOST_TOOL_FAILED_NOTE: host,

@@ -36,7 +36,7 @@ export class CivitaiChatGenerationDetails extends LightElement {
   }
 
   #resource(resource: UsedResource): TemplateResult {
-    const href = `${SITE_URL}/models/${resource.modelId}?modelVersionId=${resource.versionId}`;
+    const href = `${this.models?.siteUrl ?? SITE_URL}/models/${resource.modelId}?modelVersionId=${resource.versionId}`;
     const fallback = resource.kind === 'lora' ? 'A LoRA' : 'A Civitai model';
     const name = this.models
       ? until(

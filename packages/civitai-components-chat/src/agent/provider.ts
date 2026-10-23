@@ -44,6 +44,13 @@ export function createAssistantModel(
   }: { baseUrl?: string; model?: string; fetch?: typeof fetch; wrap?: (inner: typeof fetch) => typeof fetch } = {},
 ): LanguageModel {
   const send = app ? authedFetch(app, doFetch) : (doFetch ?? ((input, init) => globalThis.fetch(input, init)));
-  const provider = createOpenAICompatible({ name: app ? PROVIDER : HOST_PROVIDER, baseURL: `${baseUrl.replace(/\/+$/, '')}/v1`, fetch: wrap(send) });
+  // Civitai's closing usage carries what the call was charged (`chargeFetch`).
+  const provider = createOpenAICompatible({ name: app ? PROVIDER : HOST_PROVIDER, baseURL: `${withoutTrailingSlashes(baseUrl)}/v1`, fetch: wrap(send), ...(app ? { includeUsage: true } : {}) });
   return provider.chatModel(model);
+}
+
+function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
 }

@@ -1,3 +1,5 @@
+import { FUND_EMPTY, type ChatFund } from './fund.js';
+
 export interface FreeTierWindow {
   limit: number;
   remaining: number;
@@ -18,8 +20,6 @@ export interface FreeTierStatus {
 
 export const FREE_TIER_EXHAUSTED = 'free_tier_exhausted';
 export const FREE_TIER_NOT_FREE = 'free_tier_not_free';
-/** Free work waits behind all paid work; past this with no reply yet, a viewer who allows paying gets a paid one. */
-export const FREE_START_MS = 12_000;
 
 /**
  * The viewer's free allowance per model, read from the orchestrator and kept current from the
@@ -103,76 +103,47 @@ export class FreeTier extends EventTarget {
 export interface FreeTierChoice {
   /** Send eligible requests free while the allowance lasts. */
   useFree: boolean;
-  /** When the free request cannot go ahead (used up, or slow to start), send it paid without asking. */
+  /** When the free request cannot go ahead (used up, or the model has none), send it paid without asking. */
   payWhenOut: boolean;
 }
 
 /**
- * Sends a chat request free when the model has allowance left, and falls back to paid only when the
- * viewer allows it; otherwise a used-up allowance becomes a clear, non-retried error.
+ * Sends a chat request free when the model has allowance left, and paid only when the viewer allows
+ * it; otherwise a used-up allowance becomes a clear, non-retried error. With a `fund`, replies past a
+ * used-up allowance are billed to the viewer's prepaid chat balance instead of their Buzz.
  */
-export function freeTierFetch(inner: typeof fetch, air: string, freeTier: FreeTier, choice: () => FreeTierChoice, startMs = FREE_START_MS): typeof fetch {
+export function freeTierFetch(inner: typeof fetch, air: string, freeTier: FreeTier, choice: () => FreeTierChoice, fund?: ChatFund): typeof fetch {
+  const pay: typeof fetch = fund ? (input, init) => fund.send(inner, input, init) : inner;
   return async (input, init) => {
     const { useFree, payWhenOut } = choice();
     if (useFree && !freeTier.loaded) await freeTier.refresh();
     // Free only, and this model has no free replies (or they could not be checked): never send it paid.
     if (useFree && !payWhenOut && !freeTier.modelFor(air)) return notFree(freeTier.loaded);
     if (!useFree || !freeTier.modelFor(air)) return inner(input, init);
-    if (!freeTier.available(air)) return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
+    if (!freeTier.available(air)) return payWhenOut ? paidOrUsedUp(input, init) : usedUp(freeTier.resetAt(air));
 
-    const abort = new AbortController();
-    // Linked by hand: AbortSignal.any is missing in Safari before 17.4, Chrome before 116, Firefox before 124.
-    const outer = init?.signal;
-    if (outer?.aborted) abort.abort(outer.reason);
-    else outer?.addEventListener('abort', () => abort.abort(outer.reason), { once: true });
-    const signal = abort.signal;
     const headers = new Headers(init?.headers);
     headers.set('X-Civitai-Tier', 'free');
-    const response = await inner(input, { ...init, headers, signal });
+    const response = await inner(input, { ...init, headers });
     if (response.status === 429) {
       freeTier.exhausted(air, Number(response.headers.get('Retry-After')) || undefined);
-      return payWhenOut ? inner(input, init) : usedUp(freeTier.resetAt(air));
+      return payWhenOut ? paidOrUsedUp(input, init) : usedUp(freeTier.resetAt(air));
     }
     // Browsers only see RateLimit when the server exposes it; otherwise ask for the count.
     if (!freeTier.note(response.headers)) void freeTier.refresh();
-
-    if (!response.ok || !response.body || !payWhenOut) return response;
-
-    const first = await firstChunk(response.body, startMs);
-    if (first === 'slow') {
-      abort.abort();
-      return inner(input, init);
-    }
-    return new Response(first.stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+    return response;
   };
+
+  // An empty chat balance after the free replies ran out reads as the free allowance being used up, with its reset time.
+  async function paidOrUsedUp(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const response = await pay(input, init);
+    return response.status === 400 && (await isFundEmpty(response)) ? usedUp(freeTier.resetAt(air)) : response;
+  }
 }
 
-async function firstChunk(body: ReadableStream<Uint8Array>, ms: number): Promise<'slow' | { stream: ReadableStream<Uint8Array> }> {
-  const reader = body.getReader();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const read = reader.read();
-  const outcome = await Promise.race([read, new Promise<'slow'>((resolve) => (timer = setTimeout(() => resolve('slow'), ms)))]);
-  clearTimeout(timer);
-  if (outcome === 'slow') {
-    void reader.cancel().catch(() => undefined);
-    return 'slow';
-  }
-  return {
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (outcome.done) controller.close();
-        else controller.enqueue(outcome.value);
-      },
-      async pull(controller) {
-        const { value, done } = await reader.read();
-        if (done) controller.close();
-        else controller.enqueue(value);
-      },
-      cancel(reason) {
-        return reader.cancel(reason);
-      },
-    }),
-  };
+async function isFundEmpty(response: Response): Promise<boolean> {
+  const body = (await response.clone().json().catch(() => null)) as { error?: { code?: string } } | null;
+  return body?.error?.code === FUND_EMPTY;
 }
 
 // A 400, so the AI SDK does not retry it as it would a 429.

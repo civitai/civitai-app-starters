@@ -2,6 +2,7 @@ import { ApiError, isTerminal, type AppClient, type Workflow } from '@civitai/sd
 
 import { ORCH_URL } from '../config.js';
 import type { FreeTierStatus } from '../agent/free-tier.js';
+import type { FundStatus } from '../agent/fund.js';
 
 export interface UploadedBlob {
   id: string;
@@ -36,6 +37,11 @@ export interface OrchestrationApi {
   uploadDirect(file: Blob, opts?: SendOptions): Promise<UploadedBlob>;
   refreshBlobUrl(blobId: string, opts?: SendOptions & { nsfwLevel?: string }): Promise<string>;
   getFreeTier(opts?: SendOptions): Promise<FreeTierStatus>;
+  createFund(template: { ttl: string; description: string }, opts?: SendOptions): Promise<FundStatus>;
+  getFund(fundId: string, opts?: SendOptions): Promise<FundStatus>;
+  /** A 402 when the viewer has too little Buzz. */
+  depositIntoFund(fundId: string, amount: number, opts?: SendOptions): Promise<FundStatus>;
+  extendFund(fundId: string, ttl: string, opts?: SendOptions): Promise<FundStatus>;
 }
 
 export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFetch: typeof fetch = fetch.bind(globalThis)): OrchestrationApi {
@@ -125,6 +131,10 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
       return read<UploadedBlob>(response);
     },
     getFreeTier: (opts) => json('GET', 'v2/consumer/free-tier', opts),
+    createFund: (template, opts) => json('POST', 'v2/consumer/funds', { ...opts, body: template }),
+    getFund: (fundId, opts) => json('GET', `v2/consumer/funds/${encodeURIComponent(fundId)}`, opts),
+    depositIntoFund: (fundId, amount, opts) => json('POST', `v2/consumer/funds/${encodeURIComponent(fundId)}/deposits`, { ...opts, body: { amount } }),
+    extendFund: (fundId, ttl, opts) => json('PATCH', `v2/consumer/funds/${encodeURIComponent(fundId)}`, { ...opts, body: { ttl } }),
     async refreshBlobUrl(blobId, opts = {}) {
       const query = opts.nsfwLevel ? `?nsfwLevel=${encodeURIComponent(opts.nsfwLevel)}` : '';
       const response = await authed(url(`v2/consumer/blobs/${encodeURIComponent(blobId)}${query}`), {

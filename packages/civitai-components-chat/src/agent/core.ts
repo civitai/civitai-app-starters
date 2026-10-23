@@ -1,6 +1,7 @@
-import { stepCountIs, streamText, type AssistantModelMessage, type JSONValue, type LanguageModel, type ToolResultPart, type ModelMessage, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
+import { APICallError, RetryError, stepCountIs, streamText, type AssistantModelMessage, type JSONValue, type LanguageModel, type ToolResultPart, type ModelMessage, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
 
 import { stepLimit } from '../config.js';
+import { ToolImages, type ToolImagesContext } from '../mcp/images.js';
 import type { ResumePoint } from '../types.js';
 import { endedReply } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
@@ -189,6 +190,12 @@ export class AgentCore {
       toolsBuilt = true;
       const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
       if (ownSteps !== undefined) maxSteps = ownSteps;
+      // The images this reply's tools return (an added server's screenshot): shown to the model after
+      // the results that returned them, in the next step only, and in nothing it keeps.
+      const toolImages = new ToolImages();
+      const context: ToolImagesContext = { toolImages };
+      // Whether the step asked for last carried tool images: a model that takes none refuses it.
+      let stepHadImages = false;
       const retryDelays = retry.networkRetryDelaysMs ?? NETWORK_RETRY_DELAYS_MS;
       const retryCap = retry.maxNetworkRetries ?? MAX_NETWORK_RETRIES_PER_REPLY;
       // Retries of the drop now being recovered from (reset once a step finishes, i.e. the connection
@@ -260,8 +267,16 @@ export class AgentCore {
             maxOutputTokens,
             temperature: 0.7,
             providerOptions: PROVIDER_OPTIONS,
-            // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-            prepareStep: ({ stepNumber }) => (before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none', system: `${system}\n\n${lastStep}` } : undefined),
+            experimental_context: context,
+            prepareStep: ({ stepNumber, messages }) => {
+              // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
+              const last = before + stepNumber >= maxSteps - 1 || wordsOnly?.() ? { toolChoice: 'none' as const, system: `${system}\n\n${lastStep}` } : undefined;
+              // The step's request with the reply's tool images in it; only this reply's own results get
+              // them, as an earlier reply's call may have had the same id.
+              const shown = toolImages.withImages(messages, history.length);
+              stepHadImages = shown !== undefined;
+              return shown ? { ...last, messages: shown } : last;
+            },
             onStepFinish: (step) => {
               completed = [...resumeFrom, ...step.response.messages];
               recorded.push({ messages: completed, calledTools: step.toolCalls.length > 0 });
@@ -340,18 +355,20 @@ export class AgentCore {
         // tool-calls finish, which ai 6 runs.) Steps that finished before the cut, after an earlier error
         // the stream recovered from too, are finished steps and are kept. A failed reply keeps every
         // step that finished: one that ran a tool keeps its call and result.
-        if (
-          retriesThisDrop >= retryDelays.length ||
-          retriesInReply >= retryCap ||
-          atCut.calls + callsAfterCut > 0 ||
-          atCut.finished >= maxSteps ||
-          !isNetworkDrop(streamError)
-        )
-          break;
-        const wait = retryDelays[retriesThisDrop]!;
-        retriesThisDrop++;
-        retriesInReply++;
-        run.retrying?.(retriesInReply, errorTrace(streamError, failedAt ?? where()));
+        const askAgain = atCut.calls + callsAfterCut === 0 && atCut.finished < maxSteps;
+        // A model that takes no images refuses the request that carried a tool's image (a text-only
+        // model picked in the settings): that step is asked for once more without them, and no image
+        // is sent for the rest of the reply. Before images were sent the same reply carried on.
+        const imagesRefused = askAgain && stepHadImages && toolImages.open && refusedRequest(streamError);
+        if (!imagesRefused && (retriesThisDrop >= retryDelays.length || retriesInReply >= retryCap || !askAgain || !isNetworkDrop(streamError))) break;
+        let wait = 0;
+        if (imagesRefused) toolImages.refuse();
+        else {
+          wait = retryDelays[retriesThisDrop]!;
+          retriesThisDrop++;
+          retriesInReply++;
+          run.retrying?.(retriesInReply, errorTrace(streamError, failedAt ?? where()));
+        }
         // What the cut step showed goes, with any step closed after the error (none called a tool); the
         // step asked for again shows its own answer.
         this.#live?.parts.splice(atCut.shown);
@@ -361,10 +378,10 @@ export class AgentCore {
         streaming = false;
         stepText = '';
         stepOpen = false;
-        // Down until the step asked for again sends its first part.
-        if (this.#live) this.#live.reconnecting = true;
+        // Down until the step asked for again sends its first part (a drop of the network only).
+        if (this.#live && !imagesRefused) this.#live.reconnecting = true;
         this.#emit();
-        await pauseBeforeRetry(wait, controller.signal);
+        if (wait > 0) await pauseBeforeRetry(wait, controller.signal);
         if (controller.signal.aborted) break;
         since = Date.now();
       }
@@ -443,6 +460,16 @@ export class AgentCore {
   #emit(): void {
     this.#deps.change?.();
   }
+}
+
+/**
+ * The provider refused the request with a client-error status: what a model that takes no images, or
+ * a request too large for it, answers. Not only that: a used-up free allowance is a 400 too, so a step
+ * that carried images and hit it is asked once more without them and fails again, as it would have.
+ */
+function refusedRequest(error: unknown): boolean {
+  const cause = RetryError.isInstance(error) ? error.lastError : error;
+  return APICallError.isInstance(cause) && [400, 404, 413, 415, 422].includes(cause.statusCode ?? 0);
 }
 
 /** An error as the SDK words it for the model (`error-text`). */

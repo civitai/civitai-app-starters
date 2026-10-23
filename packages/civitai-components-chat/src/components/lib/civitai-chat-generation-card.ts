@@ -268,6 +268,9 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('job')) this.#watch(this.job);
     this.single = (this.job?.results.length ?? 0) <= 1;
+    // A player has no width of its own, so a card of sounds takes the thread's width rather than shrinking to it.
+    const results = this.job?.results ?? [];
+    this.toggleAttribute('audio', results.length > 0 && results.every((result) => result.kind === 'audio'));
   }
 
   #watch(job: CardJob | undefined): void {
