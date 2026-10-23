@@ -186,6 +186,20 @@ describe('<civitai-chat> page slots', () => {
     });
   });
 
+  it('an empty chat with nothing slotted opens at the top of its greeting, even where the greeting overflows', async () => {
+    await page.viewport(375, 667);
+    const chat = await mount(341, 300);
+    const welcome = await vi.waitFor(() => {
+      const el = root(chat).querySelector<HTMLElement>('civitai-chat-welcome');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // The control: it does overflow, so a scroll to the end would show.
+    expect(welcome.scrollHeight).toBeGreaterThan(welcome.clientHeight);
+    expect(welcome.scrollTop).toBe(0);
+  });
+
   it('content assigned while the reader has scrolled up is still brought into view', async () => {
     await page.viewport(1280, 900);
     const chat = await mount(900, 360);

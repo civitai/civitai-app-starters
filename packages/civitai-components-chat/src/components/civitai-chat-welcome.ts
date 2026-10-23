@@ -57,8 +57,9 @@ export class CivitaiChatWelcome extends LightElement {
   // is followed, as the thread follows it once there are messages.
   #atEnd = true;
   #endSlot?: HTMLSlotElement;
+  // Only for content the page put there: the empty slot's own first size report must not scroll.
   #resize = new ResizeObserver(() => {
-    if (this.#atEnd) this.scrollTop = this.scrollHeight;
+    if (this.#atEnd && this.#endSlot?.assignedElements({ flatten: true }).length) this.scrollTop = this.scrollHeight;
   });
   #onScroll = (): void => {
     this.#atEnd = this.scrollHeight - this.scrollTop - this.clientHeight < NEAR_END_PX;
