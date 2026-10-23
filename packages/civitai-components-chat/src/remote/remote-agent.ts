@@ -64,8 +64,8 @@ export const STOP_ATTEMPTS = 20;
  * is asked again: no ask is made later than this after the first (or after the page last woke, so
  * time it spent asleep does not count). On the reconnect waits (1, 2, 5, 10, 30 s) that is the ladder
  * once, six asks over 48 s; a start whose asks hang until the request timeout stops after fewer asks,
- * and at most one timeout past this. Past it the turn fails with Retry, which sends the same start
- * again: a spinner that never ends tells the viewer nothing.
+ * and at most one timeout past this. Past it the turn fails with Retry, which asks again with the
+ * same idempotency key: a spinner that never ends tells the viewer nothing.
  */
 export const START_GIVE_UP_MS = 60_000;
 
@@ -162,11 +162,12 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #generation = 0;
   #disposed = false;
   /**
-   * The start of a turn given up on with no answer (`#gaveUp`): it may well have started a run, so
-   * Retry sends it again unchanged (same idempotency key), and a runner that started it answers with
-   * that run instead of refusing a second one.
+   * The idempotency key of a turn's start given up on with no answer (`#gaveUp`): it may well have
+   * started a run, so Retry asks with the same key, and a runner that started it answers with that run
+   * instead of refusing a second one. Only the key: the rest of the start (model, settings, page, and
+   * `retry`) is built afresh, as any Retry's is.
    */
-  #unanswered = new WeakMap<Turn, StartRunRequest>();
+  #unanswered = new WeakMap<Turn, string>();
 
   constructor(deps: RemoteAgentDeps) {
     super();
@@ -194,10 +195,10 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     const conversation = this.#deps.store.current;
     const turn = conversation?.turns.at(-1);
     if (this.running || this.#disposed || !conversation || turn?.assistant.status !== 'error') return;
-    const again = this.#unanswered.get(turn);
+    const key = this.#unanswered.get(turn);
     this.#unanswered.delete(turn);
     turn.assistant = { messages: [], status: 'streaming' };
-    await this.#start(conversation.id, turn, true, again);
+    await this.#start(conversation.id, turn, true, key);
   }
 
   /**
@@ -310,11 +311,11 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     return run;
   }
 
-  async #start(conversationId: string, turn: Turn, retry: boolean, again?: StartRunRequest): Promise<void> {
+  async #start(conversationId: string, turn: Turn, retry: boolean, key?: string): Promise<void> {
     const run = this.#begin(conversationId, turn);
     const page = this.#deps.pageState?.();
-    run.key = again?.idempotencyKey ?? this.#deps.newKey?.() ?? ulid();
-    const request: StartRunRequest = again ?? {
+    run.key = key ?? this.#deps.newKey?.() ?? ulid();
+    const request: StartRunRequest = {
       v: RUN_PROTOCOL_VERSION,
       idempotencyKey: run.key,
       conversationId,
@@ -337,7 +338,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
         // No answer, or the runner is down for now: the run may have started, so the same start (same key) is asked again.
         if (!retryable(error)) return this.#refused(run, error);
         // Until the next ask would come later than START_GIVE_UP_MS after the first (or the last wake): then the turn fails, with Retry.
-        if (Date.now() + this.#delay(failures) - run.askingSince! > START_GIVE_UP_MS) return this.#gaveUp(run, request, error);
+        if (Date.now() + this.#delay(failures) - run.askingSince! > START_GIVE_UP_MS) return this.#gaveUp(run, error);
         this.#down(run, { stream: true });
         await this.#pause(run, failures);
         if (run.closed) return;
@@ -623,10 +624,10 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
    * have reached the runner and started a run whose id the page never learned. It is left running, as
    * `leave()` leaves a run (opening the chat again finds it), and not stopped by its key: the chat asks
    * again by itself the moment the page is back online, and a stop still on its way then would end the
-   * very reply that ask follows. Retry sends this same start, key and all, so the runner answers with
-   * that run rather than refusing a second one as `run-active`.
+   * very reply that ask follows. Retry asks with this start's key, so the runner answers with that run
+   * rather than refusing a second one as `run-active`.
    */
-  #gaveUp(run: Run, request: StartRunRequest, error: unknown): void {
+  #gaveUp(run: Run, error: unknown): void {
     const http = error instanceof RunnerHttpError ? error : undefined;
     const kind: ErrorKind = !http ? 'network' : http.status === 429 ? 'rate_limit' : 'unavailable';
     const trace = localTrace(error instanceof Error ? error.message : String(error), http?.status, error instanceof Error ? error.name : undefined);
@@ -638,7 +639,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       // No run id was ever learned, so no step of it reached the page: asking again starts the reply over.
       resume: { messages: [], steps: 0, at: Date.now() },
     });
-    this.#unanswered.set(run.turn, request);
+    this.#unanswered.set(run.turn, run.key!);
     this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { kind, message: START_GAVE_UP, trace } }));
     this.#close(run);
   }

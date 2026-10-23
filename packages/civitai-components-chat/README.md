@@ -1310,8 +1310,9 @@ Every request and response carries `v: 1`. The events are `run-started`, the par
 A `POST /runs` that gets no answer, or a 5xx, 408 or 429, is asked again with the same
 `idempotencyKey` after 1, 2, 5, 10 and 30 s, for at most a minute from the first ask, or from when the
 page last woke (`START_GIVE_UP_MS`). Past that the reply fails with Retry. A run an earlier ask may have
-started is left running, and Retry (or the chat's own ask once the page is back online) sends the same
-start again with the same key, so the runner answers with that run. Any other refusal fails the reply
+started is left running, and Retry (or the chat's own ask once the page is back online) asks again, as a
+retry with the current model and settings but the same `idempotencyKey`, so the runner answers with that
+run. Any other refusal fails the reply
 at once.
 
 ### Running the loop in Node
