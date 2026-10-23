@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ChatBackend } from '../backend.js';
 import { completion, memoryStore, sse, textReply, urlOf } from '../test-support/fake-backend.js';
-import type { CivitaiChat } from './civitai-chat.js';
+import type { BeforeSendDetail, CivitaiChat, QueuedMessage } from './civitai-chat.js';
 import type { CivitaiChatTurn } from './civitai-chat-turn.js';
 import { defineElements } from './define.js';
 
@@ -258,6 +258,52 @@ describe('Edit on the latest message', () => {
     expect(JSON.stringify(saved)).not.toContain(ORIGINAL_REPLY);
     stopButton(chat)!.click();
     await vi.waitFor(() => expect(running(chat)).toBe(false));
+  });
+
+  it('goes through before-send as an edit: a page that queues it sends it as the same edit once released', async () => {
+    const { chat, asked } = await twoExchanges([EDITED_REPLY]);
+    const seen: { text: string; edit?: boolean }[] = [];
+    let waiting: QueuedMessage | undefined;
+    chat.addEventListener('before-send', (event) => {
+      const detail = (event as CustomEvent<BeforeSendDetail>).detail;
+      seen.push({ text: detail.text, ...(detail.edit ? { edit: detail.edit } : {}) });
+      waiting = detail.queue('Waking your app…');
+    });
+    await editTo(chat, EDITED);
+    saveButton(chat)!.click();
+    await vi.waitFor(() => expect(waiting).toBeDefined());
+    expect(seen).toEqual([{ text: EDITED, edit: true }]);
+    await vi.waitFor(() => expect(editor(chat)).toBeNull());
+    // Waiting: no Edit to press meanwhile, nothing asked yet.
+    expect(editButtons(chat)).toHaveLength(0);
+    expect(asked).toHaveLength(2);
+
+    waiting!.release();
+    await vi.waitFor(() => expect(threadText(chat)).toContain(EDITED_REPLY));
+    expect(asked).toHaveLength(3);
+    expect(bubbles(chat)).toEqual([FIRST, EDITED]);
+    expect(turns(chat)).toHaveLength(2);
+  });
+
+  it('a queued edit the page gives up on reopens its edit box with the words, never the message box', async () => {
+    const { chat, asked } = await twoExchanges();
+    let waiting: QueuedMessage | undefined;
+    chat.addEventListener('before-send', (event) => {
+      waiting = (event as CustomEvent<BeforeSendDetail>).detail.queue('Waking your app…');
+    });
+    await editTo(chat, EDITED);
+    saveButton(chat)!.click();
+    await vi.waitFor(() => expect(waiting).toBeDefined());
+    await vi.waitFor(() => expect(editor(chat)).toBeNull());
+
+    waiting!.cancel();
+    await vi.waitFor(() => expect(editor(chat)?.value).toBe(EDITED));
+    expect(root(chat).activeElement).toBe(editor(chat));
+    expect(chat.draft).toBe('');
+    expect(root(chat).querySelector('.cvt-unsent')).toBeNull();
+    expect(bubbles(chat)).toEqual([FIRST]);
+    expect(threadText(chat)).toContain(ORIGINAL_REPLY);
+    expect(asked).toHaveLength(2);
   });
 
   it('names a chat still named after its first message after the edited message', async () => {

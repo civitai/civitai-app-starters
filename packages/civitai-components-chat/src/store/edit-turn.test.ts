@@ -169,11 +169,11 @@ describe('editTurn', () => {
   const conversation = (titleSource: Conversation['titleSource'], turns: Turn[]): Conversation => ({ id: 'C', title: 'Old title', titleSource, createdAt: NOW, updatedAt: NOW, turns });
   const turn = (seq: number): Turn => ({ seq, createdAt: NOW, user: { content: ORIGINAL, attachments: [{ id: 'u1-1', kind: 'image', source: { type: 'upload', blobId: 'blob-1' }, url: 'https://example.test/a.png' }], refs: ['g1-1'] }, assistant: { messages: [{ role: 'assistant', content: ORIGINAL_REPLY }], status: 'done', buzz: 3 } });
 
-  it('replaces the words, keeps the files and references, and drops the reply (and what it cost) from the turn', () => {
+  it('replaces the words, keeps the files and references, and drops the reply but not what it cost', () => {
     const edited = turn(2);
     const chat = conversation('first-message', [turn(1), edited]);
     editTurn(chat, edited, EDITED, LATER);
-    expect(edited).toEqual({ seq: 2, createdAt: NOW, user: { content: EDITED, attachments: [{ id: 'u1-1', kind: 'image', source: { type: 'upload', blobId: 'blob-1' }, url: 'https://example.test/a.png' }], refs: ['g1-1'] }, assistant: { messages: [], status: 'streaming' } });
+    expect(edited).toEqual({ seq: 2, createdAt: NOW, user: { content: EDITED, attachments: [{ id: 'u1-1', kind: 'image', source: { type: 'upload', blobId: 'blob-1' }, url: 'https://example.test/a.png' }], refs: ['g1-1'] }, assistant: { messages: [], status: 'streaming', buzz: 3 } });
     expect(chat.updatedAt).toBe(LATER);
     // Not the first message: the chat keeps its name.
     expect(chat.title).toBe('Old title');

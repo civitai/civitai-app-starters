@@ -46,6 +46,7 @@ export class CivitaiChatThread extends LightElement {
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     canEdit: { type: Boolean, attribute: 'can-edit' },
+    returnedEdit: { attribute: false },
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -75,6 +76,8 @@ export class CivitaiChatThread extends LightElement {
   declare canRetry: boolean;
   /** Whether the viewer's latest message can be edited now (no reply runs): its Edit shows. */
   declare canEdit: boolean;
+  /** An edit of the latest message that waited and came back: that message's edit box reopens with it. */
+  declare returnedEdit: { seq: number; text: string } | undefined;
   /** The live reply waits for the viewer to approve a call: its status line says so. */
   declare awaitingApproval: boolean;
   declare queued: QueuedView | null;
@@ -218,6 +221,7 @@ export class CivitaiChatThread extends LightElement {
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
                 ?can-edit=${turn.seq === last && this.canEdit}
+                .returnedEdit=${this.returnedEdit?.seq === turn.seq ? this.returnedEdit : undefined}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
                 .panels=${this.panels}

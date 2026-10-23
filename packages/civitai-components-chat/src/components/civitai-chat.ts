@@ -424,6 +424,8 @@ export class CivitaiChat extends LitElement {
   /** Messages that could not go and could not go back into the box, oldest first. */
   #unsent: Unsent[] = [];
   #unsentIds = 0;
+  /** An edit that waited and came back: its message's edit box reopens with these words (a new object each time). */
+  #returnedEdit: { seq: number; text: string } | undefined;
 
   constructor() {
     super();
@@ -901,7 +903,21 @@ export class CivitaiChat extends LitElement {
   }
 
   #giveBackQueued(queued: Queued): void {
-    if (this.#unqueue(queued)) this.#returnToViewer(queued.text, queued);
+    if (!this.#unqueue(queued)) return;
+    if (queued.edit !== undefined) this.#giveBackEdit(queued.edit, queued.text);
+    else this.#returnToViewer(queued.text, queued);
+  }
+
+  /**
+   * An edit that waited and will not go never comes back into the message box, where it would go as a
+   * new message after the one it edits: it reopens that message's edit box with its words while the
+   * message is still the open chat's latest, and is otherwise dropped with a notice.
+   */
+  #giveBackEdit(seq: number, text: string): void {
+    if (this.#session?.store.current?.turns.at(-1)?.seq === seq) {
+      this.#returnedEdit = { seq, text };
+      this.requestUpdate();
+    } else this.#toast('Your edit was not sent: the chat changed meanwhile.');
   }
 
   /**
@@ -939,6 +955,8 @@ export class CivitaiChat extends LitElement {
   /** Edit: the waiting message goes back into the box, ahead of anything typed there, and does not go. */
   #editQueued(): void {
     const queued = this.#queued;
+    // A waiting edit goes back into its own message's edit box.
+    if (queued?.edit !== undefined) return this.#giveBackQueued(queued);
     const composer = this.#composerNow();
     if (!queued || !composer || !this.#unqueue(queued)) return;
     composer.draft = putBack(queued.text, composer.draft);
@@ -1648,8 +1666,9 @@ export class CivitaiChat extends LitElement {
    */
   async #send(text: string, edit?: { seq: number; sent?: boolean }): Promise<void> {
     // With `edit`, `text` is an edit of the viewer's message `edit.seq` (their latest), not a new
-    // message: it takes none of the message box's files, one that cannot go now is never put into the
-    // box (the edit box keeps it), and `edit.sent` is set once it went or waits to go.
+    // message: it takes none of the message box's files, it is never put into the message box (the
+    // edit box keeps one that cannot go now, and gets back one that waited and will not go:
+    // `#giveBackEdit`), and `edit.sent` is set once it went or waits to go.
     const session = this.#session;
     if (!session && edit) return;
     if (!session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
@@ -2097,7 +2116,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>

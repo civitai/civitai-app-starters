@@ -41,6 +41,7 @@ export class CivitaiChatTurn extends LightElement {
     latest: { type: Boolean },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     canEdit: { type: Boolean, attribute: 'can-edit' },
+    returnedEdit: { attribute: false },
     editing: { state: true },
     saving: { state: true },
     jobs: { attribute: false },
@@ -74,6 +75,8 @@ export class CivitaiChatTurn extends LightElement {
    * only while the chat can send (`canRetry`).
    */
   declare canEdit: boolean;
+  /** An edit of this message that waited and came back: the edit box reopens with its words, once per object. */
+  declare returnedEdit: { seq: number; text: string } | undefined;
   /** The message is being edited: a box with its words in place of its bubble. */
   declare editing: boolean;
   /** Save was pressed and the chat has not yet said whether the edit went. */
@@ -133,6 +136,8 @@ export class CivitaiChatTurn extends LightElement {
 
   /** The words in the edit box. */
   #draft = '';
+  /** The returned edit already reopened. */
+  #returned: { seq: number; text: string } | undefined;
   /** Where focus goes once the edit box is drawn or gone. */
   #focusNext: 'editor' | 'edit-button' | undefined;
 
@@ -335,6 +340,13 @@ export class CivitaiChatTurn extends LightElement {
 
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
+    const back = this.returnedEdit;
+    if (back && back !== this.#returned) {
+      this.#returned = back;
+      this.#draft = back.text;
+      this.editing = true;
+      this.#focusNext = 'editor';
+    }
     // A reply started, or a newer message came: the edit can no longer go, so its box goes.
     if (this.editing && !this.canEdit && !this.saving) this.editing = false;
     if (!this.live) this.#liveSince = undefined;

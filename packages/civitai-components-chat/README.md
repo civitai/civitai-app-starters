@@ -1157,8 +1157,9 @@ saved at once with the edited message and no reply, as a new message is, so a re
 shows the old reply; a chat still named after its first message is named after the edited one.
 
 An edit goes as a message does: `before-send` fires first with `edit: true`, and the page may cancel
-it (the edit box stays open with the words) or `queue()` it (it goes as the same edit on `release()`,
-and comes back into the message box if it cannot go). Save is off while the chat holds (`canSend`).
+it (the edit box stays open with the words) or `queue()` it (it goes as the same edit on `release()`;
+one that cannot go reopens its message's edit box with the words, never the message box, where it
+would go as a new message). Save is off while the chat holds (`canSend`).
 Edit does not show while a reply runs, nor on a reply that may still be running in another tab.
 
 With `runner="remote"`, Edit shows only once the runner has said it takes edits (`features: ['edit']`

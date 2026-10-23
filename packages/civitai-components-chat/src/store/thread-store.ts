@@ -654,13 +654,15 @@ export function saved(turn: Turn): SavedTurn {
 
 /**
  * The viewer's edit of their latest message, in place: `turn`'s text becomes `content` (its files and
- * references stay), the reply that followed it is dropped (the turn is replied to afresh, so it reads
+ * references stay), the reply that followed it is dropped but for what it cost (the turn is replied to afresh, so it reads
  * as streaming and is saved with no reply), and a chat still named after this first message is named
  * after the edited one. The server runner's head does the same (`startTurn` with `edit`).
  */
 export function editTurn(conversation: Conversation, turn: Turn, content: string, now: string): void {
   turn.user = { ...turn.user, content };
-  turn.assistant = { messages: [], status: 'streaming' };
+  // What the dropped reply cost stays charged, so the chat's spend keeps counting it (as Retry does).
+  const { buzz } = turn.assistant;
+  turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
   conversation.updatedAt = now;
   if (turn.seq === 1 && conversation.titleSource === 'first-message') conversation.title = firstMessageTitle(content);
 }
