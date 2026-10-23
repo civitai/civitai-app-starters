@@ -175,6 +175,7 @@ export class CivitaiChat extends LitElement {
     toolCalls: { attribute: 'tool-calls' },
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
+    timeZone: { attribute: 'time-zone' },
     mcp: { attribute: false },
     mcpServers: { attribute: false },
     holdReason: { attribute: 'hold-reason' },
@@ -247,6 +248,12 @@ export class CivitaiChat extends LitElement {
   declare instructions?: string | (() => string | undefined);
   /** Replaces the built-in persona and rules, or edits them (a function gets the defaults); read at every reply. */
   declare systemPrompt?: string | ((defaults: string) => string);
+  /**
+   * The viewer's time zone, an IANA name such as `America/Chicago`: the assistant is told that zone's
+   * date and weekday (and its name) instead of UTC's, so "today" late in the evening is still today.
+   * Read at every reply; unset, or a name the browser does not know, the date is UTC's.
+   */
+  declare timeZone?: string;
   /**
    * Switches the assistant's Civitai tool servers: `orchestration` makes things, `site` finds Civitai models.
    * `orchestration: { exclude: [...] }` keeps it on without the named tools, e.g. `['run_step', 'run_workflow']`.
@@ -1025,6 +1032,7 @@ export class CivitaiChat extends LitElement {
         hostTools: () => this.tools,
         hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
         systemPrompt: () => this.systemPrompt,
+        timeZone: () => this.timeZone,
         mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
         beforeToolCall: () => this.beforeToolCall,
         subagents: () => this.subagents,

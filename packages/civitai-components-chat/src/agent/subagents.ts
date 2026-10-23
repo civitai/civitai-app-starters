@@ -6,7 +6,7 @@ import { ASK_CHOICE } from '../tools/build.js';
 import { isErrorOutput } from '../tools/gate.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import { AgentCore, type AgentCoreOutcome } from './core.js';
-import { defaultRules } from './system-prompt.js';
+import { dateLine, defaultRules } from './system-prompt.js';
 import {
   ACTIVITY_MAX,
   DISPATCH_AGENT,
@@ -248,6 +248,8 @@ export interface DispatchDeps {
   model(): LanguageModel;
   maxOutputTokens(): number;
   now?(): Date;
+  /** The viewer's time zone for the date line (`dateLine`); UTC's date unless set. */
+  timeZone?(): string | undefined;
   describeError?(error: unknown): HumanError;
   networkRetryDelaysMs?: readonly number[];
   progress?: SubagentTracker;
@@ -416,7 +418,7 @@ async function runChild(deps: DispatchDeps, names: string[], task: string, id: s
   save();
   let outcome: AgentCoreOutcome | undefined;
   try {
-    const system = subagentSystemPrompt(names, deps.now?.() ?? new Date(), write ? write.instructions : options.instructions, write ? 'write' : 'read');
+    const system = subagentSystemPrompt(names, deps.now?.() ?? new Date(), write ? write.instructions : options.instructions, write ? 'write' : 'read', deps.timeZone?.());
     outcome = await core.run({
       seq: 0,
       tools: async () => tools,
@@ -494,11 +496,11 @@ function shortArg(input: unknown): string {
 }
 
 /** The chat's built-in rules for the subagent's tools, the subagent rules for its mode, then the page's. */
-export function subagentSystemPrompt(tools: string[], now: Date, instructions?: string, mode: 'read' | 'write' = 'read'): string {
+export function subagentSystemPrompt(tools: string[], now: Date, instructions?: string, mode: 'read' | 'write' = 'read', timeZone?: string): string {
   return [
     defaultRules({ tools }),
     '',
-    `Today is ${now.toISOString().slice(0, 10)}.`,
+    dateLine(now, timeZone),
     '',
     'These rules come after the ones above and win where they differ:',
     mode === 'write' ? SUBAGENT_WRITE_PREAMBLE : SUBAGENT_PREAMBLE,
