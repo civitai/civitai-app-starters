@@ -1087,6 +1087,15 @@ a second after a network change. Each drop gets its own three tries once a step 
 retry, so a long reply lives through several network changes; one reply retries at most 10 times in
 all, so a network that keeps dropping still ends it. It resumes from the last step that finished, so tools that already ran are not called
 again and words already kept are not repeated; the cut step's words are replaced by its new answer.
+Asking again does not pay twice for the cut step. Orchestration names each model request's workflow
+in the `X-Civitai-Workflow-Id` header, and before the same request goes out again the chat reads that
+workflow back: one that succeeded gives the step its answer (words and tool calls) with no new
+request; one still running is waited for, at most 10 minutes (a GET shows only whether it finished,
+so a long answer still being written cannot be told from a stuck one sooner); one that failed, has
+no answer, or is still running after that is canceled (when still running) and the step is asked
+for again. A reused answer's Buzz is counted on the reply from what the workflow cost. An answer
+with no such header is asked for again as before. Stop, or any model request given up on before its
+answer is complete, cancels that request's workflow, so the model stops working on it.
 The cut is the error that ended the reply: an earlier error the reply got past by itself does not
 count, and steps that finished after it are kept like any others. If the cut step had called a tool,
 or any tool call comes after the cut before the stream ends, it is not asked again, so no tool can

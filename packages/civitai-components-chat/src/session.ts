@@ -375,7 +375,7 @@ export class ChatSession extends EventTarget {
     if (!model) {
       const wrap = (inner: typeof fetch) =>
         freeTierFetch(chargeFetch(inner, (buzz) => (this.agent as Partial<Agent>).charged?.(buzz)), id, this.freeTier, () => ({ useFree: true, payWhenOut: true }), this.fund);
-      this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
+      this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap, recoverWorkflows: true })));
     }
     return model;
   }

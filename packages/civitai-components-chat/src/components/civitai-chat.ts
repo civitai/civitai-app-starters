@@ -1400,6 +1400,21 @@ export class CivitaiChat extends LitElement {
     }
   }
 
+  async #withdraw(): Promise<void> {
+    const fund = this.#session?.fund;
+    if (!fund) return;
+    this.#toppingUp = true;
+    this.requestUpdate();
+    try {
+      await fund.withdraw();
+    } catch (error) {
+      this.#toast('Could not pay your chat balance back.', error);
+    } finally {
+      this.#toppingUp = false;
+      this.requestUpdate();
+    }
+  }
+
   #balanceView(session: ChatSession): BalanceView {
     const free = session.freeTier.modelFor(session.assistantModel());
     // The badge shows the balance once the free replies are gone, so it is read then rather than at start.
@@ -1990,6 +2005,7 @@ export class CivitaiChat extends LitElement {
                     void session.fund?.refresh();
                   }}
                   @cvt-top-up=${() => void this.#topUp(false, false)}
+                  @cvt-withdraw=${() => void this.#withdraw()}
                   @cvt-auto-top-up=${(e: CustomEvent<{ on: boolean }>) => this.#updateSettings({ autoTopUp: e.detail.on })}
                 ></civitai-chat-balance>`
               : nothing}
@@ -2067,6 +2083,7 @@ export class CivitaiChat extends LitElement {
         .canExport=${turns.length > 0}
         .balance=${session.fund ? this.#balanceView(session) : undefined}
         @cvt-top-up=${() => void this.#topUp(false, false)}
+        @cvt-withdraw=${() => void this.#withdraw()}
         @cvt-auto-top-up=${(e: CustomEvent<{ on: boolean }>) => this.#updateSettings({ autoTopUp: e.detail.on })}
         .canDeleteAll=${!session.stopsRunBeforeDelete && (session.store.summaries.length > 0 || turns.length > 0)}
         .canSignOut=${this.canSignOut}
