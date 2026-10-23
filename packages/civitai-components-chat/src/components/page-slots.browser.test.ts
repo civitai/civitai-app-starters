@@ -189,6 +189,9 @@ describe('<civitai-chat> page slots', () => {
   it('an empty chat with nothing slotted opens at the top of its greeting, even where the greeting overflows', async () => {
     await page.viewport(375, 667);
     const chat = await mount(341, 300);
+    // On a host backend the greeting is plain and short: the page's own examples make it overflow.
+    chat.examples = Array.from({ length: 8 }, (_, i) => ({ title: `Example ${i + 1}`, prompt: `Build me app number ${i + 1}` }));
+    await chat.updateComplete;
     const welcome = await vi.waitFor(() => {
       const el = root(chat).querySelector<HTMLElement>('civitai-chat-welcome');
       expect(el).not.toBeNull();
