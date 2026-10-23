@@ -1089,10 +1089,11 @@ describe('RemoteAgent, a start that keeps failing', () => {
     agent.leave();
   });
 
-  it('a start that did reach the runner: given up without stopping its run, and Retry sends the same start again, so that run is followed rather than refused as run-active', async () => {
+  it('a start that did reach the runner: given up without stopping its run, and Retry asks again with the same key, so that run is followed rather than refused as run-active', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     let keys = 0;
-    const { agent, runner, store } = setup([], { newKey: () => `key-${++keys}` }, LADDER);
+    let model = 'model-a';
+    const { agent, runner, store } = setup([], { newKey: () => `key-${++keys}`, model: () => model }, LADDER);
     // Every ask reaches the runner (the first starts the run, the rest find it by its key), and no answer comes back.
     runner.knobs.refuseConcurrent = true;
     runner.knobs.loseStartAnswers = 6;
@@ -1106,12 +1107,17 @@ describe('RemoteAgent, a start that keeps failing', () => {
     expect(runner.requests.filter((request) => request.path.endsWith('stop'))).toEqual([]);
     expect(runner.runs.get('r1')!.live).toBe(true);
 
-    // Retry (pressed, or the chat's own ask as the page comes back online): the very same start, key and all.
+    // The viewer picks another model meanwhile. Retry (pressed, or the chat's own ask as the page comes
+    // back online) asks with the same key, so the runner answers with the run that key started, but as a
+    // retry built now: the model and settings of now, never the ones frozen at the first ask.
+    model = 'model-b';
     void agent.retry();
     await vi.advanceTimersByTimeAsync(0);
-    const bodies = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs').map((request) => JSON.stringify(request.body));
+    const bodies = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs').map((request) => request.body as { idempotencyKey: string; model: string; turn: { retry?: boolean } });
     expect(bodies).toHaveLength(7);
-    expect(new Set(bodies).size).toBe(1);
+    expect(new Set(bodies.map((body) => body.idempotencyKey))).toEqual(new Set(['key-1']));
+    expect(bodies.slice(0, 6).every((body) => body.model === 'model-a' && body.turn.retry === undefined)).toBe(true);
+    expect(bodies[6]).toMatchObject({ model: 'model-b', turn: { retry: true } });
     expect(runner.runs.size).toBe(1);
     expect(store.current!.turns[0]!.assistant.status).toBe('streaming');
     expect(runner.openStreams('r1')).toBe(1);
