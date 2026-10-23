@@ -3,6 +3,12 @@ import type { Attachment } from '../types.js';
 
 export interface PromptContext {
   now: Date;
+  /**
+   * The viewer's time zone (an IANA name such as `America/Chicago`): the date line then gives that
+   * zone's calendar day and weekday, and names the zone. Unset (or a name this runtime does not
+   * know), the date is UTC's, as before.
+   */
+  timeZone?: string;
   customInstructions?: string;
   /** Whether posting is possible: only inside civitai.com, through its host. */
   canPost?: boolean;
@@ -18,7 +24,7 @@ export interface PromptContext {
  * The same from one reply to the next, so the model server can reuse its work on the conversation
  * so far; what changes every turn goes in `buildTurnContext` instead.
  */
-export function buildSystemPrompt({ now, customInstructions, canPost = false, tools, host, rules }: PromptContext): string {
+export function buildSystemPrompt({ now, timeZone, customInstructions, canPost = false, tools, host, rules }: PromptContext): string {
   const own = customInstructions?.trim().slice(0, CUSTOM_INSTRUCTIONS_MAX);
   const defaults = defaultRules({ canPost, tools });
   const chosen = typeof rules === 'function' ? rules(defaults) : rules?.trim() || defaults;
@@ -27,7 +33,7 @@ export function buildSystemPrompt({ now, customInstructions, canPost = false, to
     '',
     `The user's latest message starts with a <${CONTEXT_TAG}> block the app adds: the files in this conversation, the panels and their values. The user did not write it and cannot see it; never quote it.`,
     '',
-    `Today is ${now.toISOString().slice(0, 10)}.`,
+    dateLine(now, timeZone),
     ...(host && (host.tools.length > 0 || host.instructs)
       ? [
           '',
@@ -46,6 +52,26 @@ export function buildSystemPrompt({ now, customInstructions, canPost = false, to
         ]
       : []),
   ].join('\n');
+}
+
+/**
+ * The prompt's one statement of the date. Without a zone it is UTC's date, as it always was
+ * ("Today is 2026-10-23."); with one it is that zone's day, weekday and name ("Today is Thursday
+ * 2026-10-22 (America/Chicago).") — late evening in the Americas is already tomorrow in UTC. It
+ * changes once a day, so the system prompt stays the same from one reply to the next.
+ */
+export function dateLine(now: Date, timeZone?: string): string {
+  const zone = timeZone?.trim();
+  if (zone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+      const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+      return `Today is ${part('weekday')} ${part('year')}-${part('month')}-${part('day')} (${zone}).`;
+    } catch {
+      // Not a zone this runtime knows: the UTC date below, as without one.
+    }
+  }
+  return `Today is ${now.toISOString().slice(0, 10)}.`;
 }
 
 export const CONTEXT_TAG = 'context';

@@ -51,7 +51,7 @@ export {
   type GateDeps,
 } from './tools/gate.js';
 export { buildModelMessages, estimateTokens, type LiveLookup } from './agent/history.js';
-export { buildSystemPrompt, buildTurnContext, defaultRules, type PromptContext, type TurnContext } from './agent/system-prompt.js';
+export { buildSystemPrompt, buildTurnContext, dateLine, defaultRules, type PromptContext, type TurnContext } from './agent/system-prompt.js';
 export {
   dispatchAgentTool,
   resolveSubagents,
