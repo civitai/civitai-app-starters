@@ -143,7 +143,7 @@ export class Agent extends EventTarget implements ChatAgent {
   async edit(content: string): Promise<void> {
     const conversation = this.#deps.store.current;
     const turn = conversation?.turns.at(-1);
-    if (this.running || !conversation || !turn) return;
+    if (!conversation || !turn) return;
     const { store } = this.#deps;
     if (store.editUserTurn) store.editUserTurn(turn, content);
     else editTurn(conversation, turn, content, (this.#deps.now?.() ?? new Date()).toISOString());

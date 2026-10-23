@@ -574,7 +574,7 @@ export class CivitaiChat extends LitElement {
   /** `#editable` but for a message on its way or waiting: for that message itself, an edit, as it goes. */
   #editTarget(session: ChatSession): Turn | undefined {
     const turn = session.store.current?.turns.at(-1);
-    if (!turn || session.agent.running || !session.agent.canEdit) return undefined;
+    if (!turn || !session.agent.canEdit) return undefined;
     return replyElsewhere(turn) === 'live' ? undefined : turn;
   }
 
