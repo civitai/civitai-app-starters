@@ -632,9 +632,9 @@ Two slots put the page's own content inside the chat, as light-DOM children of t
 - `composer-top` sits just above the message box, at its width (below any "This message was not
   sent" notice). Use it for something about what the chat is working on right now.
 - `thread-end` sits after the last message, inside the thread's scroll, at the messages' width. It
-  stays after the newest message as the conversation grows. When content is put in it, or grows while
-  the viewer is at the end, it is brought into view as a new message is. With no messages yet it shows
-  under the greeting.
+  stays after the newest message as the conversation grows. Content put in it is brought into view,
+  even when the viewer had scrolled back; content that grows while the viewer is at the end stays in
+  view. With no messages yet it shows under the greeting, scrolling with it.
 
 Both take no space with nothing slotted. The page styles its content itself: it is in the page's
 DOM, so the page's own stylesheet applies. Neither shows before the chat has started or while it is

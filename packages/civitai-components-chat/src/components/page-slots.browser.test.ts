@@ -153,12 +153,48 @@ describe('<civitai-chat> page slots', () => {
     }
   });
 
-  it('with no messages yet, thread-end content still shows', async () => {
+  it('with no messages yet, thread-end content shows under the greeting, in its scroll, and never pushes the message box out', async () => {
     await page.viewport(1280, 900);
-    const chat = await mount(900);
-    const end = slotted(chat, 'thread-end', 'Free up a slot', 60);
+    const chat = await mount(900, 420);
+    // Taller than the whole chat.
+    const end = slotted(chat, 'thread-end', 'Free up a slot', 600);
     await vi.waitFor(() => expect(slotEl(chat, 'thread-end')?.assignedElements()).toEqual([end]));
-    expect(rect(end).height).toBe(60);
+    const welcome = root(chat).querySelector<HTMLElement>('civitai-chat-welcome')!;
+    expect(welcome.contains(slotEl(chat, 'thread-end'))).toBe(true);
+    expect(rect(end).height).toBe(600);
+    const host = rect(chat);
+    const composer = rect(root(chat).querySelector('civitai-chat-composer')!);
+    expect(composer.bottom).toBeLessThanOrEqual(host.bottom + 0.5);
+    expect(composer.top).toBeGreaterThanOrEqual(host.top - 0.5);
+    // It scrolls in the greeting, and was brought into view: the greeting is scrolled to its end.
+    expect(welcome.scrollHeight).toBeGreaterThan(welcome.clientHeight);
+    await vi.waitFor(() => expect(welcome.scrollTop + welcome.clientHeight).toBeGreaterThanOrEqual(welcome.scrollHeight - 1));
+  });
+
+  it('content assigned while the reader has scrolled up is still brought into view', async () => {
+    await page.viewport(1280, 900);
+    const chat = await mount(900, 360);
+    await sendAndWait(chat, 'Build me a pomodoro timer', 1);
+    await sendAndWait(chat, 'Add a dark mode', 2);
+    const scroller = root(chat).querySelector<HTMLElement>('.cvt-thread-scroll')!;
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(root(chat).querySelector('.cvt-jump')).not.toBeNull());
+    const end = slotted(chat, 'thread-end', 'Free up a slot', 120);
+    await vi.waitFor(() => expect(inView(chat, end)).toBe(true), { timeout: 3_000 });
+  });
+
+  it('content that grows while the reader is at the end stays in view', async () => {
+    await page.viewport(1280, 900);
+    const chat = await mount(900, 360);
+    await sendAndWait(chat, 'Build me a pomodoro timer', 1);
+    await sendAndWait(chat, 'Add a dark mode', 2);
+    const end = slotted(chat, 'thread-end', 'Free up a slot', 20);
+    await vi.waitFor(() => expect(inView(chat, end)).toBe(true), { timeout: 3_000 });
+    // Let any scroll the assignment started land before the content grows.
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    end.style.height = '120px';
+    await vi.waitFor(() => expect(inView(chat, end)).toBe(true), { timeout: 3_000 });
   });
 
   it('at phone width both stay inside the chat, composer-top above the message box', async () => {
