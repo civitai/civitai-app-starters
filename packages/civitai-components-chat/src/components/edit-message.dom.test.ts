@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ChatBackend } from '../backend.js';
+import type { ChatConversation } from '../store/conversation-store.js';
 import { completion, memoryStore, sse, textReply, urlOf } from '../test-support/fake-backend.js';
 import type { BeforeSendDetail, CivitaiChat, QueuedMessage } from './civitai-chat.js';
 import type { CivitaiChatTurn } from './civitai-chat-turn.js';
@@ -92,6 +93,7 @@ const root = (chat: CivitaiChat) => chat.shadowRoot!;
 const turns = (chat: CivitaiChat) => [...root(chat).querySelectorAll<CivitaiChatTurn>('civitai-chat-turn')];
 const editButtons = (chat: CivitaiChat) => [...root(chat).querySelectorAll<HTMLButtonElement>('.cvt-edit-button')];
 const bubbles = (chat: CivitaiChat) => [...root(chat).querySelectorAll('.cvt-bubble')].map((bubble) => bubble.textContent);
+const toastText = (chat: CivitaiChat) => root(chat).querySelector('civitai-toast-region')?.textContent ?? '';
 const editor = (chat: CivitaiChat) => root(chat).querySelector<HTMLTextAreaElement>('.cvt-user-editor textarea');
 const threadText = (chat: CivitaiChat) => root(chat).querySelector('civitai-chat-thread')?.textContent ?? '';
 const stopButton = (chat: CivitaiChat) => root(chat).querySelector<HTMLButtonElement>('button.cvt-send[aria-label="Stop"]');
@@ -303,6 +305,65 @@ describe('Edit on the latest message', () => {
     expect(root(chat).querySelector('.cvt-unsent')).toBeNull();
     expect(bubbles(chat)).toEqual([FIRST]);
     expect(threadText(chat)).toContain(ORIGINAL_REPLY);
+    expect(asked).toHaveLength(2);
+  });
+
+  it('a returned edit opens its edit box once: not again when the chat is opened again', async () => {
+    const { chat, store } = await twoExchanges();
+    let waiting: QueuedMessage | undefined;
+    chat.addEventListener('before-send', (event) => {
+      waiting = (event as CustomEvent<BeforeSendDetail>).detail.queue('Waking your app…');
+    });
+    await editTo(chat, EDITED);
+    saveButton(chat)!.click();
+    await vi.waitFor(() => expect(waiting).toBeDefined());
+    waiting!.cancel();
+    await vi.waitFor(() => expect(editor(chat)?.value).toBe(EDITED));
+    cancelButton(chat)!.click();
+    await vi.waitFor(() => expect(editor(chat)).toBeNull());
+
+    const id = [...store.records.keys()][0]!;
+    chat.newChat();
+    await vi.waitFor(() => expect(turns(chat)).toHaveLength(0));
+    chat.conversationId = id;
+    await vi.waitFor(() => expect(bubbles(chat)).toEqual([FIRST, ORIGINAL]));
+    await vi.waitFor(() => expect(editButtons(chat)).toHaveLength(1));
+    expect(editor(chat)).toBeNull();
+  });
+
+  it('a queued edit whose chat was left is dropped with a notice, and never opens in the chat opened instead', async () => {
+    const other: ChatConversation = {
+      id: 'OTHER',
+      title: 'Lakes',
+      titleSource: 'llm',
+      createdAt: '2026-10-20T00:00:00.000Z',
+      updatedAt: '2026-10-20T00:00:00.000Z',
+      turns: [
+        { seq: 1, createdAt: '2026-10-20T00:00:00.000Z', user: { content: 'list two lakes', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Titicaca and Junín.' }], status: 'done' } },
+        { seq: 2, createdAt: '2026-10-20T00:00:00.000Z', user: { content: 'and a third', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Poopó.' }], status: 'done' } },
+      ],
+    };
+    const asked = gateway([FIRST_REPLY, ORIGINAL_REPLY]);
+    const store = memoryStore([other]);
+    const chat = await mount(store);
+    await chat.send(FIRST);
+    await vi.waitFor(() => expect(threadText(chat)).toContain(FIRST_REPLY));
+    await chat.send(ORIGINAL);
+    await vi.waitFor(() => expect(threadText(chat)).toContain(ORIGINAL_REPLY));
+    await vi.waitFor(() => expect(editButtons(chat)).toHaveLength(1));
+    let waiting: QueuedMessage | undefined;
+    chat.addEventListener('before-send', (event) => {
+      waiting = (event as CustomEvent<BeforeSendDetail>).detail.queue('Waking your app…');
+    });
+    await editTo(chat, EDITED);
+    saveButton(chat)!.click();
+    await vi.waitFor(() => expect(waiting).toBeDefined());
+
+    chat.conversationId = 'OTHER';
+    await vi.waitFor(() => expect(bubbles(chat)).toEqual(['list two lakes', 'and a third']));
+    await vi.waitFor(() => expect(toastText(chat)).toContain('Your edit was not sent.'));
+    expect(editor(chat)).toBeNull();
+    expect(chat.draft).toBe('');
     expect(asked).toHaveLength(2);
   });
 

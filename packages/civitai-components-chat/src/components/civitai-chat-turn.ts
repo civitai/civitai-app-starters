@@ -341,11 +341,13 @@ export class CivitaiChatTurn extends LightElement {
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
     const back = this.returnedEdit;
-    if (back && back !== this.#returned) {
+    if (back && back !== this.#returned && this.canEdit) {
       this.#returned = back;
       this.#draft = back.text;
       this.editing = true;
       this.#focusNext = 'editor';
+      // Taken: the chat lets go of it, so it never opens again (another chat, a later visit).
+      emit(this, 'cvt-edit-returned');
     }
     // A reply started, or a newer message came: the edit can no longer go, so its box goes.
     if (this.editing && !this.canEdit && !this.saving) this.editing = false;
