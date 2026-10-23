@@ -47,6 +47,12 @@
  * it saves the user's turn when the run starts, the reply's progress as it goes, and how it ended
  * before `run-ended`. The page writes no head; it reads the head again once a run ended, and sends a
  * title or model the viewer changed as a patch.
+ *
+ * ## Features
+ *
+ * A runner lists what it can do beyond v1's baseline in `features` on a start's answer and a lookup's
+ * ({@link RunFeature}). A client uses one only once a runner listed it, so an older runner (which lists
+ * none) and an older client (which sends none) keep working as before.
  */
 
 import type { ModelMessage } from 'ai';
@@ -125,13 +131,29 @@ export interface StartRunRequest {
    * the runner carries on from its saved steps (or starts it over); when the head ends just before it
    * (its first start was refused, so nothing saved it), it starts as a new turn. A runner answers
    * `stale-turn` to any other `seq`.
+   *
+   * With `edit` (only to a runner that lists {@link RUN_FEATURE_EDIT} in its `features`), the viewer
+   * edited their latest message: `user` replaces the saved message of turn `seq`, the reply that
+   * followed it is dropped, and the turn is replied to afresh (nothing carries on from the old reply).
+   * `seq` is the head's latest turn, or the next one when the head ends just before it (the message's
+   * first start was refused, so nothing saved it). Sent without `retry`, so a runner that does not
+   * know `edit` answers `stale-turn` to the latest turn rather than replying to the old message.
    */
-  turn: { seq: number; user: TurnUser; retry?: boolean };
+  turn: { seq: number; user: TurnUser; retry?: boolean; edit?: boolean };
   /** The model the reply uses. */
   model: string;
   settings: RunSettings;
   page?: RunPageState;
 }
+
+/**
+ * What a runner can do beyond protocol v1's baseline, as it lists them in `features` on a start's answer
+ * and a lookup's. A client uses a feature only once a runner listed it: an older runner lists none.
+ */
+export type RunFeature = typeof RUN_FEATURE_EDIT;
+
+/** The runner takes `turn.edit`: the viewer's latest message replaced, and its reply asked afresh. */
+export const RUN_FEATURE_EDIT = 'edit';
 
 /** The answer to a start that worked. */
 export interface StartRunResponse {
@@ -139,6 +161,8 @@ export interface StartRunResponse {
   runId: string;
   conversationId: string;
   seq: number;
+  /** What this runner can do beyond the baseline ({@link RunFeature}); absent from an older runner. A client ignores a feature it does not know. */
+  features?: string[];
 }
 
 /**
@@ -178,6 +202,8 @@ export interface RunSummary {
 export interface RunLookupResponse {
   v: 1;
   run: RunSummary | null;
+  /** As on {@link StartRunResponse}: what this runner can do beyond the baseline. */
+  features?: string[];
 }
 
 /** `POST /runs/<runId>/stop`: stop the reply, keeping what it did, as the viewer's Stop does. */

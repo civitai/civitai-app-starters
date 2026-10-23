@@ -5,7 +5,7 @@ import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, TitleSource, Turn } from '../types.js';
 import { notFoundError, supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation, type OpenOptions } from './conversation-store.js';
-import { clampTitle, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
+import { clampTitle, editTurn, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
 
 export interface HostThreadStoreDeps {
   store: ChatConversationStore;
@@ -148,6 +148,19 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
     return turn;
+  }
+
+  /**
+   * The viewer edited their latest message (`turn`), whose reply is asked for afresh: its text becomes
+   * `content` and its reply is dropped (see `editTurn`). Saved at once, as a new message is.
+   */
+  editUserTurn(turn: Turn, content: string): void {
+    const conversation = this.#owners.get(turn) ?? this.current;
+    if (!conversation || conversation.turns.at(-1) !== turn) return;
+    editTurn(conversation, turn, content, this.#now().toISOString());
+    this.#save(conversation).catch((error: unknown) => console.warn('[chat-cvt] could not save the edited message yet', error));
+    this.#touchSummary(conversation);
+    this.#emit('conversation-change');
   }
 
   /**

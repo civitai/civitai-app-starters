@@ -62,7 +62,8 @@ export function fakeRunner() {
   let releaseLookups: () => void = () => {};
   let held = new Promise<void>((resolve) => (releaseLookups = resolve));
 
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  // A start's and a lookup's answer (the only successful JSON ones) carry `features` when set.
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(status < 300 && knobs.features !== undefined ? { ...(body as object), features: knobs.features } : body), { status, headers: { 'content-type': 'application/json' } });
 
   function create(request: StartRunRequest): FakeRun {
     const existing = [...runs.values()].find((run) => (run.request.idempotencyKey === request.idempotencyKey));
@@ -140,7 +141,7 @@ export function fakeRunner() {
       }
       if (knobs.refuseStart) return json(knobs.refuseStart.body, knobs.refuseStart.status);
       const run = create(body as StartRunRequest);
-      return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq, ...(knobs.features !== undefined ? { features: knobs.features } : {}) }, 201);
+      return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq }, 201);
     }
     if (method === 'POST' && path === 'runs/stop') {
       if (knobs.failStops > 0) {
@@ -155,7 +156,7 @@ export function fakeRunner() {
       }
       if (knobs.holdLookups) await held;
       const run = [...runs.values()].find((r) => r.live && r.conversationId === url.searchParams.get('conversationId'));
-      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z', lastEventId: String(run.journal.length - 1) } : null, ...(knobs.features !== undefined ? { features: knobs.features } : {}) });
+      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z', lastEventId: String(run.journal.length - 1) } : null });
     }
     const eventsPath = /^runs\/([^/]+)\/events$/.exec(path);
     if (method === 'GET' && eventsPath) {

@@ -45,6 +45,7 @@ export class CivitaiChatThread extends LightElement {
     mcpServerIds: { attribute: false },
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    canEdit: { type: Boolean, attribute: 'can-edit' },
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -72,6 +73,8 @@ export class CivitaiChatThread extends LightElement {
   declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  /** Whether the viewer's latest message can be edited now (no reply runs): its Edit shows. */
+  declare canEdit: boolean;
   /** The live reply waits for the viewer to approve a call: its status line says so. */
   declare awaitingApproval: boolean;
   declare queued: QueuedView | null;
@@ -94,6 +97,7 @@ export class CivitaiChatThread extends LightElement {
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
     this.canRetry = false;
+    this.canEdit = false;
     this.awaitingApproval = false;
     this.queued = null;
     this.turns = [];
@@ -213,6 +217,7 @@ export class CivitaiChatThread extends LightElement {
                 ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
+                ?can-edit=${turn.seq === last && this.canEdit}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
                 .panels=${this.panels}
