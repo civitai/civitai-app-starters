@@ -235,9 +235,11 @@ describe('session.requestGrants on the host', () => {
   });
 
   it('asks for a document-store scope like any other outside a local preview', async () => {
-    // The option omitted AND explicitly false must both behave as before: the
-    // storage scope goes to the host, and a grant of only the other scope is
-    // not enough to resolve.
+    // INVARIANT GUARD, not regression coverage: this was already true before the
+    // local-preview change. It is the guard on the CONDITION: drop the
+    // `localPreviewStorage` check and this goes red. The option omitted AND
+    // explicitly false must both behave as before: the storage scope goes to
+    // the host, and a grant of only the other scope is not enough to resolve.
     for (const session of [
       (t: ReturnType<typeof createFakeTransport>) => createHostSession(t),
       (t: ReturnType<typeof createFakeTransport>) =>

@@ -395,6 +395,9 @@ describe('dev-tunnel preview: requestGrants and the document-store scopes', () =
     await expect(granted).resolves.toBe(true);
   });
 
+  // Invariant guard (already true before the change): the wiring half of the
+  // condition guard in test/host/host.test.ts — `initialize()` must not hand the
+  // session `localPreviewStorage: true` without the host's signal.
   it('without the host signal, a document-store scope is asked for as before', async () => {
     const transport = block();
     const { fetch } = fakeFetch([]);
