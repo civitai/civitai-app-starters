@@ -55,6 +55,8 @@ export function fakeRunner() {
     hangLookups: false,
     /** The parts `run-started` carries. */
     startParts: [] as TurnPart[],
+    /** What the runner lists in `features` on a start's and a lookup's answer; none (an older runner) unless set. */
+    features: undefined as unknown,
   };
   let count = 0;
   let releaseLookups: () => void = () => {};
@@ -138,7 +140,7 @@ export function fakeRunner() {
       }
       if (knobs.refuseStart) return json(knobs.refuseStart.body, knobs.refuseStart.status);
       const run = create(body as StartRunRequest);
-      return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq }, 201);
+      return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq, ...(knobs.features !== undefined ? { features: knobs.features } : {}) }, 201);
     }
     if (method === 'POST' && path === 'runs/stop') {
       if (knobs.failStops > 0) {
@@ -153,7 +155,7 @@ export function fakeRunner() {
       }
       if (knobs.holdLookups) await held;
       const run = [...runs.values()].find((r) => r.live && r.conversationId === url.searchParams.get('conversationId'));
-      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z', lastEventId: String(run.journal.length - 1) } : null });
+      return json({ v: 1, run: run ? { runId: run.runId, conversationId: run.conversationId, seq: run.seq, user: run.request.turn.user, startedAt: '2026-10-19T00:00:00Z', lastEventId: String(run.journal.length - 1) } : null, ...(knobs.features !== undefined ? { features: knobs.features } : {}) });
     }
     const eventsPath = /^runs\/([^/]+)\/events$/.exec(path);
     if (method === 'GET' && eventsPath) {
