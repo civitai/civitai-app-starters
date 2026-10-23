@@ -234,6 +234,33 @@ describe('session.requestGrants on the host', () => {
     expect(t.listenerCount('CONSENT_UNAVAILABLE')).toBe(0);
   });
 
+  it('asks for a document-store scope like any other outside a local preview', async () => {
+    // The option omitted AND explicitly false must both behave as before: the
+    // storage scope goes to the host, and a grant of only the other scope is
+    // not enough to resolve.
+    for (const session of [
+      (t: ReturnType<typeof createFakeTransport>) => createHostSession(t),
+      (t: ReturnType<typeof createFakeTransport>) =>
+        createHostSession(t, { localPreviewStorage: false }),
+    ]) {
+      const t = createFakeTransport({ token: token(['models:read:self']) });
+      let settled: boolean | undefined;
+      const pending = session(t)
+        .requestGrants(['apps:storage', 'buzz:read:self'])
+        .then((v) => (settled = v));
+
+      expect(t.sent).toEqual([
+        { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage', 'buzz:read:self'] } },
+      ]);
+      t.setSnapshot({ token: token(['models:read:self', 'buzz:read:self']) });
+      await Promise.resolve();
+      expect(settled).toBeUndefined();
+
+      t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage'] });
+      await expect(pending).resolves.toBe(false);
+    }
+  });
+
   it('ends the wait when the caller aborts', async () => {
     const t = createFakeTransport({ token: token([]) });
     const ac = new AbortController();
@@ -243,5 +270,74 @@ describe('session.requestGrants on the host', () => {
     ac.abort();
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+/**
+ * A dev-tunnel preview (`storageMode: 'local-preview'`): the document store is
+ * served by the in-tab local store, and the host never mints a document-store
+ * scope onto the token. Asking the host for one can only be refused, so the
+ * session treats the document-store scopes as held and asks only for the rest.
+ *
+ * Fixtures: every scope list below is distinct from the others and from the
+ * token's own scopes, so an assertion cannot pass by echoing a neighbour.
+ */
+describe('session.requestGrants in a local preview', () => {
+  it('a document-store-only request resolves true without contacting the host', async () => {
+    const t = createFakeTransport({ token: token(['user:read:self']) });
+
+    const granted = createHostSession(t, { localPreviewStorage: true }).requestGrants([
+      'apps:storage',
+      'apps:storage:publish',
+    ]);
+    // First, so a session that still asks the host fails HERE rather than timing out.
+    expect(t.sent).toEqual([]);
+    await expect(granted).resolves.toBe(true);
+  });
+
+  it('a mixed request asks only for the rest and resolves true once that is granted', async () => {
+    const t = createFakeTransport({ token: token(['collections:read:self']) });
+
+    const pending = createHostSession(t, { localPreviewStorage: true }).requestGrants([
+      'apps:storage',
+      'ai:write:budgeted',
+      'apps:storage:publish',
+    ]);
+    expect(t.sent).toEqual([{ type: 'REQUEST_CONSENT', payload: { scopes: ['ai:write:budgeted'] } }]);
+    t.setSnapshot({ token: token(['collections:read:self', 'ai:write:budgeted']) });
+
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('a mixed request still resolves false when the host refuses the rest', async () => {
+    const t = createFakeTransport({ token: token(['goods:read:self']) });
+
+    const pending = createHostSession(t, { localPreviewStorage: true }).requestGrants([
+      'posts:write:self',
+      'apps:storage',
+    ]);
+    expect(t.sent).toEqual([{ type: 'REQUEST_CONSENT', payload: { scopes: ['posts:write:self'] } }]);
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['posts:write:self'] });
+
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('storage scopes the local store does NOT serve still go to the host', async () => {
+    // Shared storage and the deprecated key/value scopes keep the real routes in
+    // a preview, so holding them locally would be a lie.
+    const t = createFakeTransport({ token: token(['social:react:self']) });
+
+    const pending = createHostSession(t, { localPreviewStorage: true }).requestGrants([
+      'apps:storage:shared:read',
+      'apps:storage:write',
+    ]);
+    expect(t.sent).toEqual([
+      {
+        type: 'REQUEST_CONSENT',
+        payload: { scopes: ['apps:storage:shared:read', 'apps:storage:write'] },
+      },
+    ]);
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [] });
+    await expect(pending).resolves.toBe(false);
   });
 });

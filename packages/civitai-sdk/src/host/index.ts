@@ -442,8 +442,16 @@ function asScanResult(value: unknown): ImageScanResult {
   return { status: 'error', ...(typeof v?.message === 'string' ? { message: v.message } : {}) };
 }
 
+export interface HostSessionOptions {
+  /** Whether the document store is served locally (a dev-tunnel preview). Not wired yet. */
+  localPreviewStorage?: boolean;
+}
+
 /** The token the host minted for this block, kept current as the host rotates it. */
-export function createHostSession(transport: BlockTransport): Session {
+export function createHostSession(
+  transport: BlockTransport,
+  _options: HostSessionOptions = {},
+): Session {
   return {
     async getToken({ fresh, signal }: TokenOptions = {}) {
       if (!fresh) return transport.snapshot.get().token.raw;
