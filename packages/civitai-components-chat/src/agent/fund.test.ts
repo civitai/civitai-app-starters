@@ -34,6 +34,10 @@ function funds(start: { balance?: number; wallet?: number } = {}) {
       return (fund = { ...fund!, balance: fund!.balance + amount });
     }),
     extendFund: vi.fn(async () => fund!),
+    refundFund: vi.fn(async () => {
+      wallet += fund!.balance;
+      return (fund = { ...fund!, balance: 0 });
+    }),
   };
   const storage = { getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => void stored.set(k, v), removeItem: (k: string) => void stored.delete(k) };
   const make = (autoTopUp: boolean) => new ChatFund({ api, viewer: async () => 7, autoTopUp: () => autoTopUp, storage });
@@ -50,13 +54,25 @@ function funds(start: { balance?: number; wallet?: number } = {}) {
     }
     return new Response('data: {"ok":true}\n\n', { status: 200 });
   }) as typeof fetch;
-  return { make, inner, sent, deposits, balance: () => fund?.balance, stored };
+  return { make, inner, sent, deposits, balance: () => fund?.balance, wallet: () => wallet, stored };
 }
 
 const request = (doFetch: typeof fetch) => doFetch('https://orch/v1/chat/completions', { method: 'POST', body: '{"model":"x"}' });
 const messageOf = async (response: Response) => ((await response.json()) as { error: { message: string } }).error.message;
 
 describe('chat balance', () => {
+  it('pays what is left back to the viewer on Withdraw, and tops up again from an empty fund', async () => {
+    const { make, inner, balance, wallet, deposits } = funds({ balance: 60, wallet: 500 });
+    const fund = make(true);
+    await fund.refresh();
+
+    await fund.withdraw();
+    expect([balance(), fund.balance, wallet()]).toEqual([0, 0, 560]);
+
+    expect((await request(freeTierFetch(inner, QWEN, await usedUpFreeTier(), () => ({ useFree: true, payWhenOut: true }), fund))).status).toBe(200);
+    expect(deposits).toEqual([100]);
+  });
+
   it('bills the fund once the free replies are used up, never the wallet', async () => {
     const { make, inner, sent, balance } = funds({ balance: 5 });
     const response = await request(freeTierFetch(inner, QWEN, await usedUpFreeTier(), () => ({ useFree: true, payWhenOut: true }), make(false)));
@@ -72,7 +88,7 @@ describe('chat balance', () => {
 
     expect(sent).toEqual([]);
     expect(deposits).toEqual([]);
-    expect(humanize(new Error(await messageOf(response)))).toMatchObject({ kind: 'free_tier_exhausted', message: expect.stringMatching(/^Your free replies are used up until .+\.$/) });
+    expect(humanize(new Error(await messageOf(response)))).toMatchObject({ kind: 'free_tier_exhausted', message: expect.stringMatching(/^Your free allowance is used up until .+\.$/) });
   });
 
   it('with auto top-up, opens and fills a fund and keeps going, and tops up again when a reply empties it', async () => {

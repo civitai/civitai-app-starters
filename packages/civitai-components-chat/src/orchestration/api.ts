@@ -42,6 +42,8 @@ export interface OrchestrationApi {
   /** A 402 when the viewer has too little Buzz. */
   depositIntoFund(fundId: string, amount: number, opts?: SendOptions): Promise<FundStatus>;
   extendFund(fundId: string, ttl: string, opts?: SendOptions): Promise<FundStatus>;
+  /** Pays what is left back to its depositors; the fund stays open, empty. */
+  refundFund(fundId: string, opts?: SendOptions): Promise<FundStatus>;
 }
 
 export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFetch: typeof fetch = fetch.bind(globalThis)): OrchestrationApi {
@@ -135,6 +137,7 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
     getFund: (fundId, opts) => json('GET', `v2/consumer/funds/${encodeURIComponent(fundId)}`, opts),
     depositIntoFund: (fundId, amount, opts) => json('POST', `v2/consumer/funds/${encodeURIComponent(fundId)}/deposits`, { ...opts, body: { amount } }),
     extendFund: (fundId, ttl, opts) => json('PATCH', `v2/consumer/funds/${encodeURIComponent(fundId)}`, { ...opts, body: { ttl } }),
+    refundFund: (fundId, opts) => json('POST', `v2/consumer/funds/${encodeURIComponent(fundId)}/refund`, opts),
     async refreshBlobUrl(blobId, opts = {}) {
       const query = opts.nsfwLevel ? `?nsfwLevel=${encodeURIComponent(opts.nsfwLevel)}` : '';
       const response = await authed(url(`v2/consumer/blobs/${encodeURIComponent(blobId)}${query}`), {

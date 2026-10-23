@@ -661,14 +661,14 @@ describe('civitai-chat-thread', () => {
       seq: 1,
       createdAt: '',
       user: { content: 'hi', attachments: [] },
-      assistant: { messages: [], status: 'error' as const, error: 'Your free replies are used up until 4:55 PM.', errorKind: 'free_tier_exhausted' },
+      assistant: { messages: [], status: 'error' as const, error: 'Your free allowance is used up until 4:55 PM.', errorKind: 'free_tier_exhausted' },
     };
     const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     const asked: unknown[] = [];
     thread.addEventListener('cvt-top-up', (e) => asked.push((e as CustomEvent<{ auto: boolean }>).detail));
 
-    expect(thread.textContent).toContain('Your free replies are used up until 4:55 PM.');
+    expect(thread.textContent).toContain('Your free allowance is used up until 4:55 PM.');
     const button = (text: string) => [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes(text))!;
     button('Top up 100 Buzz').click();
     button('Always top up when empty').click();
@@ -680,14 +680,14 @@ describe('civitai-chat-thread', () => {
       seq: 1,
       createdAt: '',
       user: { content: 'hi', attachments: [] },
-      assistant: { messages: [], status: 'error' as const, error: "This model has no free replies, and you chose free replies only.", errorKind: 'free_tier_not_free' },
+      assistant: { messages: [], status: 'error' as const, error: "This model has no free allowance, and you chose free use only.", errorKind: 'free_tier_not_free' },
     };
     const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     const asked: unknown[] = [];
     thread.addEventListener('cvt-continue-paid', (e) => asked.push(e));
 
-    expect(thread.textContent).toContain('This model has no free replies');
+    expect(thread.textContent).toContain('This model has no free allowance');
     expect(thread.textContent).not.toContain('Settings');
     expect(thread.textContent).not.toMatch(/about 1|Buzz a reply|per reply/);
     [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'))!.click();
