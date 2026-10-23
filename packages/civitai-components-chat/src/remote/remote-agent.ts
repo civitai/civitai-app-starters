@@ -196,7 +196,7 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   async edit(content: string): Promise<void> {
     const conversation = this.#deps.store.current;
     const turn = conversation?.turns.at(-1);
-    if (this.running || this.#disposed || !this.canEdit || !conversation || !turn || turn.assistant.status === 'streaming') return;
+    if (this.running || this.#disposed || !this.canEdit || !conversation || !turn) return;
     const { store } = this.#deps;
     if (store.editUserTurn) store.editUserTurn(turn, content);
     else editTurn(conversation, turn, content, new Date().toISOString());
