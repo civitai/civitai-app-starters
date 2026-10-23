@@ -58,7 +58,7 @@ describe('free chat replies', () => {
     const response = await request(freeTierFetch(inner, 'z-ai/glm-5.3-flash', tier, () => ({ useFree: true, payWhenOut: false })));
     expect(calls).toEqual([]);
     const failed = humanize(new Error(((await response.json()) as { error: { message: string } }).error.message));
-    expect(failed).toMatchObject({ kind: 'free_tier_not_free', message: "This model has no free replies, and you chose free replies only." });
+    expect(failed).toMatchObject({ kind: 'free_tier_not_free', message: "This model has no free allowance, and you chose free use only." });
 
     // Free replies that could not be checked are not a reason to pay either.
     const unknown = new FreeTier(async () => Promise.reject(new Error('offline')));
@@ -67,7 +67,7 @@ describe('free chat replies', () => {
     expect(calls).toEqual([]);
     expect(humanize(new Error(((await offline.json()) as { error: { message: string } }).error.message))).toMatchObject({
       kind: 'free_tier_not_free',
-      message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies.",
+      message: "Your free allowance couldn't be checked, so nothing was sent. Try again, or allow paid use.",
     });
   });
 
@@ -81,7 +81,7 @@ describe('free chat replies', () => {
 
     const failed = humanize(new Error(((await response.json()) as { error: { message: string } }).error.message));
     expect(failed.kind).toBe('free_tier_exhausted');
-    expect(failed.message).toMatch(/^Your free replies are used up until .+\.$/);
+    expect(failed.message).toMatch(/^Your free allowance is used up until .+\.$/);
 
     await request(freeTierFetch(inner, QWEN, tier, () => ({ useFree: true, payWhenOut: false })));
     expect(calls).toEqual(['free']);

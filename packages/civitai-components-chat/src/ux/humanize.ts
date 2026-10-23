@@ -18,8 +18,8 @@ export interface HumanError {
 }
 
 const WORDS: Record<ErrorKind, string> = {
-  free_tier_exhausted: 'Your free replies are used up for now.',
-  free_tier_not_free: "This model has no free replies, and you chose free replies only.",
+  free_tier_exhausted: 'Your free allowance is used up for now.',
+  free_tier_not_free: "This model has no free allowance, and you chose free use only.",
   fund_empty: 'Your chat balance is empty.',
   insufficient_buzz: "You don't have enough Buzz for this.",
   blocked: 'That request was blocked by the safety filter. Try wording it differently.',
@@ -37,7 +37,7 @@ export function humanize(error: unknown): HumanError {
   const kind = kindOf(error, detail);
   if (kind === 'free_tier_exhausted') return { kind, message: freeTierMessage(detail), detail };
   if (kind === 'free_tier_not_free' && /could not be checked/i.test(detail)) {
-    return { kind, message: "Your free replies couldn't be checked, so nothing was sent. Try again, or allow paid replies.", detail };
+    return { kind, message: "Your free allowance couldn't be checked, so nothing was sent. Try again, or allow paid use.", detail };
   }
   return { kind, message: WORDS[kind], detail };
 }
@@ -134,7 +134,7 @@ function freeTierMessage(detail: string): string {
   const at = new Date(until);
   const sameDay = at.toDateString() === new Date().toDateString();
   const when = sameDay ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-  return `Your free replies are used up until ${when}.`;
+  return `Your free allowance is used up until ${when}.`;
 }
 
 function kindOf(error: unknown, detail: string): ErrorKind {

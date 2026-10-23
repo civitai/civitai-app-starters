@@ -17,7 +17,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export interface ChatFundOptions {
-  api: Pick<OrchestrationApi, 'createFund' | 'getFund' | 'depositIntoFund' | 'extendFund'>;
+  api: Pick<OrchestrationApi, 'createFund' | 'getFund' | 'depositIntoFund' | 'extendFund' | 'refundFund'>;
   /** The signed-in viewer. A fund only checks the app, so its id is kept per viewer. */
   viewer: () => Promise<number | undefined>;
   autoTopUp: () => boolean;
@@ -60,6 +60,12 @@ export class ChatFund extends EventTarget {
   topUp(): Promise<FundStatus> {
     this.#topping ??= this.#topUp().finally(() => (this.#topping = undefined));
     return this.#topping;
+  }
+
+  /** Pays what is left back to the viewer. */
+  async withdraw(): Promise<void> {
+    if (!this.status) return;
+    this.#set(await this.#options.api.refundFund(this.status.id));
   }
 
   /** Sends a paid chat request billed to the fund, topping it up first when it is empty and the viewer allows that. */

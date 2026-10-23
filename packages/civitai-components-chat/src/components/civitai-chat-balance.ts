@@ -20,7 +20,7 @@ let ids = 0;
 
 /**
  * What the viewer has left to chat with: a top-bar badge ("187 free", else the chat balance) that
- * opens like `civitai-chat-spend`. Emits `cvt-top-up` (`{ auto: false }`) and `cvt-auto-top-up` (`{ on }`).
+ * opens like `civitai-chat-spend`. Emits `cvt-top-up` (`{ auto: false }`), `cvt-withdraw` and `cvt-auto-top-up` (`{ on }`).
  */
 export class CivitaiChatBalance extends LightElement {
   static override properties: PropertyDeclarations = {
@@ -68,8 +68,8 @@ export class CivitaiChatBalance extends LightElement {
     const { loaded, free, balance } = this.view;
     const n = (value: number) => value.toLocaleString();
     const onFree = free !== undefined && free.remaining > 0;
-    const pill = !loaded ? '…' : onFree ? `${n(free.remaining)} free` : balance === undefined ? '…' : `${n(balance)} left`;
-    const label = !loaded ? 'Your free replies and chat balance' : onFree ? `${n(free.remaining)} free replies left` : `Chat balance ${n(balance ?? 0)} Buzz`;
+    const pill = !loaded ? '…' : onFree ? `${percentLeft(free)}% free` : balance === undefined ? '…' : `${n(balance)} left`;
+    const label = !loaded ? 'Your free allowance and chat balance' : onFree ? `${percentLeft(free)}% of your free allowance left` : `Chat balance ${n(balance ?? 0)} Buzz`;
     return html`<button
         type="button"
         class="cvt-spend"
@@ -89,30 +89,38 @@ export class CivitaiChatBalance extends LightElement {
   }
 }
 
-/** The free replies and the chat balance, with topping it up: the badge's details, and Settings' on a phone. Emits from `from`. */
+/** The free allowance and the chat balance, with topping it up: the badge's details, and Settings' on a phone. Emits from `from`. */
 export function balanceDetails({ loaded, free, balance, autoTopUp, busy }: BalanceView, from: EventTarget): TemplateResult {
   return html`<section>
-      <h3>Free replies</h3>
-      ${!loaded ? html`<p class="cvt-spend-note">…</p>` : free ? freeRows(free) : html`<p class="cvt-spend-note">This model has no free replies.</p>`}
+      <h3>Free allowance</h3>
+      ${!loaded ? html`<p class="cvt-spend-note">…</p>` : free ? freeRows(free) : html`<p class="cvt-spend-note">This model has no free allowance.</p>`}
     </section>
     <section>
       <h3>Chat balance</h3>
       <dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>Left</dt><dd data-balance="fund">${balance === undefined ? '…' : `${balance.toLocaleString()} Buzz`}</dd></div></dl>
-      <civitai-button size="sm" variant="light" ?disabled=${busy} @click=${() => emit(from, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+      <div class="cvt-settings-actions">
+        <civitai-button size="sm" variant="light" ?disabled=${busy} @click=${() => emit(from, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+        ${balance ? html`<civitai-button size="sm" variant="subtle" ?disabled=${busy} @click=${() => emit(from, 'cvt-withdraw')}>Withdraw</civitai-button>` : nothing}
+      </div>
       <civitai-switch
         label="Top up when empty"
         .checked=${autoTopUp}
         @change=${(event: Event) => emit(from, 'cvt-auto-top-up', { on: (event.target as HTMLInputElement).checked })}
       ></civitai-switch>
     </section>
-    <p class="cvt-spend-note">Replies use your free ones first, then the chat balance (about 1 Buzz each). A balance unused for 7 days expires.</p>`;
+    <p class="cvt-spend-note">The assistant uses your free allowance first, then the chat balance. Each step it takes (writing, searching, checking a price) uses about 1 Buzz, so one reply can take a few. What is left after 7 days without use is paid back to you.</p>`;
+}
+
+// A share, not a count: one reply can take several model calls (a search, a check), each drawing on the allowance.
+function percentLeft(free: NonNullable<BalanceView['free']>): number {
+  return free.limit > 0 ? Math.round((Math.max(0, free.remaining) / free.limit) * 100) : 0;
 }
 
 function freeRows(free: NonNullable<BalanceView['free']>): TemplateResult {
-  const used = Math.max(0, free.limit - free.remaining);
+  const used = 100 - percentLeft(free);
   const reset = free.resetAt && used > 0 ? new Date(free.resetAt) : undefined;
-  return html`<dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>${used.toLocaleString()} of ${free.limit.toLocaleString()} used</dt><dd data-balance="free">${reset ? `Resets ${when(reset)}` : nothing}</dd></div></dl>
-    <civitai-progress size="sm" .value=${free.limit > 0 ? Math.round((used / free.limit) * 100) : 0} label="Free replies used"></civitai-progress>`;
+  return html`<dl class="cvt-spend-rows"><div class="cvt-spend-row"><dt>${used}% used</dt><dd data-balance="free">${reset ? `Resets ${when(reset)}` : nothing}</dd></div></dl>
+    <civitai-progress size="sm" .value=${used} label="Free allowance used"></civitai-progress>`;
 }
 
 function when(at: Date): string {

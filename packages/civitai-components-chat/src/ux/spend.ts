@@ -3,8 +3,8 @@ import type { Conversation, Turn } from '../types.js';
 
 /** A reply saved before the orchestrator reported charges is counted at the hosted model's price per call. */
 export const ASSISTANT_CALL_BUZZ = 1;
-/** What production charges for a turn's save until a save in this session says otherwise. */
-export const TURN_SAVE_BUZZ = 1;
+/** What a turn's save costs until a save in this session says otherwise: production charges nothing for one. */
+export const TURN_SAVE_BUZZ = 0;
 
 export interface Spend {
   total: number;
