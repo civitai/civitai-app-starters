@@ -235,6 +235,7 @@ describe('civitai-chat', () => {
   });
 
   it("runs slash commands itself: switches this chat's model and starts a new chat without asking the assistant", async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
     const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response('{}', { status: 400 }));
     vi.stubGlobal('fetch', fetch);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -275,6 +276,7 @@ describe('civitai-chat', () => {
   });
 
   it("picks this chat's model from a searchable list priced per million input and output tokens, or any model id", async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const openRouter = {
       data: [
@@ -309,7 +311,7 @@ describe('civitai-chat', () => {
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
 
     chip.click();
-    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.15 in · $0.61 out /M cheap/model'));
+    await vi.waitFor(() => expect(options()).toContain('Cheap Model ~195 in · ~793 out Buzz/M tokens cheap/model'));
     expect(options().join(' | ')).not.toContain('Pricey');
     expect(options().join(' | ')).not.toContain('behind-an-alias');
     expect(options().join(' | ')).not.toContain('narrow-window');
@@ -342,6 +344,7 @@ describe('civitai-chat', () => {
   });
 
   it("keeps listing and marking this chat's own model even when its window is too small for the cap", async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const routable = {
       data: [
@@ -438,6 +441,7 @@ describe('civitai-chat', () => {
   });
 
   it('still offers the default and a custom model id when neither model list can be reached', async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))));
     const chat = document.createElement('civitai-chat');

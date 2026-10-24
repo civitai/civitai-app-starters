@@ -99,6 +99,7 @@ describe("ChatSession's model and output cap, as the reply request carries them"
 
   it("asks with the chat's own model, else the page's, from the next reply", async () => {
     const { session, replies } = setup();
+    session.updateSettings({ premiumModels: true });
     session.newConversation();
     await session.send('one');
     await session.setChatModel('chat/own-model');
@@ -108,8 +109,18 @@ describe("ChatSession's model and output cap, as the reply request carries them"
     expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'chat/own-model', chatConfig.model]);
   });
 
+  it('answers with the default model while premium models are off, even in a chat saved with another', async () => {
+    const { session, replies } = setup({ PICKED: 'saved/chat-model' });
+    await session.openConversation('PICKED');
+    await session.send('again');
+    session.updateSettings({ premiumModels: true });
+    await session.send('and again');
+    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'saved/chat-model']);
+  });
+
   it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
     const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
+    session.updateSettings({ premiumModels: true });
     await session.openConversation('PICKED');
     await session.send('again');
     await session.openConversation('OLD');
