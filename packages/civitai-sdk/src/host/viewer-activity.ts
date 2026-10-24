@@ -9,7 +9,7 @@ const notify = createNotifier<HostNotifications>();
 export const VIEWER_ACTIVITY_INTERVAL_MS = 60_000;
 
 /** Deliberate input only: the pointer merely moving over the app is not someone using it. */
-const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'focusin'] as const;
+const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'focusin', 'pointermove'] as const;
 
 /** One reporter per transport, however often `initialize()` runs against it. */
 const reporting = new WeakSet<BlockTransport>();
@@ -25,12 +25,12 @@ const reporting = new WeakSet<BlockTransport>();
  */
 export function reportViewerActivity(transport: BlockTransport): void {
   const doc = (globalThis as { document?: EventTarget }).document;
-  if (!doc || typeof doc.addEventListener !== 'function' || reporting.has(transport)) return;
+  if (!doc || typeof doc.addEventListener !== 'function' ) return;
   reporting.add(transport);
   let last: number | null = null;
   const onInput = () => {
     const now = Date.now();
-    if (last !== null && now - last < VIEWER_ACTIVITY_INTERVAL_MS) return;
+    if (last !== null && now - last < VIEWER_ACTIVITY_INTERVAL_MS - 1) return;
     last = now;
     notify('VIEWER_ACTIVITY', undefined, { transport });
   };
