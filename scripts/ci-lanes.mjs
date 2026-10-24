@@ -32,9 +32,10 @@
  *              runners. (`starter` still starts all five legs either way: it is
  *              step-gated, so for any other `only` its legs run the every-lane
  *              guards only, under `[only <job>] Starter (<name>)`.) It narrows
- *              ONLY after `commits/{sha}/pulls` positively says no open pull
- *              request has this commit as its head; an open one, or a failed
- *              lookup, is the full lane (see `decideLane`).
+ *              ONLY after every page of open pull requests positively shows
+ *              none has this commit as its head; an open one (fork PRs
+ *              included), or a failed lookup, is the full lane (see
+ *              `decideLane` and `openPullRequestsAtSha`).
  *   release    the changesets Version Packages PR, when its diff is ONLY release
  *              machinery (`RELEASE_FILES`) AND every package.json in it changed
  *              only `version` and workspace-dependency versions (read from the
@@ -602,33 +603,45 @@ export async function fetchPullRequestFiles({ api, repo, number, token, fetchImp
 
 const HEX40 = /^[0-9a-f]{40}$/;
 
+/** At most this many pages of open pull requests are read; more is "unknown". */
+export const MAX_OPEN_PR_PAGES = 10;
+
 /**
  * Numbers of the OPEN pull requests whose head is exactly `sha`, or a thrown
- * error. Never a guess: a malformed sha, a non-200, a non-list body or a full
- * first page (more may exist) all throw, and the caller then runs every job.
+ * error. Never a guess: a malformed sha, a non-200, a non-list body, a `next`
+ * link off the API origin, or more than `MAX_OPEN_PR_PAGES` pages all throw,
+ * and the caller then runs every job.
  *
- * `commits/{sha}/pulls` lists every pull request associated with the commit,
- * whichever branch it was dispatched on, so a second branch at the same sha
- * still finds the pull request. Known edge: for a commit already on the
- * default branch the endpoint lists only the merged pull request that brought
- * it in, so an open pull request whose head is a commit already on `main`
- * is not seen.
+ * It reads `pulls?state=open` (every page, following the `Link: rel="next"`
+ * header) and matches `head.sha`, rather than asking `commits/{sha}/pulls`:
+ * that endpoint omits pull requests from forks, and for a commit already on
+ * the default branch it lists only the merged pull request that introduced it.
+ * The open list sees both, and a second branch at the same sha still matches.
  */
 export async function openPullRequestsAtSha({ api, repo, sha, token, fetchImpl = fetch }) {
   if (typeof sha !== 'string' || !HEX40.test(sha)) throw new Error(`no commit sha (${sha})`);
-  const res = await fetchImpl(`${api}/repos/${repo}/commits/${sha}/pulls?per_page=100`, {
-    headers: {
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`commits/${sha}/pulls answered HTTP ${res.status}`);
-  const list = await res.json();
-  if (!Array.isArray(list)) throw new Error(`commits/${sha}/pulls is not a list`);
-  if (list.length >= 100) throw new Error(`commits/${sha}/pulls filled a page; the list may be incomplete`);
-  return list.filter((p) => p?.state === 'open' && p?.head?.sha === sha).map((p) => p.number);
+  const found = [];
+  let url = `${api}/repos/${repo}/pulls?state=open&per_page=100`;
+  for (let page = 1; url; page++) {
+    if (page > MAX_OPEN_PR_PAGES) throw new Error(`more than ${MAX_OPEN_PR_PAGES} pages of open pull requests; the list is not read in full`);
+    const res = await fetchImpl(url, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`open pull requests page ${page} answered HTTP ${res.status}`);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error(`open pull requests page ${page} is not a list`);
+    for (const p of list) if (p?.head?.sha === sha && Number.isInteger(p?.number)) found.push(p.number);
+    const next = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get('link') ?? '')?.[1];
+    // The token rides on every request, so a next page must stay on the API.
+    if (next !== undefined && !next.startsWith(`${api}/`)) throw new Error(`next page ${next} is not on ${api}`);
+    url = next;
+  }
+  return found;
 }
 
 /**
@@ -865,6 +878,7 @@ async function main() {
         });
       } catch (err) {
         input.prLookupError = String(err?.message ?? err);
+        console.log(`::warning title=only ignored::the open pull request lookup failed (${input.prLookupError}); every job runs`);
       }
     }
   }

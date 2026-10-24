@@ -353,52 +353,104 @@ describe('only lane: never narrowed at the head of an open pull request', () => 
   });
 });
 
+/**
+ * A stand-in for the two GitHub endpoints that could answer "which open pull
+ * requests have this head", with GitHub's own semantics for each, so a test
+ * fails for the real reason whichever one the code asks:
+ *   - `pulls?state=open`: every open PR, forks included, 100 per page, with a
+ *     `Link: rel="next"` header while more pages remain;
+ *   - `commits/{sha}/pulls`: same-repository PRs only (GitHub omits forks here).
+ * `prs` is `{ number, sha, fork }`; `pageSize` lets a test force pagination.
+ */
+function prWorld(prs, { pageSize = 100, base = 'https://api.invalid', repo = 'o/r', fail } = {}) {
+  const calls = [];
+  const asPr = (p) => ({
+    number: p.number,
+    state: 'open',
+    head: { sha: p.sha, repo: { full_name: p.fork ? 'someone/fork' : repo } },
+    base: { repo: { full_name: repo } },
+  });
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (fail) return fail(url);
+    const u = new URL(url);
+    if (u.pathname === `/repos/${repo}/pulls` && u.searchParams.get('state') === 'open') {
+      const page = Number(u.searchParams.get('page') ?? '1');
+      const rows = prs.slice((page - 1) * pageSize, page * pageSize).map(asPr);
+      const more = page * pageSize < prs.length;
+      const headers = more ? { link: `<${base}/repos/${repo}/pulls?state=open&per_page=100&page=${page + 1}>; rel="next"` } : {};
+      return new Response(JSON.stringify(rows), { status: 200, headers });
+    }
+    const commit = u.pathname.match(new RegExp(`^/repos/${repo}/commits/([0-9a-f]{40})/pulls$`));
+    if (commit) {
+      return new Response(JSON.stringify(prs.filter((p) => p.sha === commit[1] && !p.fork).map(asPr)), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  return { fetchImpl, calls };
+}
+
 describe('openPullRequestsAtSha', () => {
   const SHA = 'a'.repeat(40);
-  const respond = (body, status = 200) => async () => new Response(JSON.stringify(body), { status });
+  const OTHER = 'b'.repeat(40);
   const args = (fetchImpl, sha = SHA) => ({ api: 'https://api.invalid', repo: 'o/r', sha, token: 't', fetchImpl });
+  const filler = (n, from = 1000) => Array.from({ length: n }, (_, i) => ({ number: from + i, sha: OTHER }));
 
-  test('returns the OPEN pull requests whose head IS the sha, and nothing else', async () => {
-    const list = [
-      { number: 1, state: 'open', head: { sha: SHA } },
-      { number: 2, state: 'closed', head: { sha: SHA } },
-      { number: 3, state: 'open', head: { sha: 'b'.repeat(40) } },
-      { number: 4, state: 'open', head: { sha: SHA } },
-      null,
-    ];
-    assert.deepEqual(await openPullRequestsAtSha(args(respond(list))), [1, 4]);
-    assert.deepEqual(await openPullRequestsAtSha(args(respond([]))), []);
+  test('POSITIVE CONTROL: a same-repository PR at the sha is found; none at another sha', async () => {
+    const w = prWorld([{ number: 1, sha: SHA }, { number: 3, sha: OTHER }, { number: 4, sha: SHA }]);
+    assert.deepEqual(await openPullRequestsAtSha(args(w.fetchImpl)), [1, 4]);
+    assert.deepEqual(await openPullRequestsAtSha(args(prWorld([{ number: 3, sha: OTHER }]).fetchImpl)), []);
   });
-  test('asks commits/{sha}/pulls for this repository', async () => {
-    let asked;
-    await openPullRequestsAtSha(args(async (url) => ((asked = url), new Response('[]'))));
-    assert.equal(asked, `https://api.invalid/repos/o/r/commits/${SHA}/pulls?per_page=100`);
+  test('a FORK pull request at the sha is found', async () => {
+    const w = prWorld([{ number: 42, sha: SHA, fork: true }]);
+    assert.deepEqual(await openPullRequestsAtSha(args(w.fetchImpl)), [42]);
   });
-  test('never guesses: a bad sha, a non-200, a non-list or a full page throws', async () => {
+  test('a match on page 2 is found (follows Link rel="next")', async () => {
+    const w = prWorld([...filler(100), { number: 9, sha: SHA }]);
+    assert.deepEqual(await openPullRequestsAtSha(args(w.fetchImpl)), [9]);
+    assert.equal(w.calls.length, 2);
+  });
+  test('asks the open pull request list of this repository', async () => {
+    const w = prWorld([]);
+    await openPullRequestsAtSha(args(w.fetchImpl));
+    assert.deepEqual(w.calls, ['https://api.invalid/repos/o/r/pulls?state=open&per_page=100']);
+  });
+  test('never guesses: a bad sha, a non-200, a non-list, too many pages or an off-API next link throws', async () => {
     await assert.rejects(openPullRequestsAtSha(args(async () => assert.fail('fetched'), 'main')), /no commit sha/);
     await assert.rejects(openPullRequestsAtSha(args(async () => assert.fail('fetched'), '')), /no commit sha/);
-    await assert.rejects(openPullRequestsAtSha(args(respond({}, 502))), /HTTP 502/);
-    await assert.rejects(openPullRequestsAtSha(args(respond({ message: 'x' }))), /not a list/);
-    const full = Array.from({ length: 100 }, (_, i) => ({ number: i, state: 'closed', head: { sha: SHA } }));
-    await assert.rejects(openPullRequestsAtSha(args(respond(full))), /may be incomplete/);
+    await assert.rejects(openPullRequestsAtSha(args(async () => new Response('{}', { status: 502 }))), /HTTP 502/);
+    await assert.rejects(openPullRequestsAtSha(args(async () => new Response('{"message":"x"}'))), /not a list/);
+    const many = prWorld(filler(1001));
+    await assert.rejects(openPullRequestsAtSha(args(many.fetchImpl)), /more than 10 pages/);
+    assert.equal(many.calls.length, 10, 'reads exactly the cap before giving up');
+    const offsite = async () => new Response('[]', { headers: { link: '<https://evil.invalid/x?page=2>; rel="next"' } });
+    await assert.rejects(openPullRequestsAtSha(args(offsite)), /not on https:\/\/api\.invalid/);
   });
 });
 
 describe('the command, dispatched with `only`, against a stub API', () => {
   const run = promisify(execFile);
   const SHA = 'd'.repeat(40);
-  async function dispatch(only, pulls) {
+  const OTHER = 'e'.repeat(40);
+  /** `prs` as for prWorld; `fail` makes every API answer HTTP 502. */
+  async function dispatch(only, prs, { fail = false } = {}) {
     const requests = [];
-    const server = createServer((req, res) => {
+    let base;
+    const server = createServer(async (req, res) => {
       requests.push(req.url);
-      if (req.url === `/repos/o/r/commits/${SHA}/pulls?per_page=100`) {
-        res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify(pulls));
+      if (fail) {
+        res.statusCode = 502;
+        return res.end('{}');
       }
-      res.statusCode = 500;
-      return res.end('{}');
+      const answer = await prWorld(prs, { base }).fetchImpl(`${base}${req.url}`);
+      res.statusCode = answer.status;
+      const link = answer.headers.get('link');
+      if (link) res.setHeader('link', link);
+      res.setHeader('content-type', 'application/json');
+      return res.end(await answer.text());
     });
     await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    base = `http://127.0.0.1:${server.address().port}`;
     const dir = mkdtempSync(join(tmpdir(), 'ci-lanes-only-'));
     try {
       const out = join(dir, 'out');
@@ -413,7 +465,7 @@ describe('the command, dispatched with `only`, against a stub API', () => {
           GITHUB_EVENT_NAME: 'workflow_dispatch',
           GITHUB_REPOSITORY: 'o/r',
           GITHUB_SHA: SHA,
-          GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`,
+          GITHUB_API_URL: base,
         },
       });
       const outputs = Object.fromEntries(
@@ -425,21 +477,48 @@ describe('the command, dispatched with `only`, against a stub API', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+  const everyJobOn = (outputs) => {
+    assert.equal(outputs.lane, 'full');
+    for (const id of Object.keys(JOBS)) assert.equal(outputs[id], 'true', id);
+    assert.equal(outputs['name-prefix'], '');
+  };
 
-  test('no open PR at the sha: only=examples runs examples alone, Starter prefixed', async () => {
-    const { outputs, requests } = await dispatch('examples', [{ number: 9, state: 'closed', head: { sha: SHA } }]);
+  test('POSITIVE CONTROL: no open PR at the sha: only=examples runs examples alone, Starter prefixed, no warning', async () => {
+    const { outputs, stdout, requests } = await dispatch('examples', [{ number: 9, sha: OTHER }]);
     assert.equal(requests.length, 1);
     assert.equal(outputs.lane, 'only');
     assert.deepEqual(Object.keys(JOBS).filter((id) => outputs[id] === 'true'), ['examples']);
     assert.deepEqual(Object.keys(JOBS).filter((id) => outputs[id] !== 'true' && outputs[id] !== 'false'), []);
     assert.equal(outputs['name-prefix'], '[only examples] ');
+    assert.doesNotMatch(stdout, /::warning/);
   });
-  test('an open PR heads the sha: every job runs, prefix empty', async () => {
-    const { outputs, stdout } = await dispatch('examples', [{ number: 757, state: 'open', head: { sha: SHA } }]);
-    assert.equal(outputs.lane, 'full');
-    for (const id of Object.keys(JOBS)) assert.equal(outputs[id], 'true', id);
-    assert.equal(outputs['name-prefix'], '');
+  test('a same-repository open PR heads the sha: every job runs', async () => {
+    const { outputs, stdout } = await dispatch('examples', [{ number: 757, sha: SHA }]);
+    everyJobOn(outputs);
     assert.match(stdout, /#757/);
+  });
+  test('a FORK open PR heads the sha: every job runs', async () => {
+    const { outputs, stdout } = await dispatch('examples', [{ number: 42, sha: SHA, fork: true }]);
+    everyJobOn(outputs);
+    assert.match(stdout, /#42/);
+  });
+  test('the PR at the sha is on page 2: every job runs', async () => {
+    const filler = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, sha: OTHER }));
+    const { outputs, stdout, requests } = await dispatch('examples', [...filler, { number: 9, sha: SHA }]);
+    everyJobOn(outputs);
+    assert.match(stdout, /#9\b/);
+    assert.equal(requests.length, 2);
+  });
+  test('more pages than the cap: every job runs, and the run warns', async () => {
+    const filler = Array.from({ length: 1001 }, (_, i) => ({ number: 1000 + i, sha: OTHER }));
+    const { outputs, stdout } = await dispatch('examples', filler);
+    everyJobOn(outputs);
+    assert.match(stdout, /::warning title=only ignored::.*more than 10 pages/);
+  });
+  test('the API errors: every job runs, and the run warns', async () => {
+    const { outputs, stdout } = await dispatch('examples', [], { fail: true });
+    everyJobOn(outputs);
+    assert.match(stdout, /::warning title=only ignored::.*HTTP 502/);
   });
   test('only=all never asks the API', async () => {
     const { outputs, requests } = await dispatch('all', []);
