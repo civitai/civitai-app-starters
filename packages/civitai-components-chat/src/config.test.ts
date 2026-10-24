@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { chatConfig, configureChat, outputTokenCap } from './config.js';
+import { chatConfig, configureChat, onSite, outputTokenCap } from './config.js';
+import { ModelDirectory } from './store/models.js';
 
 describe('outputTokenCap', () => {
   const pageDefault = chatConfig.maxOutputTokens;
@@ -33,5 +34,22 @@ describe('outputTokenCap', () => {
     expect(outputTokenCap(2_048)).toBe(2_048);
     configureChat({ maxOutputTokens: 100_000 });
     expect(outputTokenCap()).toBe(32_768);
+  });
+});
+
+describe('links to civitai.com or civitai.red', () => {
+  it("point the assistant's links at the viewer's site, either way, and leave Civitai's other hosts alone", () => {
+    const text = 'See https://civitai.com/models/1 and https://www.civitai.red/posts/2, built on https://mcp.civitai.com/mcp (civitai.community).';
+    expect(onSite(text, 'https://civitai.red')).toBe('See https://civitai.red/models/1 and https://civitai.red/posts/2, built on https://mcp.civitai.com/mcp (civitai.community).');
+    expect(onSite(text, 'https://civitai.com')).toBe('See https://civitai.com/models/1 and https://civitai.com/posts/2, built on https://mcp.civitai.com/mcp (civitai.community).');
+  });
+
+  it("follows the mature-content setting on a model card's link, also after the card loaded", async () => {
+    let allowMature = false;
+    const models = new ModelDirectory({ get: async () => ({ name: 'Juggernaut', modelVersions: [] }) } as never, () => allowMature);
+
+    expect((await models.get(7)).href).toBe('https://civitai.com/models/7');
+    allowMature = true;
+    expect((await models.get(7)).href).toBe('https://civitai.red/models/7');
   });
 });

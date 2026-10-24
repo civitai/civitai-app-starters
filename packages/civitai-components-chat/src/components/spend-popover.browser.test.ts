@@ -69,7 +69,6 @@ describe('the Buzz badge', () => {
     const text = panel()!.textContent!.replace(/\s+/g, ' ');
     expect(text).toContain('For what was made');
     expect(text).toContain('For the assistant');
-    expect(text).toContain('An estimate of the Buzz spent in this chat');
 
     // A second click closes it.
     await userEvent.click(target);

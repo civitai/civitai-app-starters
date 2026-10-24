@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components-chat",
-  "version": "0.19.0",
+  "version": "0.30.0",
   "description": "<civitai-chat>: a Civitai assistant that makes images, video and music, as one element for any page. Companion to @civitai/components.",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,14 @@
     "./civitai-chat-studio/define": {
       "types": "./dist/civitai-chat-studio.define.d.ts",
       "import": "./dist/civitai-chat-studio.define.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./runner-protocol": {
+      "types": "./dist/runner-protocol.d.ts",
+      "import": "./dist/runner-protocol.js"
     }
   },
   "files": [

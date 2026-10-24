@@ -43,6 +43,8 @@ export interface CardJob extends EventTarget {
   readonly label: string;
   /** What it makes, named before it starts (e.g. "Your picture"); `label` says what it is doing once it runs. */
   readonly subject?: string;
+  /** What it was asked to make, shown before it runs so "Make it?" says what. */
+  readonly request?: string;
   readonly state: CardState;
   readonly price: { total: number; variable: boolean } | null;
   readonly progress: number | null;
@@ -51,6 +53,11 @@ export interface CardJob extends EventTarget {
   readonly results: CardResult[];
   readonly cancelable: boolean;
   readonly workflowId?: string;
+  /** Its mature results are shown blurred until it is paid for with Buzz that covers them. */
+  readonly locked?: boolean;
+  readonly unlocking?: boolean;
+  readonly unlockError?: { message: string };
+  unlock?(): Promise<void>;
   confirm(): Promise<void>;
   decline(): void;
   cancel(): Promise<void>;
@@ -84,6 +91,15 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
         margin: 0;
         font-size: 14px;
         font-weight: 600;
+      }
+      .request {
+        margin: 8px 0 0;
+        font-size: 14px;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
       }
       .status {
         display: flex;
@@ -210,6 +226,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     actions: { attribute: false },
     single: { type: Boolean, reflect: true },
     adjustable: { type: Boolean },
+    raiseSteps: { attribute: false },
   };
 
   declare job?: CardJob;
@@ -219,6 +236,11 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   declare single: boolean;
   /** Offers Adjust, which emits `job-adjust`: the page turns the request into controls to change and rerun. */
   declare adjustable: boolean;
+  /**
+   * Limits a confirmation may also raise the viewer's to: the smallest that covers a fixed price is offered
+   * beside Go ahead, and picking it emits `job-raise-limit` with `{ limit }` before running the job.
+   */
+  declare raiseSteps: number[];
 
   #watched?: CardJob;
   #retried = new Set<string>();
@@ -230,6 +252,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     this.actions = DEFAULT_ACTIONS;
     this.single = false;
     this.adjustable = false;
+    this.raiseSteps = [];
   }
 
   override disconnectedCallback(): void {
@@ -245,6 +268,9 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('job')) this.#watch(this.job);
     this.single = (this.job?.results.length ?? 0) <= 1;
+    // A player has no width of its own, so a card of sounds takes the thread's width rather than shrinking to it.
+    const results = this.job?.results ?? [];
+    this.toggleAttribute('audio', results.length > 0 && results.every((result) => result.kind === 'audio'));
   }
 
   #watch(job: CardJob | undefined): void {
@@ -282,11 +308,12 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
       case 'pricing':
         return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Checking the price…</div>`;
       case 'awaiting_confirmation':
-        return html`<div class="status" role="status">
+        return html`${this.#request(job)}<div class="status" role="status">
             <span>${job.price ? html`Costs about <strong>${job.price.total} Buzz</strong>. Make it?` : 'Make it?'}</span>
           </div>
           <div class="row">
             <civitai-button part="confirm" size="sm" @click=${() => void job.confirm()}>Go ahead</civitai-button>
+            ${this.#raise(job)}
             <civitai-button part="decline" size="sm" variant="subtle" @click=${() => job.decline()}>Not now</civitai-button>
             ${this.#adjust()} ${this.#info()}
           </div>`;
@@ -295,14 +322,14 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
       case 'running':
         return this.#running(job);
       case 'succeeded':
-        return html`${this.#gallery(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
+        return html`${this.#gallery(job)}${this.#unlock(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
       case 'rejected':
         return html`<civitai-alert color="warning" part="error">
           You don't have enough Buzz for this${job.price ? html` (about ${job.price.total})` : nothing}.
           <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a>${this.#adjust()}</div>
         </civitai-alert>`;
       case 'declined':
-        return html`<div class="status">Not started.</div>
+        return html`${this.#request(job)}<div class="status">Not started.</div>
           <div class="row"><civitai-button size="sm" variant="light" @click=${() => void job.confirm()}>Run it</civitai-button></div>`;
       case 'canceled':
         return html`<div class="status">Stopped. Only work already done is billed.</div>`;
@@ -313,6 +340,40 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
           <div class="row"><civitai-button size="sm" variant="light" @click=${() => void job.retry()}>Try again</civitai-button></div>
         </civitai-alert>`;
     }
+  }
+
+  #unlock(job: CardJob): TemplateResult | typeof nothing {
+    if (!job.locked || !job.unlock) return nothing;
+    return html`<div class="status">Blurred: the Buzz it was paid with doesn't cover mature content.</div>
+      <div class="row">
+        <civitai-button part="unlock" size="sm" ?loading=${job.unlocking === true} ?disabled=${job.unlocking === true} @click=${() => void job.unlock!()}>Unlock</civitai-button>
+      </div>
+      ${job.unlockError
+        ? html`<civitai-alert color="warning" part="unlock-error">
+            ${job.unlockError.message}
+            <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a></div>
+          </civitai-alert>`
+        : nothing}`;
+  }
+
+  #request(job: CardJob): TemplateResult | typeof nothing {
+    return job.request ? html`<p class="request" part="request" title=${job.request}>“${job.request}”</p>` : nothing;
+  }
+
+  #raise(job: CardJob): TemplateResult | typeof nothing {
+    const price = job.price;
+    const limit = price && !price.variable ? this.raiseSteps.find((step) => step >= price.total) : undefined;
+    if (limit === undefined) return nothing;
+    return html`<civitai-button
+      part="confirm-raise"
+      size="sm"
+      variant="light"
+      @click=${() => {
+        this.#emit('job-raise-limit', { limit });
+        void job.confirm();
+      }}
+      >Yes, don't ask up to ${limit} Buzz</civitai-button
+    >`;
   }
 
   /** Asks the page to show what this job is making, before there is anything to open. */

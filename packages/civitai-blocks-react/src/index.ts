@@ -165,19 +165,6 @@ export type {
   BlockCreatePostHostError,
 } from './hooks/useCreatePostFromApp.js';
 export {
-  usePrepareTrainingDataset,
-  PrepareTrainingDatasetError,
-  PREPARE_TRAINING_DATASET_ERROR_CODES,
-  isPrepareTrainingDatasetErrorCode,
-} from './hooks/usePrepareTrainingDataset.js';
-export type {
-  UsePrepareTrainingDataset,
-  BlockPrepareTrainingDatasetHostError,
-  BlockTrainingDatasetItem,
-  BlockTrainingDatasetResult,
-  BlockTrainingRejectionReason,
-} from './hooks/usePrepareTrainingDataset.js';
-export {
   useRunTraining,
   RunTrainingError,
   RUN_TRAINING_ERROR_CODES,
@@ -189,6 +176,7 @@ export type {
   RunTrainingErrorCode,
   BlockRunTrainingHostError,
   BlockTrainingQuote,
+  BlockTrainingDatasetItem,
   WorkflowBodyTraining,
 } from './hooks/useRunTraining.js';
 export {
@@ -240,7 +228,9 @@ export type {
   UseImageUpload,
   UseImageUploadAsyncScan,
   UseImageUploadGenerationSource,
+  UseImageUploadTrainingData,
   UseImageUploadOptions,
+  BlockTrainingDataImage,
 } from './hooks/useImageUpload.js';
 export { useUploadImageBytes } from './hooks/useUploadImageBytes.js';
 export type {

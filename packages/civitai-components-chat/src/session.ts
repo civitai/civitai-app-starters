@@ -2,13 +2,17 @@ import type { AppClient } from '@civitai/sdk';
 import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
-import { absoluteUrl, backendModels, unavailableApp, type ChatBackend } from './backend.js';
+import type { ChatAgent } from './agent/chat-agent.js';
+import { absoluteUrl, backendModels, hasGatewayUrl, hasTranscribe, namesGateway, newChatModelOf, transcribeOnHost, unavailableApp, type ChatBackend, type ChatStoreBackend } from './backend.js';
 import { partsFromMessages } from './agent/parts.js';
 import { FreeTier, freeTierFetch } from './agent/free-tier.js';
+import { chargeFetch } from './agent/charge.js';
+import { ChatFund } from './agent/fund.js';
+import { viewerId } from './auth/viewer.js';
 import { buildModelList, ModelCatalog, type ChatModelEntry } from './agent/model-list.js';
 import { authedFetch, createAssistantModel } from './agent/provider.js';
-import { chatConfig, outputTokenCap } from './config.js';
-import { createMcpConnection, type McpConnection } from './mcp/clients.js';
+import { chatConfig, outputTokenCap, siteUrl } from './config.js';
+import { createMcpConnection, signedInOrAnonymous, type McpConnection } from './mcp/clients.js';
 import { McpServerPool, type ChatMcpOptions, type ChatMcpServer } from './mcp/servers.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
@@ -22,13 +26,13 @@ import { OPEN_PANEL } from './panels/tools.js';
 import { sitePoster } from './posting/site.js';
 import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
 import { resolveAttachmentArgs, uploadId } from './store/attachments.js';
-import type { ConversationStore } from './store/conversation-store.js';
+import type { ConversationStore, OpenOptions } from './store/conversation-store.js';
 import { HostThreadStore } from './store/host-store.js';
 import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
 import type { McpTool } from './mcp/clients.js';
 import { isJobTool, loadOrchestrationTools, loadSiteTools, type ToolCatalog } from './tools/catalog.js';
-import type { Attachment, Settings, Turn } from './types.js';
+import type { Attachment, Conversation, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { humanizeHost } from './ux/humanize.js';
 import { decide } from './ux/spending.js';
@@ -38,8 +42,23 @@ import { gateToolSet, nextReply, type ChatToolGate, type ChatToolResult, type Ga
 import { DISPATCH_AGENT, dispatchAgentTool, offersDispatch, resolveSubagents, SubagentTracker, type ChatSubagents } from './agent/subagents.js';
 import { hostToolSet, type ChatTool, type ChatToolView } from './tools/host.js';
 import { StreamingTranscript } from './voice/streaming-transcript.js';
+import { RemoteAgent } from './remote/remote-agent.js';
+import { REQUEST_TIMEOUT_MS, RunnerClient, RunnerHttpError, type ChatRemoteRunner } from './remote/runner-client.js';
 import { voiceLanguage } from './voice/languages.js';
 import { transcribe } from './voice/transcribe.js';
+
+/** How often a stopped run is looked up again before its chat is deleted, until it has ended. */
+export const STOP_POLL_MS = 250;
+
+/**
+ * Why `stopRunBeforeDelete` refused (its error's `code`): the runner could not be reached, it refused
+ * the stop, or the run had not ended in time. In every case nothing should be deleted.
+ */
+export type DeleteBlockedCode = 'runner-unreachable' | 'stop-refused' | 'still-stopping';
+
+function deleteBlocked(code: DeleteBlockedCode, message: string, cause?: unknown): Error {
+  return Object.assign(new Error(message), { code, ...(cause === undefined ? {} : { cause }) });
+}
 
 /** Jobs still waiting for a click are offered again only in the most recent turns. */
 const REOFFER_TURNS = 3;
@@ -53,18 +72,21 @@ export interface PendingUpload {
 }
 
 /**
- * Unreachable for now: `ChatSession` is not exported and the element passes no `runner`, so nothing
- * outside this package can set it until the element exposes it (then document it).
- *
  * Experimental: where a reply's loop runs. `'browser'` (the default) runs it on the page, as every
- * chat does today. `'remote'` is reserved for a server-side runner that keeps a reply going when the
- * page sleeps or closes; it is not implemented yet.
+ * chat always has. `'remote'` runs it on a server runner (`remote`), which keeps a reply going when the
+ * page sleeps or closes; the page follows it (`RemoteAgent`).
  */
 export type ChatRunner = 'browser' | 'remote';
 
 export interface SessionOptions {
-  /** Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` throws, not implemented yet. */
+  /**
+   * Experimental; see {@link ChatRunner}. `'browser'` unless set; `'remote'` needs `remote`, and takes
+   * either no `backend` (conversations on the orchestrator, with a signed-in app) or a store-only one
+   * ({@link ChatStoreBackend}: conversations in the host's store).
+   */
   runner?: ChatRunner;
+  /** The server runner `runner: 'remote'` uses. */
+  remote?: ChatRemoteRunner;
   /** Keeps an embedding app's conversations and preferences apart from the rest. */
   scope?: string;
   /** Tools the embedding page offers; read at the start of every reply. */
@@ -77,6 +99,8 @@ export interface SessionOptions {
   mcp?(): ChatMcpOptions;
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** The viewer's time zone (IANA name): the prompt's date is that zone's day. UTC's unless set; read at every reply. */
+  timeZone?(): string | undefined;
   /** Asked before every tool call; read at the start of every reply. Each result is reported as a `tool-result` event. */
   beforeToolCall?(): ChatToolGate | undefined;
   /** Subagents (`dispatch_agent`): read ones, and write ones with `write`; off unless set. Read at the start of every reply. */
@@ -86,17 +110,40 @@ export interface SessionOptions {
   compose?(message: string, refs: string[]): void;
   /**
    * The host's own model gateway and storage. The session then needs no `app`, keeps conversations
-   * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice,
-   * posting or free tier.
+   * in the host's store, and never calls Civitai: no built-in MCP, generations, uploads, voice
+   * conversations, posting or free tier; dictation only through the backend's own `transcribe`. With `runner: 'remote'`, a {@link ChatStoreBackend}: the host keeps the
+   * conversations and the runner runs the replies, so it names no gateway.
    */
-  backend?: ChatBackend;
+  backend?: ChatBackend | ChatStoreBackend;
 }
 
-/** Only the browser runner exists yet: `'remote'` (and anything else) is refused before anything is wired. */
-function assertRunner(runner: unknown): void {
-  if (runner === undefined || runner === 'browser') return;
-  if (runner === 'remote') throw new Error("The 'remote' chat runner is not implemented yet (experimental): leave runner unset or 'browser'.");
-  throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser'.`);
+/** A runner the options cannot run is refused before anything is wired: whether it is the remote one. */
+function assertRunner(options: SessionOptions): boolean {
+  const { runner, backend } = options;
+  if (runner === undefined || runner === 'browser') {
+    // A store-only backend has no gateway for a page-run reply to go to (`hasGatewayUrl`: a missing or blank `url`).
+    if (backend && !hasGatewayUrl(backend)) throw new Error("A backend without url needs runner 'remote': in the browser, replies go to backend.url.");
+    return false;
+  }
+  if (runner !== 'remote') throw new Error(`Unknown chat runner ${JSON.stringify(runner)}: use 'browser' or 'remote'.`);
+  if (typeof options.remote?.url !== 'string' || !options.remote.url.trim()) throw new Error("The 'remote' chat runner needs remote.url: the server runner's base URL.");
+  // Remote with a backend: the host keeps the conversations, the runner runs the replies, so the page has no gateway to call.
+  if (backend && namesGateway(backend)) throw new Error("The 'remote' chat runner takes a backend's store and models only: leave out backend.url and backend.fetch, since replies run on the runner.");
+  return true;
+}
+
+/** The page waking, for a remote reply's connection: shown again, back online, or restored from the back-forward cache. */
+function pageWake(listener: () => void): () => void {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return () => undefined;
+  const visible = () => document.visibilityState === 'visible' && listener();
+  document.addEventListener('visibilitychange', visible);
+  window.addEventListener('online', listener);
+  window.addEventListener('pageshow', listener);
+  return () => {
+    document.removeEventListener('visibilitychange', visible);
+    window.removeEventListener('online', listener);
+    window.removeEventListener('pageshow', listener);
+  };
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
@@ -108,10 +155,13 @@ export interface LiveSession {
 export class ChatSession extends EventTarget {
   /** The viewer's Civitai client; with a `backend`, a stand-in that refuses every call. */
   readonly app: AppClient;
-  readonly backend: ChatBackend | undefined;
+  /** With `runner: 'remote'`, a store-only one. */
+  readonly backend: ChatBackend | ChatStoreBackend | undefined;
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
+  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend`. */
+  readonly fund: ChatFund | undefined;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
   /** The servers added through `mcp().mcpServers`. */
@@ -120,7 +170,8 @@ export class ChatSession extends EventTarget {
   readonly posts: PostManager;
   readonly panels: PanelManager;
   readonly store: ConversationStore;
-  readonly agent: Agent;
+  /** The page's own `Agent`, or with `runner: 'remote'` a `RemoteAgent` following the server's runs. */
+  readonly agent: ChatAgent;
   /** The subagents running now, for their cards' live progress. */
   readonly subagents = new SubagentTracker();
   /** The models the picker offers, loaded once when it is first opened. */
@@ -133,15 +184,21 @@ export class ChatSession extends EventTarget {
   #siteTools: Promise<McpTool[] | null> | null = null;
   #options: SessionOptions;
   #hostToolNames = new Set<string>();
+  #viewer: Promise<number | undefined> | undefined;
   #models = new Map<string, LanguageModel>();
   /** What the run tools can do, from the latest catalog; panels run through them. */
   #runTools = new Map<string, JobToolInfo>();
+  /** With `runner: 'remote'`: the agent following the server's runs. */
+  #remote: RemoteAgent | undefined;
+  /** With `runner: 'remote'`: the runner's calls. */
+  #runner: RunnerClient | undefined;
 
   /** `app` may be `null` only with `options.backend`. */
   constructor(signedIn: AppClient | null, options: SessionOptions = {}) {
     super();
     const backend = options.backend;
-    assertRunner(options.runner);
+    const remote = assertRunner(options) ? new RunnerClient(options.remote!) : undefined;
+    this.#runner = remote;
     if (!signedIn && !backend) throw new Error('A chat session needs a signed-in app or a backend.');
     const app = backend ? unavailableApp() : signedIn!;
     this.app = app;
@@ -150,14 +207,21 @@ export class ChatSession extends EventTarget {
     this.settings = loadSettings(settingsKey(options.scope));
     this.api = createOrchestrationApi(app);
     this.freeTier = new FreeTier(() => (backend ? Promise.resolve({ enabled: false, models: [] }) : this.api.getFreeTier()));
+    const viewer = () =>
+      (this.#viewer ??= viewerId(app).catch((error: unknown) => {
+        this.#viewer = undefined;
+        throw error;
+      }));
+    this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
-    this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    // As the viewer, so what it finds can follow their own preferences; a host's backend has no Civitai token.
+    this.siteMcp = backend ? anonymousSite : signedInOrAnonymous(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }), anonymousSite);
     this.mcpServers = new McpServerPool({
       onError: (server, error) => this.dispatchEvent(new CustomEvent<McpServerErrorDetail>('mcp-server-error', { detail: { server, error } })),
       onListed: () => this.dispatchEvent(new Event('mcp-servers-change')),
     });
-    // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
-    const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
+    const poster = sitePoster(this.siteMcp, () => siteUrl(this.settings.allowMature));
     this.posts = new PostManager({
       host: backend ? null : postHostOf(app),
       site: () => (backend || this.#options.mcp?.().site === false ? null : poster),
@@ -185,15 +249,46 @@ export class ChatSession extends EventTarget {
       ...(options.compose ? { compose: options.compose } : {}),
     });
     this.store = backend
-      ? new HostThreadStore({ store: backend.store, scope: options.scope })
+      ? new HostThreadStore({
+          store: backend.store,
+          scope: options.scope,
+          // Remote: the runner is the only writer of each conversation in the host's store.
+          ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
+        })
       : new ThreadStore({
           orchestration: app.orchestration,
           api: this.api,
           hideMatureContent: () => !this.settings.allowMature,
           scope: options.scope,
+          // Remote: the runner is the only writer of the chat's head.
+          ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
         });
     // A backend's models are the ones it names: nothing is asked of Civitai or OpenRouter.
     this.modelCatalog = backend ? { load: async () => this.modelChoices() } : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    if (remote) {
+      this.agent = this.#remote = new RemoteAgent({
+        client: remote,
+        store: this.store,
+        ...(options.scope ? { scope: options.scope } : {}),
+        model: () => this.assistantModel(),
+        settings: () => ({
+          ...(this.settings.customInstructions ? { customInstructions: this.settings.customInstructions } : {}),
+          ...(this.#options.hostInstructions?.() ? { hostInstructions: this.#options.hostInstructions()! } : {}),
+          maxOutputTokens: outputTokenCap(this.settings.maxOutputTokens),
+          tier: 'auto',
+          allowMature: this.settings.allowMature,
+          autoRunLimit: this.settings.autoRunLimit,
+          spokenReplies: this.spokenReplies,
+        }),
+        pageState: () => options.remote!.pageState?.(),
+        // Read while the agent still counts as running (so nothing sent meanwhile lands on the chat being replaced), and never followed by a lookup: the run just ended.
+        reread: (id) => this.#reread(id),
+        progress: this.subagents,
+        onToolResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
+        wake: pageWake,
+      });
+      return;
+    }
     this.agent = new Agent({
       model: () => this.#model(this.assistantModel()),
       titleModel: () => this.#model(this.defaultModel()),
@@ -209,6 +304,7 @@ export class ChatSession extends EventTarget {
       isHostTool: (name) => this.#hostToolNames.has(name),
       panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
+      timeZone: () => this.#options.timeZone?.(),
       ...(backend ? { describeError: humanizeHost } : {}),
     });
   }
@@ -232,6 +328,8 @@ export class ChatSession extends EventTarget {
    * current one changes nothing.
    */
   syncMcpServers(): void {
+    // Remote: the runner holds the tools; the page opens no server.
+    if (this.#remote) return;
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     void this.mcpServers.tools();
   }
@@ -245,8 +343,8 @@ export class ChatSession extends EventTarget {
 
   /** Read at every turn, so switching a server on or off applies from the next reply. */
   async catalog(): Promise<ToolCatalog> {
-    // A host's backend has no Civitai sign-in: neither built-in server is asked anything.
-    if (this.backend) {
+    // A host's backend has no Civitai sign-in, and a remote runner holds the tools: neither built-in server is asked anything.
+    if (this.backend || this.#remote) {
       this.#runTools = new Map();
       return { orchestration: [], site: [] };
     }
@@ -272,21 +370,20 @@ export class ChatSession extends EventTarget {
 
   #model(id: string): LanguageModel {
     let model = this.#models.get(id);
-    if (!model && this.backend) {
-      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(this.backend.url), model: id, ...(this.backend.fetch ? { fetch: this.backend.fetch } : {}) })));
+    // Only a page-run reply asks for a model, and in the browser a backend always names its gateway (`assertRunner`).
+    const backend = this.backend as ChatBackend | undefined;
+    if (!model && backend) {
+      this.#models.set(id, (model = createAssistantModel(null, { baseUrl: absoluteUrl(backend.url), model: id, ...(backend.fetch ? { fetch: backend.fetch } : {}) })));
     }
     if (!model) {
       const wrap = (inner: typeof fetch) =>
-        freeTierFetch(inner, id, this.freeTier, () => {
-          const tier = this.settings.assistantTier ?? 'auto';
-          return { useFree: tier !== 'paid', payWhenOut: tier !== 'free' };
-        });
-      this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
+        freeTierFetch(chargeFetch(inner, (buzz) => (this.agent as Partial<Agent>).charged?.(buzz)), id, this.freeTier, () => ({ useFree: true, payWhenOut: true }), this.fund);
+      this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap, recoverWorkflows: true })));
     }
     return model;
   }
 
-  /** The model the open chat's next reply uses: its own, else the viewer's default, else the page's. */
+  /** The model the open chat's next reply uses: its own, else the page's. */
   assistantModel(): string {
     const backend = this.backend;
     if (backend) {
@@ -294,13 +391,22 @@ export class ChatSession extends EventTarget {
       const own = this.store.current?.model?.trim();
       return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
     }
-    return this.store.current?.model?.trim() || this.settings.assistantModel?.trim() || chatConfig.model;
+    return this.store.current?.model?.trim() || chatConfig.model;
   }
 
   /** Switches the open chat's model from its next reply; `undefined` makes it follow the viewer's default. */
   async setChatModel(model: string | undefined): Promise<void> {
-    if (!this.store.current) this.store.startNew();
+    if (!this.store.current) this.#startNew();
     await this.store.setModel(model);
+  }
+
+  /** Starts a new chat in the store: on the backend's `newChatModel`, when it names one of its models. */
+  #startNew(): Conversation {
+    const conversation = this.store.startNew();
+    const model = this.backend ? newChatModelOf(this.backend) : undefined;
+    // Kept with the chat from its first save; nothing is saved now.
+    if (model) conversation.model = model;
+    return conversation;
   }
 
   updateSettings(patch: Partial<Settings>): void {
@@ -359,14 +465,25 @@ export class ChatSession extends EventTarget {
     return job.results.find((result) => result.id === attachment.id)?.url;
   }
 
-  async openConversation(id: string): Promise<void> {
-    this.agent.abort();
-    this.jobs.clear();
-    this.posts.clear();
-    this.panels.clear();
-    const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+  /**
+   * Opens a saved chat. With `existing`, one with nothing saved under `id` rejects instead of opening
+   * empty, and the chat is read before anything is left: one that cannot be opened (not found, or a
+   * read that fails) leaves the open chat, and a reply running in it, as they are.
+   */
+  async openConversation(id: string, options: Pick<OpenOptions, 'existing'> = {}): Promise<void> {
+    // A remote reply carries on on the server, and is followed again when its chat is opened.
+    const leave = (): void => {
+      this.agent.leave();
+      this.jobs.clear();
+      this.posts.clear();
+      this.panels.clear();
+    };
+    if (!options.existing) leave();
+    const opening = this.store.open(id, options.existing ? { existing: true, ready: leave } : {});
+    const [opened, catalog] = await Promise.all([opening, this.#restoreCatalog()]);
     this.#restore(opened, catalog);
     this.updateSettings({ lastConversationId: id });
+    void this.#remote?.reattach(id);
   }
 
   /**
@@ -376,7 +493,24 @@ export class ChatSession extends EventTarget {
    */
   async reloadConversation(id: string): Promise<void> {
     if (this.agent.running || this.store.current?.id !== id) return;
-    const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
+    this.jobs.clear();
+    this.posts.clear();
+    this.panels.clear();
+    this.#restore(opened, catalog);
+    // A run that started meanwhile (another tab or device) is followed here too.
+    void this.#remote?.reattach(id);
+  }
+
+  /** The tool schemas a reopened chat's jobs are rebuilt with; none in remote mode, where the runner holds the tools and the page asks no tool server. */
+  #restoreCatalog(): Promise<ToolCatalog | null> {
+    return this.#remote ? Promise.resolve(null) : this.catalog().catch(() => null);
+  }
+
+  /** The open chat read again after its remote run ended, whatever the agent says. */
+  async #reread(id: string): Promise<void> {
+    if (this.store.current?.id !== id) return;
+    const [opened, catalog] = await Promise.all([this.store.open(id), this.#restoreCatalog()]);
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
@@ -385,16 +519,55 @@ export class ChatSession extends EventTarget {
 
   #restore(opened: OpenedConversation, catalog: ToolCatalog | null): void {
     this.#rebuildJobs(opened, catalog);
-    this.#rebuildPosts(opened);
+    // Panels first: their runs make pictures a post may show.
     this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
+    this.#rebuildPosts(opened);
+  }
+
+  /** Remote mode on a host's store, where `stopRunBeforeDelete` has something to do. */
+  get stopsRunBeforeDelete(): boolean {
+    return Boolean(this.#runner && this.backend);
+  }
+
+  /**
+   * Before a chat is deleted from a host's store in remote mode: stops its live run, if it has one, and
+   * waits until the runner no longer lists a live run for it. A run saves its final state before it
+   * ends, so once none is live that save has landed and a delete after it stays deleted. A stop answered
+   * 404 (the run ended meanwhile) counts as stopped. Rejects, with a {@link DeleteBlockedCode} as its
+   * `code`, when the runner could not be reached, refused the stop, or still listed the run after
+   * `timeoutMs` (the runner's `timeoutMs`, else {@link REQUEST_TIMEOUT_MS}); then nothing should be
+   * deleted. Does nothing in any other mode.
+   */
+  async stopRunBeforeDelete(conversationId: string, { pollMs = STOP_POLL_MS }: { pollMs?: number } = {}): Promise<void> {
+    if (!this.stopsRunBeforeDelete) return;
+    const runner = this.#runner!;
+    const lookup = async () => {
+      try {
+        return await runner.lookup(conversationId);
+      } catch (error) {
+        throw deleteBlocked('runner-unreachable', 'The chat runner could not be reached.', error);
+      }
+    };
+    const run = await lookup();
+    if (!run) return;
+    try {
+      await runner.stop(run.runId);
+    } catch (error) {
+      if (!(error instanceof RunnerHttpError && error.status === 404)) throw deleteBlocked('stop-refused', 'The chat runner did not stop the reply.', error);
+    }
+    const deadline = Date.now() + (runner.options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    while (await lookup()) {
+      if (Date.now() >= deadline) throw deleteBlocked('still-stopping', 'The reply is still stopping.');
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
   }
 
   newConversation(): void {
-    this.agent.abort();
+    this.agent.leave();
     this.jobs.clear();
     this.posts.clear();
     this.panels.clear();
-    this.store.startNew();
+    this.#startNew();
   }
 
   async upload(pending: PendingUpload, onChange: () => void): Promise<void> {
@@ -461,13 +634,27 @@ export class ChatSession extends EventTarget {
     void this.app.orchestration.cancelWorkflow(workflowId).catch(() => undefined);
   }
 
-  /** About 1 Buzz per call, whatever the length. */
+  /**
+   * Who turns the viewer's dictation into text: `'civitai'` (the orchestrator, signed in as the
+   * viewer), `'host'` (a backend's own `transcribe`), or `null` (a backend without one: no
+   * microphone). Only `'civitai'` streams live and offers a spoken conversation.
+   */
+  get dictation(): 'civitai' | 'host' | null {
+    const backend = this.backend;
+    if (!backend) return 'civitai';
+    return hasTranscribe(backend) ? 'host' : null;
+  }
+
+  /** One recorded phrase as text: through a backend's `transcribe`, else Civitai's (about 1 Buzz per call, whatever the length). */
   transcribe(recording: Blob, signal?: AbortSignal): Promise<string> {
-    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, voiceLanguage(this.settings.voiceLanguage));
+    const language = voiceLanguage(this.settings.voiceLanguage);
+    const backend = this.backend;
+    if (backend) return transcribeOnHost(backend, recording, { language, ...(signal ? { signal } : {}) });
+    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, language);
   }
 
   async send(text: string, uploads: PendingUpload[] = [], refs: string[] = []): Promise<void> {
-    const conversation = this.store.current ?? this.store.startNew();
+    const conversation = this.store.current ?? this.#startNew();
     const seq = (conversation.turns.at(-1)?.seq ?? 0) + 1;
     const attachments = uploads
       .filter((pending) => pending.attachment)
@@ -481,6 +668,8 @@ export class ChatSession extends EventTarget {
    * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
    */
   async openShared(shared: SharedPanel): Promise<void> {
+    // Remote: the page writes no head, so a chat it made would be the page's alone, and the runner would refuse its next turn.
+    if (this.#remote) throw new Error('A shared panel cannot be opened while replies run on a server runner.');
     this.newConversation();
     const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
     const conversation = this.store.current!;
@@ -496,7 +685,8 @@ export class ChatSession extends EventTarget {
    * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
    */
   async adjust(job: GenerationJob): Promise<boolean> {
-    if (this.backend || this.agent.running || !this.store.current) return false;
+    // Remote: the page writes no head, so a turn it made would be the page's alone.
+    if (this.backend || this.#remote || this.agent.running || !this.store.current) return false;
     const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
     if (!built) return false;
     const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);
@@ -554,6 +744,7 @@ export class ChatSession extends EventTarget {
         ended: replyEnded.signal,
         model: () => this.#model(subagents.model ?? this.assistantModel()),
         maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
+        timeZone: () => this.#options.timeZone?.(),
         progress: this.subagents,
         // A write subagent's progress rides on the reply's own saves, so Continue after a closed page gets its `changed`.
         checkpoint: (id, progress) => {

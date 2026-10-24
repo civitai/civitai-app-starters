@@ -28,6 +28,7 @@ export class CivitaiChatSidebar extends LightElement {
     hasMore: { type: Boolean },
     userName: {},
     editingId: { state: true },
+    stoppingIds: { attribute: false },
   };
 
   declare summaries: ConversationSummary[];
@@ -35,6 +36,8 @@ export class CivitaiChatSidebar extends LightElement {
   declare hasMore: boolean;
   declare userName: string;
   declare editingId: string | null;
+  /** Chats whose reply is being stopped before their delete: shown busy, with Delete off. */
+  declare stoppingIds: ReadonlySet<string>;
 
   constructor() {
     super();
@@ -43,6 +46,7 @@ export class CivitaiChatSidebar extends LightElement {
     this.hasMore = false;
     this.userName = '';
     this.editingId = null;
+    this.stoppingIds = new Set();
   }
 
   #commit(summary: ConversationSummary, input: HTMLInputElement): void {
@@ -68,13 +72,14 @@ export class CivitaiChatSidebar extends LightElement {
         />
       </li>`;
     }
-    return html`<li class="cvt-chat-row" data-current=${current ? '' : nothing}>
+    const stopping = this.stoppingIds.has(summary.id);
+    return html`<li class="cvt-chat-row" data-current=${current ? '' : nothing} data-stopping=${stopping ? '' : nothing} aria-busy=${stopping ? 'true' : nothing}>
       <button class="cvt-chat-open" aria-current=${current ? 'page' : nothing} @click=${() => emit(this, 'cvt-open', { id: summary.id })}>${summary.title}</button>
       <span class="cvt-chat-actions">
         <button class="cvt-icon-button" aria-label=${`Rename ${summary.title}`} @click=${() => this.#startEditing(summary.id)}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>
         </button>
-        <button class="cvt-icon-button" aria-label=${`Delete ${summary.title}`} @click=${() => emit(this, 'cvt-delete', { id: summary.id, title: summary.title })}>
+        <button class="cvt-icon-button" aria-label=${`Delete ${summary.title}`} ?disabled=${stopping} @click=${() => emit(this, 'cvt-delete', { id: summary.id, title: summary.title })}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
         </button>
       </span>

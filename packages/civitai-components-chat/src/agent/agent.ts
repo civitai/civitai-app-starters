@@ -6,6 +6,7 @@ import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
 import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
+import type { ChatAgent } from './chat-agent.js';
 import { AgentCore, type AgentCoreOutcome, type LiveTurn } from './core.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
@@ -38,6 +39,8 @@ export interface AgentDeps {
   /** The words the viewer sees for a reply that failed; `humanize` unless set. */
   describeError?(error: unknown): HumanError;
   now?(): Date;
+  /** The viewer's time zone for the prompt's date (`dateLine`), read at the start of every reply; UTC's date unless set. */
+  timeZone?(): string | undefined;
   /**
    * The wait before each automatic retry of one drop of the browser's network (see
    * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
@@ -59,9 +62,10 @@ export interface AgentRetryDetail {
 }
 
 /** Runs one assistant reply at a time and records it on the thread store; the reply's loop is {@link AgentCore}'s. */
-export class Agent extends EventTarget {
+export class Agent extends EventTarget implements ChatAgent {
   #deps: AgentDeps;
   #core: AgentCore;
+  #turn: Turn | undefined;
 
   constructor(deps: AgentDeps) {
     super();
@@ -78,6 +82,14 @@ export class Agent extends EventTarget {
     return this.#core.running;
   }
 
+  /** Falls back to the last reply: the title call runs after the reply ends. */
+  charged(buzz: number): void {
+    const turn = this.#turn ?? this.#deps.store.current?.turns.at(-1);
+    if (!turn) return;
+    turn.assistant.buzz = (turn.assistant.buzz ?? 0) + buzz;
+    this.#emit();
+  }
+
   async send(content: string, attachments: Attachment[] = [], refs: string[] = []): Promise<void> {
     if (this.running) return;
     const turn = this.#deps.store.appendUserTurn(content, attachments, refs);
@@ -86,6 +98,16 @@ export class Agent extends EventTarget {
 
   abort(): void {
     this.#core.abort();
+  }
+
+  /** The page leaves the reply: in the page, that ends it as Stop does. */
+  leave(): void {
+    this.abort();
+  }
+
+  /** The session is replaced: in the page, that ends the reply as Stop does. */
+  dispose(): void {
+    this.abort();
   }
 
   /**
@@ -102,8 +124,8 @@ export class Agent extends EventTarget {
   async retry(): Promise<void> {
     const turn = this.#deps.store.current?.turns.at(-1);
     if (this.running || turn?.assistant.status !== 'error') return;
-    const from = turn.assistant.resume;
-    turn.assistant = { messages: [], status: 'streaming' };
+    const { resume: from, buzz } = turn.assistant;
+    turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
     await this.#run(turn, from);
   }
 
@@ -115,6 +137,7 @@ export class Agent extends EventTarget {
       // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
       if (from) this.#checkpoint(turn, from.messages);
     }
+    this.#turn = turn;
     const outcome = await this.#core.run({
       seq: turn.seq,
       ...(from ? { from } : {}),
@@ -123,6 +146,7 @@ export class Agent extends EventTarget {
         const hostInstructions = this.#deps.hostInstructions?.();
         const system = buildSystemPrompt({
           now: this.#deps.now?.() ?? new Date(),
+          timeZone: this.#deps.timeZone?.(),
           customInstructions: this.#deps.customInstructions?.(),
           canPost: this.#deps.posts?.available ?? false,
           tools: Object.keys(tools),
@@ -152,6 +176,7 @@ export class Agent extends EventTarget {
       // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
       settled: (ended) => this.#settle(turn, ended),
     });
+    if (this.#turn === turn) this.#turn = undefined;
     if (!outcome) return;
 
     try {

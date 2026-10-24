@@ -2,6 +2,7 @@ import { ApiError, isTerminal, type AppClient, type Workflow } from '@civitai/sd
 
 import { ORCH_URL } from '../config.js';
 import type { FreeTierStatus } from '../agent/free-tier.js';
+import type { FundStatus } from '../agent/fund.js';
 
 export interface UploadedBlob {
   id: string;
@@ -27,6 +28,8 @@ export interface OrchestrationApi {
   getWorkflow(workflowId: string, opts?: ReadOptions & { wait?: number; until?: 'completion' | 'change' }): Promise<Workflow>;
   watchWorkflow(workflowId: string, opts?: ReadOptions): AsyncGenerator<Workflow, void, undefined>;
   updateWorkflow(workflowId: string, patch: { metadata?: unknown; tags?: string[] }, opts?: SendOptions): Promise<void>;
+  /** Pays for a workflow's mature results with Buzz that covers them, refunding what it was paid with; a 400 when the viewer has too little. */
+  allowMatureContent(workflowId: string, opts?: SendOptions): Promise<void>;
   addTag(workflowId: string, tag: string, opts?: SendOptions): Promise<void>;
   removeTag(workflowId: string, tag: string, opts?: SendOptions): Promise<void>;
   deleteWorkflow(workflowId: string, opts?: SendOptions): Promise<void>;
@@ -34,6 +37,13 @@ export interface OrchestrationApi {
   uploadDirect(file: Blob, opts?: SendOptions): Promise<UploadedBlob>;
   refreshBlobUrl(blobId: string, opts?: SendOptions & { nsfwLevel?: string }): Promise<string>;
   getFreeTier(opts?: SendOptions): Promise<FreeTierStatus>;
+  createFund(template: { ttl: string; description: string }, opts?: SendOptions): Promise<FundStatus>;
+  getFund(fundId: string, opts?: SendOptions): Promise<FundStatus>;
+  /** A 402 when the viewer has too little Buzz. */
+  depositIntoFund(fundId: string, amount: number, opts?: SendOptions): Promise<FundStatus>;
+  extendFund(fundId: string, ttl: string, opts?: SendOptions): Promise<FundStatus>;
+  /** Pays what is left back to its depositors; the fund stays open, empty. */
+  refundFund(fundId: string, opts?: SendOptions): Promise<FundStatus>;
 }
 
 export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFetch: typeof fetch = fetch.bind(globalThis)): OrchestrationApi {
@@ -100,6 +110,9 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
     async updateWorkflow(workflowId, patch, opts) {
       await json('PUT', `v2/consumer/workflows/${encodeURIComponent(workflowId)}`, { ...opts, body: patch });
     },
+    async allowMatureContent(workflowId, opts) {
+      await json('PUT', `v2/consumer/workflows/${encodeURIComponent(workflowId)}`, { ...opts, body: { allowMatureContent: true } });
+    },
     async addTag(workflowId, tag, opts) {
       await json('POST', `v2/consumer/workflows/${encodeURIComponent(workflowId)}/tags`, { ...opts, body: tag });
     },
@@ -120,6 +133,11 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
       return read<UploadedBlob>(response);
     },
     getFreeTier: (opts) => json('GET', 'v2/consumer/free-tier', opts),
+    createFund: (template, opts) => json('POST', 'v2/consumer/funds', { ...opts, body: template }),
+    getFund: (fundId, opts) => json('GET', `v2/consumer/funds/${encodeURIComponent(fundId)}`, opts),
+    depositIntoFund: (fundId, amount, opts) => json('POST', `v2/consumer/funds/${encodeURIComponent(fundId)}/deposits`, { ...opts, body: { amount } }),
+    extendFund: (fundId, ttl, opts) => json('PATCH', `v2/consumer/funds/${encodeURIComponent(fundId)}`, { ...opts, body: { ttl } }),
+    refundFund: (fundId, opts) => json('POST', `v2/consumer/funds/${encodeURIComponent(fundId)}/refund`, opts),
     async refreshBlobUrl(blobId, opts = {}) {
       const query = opts.nsfwLevel ? `?nsfwLevel=${encodeURIComponent(opts.nsfwLevel)}` : '';
       const response = await authed(url(`v2/consumer/blobs/${encodeURIComponent(blobId)}${query}`), {

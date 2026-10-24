@@ -9,8 +9,9 @@ import type { JSONValue, ModelMessage } from 'ai';
 
 import { DISPATCH_AGENT, interruptedSubagent, type SubagentCheckpoint } from '../agent/subagent-result.js';
 
+import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { Attachment, Conversation, ConversationSummary, JobMetadata, ResumePoint, SavedTurn, SavedTurnV3, StoredConversationMetadata, TitleSource, Turn } from '../types.js';
-import { supersededError, type ConversationStore } from './conversation-store.js';
+import { notFoundError, supersededError, type ConversationStore, type OpenOptions } from './conversation-store.js';
 
 export interface ThreadStoreDeps {
   orchestration: Pick<OrchestrationClient, 'submitWorkflow' | 'queryWorkflows'>;
@@ -31,6 +32,14 @@ export interface ThreadStoreDeps {
    * tab closes, crashes or is unloaded. With none, a reply is never taken as dead by its note alone.
    */
   locks?: Pick<LockManager, 'request' | 'query'> | null;
+  /**
+   * Remote mode (`runner: 'remote'`): a server-side runner is the only writer of every head, so this
+   * store writes none. It still holds the open chat as the page changes it, and reads heads as ever. A
+   * title the viewer or the assistant gave, and the chat's model, go to the runner as a patch (`patch`)
+   * once the chat has a turn; before that, the model goes with its first run (`model`) and a title is
+   * kept for this page only, as are posts and panels.
+   */
+  remote?: { patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> };
 }
 
 /** The reply this tab started and has not seen end, and the time of the latest save this tab made of it. */
@@ -73,6 +82,10 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   #heads = new Map<string, Head>();
   /** Bumped by every open and new chat, so an open that lands after a later one cannot take its place. */
   #generation = 0;
+  /** The chat each turn belongs to, so a reply that ends after the viewer left its chat is saved there. */
+  #owners = new WeakMap<Turn, Conversation>();
+  /** Chats deleted (or being deleted) here: a reply of theirs that ends after is not saved, which would bring them back. */
+  #removed = new Set<string>();
   /** A running reply's finished steps so far (`checkpoint`): every save of the chat carries them, as `running`. */
   #progress = new WeakMap<Turn, ModelMessage[]>();
   /** A running reply's write subagents as far as each had got (`checkpointSubagent`), by `dispatch_agent` call id: saved with its progress. */
@@ -120,8 +133,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
    * while it waits ride on it. Nothing until the turn's first save went through: its end saves it then.
    */
   async checkpoint(turn: Turn, { messages }: { messages: ModelMessage[] }): Promise<void> {
-    const conversation = this.current;
-    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    const conversation = this.#ownerOf(turn);
+    if (!conversation || turn.assistant.status !== 'streaming') return;
     this.#progress.set(turn, [...messages]);
     await this.#saveProgress(conversation, turn);
   }
@@ -132,8 +145,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
    * `dispatch_agent` call is saved as it starts, and a subagent's record means nothing without it.
    */
   async checkpointSubagent(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void> {
-    const conversation = this.current;
-    if (!conversation?.turns.includes(turn) || turn.assistant.status !== 'streaming') return;
+    const conversation = this.#ownerOf(turn);
+    if (!conversation || turn.assistant.status !== 'streaming') return;
     this.#subagents.set(turn, { ...this.#subagents.get(turn), [toolCallId]: progress });
     if (!this.#progress.has(turn)) return;
     await this.#saveProgress(conversation, turn);
@@ -182,7 +195,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     this.#emit('list-change');
   }
 
-  async open(id: string): Promise<OpenedConversation> {
+  async open(id: string, options: OpenOptions = {}): Promise<OpenedConversation> {
     const generation = ++this.#generation;
     let heads: Awaited<ReturnType<OrchestrationClient['queryWorkflows']>>;
     let jobWorkflows: Workflow[];
@@ -197,10 +210,12 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     // The viewer opened or started another chat meanwhile: this one must not take its place.
     if (generation !== this.#generation) throw supersededError();
     const head = newestHead(heads.items);
+    if (options.existing && !head) throw notFoundError();
     const now = this.#now().toISOString();
     const turns = (head?.metadata.turns ?? []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     await this.#markLiveness(id, turns.at(-1));
     if (generation !== this.#generation) throw supersededError();
+    options.ready?.();
     if (head) this.#heads.set(id, { workflowId: head.workflowId, seq: turns.at(-1)?.seq ?? 0 });
     this.current = {
       id,
@@ -213,6 +228,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       ...(head?.metadata.panels ? { panels: head.metadata.panels } : {}),
       ...(typeof head?.metadata.model === 'string' && head.metadata.model.trim() ? { model: head.metadata.model.trim() } : {}),
     };
+    for (const turn of turns) this.#owners.set(turn, this.current);
     const jobs = jobWorkflows.flatMap((workflow) => {
       const metadata = jobMetadataOf(workflow);
       return metadata ? [{ metadata, workflow }] : [];
@@ -242,6 +258,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       assistant: { messages: [], status: 'streaming' },
     };
     conversation.turns.push(turn);
+    this.#owners.set(turn, conversation);
     conversation.updatedAt = now;
     this.#submits.set(submitKey(conversation.id, seq), this.#submitHead(conversation, seq));
     this.#touchSummary(conversation);
@@ -249,9 +266,13 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     return turn;
   }
 
+  /**
+   * Saves how the reply to `turn` ended into the chat it belongs to, which need not be the open one: the
+   * viewer may have opened or started another while it ran (its reply is then stopped, and ends after).
+   */
   async completeTurn(turn: Turn): Promise<void> {
     try {
-      const conversation = this.current;
+      const conversation = this.#ownerOf(turn);
       if (!conversation) return;
       await this.#submits.get(submitKey(conversation.id, turn.seq));
       const head = this.#heads.get(conversation.id);
@@ -270,6 +291,13 @@ export class ThreadStore extends EventTarget implements ConversationStore {
       // How it ended is saved, or could not be: either way no reply of this tab's runs any more.
       if (turn.assistant.status !== 'streaming') this.#ended(turn);
     }
+  }
+
+  /** The chat `turn` belongs to: the one it was added to or read with, else the open chat when it holds it. */
+  #ownerOf(turn: Turn): Conversation | null {
+    const owner = this.#owners.get(turn);
+    const conversation = owner?.turns.includes(turn) ? owner : this.current?.turns.includes(turn) ? this.current : null;
+    return conversation && !this.#removed.has(conversation.id) ? conversation : null;
   }
 
   /** A reply of this tab's ended: its lock is let go, its progress dropped, and its note (when it is the one noted) cleared. */
@@ -302,6 +330,11 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (id) conversation.model = id;
     else delete conversation.model;
     this.#emit('conversation-change');
+    // Remote: the runner writes it, now or with the run that is live; a chat with nothing saved yet sends it with its first run.
+    if (this.#deps.remote) {
+      if (conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { model: id || null });
+      return;
+    }
     // A reply still streaming saves it with that reply.
     if (conversation.turns.at(-1)?.assistant.status === 'streaming') return;
     const head = this.#heads.get(conversation.id);
@@ -321,6 +354,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   // Each write replaces the whole metadata, so they go one at a time per workflow, each built from the latest state.
   // Only a rename of a chat that is not open writes back a head as it was read, which may be a v3 one.
   #writeHead(workflowId: string, metadata: () => StoredConversationMetadata): Promise<void> {
+    // Remote: the runner is the only writer of a head.
+    if (this.#deps.remote) return Promise.resolve();
     const write = (this.#writes.get(workflowId) ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => {
@@ -339,6 +374,10 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     conversation.titleSource = source;
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
+    if (this.#deps.remote) {
+      if (source !== 'first-message' && conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { title: conversation.title, titleSource: source });
+      return;
+    }
     const newest = conversation.turns.at(-1);
     if (newest && newest.assistant.status !== 'streaming') await this.completeTurn(newest);
   }
@@ -348,14 +387,22 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     const summary = this.summaries.find((s) => s.id === id);
     if (!summary) return;
     const metadata: StoredConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
-    await this.#writeHead(summary.head.workflowId, () => metadata);
+    if (this.#deps.remote) await this.#deps.remote.patch(id, { title: metadata.title, titleSource: 'user' });
+    else await this.#writeHead(summary.head.workflowId, () => metadata);
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
   }
 
   async remove(id: string): Promise<void> {
-    const workflows = await this.#all([APP_TAG, conversationTag(id)]);
-    await Promise.all(workflows.map((workflow) => (workflow.id ? this.#deps.api.deleteWorkflow(workflow.id) : undefined)));
+    this.#removed.add(id);
+    try {
+      const workflows = await this.#all([APP_TAG, conversationTag(id)]);
+      await Promise.all(workflows.map((workflow) => (workflow.id ? this.#deps.api.deleteWorkflow(workflow.id) : undefined)));
+    } catch (error) {
+      // Not deleted: its replies are saved again as usual.
+      this.#removed.delete(id);
+      throw error;
+    }
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
     this.#heads.delete(id);
     if (this.current?.id === id) this.current = null;
@@ -382,6 +429,8 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   async #submitHead(conversation: Conversation, seq: number): Promise<string | undefined> {
+    // Remote: the runner saves the turn when its run starts.
+    if (this.#deps.remote) return undefined;
     const template: WorkflowTemplate = {
       steps: [{ $type: 'echo', name: 'turn', input: { message: 'chat-cvt turn' } }],
       tags: [APP_TAG, TURN_TAG, HEAD_TAG, conversationTag(conversation.id), ...this.#scopeTags()],
@@ -399,6 +448,7 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     if (!workflowId) return undefined;
     const previous = this.#heads.get(conversation.id);
     this.#heads.set(conversation.id, { workflowId, seq });
+    if (!previous) this.#emit('saved-change');
     this.#touchSummary(conversation);
     if (previous && previous.workflowId !== workflowId) {
       this.#deps.api.removeTag(previous.workflowId, HEAD_TAG).catch((error) => console.warn('[chat-cvt] an older save still counts as the latest', error));
@@ -539,7 +589,11 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     return this.#deps.now?.() ?? new Date();
   }
 
-  #emit(type: 'list-change' | 'conversation-change'): void {
+  isSaved(id: string): boolean {
+    return this.#heads.has(id);
+  }
+
+  #emit(type: 'list-change' | 'conversation-change' | 'saved-change'): void {
     this.dispatchEvent(new Event(type));
   }
 }

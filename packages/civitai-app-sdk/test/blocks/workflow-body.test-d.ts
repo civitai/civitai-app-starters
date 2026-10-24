@@ -41,6 +41,7 @@ import { expectTypeOf } from 'vitest';
 
 import type {
   BlockSourceImage,
+  BlockTrainingDatasetItem,
   InlineComfyNode,
   WorkflowBody,
   WorkflowBodyCustomComfy,
@@ -449,7 +450,7 @@ if (someBody.kind === 'textToImage') {
   // rather than letting a consumer assume every customComfy body is a recipe.
   expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
 } else if (someBody.kind === 'training') {
-  expectTypeOf(someBody.datasetId).toEqualTypeOf<string>();
+  expectTypeOf(someBody.items).toEqualTypeOf<BlockTrainingDatasetItem[]>();
 } else if (someBody.kind === 'workflow') {
   expectTypeOf(someBody.steps).toEqualTypeOf<WorkflowBodyWorkflow['steps']>();
 } else {

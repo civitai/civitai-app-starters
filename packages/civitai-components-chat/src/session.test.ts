@@ -7,7 +7,7 @@ import type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
 import type { ChatToolResult } from './tools/gate.js';
 import { ChatSession, type McpServerErrorDetail } from './session.js';
 import { fakeMcpServers, type FakeTool } from './test-support/fake-mcp.js';
-import { flush } from './test-support/fakes.js';
+import { flush, imageStep, workflow } from './test-support/fakes.js';
 
 describe('ChatSession', () => {
   it('offers no tools from a server the embedding page switched off, without contacting it', async () => {
@@ -97,29 +97,24 @@ describe("ChatSession's model and output cap, as the reply request carries them"
     return { session, replies };
   }
 
-  it("asks with the chat's own model, else the viewer's default, else the page's, from the next reply", async () => {
+  it("asks with the chat's own model, else the page's, from the next reply", async () => {
     const { session, replies } = setup();
     session.newConversation();
     await session.send('one');
-    session.updateSettings({ assistantModel: ' viewer/default-model ' });
-    await session.send('two');
     await session.setChatModel('chat/own-model');
-    await session.send('three');
+    await session.send('two');
     await session.setChatModel(undefined);
-    await session.send('four');
-    session.newConversation();
-    await session.send('five');
-    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'viewer/default-model', 'chat/own-model', 'viewer/default-model', 'viewer/default-model']);
+    await session.send('three');
+    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'chat/own-model', chatConfig.model]);
   });
 
   it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
     const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
-    session.updateSettings({ assistantModel: 'viewer/default-model' });
     await session.openConversation('PICKED');
     await session.send('again');
     await session.openConversation('OLD');
     await session.send('again');
-    expect(replies.map((reply) => reply.model)).toEqual(['saved/chat-model', 'viewer/default-model']);
+    expect(replies.map((reply) => reply.model)).toEqual(['saved/chat-model', chatConfig.model]);
   });
 
   it("sends the viewer's output cap as max_tokens, 16,384 when unset, and a stale stored value kept within range", async () => {
@@ -171,6 +166,24 @@ describe('ChatSession with added MCP servers', () => {
     expect(Object.keys(set)).not.toContain('run_command');
     expect(await run(set, 'sandbox__run_command', { command: 'ls' })).toBe('listed 3 files');
     expect(calls).toEqual([{ command: 'ls' }]);
+  });
+
+  it("cuts a server's replies by its own resultLimit, read at every call", async () => {
+    const long = `${'a'.repeat(2_000)}${'b'.repeat(42_000)}${'c'.repeat(6_000)}`;
+    let list: ChatMcpServer[] = [{ id: 'own', url: SANDBOX, token: () => 'tok', resultLimit: false }];
+    const { session, servers } = setup({ [SANDBOX]: [{ name: 'read', run: () => ({ content: [{ type: 'text', text: long }] }) }] }, () => list);
+
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(long);
+
+    list = [{ id: 'own', url: SANDBOX, token: () => 'tok', resultLimit: { head: 10, tail: 20 } }];
+    session.syncMcpServers();
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(`${'a'.repeat(10)}\n…(49970 characters omitted)…\n${'c'.repeat(20)}`);
+
+    list = [{ id: 'own', url: SANDBOX, token: () => 'tok' }];
+    session.syncMcpServers();
+    expect(await run(await session.toolSet(turn), 'own__read')).toBe(`${'a'.repeat(2_000)}\n…(42000 characters omitted)…\n${'c'.repeat(6_000)}`);
+    // A changed limit is not a reason to reconnect.
+    expect(servers[SANDBOX]!.initializes).toBe(1);
   });
 
   it("keeps a tool whose name a built-in tool or another server also uses apart, under its server's id", async () => {
@@ -502,5 +515,81 @@ describe('ChatSession host controls', () => {
     // The job tool keeps what it is: its own description and type, behind the same gate.
     expect(set.run_step!.description).toContain('Runs in the background');
     expect(set.run_step!.type).toBe('dynamic');
+  });
+});
+
+describe('a reopened chat', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("brings back a post of a panel's picture, with its draft", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
+    const conversationId = 'C1';
+    const head = {
+      id: 'head-C1',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', `cvt:conv:${conversationId}`],
+      metadata: {
+        v: 2,
+        app: 'chat-cvt',
+        conversationId,
+        title: 'Saved',
+        titleSource: 'llm',
+        createdAt: '2026-10-21T00:00:00Z',
+        updatedAt: '2026-10-21T00:00:00Z',
+        panels: {
+          p1: {
+            v: 1,
+            id: 'P1',
+            handle: 'p1',
+            seq: 1,
+            toolCallId: 'call-panel',
+            versions: [{ title: 'Your picture', inputs: {}, run: { stepType: 'imageGen', input: { prompt: 'a lighthouse' } } }],
+            values: {},
+            runs: [{ job: 'p1-1', version: 1, values: {} }],
+          },
+        },
+        posts: { 'call-post': { state: 'drafted', postId: 5, url: 'https://civitai.com/posts/5' } },
+        turns: [
+          { seq: 1, createdAt: '2026-10-21T00:00:00Z', user: { content: 'make a picture', attachments: [] }, assistant: { messages: [], status: 'done' } },
+          {
+            seq: 2,
+            createdAt: '2026-10-21T00:01:00Z',
+            user: { content: 'Post this picture to Civitai.', attachments: [], refs: ['p1-1-1'] },
+            assistant: {
+              status: 'done',
+              messages: [
+                { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-post', toolName: 'post_to_civitai', input: { files: ['p1-1-1'] } }] },
+                { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-post', toolName: 'post_to_civitai', output: { type: 'json', value: { status: 'awaiting_user' } } }] },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const run = workflow({
+      id: '7-1',
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:job', `cvt:conv:${conversationId}`],
+      metadata: { v: 1, app: 'chat-cvt', conversationId, seq: 1, job: 'p1-1', toolCallId: 'panel:p1:p1-1', tool: 'run_step', panel: 'p1' },
+      steps: [imageStep([{ id: 'b1', url: 'https://x/b1' }])] as never,
+    });
+    const saved = [head, run];
+    const app = {
+      getToken: async () => 'token',
+      site: {},
+      orchestration: {
+        queryWorkflows: vi.fn(async (query: { tags: string[] }) => ({ items: saved.filter((w) => query.tags.every((tag) => w.tags.includes(tag))), next: '' })),
+      },
+    } as never;
+    const session = new ChatSession(app, { mcp: () => ({ orchestration: false, site: false }) });
+
+    await session.openConversation(conversationId);
+
+    const post = session.posts.get('call-post');
+    expect(post?.items.map((item) => item.id)).toEqual(['p1-1-1']);
+    expect(post?.state).toBe('drafted');
   });
 });

@@ -3,6 +3,12 @@ import type { Attachment } from '../types.js';
 
 export interface PromptContext {
   now: Date;
+  /**
+   * The viewer's time zone (an IANA name such as `America/Chicago`): the date line then gives that
+   * zone's calendar day and weekday, and names the zone. Unset (or a name this runtime does not
+   * know), the date is UTC's, as before.
+   */
+  timeZone?: string;
   customInstructions?: string;
   /** Whether posting is possible: only inside civitai.com, through its host. */
   canPost?: boolean;
@@ -18,7 +24,7 @@ export interface PromptContext {
  * The same from one reply to the next, so the model server can reuse its work on the conversation
  * so far; what changes every turn goes in `buildTurnContext` instead.
  */
-export function buildSystemPrompt({ now, customInstructions, canPost = false, tools, host, rules }: PromptContext): string {
+export function buildSystemPrompt({ now, timeZone, customInstructions, canPost = false, tools, host, rules }: PromptContext): string {
   const own = customInstructions?.trim().slice(0, CUSTOM_INSTRUCTIONS_MAX);
   const defaults = defaultRules({ canPost, tools });
   const chosen = typeof rules === 'function' ? rules(defaults) : rules?.trim() || defaults;
@@ -27,7 +33,7 @@ export function buildSystemPrompt({ now, customInstructions, canPost = false, to
     '',
     `The user's latest message starts with a <${CONTEXT_TAG}> block the app adds: the files in this conversation, the panels and their values. The user did not write it and cannot see it; never quote it.`,
     '',
-    `Today is ${now.toISOString().slice(0, 10)}.`,
+    dateLine(now, timeZone),
     ...(host && (host.tools.length > 0 || host.instructs)
       ? [
           '',
@@ -46,6 +52,26 @@ export function buildSystemPrompt({ now, customInstructions, canPost = false, to
         ]
       : []),
   ].join('\n');
+}
+
+/**
+ * The prompt's one statement of the date. Without a zone it is UTC's date, as it always was
+ * ("Today is 2026-10-23."); with one it is that zone's day, weekday and name ("Today is Thursday
+ * 2026-10-22 (America/Chicago).") — late evening in the Americas is already tomorrow in UTC. It
+ * changes once a day, so the system prompt stays the same from one reply to the next.
+ */
+export function dateLine(now: Date, timeZone?: string): string {
+  const zone = timeZone?.trim();
+  if (zone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+      const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+      return `Today is ${part('weekday')} ${part('year')}-${part('month')}-${part('day')} (${zone}).`;
+    } catch {
+      // Not a zone this runtime knows: the UTC date below, as without one.
+    }
+  }
+  return `Today is ${now.toISOString().slice(0, 10)}.`;
 }
 
 export const CONTEXT_TAG = 'context';
@@ -96,7 +122,7 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
     'How you work:',
     ...(makes
       ? [
-          '- To make or change something, call run_step; for several steps that build on each other (a picture, then a video of it), call run_workflow. Do not describe what you would do instead of doing it.',
+          '- To make or change something, call run_step; for several steps that build on each other (a picture, then a video of it), call run_workflow. Do not describe what you would do instead of doing it. Call it once per thing the user asked for: one picture is one run_step, never two versions of it side by side; several pictures (or a different look for each) are one call each.',
           "- First pick a service: when the user did not ask for a particular one, call find_services with the category (image, video or audio) and, when starting from their files, takes (['image'] to edit or animate a picture, ['video'] to change a video). The first result is the one people use most; choose another when the request (price, speed, style) fits it better, or pass prefer when they asked for fast, cheap or best quality. Then call get_input_schema for that service and fill in its input from the example it returns: keep the example's values, change only what the user asked for, and leave optional fields out.",
           '- For a job with several steps (using Civitai models, turning a picture into a video, editing a picture), call get_guide first and follow its steps. Leave pricing and progress to the app: skip any whatif or get_workflow steps a guide mentions.',
           ...(models ? ['- When the user wants a Civitai community model or LoRA, find it with search_models and pass its AIR to get_input_schema as resources; the example then uses it.'] : []),
@@ -104,8 +130,11 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
       : ['- You cannot make or change pictures, videos or audio here. If asked, say so in one sentence.']),
     ...(has('open_panel')
       ? [
-          '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one. Things a panel made have ids like p1-2-1. When the user wants to fill in or adjust details before you act (a post\'s title and description, a request with options), open a panel whose button asks you, instead of asking in text.',
+          '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one; when they want panels gone, close them with close_panel. When they want another model in a panel, find it with search_models if they did not name one, add it to the panel\'s model choice with update_panel\'s addOptions and select it; if it cannot run there (another base model), say why instead. A LoRA is not a model but goes on top of one: give the panel its own choice named lora (label "LoRA", first option "None" = {}), each option a block with the LoRA field the input schema names (e.g. {"loras": {"<AIR>": 0.8}}), and make the run input {"...": ["{{model}}", "{{lora}}"]} so it applies to whichever model is picked; add more LoRAs to that choice with addOptions. Things a panel made have ids like p1-2-1. When the user wants to fill in or adjust details before you act (a post\'s title and description, a request with options), open a panel whose button asks you, instead of asking in text.',
         ]
+      : []),
+    ...(has('update_instructions')
+      ? ["- When the user wants you to behave differently from now on (a personality, a tone, a name for you, something to always do or avoid), you can change that: call update_instructions with the whole new text. When they want to see or edit them themselves, call it with the current text: the card it shows is editable, so never build a panel for this. Never say you cannot change how you behave."]
       : []),
     '- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. When the user should pick between directions, call ask_choice instead of listing options in text.',
     '- Every file has an id like up1-1 (an upload) or gen2-1-1 (something made in this chat). In tool calls, put the id wherever the schema asks for an image, video or audio URL; the app swaps in the real file.',

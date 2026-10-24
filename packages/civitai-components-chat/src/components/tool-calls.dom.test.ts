@@ -242,3 +242,56 @@ describe('tool calls with tool-calls="details": a lone row that becomes a group 
     expect(document.activeElement).toBe(rowHead);
   });
 });
+
+describe('a failed call the assistant fixed itself', () => {
+  it('shows no failure once the same tool worked later in the reply, and still shows one that was never fixed', async () => {
+    const el = await turnWith([
+      { kind: 'tool', toolCallId: 'f1', toolName: 'search_models', input: { query: 1 }, state: 'done', output: { error: 'query must be a string' } },
+      { kind: 'tool', toolCallId: 'f2', toolName: 'search_models', input: { query: 'cats' }, state: 'done', output: { items: [] } },
+      { kind: 'tool', toolCallId: 'f3', toolName: 'sandbox__read_file', input: { path: '/x' }, state: 'error', error: 'No such file' },
+    ]);
+    expect([...el.querySelectorAll('.cvt-step-failed code')].map((code) => code.textContent)).toEqual(['No such file']);
+  });
+});
+
+describe('new instructions the assistant proposes', () => {
+  const PROPOSAL: TurnPart = { kind: 'tool', toolCallId: 'i1', toolName: 'update_instructions', input: { instructions: 'Be Civ-chan: playful and fierce.' }, state: 'done', output: { shown: true } };
+
+  it('are saved for every chat only when the viewer presses Save, and then read as saved', async () => {
+    const el = await turnWith([PROPOSAL], { latest: true });
+    const changes: unknown[] = [];
+    el.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    expect(el.querySelector<HTMLTextAreaElement>('.cvt-instructions-text')?.value).toBe('Be Civ-chan: playful and fierce.');
+    const button = (label: string) => [...el.querySelectorAll<HTMLElement>('.cvt-instructions-card civitai-button')].find((b) => b.textContent?.trim() === label);
+    button('Save')!.click();
+    expect(changes).toEqual([{ customInstructions: 'Be Civ-chan: playful and fierce.' }]);
+
+    el.instructions = 'Be Civ-chan: playful and fierce.';
+    await el.updateComplete;
+    expect(button('Save')).toBeUndefined();
+    expect(el.querySelector('.cvt-instructions-state')?.textContent).toContain('Saved.');
+  });
+
+  it('can be edited before saving, also once the chat has moved on', async () => {
+    const el = await turnWith([{ ...PROPOSAL, toolCallId: 'i2' } as TurnPart], { latest: false });
+    const changes: unknown[] = [];
+    el.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    const box = el.querySelector<HTMLTextAreaElement>('.cvt-instructions-text')!;
+    box.value = 'Be Civ-chan, and meow now and then.';
+    box.dispatchEvent(new Event('input'));
+    [...el.querySelectorAll<HTMLElement>('.cvt-instructions-card civitai-button')].find((b) => b.textContent?.trim() === 'Save')!.click();
+    expect(changes).toEqual([{ customInstructions: 'Be Civ-chan, and meow now and then.' }]);
+  });
+});
+
+describe('a failed call while the reply runs', () => {
+  it('shows nothing until the reply ends, then only what was never fixed', async () => {
+    const failed: TurnPart = { kind: 'tool', toolCallId: 'l1', toolName: 'sandbox__read_file', input: { path: '/x' }, state: 'error', error: 'No such file' };
+    const el = await turnWith([failed], { live: true });
+    expect(el.querySelector('.cvt-step-failed')).toBeNull();
+    el.live = false;
+    await el.updateComplete;
+    expect(el.querySelector('.cvt-step-failed code')?.textContent).toBe('No such file');
+  });
+});
+

@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "cd79a91fe4",
-  "capturedAt": "2026-10-17",
+  "capturedFrom": "05f1d1fa8f",
+  "capturedAt": "2026-10-20",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -464,9 +464,7 @@
     "PREPARE_TRAINING_DATASET": {
       "request": true,
       "reply": "TRAINING_DATASET_RESULT",
-      "replyKeys": [
-        "result"
-      ],
+      "replyKeys": [],
       "optionalReplyKeys": [],
       "replyKeysFrom": "inventory",
       "framing": "legacy",

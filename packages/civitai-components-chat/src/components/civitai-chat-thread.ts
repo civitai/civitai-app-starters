@@ -36,6 +36,7 @@ export class CivitaiChatThread extends LightElement {
     panels: { attribute: false },
     files: { attribute: false },
     canShare: { type: Boolean, attribute: 'can-share' },
+    instructions: { attribute: false },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
@@ -44,6 +45,7 @@ export class CivitaiChatThread extends LightElement {
     mcpServerIds: { attribute: false },
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     queued: { attribute: false },
     atBottom: { state: true },
     announcement: { state: true },
@@ -56,6 +58,8 @@ export class CivitaiChatThread extends LightElement {
   declare panels: PanelManager;
   declare files: () => Attachment[];
   declare canShare: boolean;
+  /** The viewer's custom instructions, for the cards that propose new ones. */
+  declare instructions: string | undefined;
   /** Panels show in the page beside the chat; the thread only points at them. */
   declare dockPanels: boolean;
   declare models: ModelDirectory;
@@ -68,6 +72,8 @@ export class CivitaiChatThread extends LightElement {
   declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  /** The live reply waits for the viewer to approve a call: its status line says so. */
+  declare awaitingApproval: boolean;
   declare queued: QueuedView | null;
   declare atBottom: boolean;
   declare announcement: string;
@@ -79,6 +85,7 @@ export class CivitaiChatThread extends LightElement {
     if (this.atBottom) this.#jumpToEnd();
   });
   #gliding = false;
+  #end?: HTMLSlotElement;
   #wasLive = false;
   #queuedStatus?: string;
 
@@ -88,6 +95,7 @@ export class CivitaiChatThread extends LightElement {
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
     this.canRetry = false;
+    this.awaitingApproval = false;
     this.queued = null;
     this.turns = [];
     this.live = null;
@@ -152,7 +160,19 @@ export class CivitaiChatThread extends LightElement {
       if (list) this.#resize.observe(list);
       this.#jumpToEnd();
     }
+    // The page's content after the last message grows like a message does: followed while at the end.
+    const end = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]');
+    if (end && end !== this.#end) {
+      this.#end = end;
+      this.#resize.observe(end);
+    }
   }
+
+  // Content the page puts after the last message is the newest thing in the chat: it is brought into view.
+  #onEndChange = (event: Event): void => {
+    const slot = event.target as HTMLSlotElement;
+    if (slot.assignedElements({ flatten: true }).length) void this.updateComplete.then(() => this.scrollToEnd());
+  };
 
   // Screen readers hear a reply start and the finished text once, never token by token.
   #announce(): void {
@@ -202,6 +222,8 @@ export class CivitaiChatThread extends LightElement {
                 .turn=${turn}
                 .parts=${this.#partsOf(turn)}
                 ?live=${this.live?.seq === turn.seq}
+                .liveTurn=${this.live?.seq === turn.seq ? this.live : null}
+                ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
                 .jobs=${this.jobs}
@@ -209,6 +231,7 @@ export class CivitaiChatThread extends LightElement {
                 .panels=${this.panels}
                 .files=${this.files}
                 ?can-share=${this.canShare}
+                .instructions=${this.instructions}
                 ?dock-panels=${this.dockPanels}
                 .models=${this.models}
                 .resolve=${this.resolve}
@@ -220,6 +243,7 @@ export class CivitaiChatThread extends LightElement {
           )}
           ${this.#queuedMessage()}
         </div>
+        <slot name="thread-end" class="cvt-thread-end" @slotchange=${this.#onEndChange}></slot>
       </div>
       ${this.atBottom
         ? nothing

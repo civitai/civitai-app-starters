@@ -92,6 +92,19 @@ describe('<civitai-chat> chat-change', () => {
     expect(chat.chatId).toBe('CONV1');
   });
 
+  it('starts a new chat under a new id when the last one was deleted, so its first message is not saved into the deleted chat', async () => {
+    stubFetch();
+    localStorage.setItem('cvt:settings', JSON.stringify({ lastConversationId: 'DELETED' }));
+    const { chat, seen } = await mount((c) => {
+      c.mcp = { orchestration: false, site: false };
+      c.app = fakeApp() as never;
+    });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await settle();
+    expect(chat.chatId).not.toBe('DELETED');
+    expect(seen).toEqual([chat.chatId]);
+  });
+
   it('names the fresh chat a first visit starts with', async () => {
     stubFetch();
     const { chat, seen } = await mount((c) => {
@@ -175,16 +188,17 @@ describe('<civitai-chat> chat-change', () => {
     await vi.waitFor(() => expect(seen).toHaveLength(1));
     await chat.send('hello');
     await vi.waitFor(() => expect(threadText(chat)).toContain('Hello there.'));
-    // Sending saves the chat; it keeps its id.
-    expect(seen).toHaveLength(1);
+    // Sending saves the chat; it keeps its id, and is named again once, now saved.
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
     const sent = seen[0]!;
+    expect(seen[1]).toBe(sent);
 
     await deleteFromHistory(chat, sent);
     await vi.waitFor(() => expect(store.records.has(sent)).toBe(false));
     await settle();
-    expect(seen).toHaveLength(2);
-    expect(seen[1]).toEqual(expect.any(String));
-    expect(seen[1]).not.toBe(sent);
-    expect(chat.chatId).toBe(seen[1]);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toEqual(expect.any(String));
+    expect(seen[2]).not.toBe(sent);
+    expect(chat.chatId).toBe(seen[2]);
   });
 });

@@ -1,9 +1,12 @@
 import { defineChatShell } from './components/define-shell.js';
 
-export { CivitaiChat, QUEUE_TIMEOUT_MS, type BeforeSendDetail, type CanSendChangeDetail, type ChatChangeDetail, type ChatLayout, type QueuedMessage, type ReplyResumeDetail } from './components/civitai-chat.js';
+export { CivitaiChat, QUEUE_TIMEOUT_MS, type BeforeSendDetail, type CanSendChangeDetail, type ChatChangeDetail, type ChatLayout, type ModelChangeDetail, type QueuedMessage, type ReplyResumeDetail } from './components/civitai-chat.js';
 export type { Example as ChatExample } from './components/civitai-chat-welcome.js';
 export { configureChat, type ChatConfig, type ChatModelOption } from './config.js';
-export type { ChatBackend } from './backend.js';
+export type { ChatBackend, ChatStoreBackend, ChatTranscribe, ChatTranscribeOptions, ChatTranscription } from './backend.js';
+export type { ChatRunner } from './session.js';
+export type { ChatRemoteRunner } from './remote/runner-client.js';
+export type { RunPageState } from './runner-protocol.js';
 export type { ChatConversation, ChatConversationStore, ChatConversationSummary, ChatSavedTurn } from './store/conversation-store.js';
 export type { AgentErrorDetail as ChatReplyError } from './agent/agent.js';
 export type { AgentRetryDetail as ChatReplyRetry } from './agent/agent.js';
@@ -12,7 +15,7 @@ export { holdSharedPanel, takeSharedPanel, type SharedPanel } from './panels/sha
 export { popupSignIn } from './auth/popup.js';
 export type { ChatFile, ChatTool, ChatToolCall, ChatToolContext, ChatToolView } from './tools/host.js';
 export type { ToolCallsMode as ChatToolCallsMode } from './components/tool-calls.js';
-export type { ChatMcpOptions, ChatMcpServer } from './mcp/servers.js';
+export type { ChatMcpOptions, ChatMcpResultLimit, ChatMcpServer } from './mcp/servers.js';
 export type { ChatToolDecision, ChatToolGate, ChatToolGateContext, ChatToolResult } from './tools/gate.js';
 export type {
   ChatSubagents,

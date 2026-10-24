@@ -99,7 +99,7 @@ describe('createMockHost — batch estimate', () => {
     const result = await hooks({ generation: { costPerGen } });
     const training = {
       kind: 'training',
-      datasetId: `tds_${'a'.repeat(32)}`,
+      items: [{ air: 'k1.png', caption: 'c' }],
       engine: 'ai-toolkit',
       model: 'sdxl',
       triggerWord: 'x',

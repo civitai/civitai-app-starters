@@ -151,7 +151,7 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -267,15 +267,21 @@ const rigged = pickModel(snapshot, 'fbx', 'riggedFbxModel');
 ```
 
 `WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
-run on a dataset Civitai prepared from the viewer's own images, mirroring the host's
-`blockTrainingBodySchema` (civitai/civitai#5434). There is no `maxBuzz` and no timeout — the
+run on images the viewer uploaded through the host, mirroring the host's
+`blockTrainingBodySchema` (civitai/civitai#5434, #6461). Its dataset is `items: [{ air, caption }]`
+(`BlockTrainingDatasetItem`; at most `BLOCK_TRAINING_DATASET_MAX_ITEMS` items and
+`BLOCK_TRAINING_CAPTION_MAX_CHARS` caption characters, one blob at most once). There is no `maxBuzz` and no timeout — the
 `estimate` reply carries `snapshot.trainingQuote` (`quoteId`, `total`, `imageCount`,
 `expiresAt`), and the run starts only through the `RUN_TRAINING` bridge, after the viewer
 confirms that price in Civitai's own dialog. A confirmed run may exceed the token's per-call
 budget, up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000). Page apps only, `ai:write:budgeted`,
 behind the host flag `app-blocks-training-kind` (off by default), and refused from development
-and review sessions. The dataset is prepared over `PREPARE_TRAINING_DATASET`
-(civitai/civitai#5438). Use it through `@civitai/blocks-react`'s `usePrepareTrainingDataset()`
+and review sessions. The images are uploaded over `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`,
+which replies `IMAGE_UPLOAD_RESULT { selected: { images: [{ url, air }] } }`
+(`BlockTrainingDataUploadResult`); the host refuses a run whose quote names a blob it did not
+upload for the block, with the `BlockRunTrainingHostError` `training data not uploaded here`.
+`PREPARE_TRAINING_DATASET` (the server-prepared dataset of civitai/civitai#5438) is removed from
+the protocol. Use it through `@civitai/blocks-react`'s `useImageUpload({ purpose: 'trainingData' })`
 and `useRunTraining()`.
 
 `WorkflowBodyWorkflow` (`kind: 'workflow'`) submits **several orchestrator steps as one
@@ -660,7 +666,7 @@ The starters in `civitai/civitai-app-starters` wire this into framework-specific
 
 ## Choosing a workflow step type
 
-The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (55 in total).
+The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (58 in total).
 
 The catalog is pinned to the orchestrator's published OpenAPI spec two ways — an offline unit test against a transcribed copy of the spec's `WorkflowStepTemplate` discriminator mapping, and a CI job (`pnpm check:catalogs`) that re-fetches the live spec and diffs it. If a `$type` is listed here, the orchestrator accepts it.
 
@@ -735,15 +741,15 @@ What it exports:
 
 | Export | What |
 |---|---|
-| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 55 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
+| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 58 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
 | `WorkflowStepTemplateFor<'videoGen'>` | One step's template. |
 | `WorkflowStepInputFor<'videoGen'>` | One step's `input` shape, without needing the generated `*Input` name. |
 | `AnyWorkflowStepTemplate` | Discriminated union of all 47 mapped templates — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
 | `TypedWorkflowTemplate` | The submit envelope with `steps` narrowed to that union. Pass it straight to `submitWorkflow` / `estimateWorkflow`. |
 
-> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 55 `$type`s; this map covers 47. The 8 with no generated template in the pinned `@civitai/client` are `imageScanning`, `liveTextToSpeech`, `liveTranscription`, `merge`, `preprocessVideo`, `promptModeration`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
+> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 58 `$type`s; this map covers 47. The 11 with no generated template in the pinned `@civitai/client` are `archiveExtraction`, `audioModeration`, `imageScanning`, `liveTextToSpeech`, `liveTranscription`, `merge`, `multimodalEmbedding`, `preprocessVideo`, `promptModeration`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
 >
-> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (55, 47, 8, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
+> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (58, 47, 11, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
 
 The generated `*StepTemplate` and `*Input` types are **not** re-exported individually. Using this subpath already requires `@civitai/client` installed, so if you want one by name, import it straight from there — `import type { TextToImageStepTemplate } from '@civitai/client'`.
 
@@ -782,7 +788,7 @@ Several of the 47 exist to serve Civitai's own pipelines rather than third-party
 
 `training` and `imageResourceTraining` are the exception: an App Block's host explicitly **allows** them on the pass-through arm (see `WorkflowBodyPassThroughStep` under Primitives above for the `maxBuzz` bound, and how a trained epoch is published). For a standalone app, the orchestrator's own authorization still decides.
 
-Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 55 entries exactly three — `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for each `$type` the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
+Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 58 entries exactly three — `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for each `$type` the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 
 ## Public vs. confidential clients
 

@@ -11,9 +11,25 @@ const turn = (seq: number, steps: number): Turn => ({
 });
 
 describe('conversationSpend', () => {
-  it('adds what the generations cost to one Buzz per assistant call and per saved turn', () => {
+  it('counts each reply at what the orchestrator charged it, free replies at 0, whatever the model', () => {
+    const free = turn(1, 6);
+    free.assistant.buzz = 0;
+    const premium = turn(2, 2);
+    premium.assistant.buzz = 37;
+    const conversation: Conversation = { id: 'c', title: 'Bikes', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [free, premium] };
+    expect(conversationSpend(conversation, [{ spent: 20 }], 1)).toEqual({ total: 59, generations: 20, assistant: 39 });
+  });
+
+  it('counts a reopened chat of free replies as costing nothing, before any save in this session says what saving costs', () => {
+    const free = turn(1, 3);
+    free.assistant.buzz = 0;
+    const conversation: Conversation = { id: 'c', title: 'Free', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [free, { ...turn(2, 2), assistant: { ...turn(2, 2).assistant, buzz: 0 } }] };
+    expect(conversationSpend(conversation, [])).toEqual({ total: 0, generations: 0, assistant: 0 });
+  });
+
+  it('estimates replies saved before charges were reported at one Buzz per call, plus each saved turn', () => {
     const conversation: Conversation = { id: 'c', title: 'Bikes', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [turn(1, 2), turn(2, 1)] };
-    expect(conversationSpend(conversation, [{ spent: 44 }, { spent: 0 }, { spent: 8.4 }])).toEqual({ total: 58, generations: 52, assistant: 6 });
+    expect(conversationSpend(conversation, [{ spent: 44 }, { spent: 0 }, { spent: 8.4 }], 1)).toEqual({ total: 58, generations: 52, assistant: 6 });
     expect(conversationSpend(conversation, [], 0).assistant).toBe(4);
   });
 

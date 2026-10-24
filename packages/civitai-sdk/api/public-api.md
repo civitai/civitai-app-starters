@@ -865,6 +865,26 @@ export declare class SubmissionUnconfirmedError extends CivitaiError {
     constructor(snapshot: BlockWorkflowSnapshot | undefined);
 }
 
+/**
+ * The price an {@link WorkflowsClient.estimate} reply quotes, in whole Buzz, or
+ * `null` when it quotes none.
+ *
+ * An estimate is priced when its `status` is not `'failed'` AND it carries a
+ * numeric `cost.total`. That is the whole rule, and it is the one to branch on:
+ * - Do not require `'succeeded'`. Nothing runs on an estimate, so a priced one
+ *   comes back with a status that has not finished (`'pending'` in practice),
+ *   and a check for `'succeeded'` reads every price as missing.
+ * - `0` is a price.
+ * - A `'failed'` snapshot is never priced, even one carrying a `cost.total`: a
+ *   budget refusal carries the total it would not charge.
+ * - A snapshot with no numeric `cost.total` is not priced, whatever its status.
+ *
+ * `null` does not predict a refused {@link WorkflowsClient.submit}: a body the
+ * host cannot price can still be submitted. Read `error` / `errorCode` on the
+ * snapshot for why.
+ */
+export declare function estimatedCost(snapshot: Pick<BlockWorkflowSnapshot, 'status' | 'cost'>): number | null;
+
 export interface WorkflowCallOptions {
     signal?: AbortSignal;
 }
@@ -945,6 +965,16 @@ export interface WorkflowsClient {
      * The price is `snapshot.cost.total`. A refused estimate resolves with
      * `status: 'failed'` and no `cost`; a body the host cannot price fails this
      * way without that predicting a refused {@link WorkflowsClient.submit}.
+     *
+     * 🔴 DO NOT REQUIRE `'succeeded'`. Nothing runs on an estimate, so a priced
+     * one comes back with a status that has not finished (`'pending'` in
+     * practice). Read the price with {@link estimatedCost}, which is `null`
+     * exactly when there is none to show:
+     *
+     * ```ts
+     * const price = estimatedCost(await app.workflows.estimate(body));
+     * if (price === null) showMessage('This generation could not be priced.');
+     * ```
      */
     estimate(body: WorkflowBody, opts?: WorkflowCallOptions): Promise<BlockWorkflowSnapshot>;
     /**
@@ -1983,16 +2013,16 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
 });
 
 /**
- * Train a LoRA with the ai-toolkit engine on a dataset Civitai prepared from the
- * VIEWER'S OWN images — the App Blocks `kind: 'training'` workflow body.
+ * Train a LoRA with the ai-toolkit engine on images the VIEWER uploaded through
+ * the host — the App Blocks `kind: 'training'` workflow body.
  *
  * ## Availability — read before building on it
  *
  *  - 🔴 Behind the host flag **`app-blocks-training-kind`**, which ships OFF and is
  *    evaluated per viewer. Where it is off, every training call is refused
  *    (`training from apps is not enabled`).
- *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers both training
- *    messages with an error, and the server refuses a non-page token.
+ *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers
+ *    `RUN_TRAINING` with an error, and the server refuses a non-page token.
  *  - The manifest must declare **`ai:write:budgeted`** and the viewer must have
  *    granted it; the viewer must be signed in.
  *  - **Not from a development or review session**: dev tokens (`dev:live`, dev
@@ -2001,17 +2031,22 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
  *
  * ## The flow
  *
- *  1. **Dataset** — `usePrepareTrainingDataset()` (`PREPARE_TRAINING_DATASET`)
- *     with `[{ imageId, caption }]`. Only the viewer's OWN scanned, unflagged
- *     images within the page's maturity ceiling are admitted; the rest come back
- *     in `rejected`. You get an opaque {@link WorkflowBodyTraining.datasetId}.
+ *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+ *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
+ *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
+ *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
  *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
  *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the
  *     orchestrator's own price for exactly this run, stored server-side.
  *  3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })`
  *     (`RUN_TRAINING`). Civitai shows the viewer a consent dialog in ITS chrome —
  *     price, base model, length, dataset size, all read back from the server,
- *     never from your body — and submits only on their click.
+ *     never from your body, with the host's own copies of the uploads as
+ *     thumbnails — and submits only on their click. A quote naming an image this
+ *     host did not upload for the block is refused with no dialog
+ *     (`training data not uploaded here`) — upload in the same page session as the
+ *     run; a reload forgets the uploads.
  *  4. **Follow** — `useBuzzWorkflow().watch(snapshot.workflowId)`.
  *
  * 🔴 `useBuzzWorkflow().submit()` REFUSES THIS BODY before sending it. The server
@@ -2027,8 +2062,12 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
  */
 export interface WorkflowBodyTraining {
     kind: 'training';
-    /** The handle `usePrepareTrainingDataset()` returned — `tds_` + 32 hex characters. */
-    datasetId: string;
+    /**
+     * The dataset: 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images this host
+     * uploaded for the viewer, each with its caption — see
+     * {@link BlockTrainingDatasetItem}. One blob may appear once.
+     */
+    items: BlockTrainingDatasetItem[];
     /** The only engine accepted. */
     engine: 'ai-toolkit';
     /**
@@ -2037,12 +2076,17 @@ export interface WorkflowBodyTraining {
      */
     model: string;
     params: AiToolkitTrainingParams;
-    /** At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. Moderated like a prompt. */
+    /**
+     * At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. The host runs
+     * it through the same trigger-word check Civitai's trainer and Training Studio
+     * use, at the estimate and again at the submit, before anything is reserved; a
+     * refused trigger word fails the estimate.
+     */
     triggerWord: string;
     /**
      * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
-     * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Moderated like
-     * prompts.
+     * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Checked for
+     * those bounds only, as in the Training Studio.
      */
     samplePrompts: string[];
     /**
@@ -2073,7 +2117,7 @@ export interface WorkflowBodyTraining {
  *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
  *    by a registry.
  *  - {@link WorkflowBodyTraining} (`kind: 'training'`) — an ai-toolkit LoRA run
- *    on a server-prepared dataset of the viewer's own images. ESTIMATE ONLY
+ *    on images the viewer uploaded through the host. ESTIMATE ONLY
  *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
  *    host-chrome consent dialog is the only way to confirm its quote.
  *  - {@link WorkflowBodyWorkflow} (`kind: 'workflow'`) — up to
@@ -2442,8 +2486,8 @@ export interface BlockWorkflowSnapshot {
      *
      * `cost.total` on the same snapshot equals `trainingQuote.total`.
      * `expiresAt` is an ISO-8601 timestamp: after it the run is refused and you
-     * estimate again. `imageCount` is the server-derived size of the prepared
-     * dataset, never a number the block sent.
+     * estimate again. `imageCount` is the size of the dataset the server quoted
+     * (`items.length`).
      *
      * Present ONLY on the reply to a `kind: 'training'` estimate. Absent on hosts
      * that predate civitai/civitai#5434.
@@ -2578,7 +2622,7 @@ export interface BlockTrainingQuote {
     quoteId: string;
     /** The quoted price, in Buzz. */
     total: number;
-    /** How many images the prepared dataset holds. */
+    /** How many images the quoted dataset holds. */
     imageCount: number;
     /** ISO-8601. The quote cannot be run after this. */
     expiresAt: string;
@@ -2768,6 +2812,24 @@ export interface AppWorkflow {
      * there are none (and on hosts that predate it).
      */
     model3dOutputs?: BlockModel3dOutput[];
+}
+
+/**
+ * One image of a training dataset ({@link WorkflowBodyTraining.items}) — a blob
+ * this host uploaded for the viewer, and the caption to train it with. The
+ * Training Studio's own `{ air, caption }` shape.
+ *
+ * Host bounds (`blockTrainingDatasetItemsSchema`, civitai/civitai#6461): `air`
+ * is the blob's key ({@link BlockTrainingDataImage.air}) or its Civitai-hosted
+ * blob url — the server keeps only the key; `caption` at most
+ * {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters; no other keys;
+ * 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per body, and one blob at
+ * most once (keys compare case-insensitively). A body outside them is refused at
+ * the estimate.
+ */
+export interface BlockTrainingDatasetItem {
+    air: string;
+    caption: string;
 }
 
 export declare function isTerminal(workflow: Workflow): boolean;

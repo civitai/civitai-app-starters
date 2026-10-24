@@ -2,18 +2,21 @@ import { html, nothing, type PropertyDeclarations, type PropertyValues, type Tem
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
+import type { LiveTurn } from '../agent/core.js';
 import type { TurnPart } from '../agent/parts.js';
 import type { SubagentTracker } from '../agent/subagents.js';
 import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import type { PanelManager } from '../panels/panel.js';
+import type { Panel, PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
 import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
+import { onSite, TOP_UP_BUZZ } from '../config.js';
 import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
+import type { ReplyStatusState } from './civitai-chat-reply-status.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
 import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
@@ -33,6 +36,8 @@ export class CivitaiChatTurn extends LightElement {
     turn: { attribute: false, hasChanged: () => true },
     parts: { attribute: false, hasChanged: () => true },
     live: { type: Boolean },
+    liveTurn: { attribute: false },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     latest: { type: Boolean },
     canRetry: { type: Boolean, attribute: 'can-retry' },
     jobs: { attribute: false },
@@ -40,6 +45,7 @@ export class CivitaiChatTurn extends LightElement {
     panels: { attribute: false },
     files: { attribute: false },
     canShare: { type: Boolean, attribute: 'can-share' },
+    instructions: { attribute: false },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
@@ -52,6 +58,10 @@ export class CivitaiChatTurn extends LightElement {
   declare turn: Turn;
   declare parts: TurnPart[];
   declare live: boolean;
+  /** The reply running now, while this turn is it: how its status line reads. */
+  declare liveTurn: LiveTurn | null;
+  /** The page says the reply waits for the viewer to approve a call (`<civitai-chat>`'s `awaitingApproval`). */
+  declare awaitingApproval: boolean;
   /** Only the newest turn's choices can still be picked. */
   declare latest: boolean;
   /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
@@ -61,6 +71,7 @@ export class CivitaiChatTurn extends LightElement {
   declare panels?: PanelManager;
   declare files: () => Attachment[];
   declare canShare: boolean;
+  declare instructions: string | undefined;
   /** Panels show in the page beside the chat; the thread only points at them. */
   declare dockPanels: boolean;
   declare models: ModelDirectory;
@@ -95,6 +106,8 @@ export class CivitaiChatTurn extends LightElement {
     super();
     this.parts = [];
     this.live = false;
+    this.liveTurn = null;
+    this.awaitingApproval = false;
     this.latest = false;
     this.canRetry = false;
     this.files = () => [];
@@ -120,13 +133,26 @@ export class CivitaiChatTurn extends LightElement {
   #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
+    // The error is the assistant's to act on: say nothing while it may still fix the call, nor once it has.
+    if (failure && (this.live || this.#recovered(part))) return failedNote ? nothing : undefined;
     if (failure && !view?.ownsFailure?.(part, this.#context())) {
       if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
     const rendered = view?.render?.(part, this.#context());
-    return rendered !== undefined ? rendered : modelCards(part, this.models);
+    return rendered !== undefined ? rendered : modelCards(part, this.models, this.#modelPanel());
+  }
+
+  /** The newest open panel whose model choice a picked search result can join. */
+  #modelPanel(): Panel | undefined {
+    return this.panels?.all().filter((panel) => !panel.closed && panel.canFindModel).at(-1);
+  }
+
+  /** The assistant fixed the call itself: the same tool worked later in the reply, so the viewer has nothing to act on. */
+  #recovered(part: ToolPart): boolean {
+    const later = this.parts.slice(this.parts.indexOf(part) + 1);
+    return later.some((next) => next.kind === 'tool' && next.toolName === part.toolName && next.state === 'done' && !failureOf(next));
   }
 
   #tool(part: ToolPart): unknown {
@@ -158,7 +184,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #assistantParts(): unknown {
     // A reply can stream a text part that is only whitespace so far: no empty bubble for it.
-    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(text))}</div>`);
+    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(this.models ? onSite(text, this.models.siteUrl) : text))}</div>`);
     if (this.toolCalls === 'details') return this.#detailed(md);
     return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }
@@ -172,6 +198,7 @@ export class CivitaiChatTurn extends LightElement {
       files: this.files,
       canShare: this.canShare,
       dockPanels: this.dockPanels,
+      ...(this.instructions ? { instructions: this.instructions } : {}),
       latest: this.latest,
       live: this.live,
       models: this.models,
@@ -181,10 +208,18 @@ export class CivitaiChatTurn extends LightElement {
     };
   }
 
-  // Between steps the finished tool shows nothing and the next reply has not started streaming.
-  #waiting(): boolean {
-    const last = this.parts.at(-1);
-    return !last || (last.kind === 'tool' && last.state !== 'calling');
+  /** When this turn was first drawn live, for a reply that does not say when it started. */
+  #liveSince?: number;
+
+  /**
+   * The live reply's status line. It shows for as long as the reply is live, whatever its last part is:
+   * words (the model may be writing a long call it has not sent yet), a call still running (whose own
+   * view may show nothing that moves), or a call that finished (the next step not started yet).
+   */
+  #status(): TemplateResult {
+    const live = this.liveTurn;
+    const state: ReplyStatusState = live?.reconnecting ? 'reconnecting' : this.awaitingApproval ? 'approval' : live?.reattached ? 'server' : 'working';
+    return html`<civitai-chat-reply-status class="cvt-reply-status" state=${state} .since=${live?.startedAt ?? this.#liveSince ?? Date.now()}></civitai-chat-reply-status>`;
   }
 
   /** Draws the turn again once a reply that may still be running elsewhere stops counting as live. */
@@ -208,6 +243,12 @@ export class CivitaiChatTurn extends LightElement {
       </div>`;
     }
     return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+  }
+
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (!this.live) this.#liveSince = undefined;
+    else this.#liveSince ??= Date.now();
   }
 
   protected override updated(changed: PropertyValues): void {
@@ -235,7 +276,7 @@ export class CivitaiChatTurn extends LightElement {
 
   #footer(): TemplateResult | typeof nothing {
     const { status, error, errorDetail, errorTrace } = this.turn.assistant;
-    if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
+    if (this.live) return this.#status();
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     // A reply the page ended reads like one that ran out of steps, in the page's words.
     const { ranOut, stopped } = this.turn.assistant;
@@ -246,10 +287,16 @@ export class CivitaiChatTurn extends LightElement {
       </div>`;
     }
     if (status === 'error' && error === CUT_OFF) return this.#cutOff();
-    if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
+    const kind = this.turn.assistant.errorKind;
+    if (status === 'error' && (kind === 'free_tier_exhausted' || kind === 'fund_empty')) {
       return html`<civitai-alert color="info">
-        ${error} You can keep going on Buzz (about 1 per reply).
-        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Continue with Buzz</civitai-button>` : nothing}
+        ${error} Top up ${TOP_UP_BUZZ} Buzz to keep going (each step the assistant takes uses about 1).
+        ${this.latest
+          ? html`<div class="cvt-top-up-actions">
+              <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+              <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-top-up', { auto: true })}>Always top up when empty</civitai-button>
+            </div>`
+          : nothing}
       </civitai-alert>`;
     }
     // Free only, and this model has no free replies (or they could not be checked). What a paid reply

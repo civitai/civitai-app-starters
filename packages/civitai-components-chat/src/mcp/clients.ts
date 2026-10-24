@@ -233,3 +233,29 @@ export function createMcpConnection({ url, token, fetch: doFetch = fetch.bind(gl
     },
   };
 }
+
+/**
+ * Calls as the viewer, and anonymously from then on once the server refuses their token (inside
+ * civitai.com the chat may hold a block-scoped one, which some routes turn down).
+ */
+export function signedInOrAnonymous(signedIn: McpConnection, anonymous: McpConnection): McpConnection {
+  let refused = false;
+  const attempt = async <T>(call: (connection: McpConnection) => Promise<T>): Promise<T> => {
+    if (refused) return call(anonymous);
+    try {
+      return await call(signedIn);
+    } catch (error) {
+      if (!(error instanceof StreamableHTTPError) || (error.code !== 401 && error.code !== 403)) throw error;
+      refused = true;
+      return call(anonymous);
+    }
+  };
+  return {
+    url: signedIn.url,
+    listTools: () => attempt((connection) => connection.listTools()),
+    callTool: (name, args, opts) => attempt((connection) => connection.callTool(name, args, opts)),
+    close: async () => {
+      await Promise.all([signedIn.close(), anonymous.close()]);
+    },
+  };
+}

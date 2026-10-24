@@ -1,13 +1,14 @@
 import { dynamicTool, jsonSchema, type JSONSchema7, type ToolSet } from 'ai';
 
-import type { PanelManager, Probe } from './panel.js';
+import type { PanelManager, PanelSummary, Probe } from './panel.js';
 import { checkPanelSpec, mergeSpec, normalizeValues } from './spec.js';
 
 export const OPEN_PANEL = 'open_panel';
 export const UPDATE_PANEL = 'update_panel';
+export const CLOSE_PANEL = 'close_panel';
 
 export function isPanelTool(name: string): boolean {
-  return name === OPEN_PANEL || name === UPDATE_PANEL;
+  return name === OPEN_PANEL || name === UPDATE_PANEL || name === CLOSE_PANEL;
 }
 
 export interface PanelToolContext {
@@ -47,6 +48,8 @@ const RUN_DESCRIPTION =
 const BUTTON_SCHEMA = { type: 'string', description: 'The button label, 1-3 words, e.g. "Post" or "Make it"; Run by default' } as const;
 
 const FIX_NOTE = 'Nothing was shown. Fix the definition and call again; if it fails twice, tell the user in plain words.';
+const GIVE_UP_NOTE = 'Nothing was shown, and this reply has failed to set up controls several times. Do not call open_panel or update_panel again in this reply: tell the user in plain words what you were making, and offer to run it once with run_step instead.';
+const MAX_FAILURES = 3;
 const REFUSED_NOTE =
   'Nothing was shown: the service refused the run with these settings. Check run against get_input_schema and call again; if it is refused again, tell the user in plain words.';
 
@@ -54,6 +57,10 @@ const OPEN_DESCRIPTION = `Show a panel of controls in the chat for one kind of t
 
 /** The assistant's tools for building panels; offered only where it can make things. */
 export function panelTools(ctx: PanelToolContext): ToolSet {
+  let failures = 0;
+  const failed = (error: unknown, note: string) => ({ error, note: ++failures >= MAX_FAILURES ? GIVE_UP_NOTE : note });
+  const withDropped = (summary: PanelSummary, dropped?: string[]) =>
+    dropped ? { ...summary, note: `${summary.note} Left out ${dropped.join(', ')}: run never used ${dropped.length === 1 ? 'it' : 'them'}.` } : summary;
   return {
     [OPEN_PANEL]: dynamicTool({
       description: OPEN_DESCRIPTION,
@@ -73,17 +80,17 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
       execute: async (input, { toolCallId }) => {
         const raw = (input ?? {}) as Record<string, unknown>;
         const checked = checkPanelSpec(raw);
-        if (checked.errors) return { error: checked.errors.join(' '), note: FIX_NOTE };
+        if (checked.errors) return failed(checked.errors.join(' '), FIX_NOTE);
         const values = normalizeValues(checked.spec, raw.values as Record<string, unknown> | undefined);
         const probe = await ctx.panels.probe(ctx, checked.spec, values);
-        if (refused(probe)) return { error: probe.error?.detail ?? probe.error?.message, note: REFUSED_NOTE };
+        if (refused(probe)) return failed(probe.error?.detail ?? probe.error?.message, REFUSED_NOTE);
         const panel = ctx.panels.open({ ...ctx, toolCallId, spec: checked.spec, values, price: probe.price });
-        return panel.summary();
+        return withDropped(panel.summary(), checked.dropped);
       },
     }),
     [UPDATE_PANEL]: dynamicTool({
       description:
-        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), or change the run. The panel moves to the end of the chat with its runs. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one.',
+        'Change a panel already in the chat: fill in values for the user, add, change or remove controls (inputs merge by name; null removes one), add options to a choice (addOptions keeps the ones it has), or change the run. The panel moves to the end of the chat with its runs, and a closed one opens again. Use it whenever the user asks to change, extend or set up a panel, rather than opening a new one. Never use it to close or remove a panel: that is close_panel.',
       inputSchema: jsonSchema({
         type: 'object',
         properties: {
@@ -95,6 +102,11 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
           run: { type: 'object', description: `Replaces what the button does. ${RUN_DESCRIPTION}` },
           button: BUTTON_SCHEMA,
           values: { type: 'object', description: 'Values to set by input name' },
+          addOptions: {
+            type: 'object',
+            description: 'New options for choices, keeping the current ones: {"<input name>": {"<option label>": what it puts in the run}}. For a model, copy the settings the selected option puts (in the panel context) and swap in the new model. Label it with the model\'s name only: never a price, which the Run button quotes from the service. A LoRA goes in its own lora choice, not the model one.',
+            additionalProperties: { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'object' }] } },
+          },
         },
         required: ['panel'],
       }),
@@ -102,15 +114,38 @@ export function panelTools(ctx: PanelToolContext): ToolSet {
         const raw = (input ?? {}) as Record<string, unknown>;
         const panel = ctx.panels.get(String(raw.panel));
         if (!panel) return { error: `There is no panel ${String(raw.panel)}.`, note: 'Use the handle of a panel in this chat, or open_panel for a new one.' };
-        const changesDefinition = ['title', 'description', 'inputs', 'layout', 'run', 'button'].some((key) => raw[key] !== undefined);
+        const changesDefinition = ['title', 'description', 'inputs', 'layout', 'run', 'button', 'addOptions'].some((key) => raw[key] !== undefined);
         const checked = changesDefinition ? checkPanelSpec(mergeSpec(panel.spec, raw)) : { spec: panel.spec };
-        if (checked.errors) return { error: checked.errors.join(' '), note: 'The panel was not changed. Fix it and call again.' };
-        const values = normalizeValues(checked.spec, { ...panel.values, ...(raw.values as Record<string, unknown> | undefined) });
+        if (checked.errors) return failed(checked.errors.join(' '), 'The panel was not changed. Fix it and call again.');
+        // An option added for the viewer is the one they want next, unless the call picks another.
+        const added = Object.fromEntries(
+          Object.entries((raw.addOptions ?? {}) as Record<string, unknown>).flatMap(([key, options]) => {
+            const first = options && typeof options === 'object' ? Object.keys(options)[0] : undefined;
+            return first === undefined ? [] : [[key, first]];
+          }),
+        );
+        const values = normalizeValues(checked.spec, { ...panel.values, ...added, ...(raw.values as Record<string, unknown> | undefined) });
         const probe = await panel.probe(checked.spec, values);
-        if (refused(probe)) return { error: probe.error?.detail ?? probe.error?.message, note: 'The panel was not changed: the service refused the run with these settings. Check run against get_input_schema and call again.' };
+        if (refused(probe)) return failed(probe.error?.detail ?? probe.error?.message, 'The panel was not changed: the service refused the run with these settings. Check run against get_input_schema and call again.');
         panel.apply({ spec: changesDefinition ? checked.spec : undefined, values, toolCallId });
         panel.price = probe.price;
-        return panel.summary();
+        return withDropped(panel.summary(), 'dropped' in checked ? checked.dropped : undefined);
+      },
+    }),
+    [CLOSE_PANEL]: dynamicTool({
+      description: 'Close panels the user no longer wants, when they ask to close, remove, cancel or get rid of them. Each folds to one line in the chat, with what it made kept, and the user can reopen it.',
+      inputSchema: jsonSchema({
+        type: 'object',
+        properties: { panels: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Their handles, e.g. ["p1", "p2"]' } },
+        required: ['panels'],
+      }),
+      execute: async (input) => {
+        const handles = ((input ?? {}) as { panels?: unknown }).panels;
+        const found = (Array.isArray(handles) ? handles : []).map((handle) => ctx.panels.get(String(handle)));
+        const missing = (Array.isArray(handles) ? handles : []).filter((_, index) => !found[index]);
+        if (missing.length || found.length === 0) return { error: `There is no panel ${missing.join(', ') || '(none given)'}.`, note: 'Use the handles of panels in this chat.' };
+        for (const panel of found) panel!.close();
+        return { closed: found.map((panel) => panel!.handle), note: 'They are closed. Say so in one short sentence.' };
       },
     }),
   };

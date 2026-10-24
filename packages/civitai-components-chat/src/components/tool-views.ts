@@ -4,10 +4,13 @@ import { until } from 'lit/directives/until.js';
 import type { TurnPart } from '../agent/parts.js';
 import { DISPATCH_AGENT, isSubagentOutput, subagentResultOf, type SubagentStatus } from '../agent/subagent-result.js';
 import type { SubagentTracker } from '../agent/subagents.js';
+import { AUTO_RUN_STEPS } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import type { PanelManager } from '../panels/panel.js';
-import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import type { Panel, PanelManager } from '../panels/panel.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
+import { UPDATE_INSTRUCTIONS, proposedInstructions } from '../tools/instructions.js';
+import { CUSTOM_INSTRUCTIONS_MAX } from '../config.js';
 import type { ModelDirectory } from '../store/models.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { JOB_TOOLS } from '../tools/catalog.js';
@@ -37,6 +40,8 @@ export interface ToolViewContext {
   subagents?: SubagentTracker;
   /** Which disclosures in the turn are open. */
   rows?: Pick<CallRowState, 'isOpen' | 'wasOpened' | 'toggle'>;
+  /** The viewer's saved custom instructions, so a proposal already saved reads as saved. */
+  instructions?: string;
 }
 
 /** `render` returning `undefined` leaves the call to the default: its activity while it runs, nothing after. */
@@ -53,7 +58,7 @@ const job: ToolView = {
     const output = part.output as { job?: string } | undefined;
     const found = ctx.jobs.byToolCall(part.toolCallId) ?? (output?.job ? ctx.jobs.get(output.job) : undefined);
     if (!found) return undefined;
-    return html`<civitai-chat-generation-card .job=${found} ?adjustable=${found.tool.name === 'run_step' && !found.panel} .actions=${mediaActions(ctx.posts)}></civitai-chat-generation-card>`;
+    return html`<civitai-chat-generation-card .job=${found} ?adjustable=${found.tool.name === 'run_step' && !found.panel} .actions=${mediaActions(ctx.posts)} .raiseSteps=${AUTO_RUN_STEPS}></civitai-chat-generation-card>`;
   },
 };
 
@@ -83,6 +88,61 @@ const post: ToolView = {
   },
 };
 
+// The viewer's edits and "Not now" last until a reload; nothing is saved without Save.
+const edited = new Map<string, string>();
+const declined = new Set<string>();
+
+const instructions: ToolView = {
+  activity: 'Writing new instructions…',
+  render(part, ctx) {
+    const proposed = proposedInstructions(part.input);
+    if (!proposed || part.state !== 'done') return undefined;
+    const text = edited.get(part.toolCallId) ?? proposed;
+    const rerender = () => (ctx.host as HTMLElement & { requestUpdate(): void }).requestUpdate();
+    if (ctx.instructions?.trim() === text.trim()) {
+      return html`<section class="cvt-instructions-card" aria-label="New instructions">
+        <h3>New instructions for every chat</h3>
+        <blockquote>${text}</blockquote>
+        <p class="cvt-instructions-state">Saved. They apply from the next reply; change them any time in Settings.</p>
+      </section>`;
+    }
+    if (declined.has(part.toolCallId)) {
+      return html`<section class="cvt-instructions-card" aria-label="New instructions">
+        <h3>New instructions for every chat</h3>
+        <blockquote>${text}</blockquote>
+        <p class="cvt-instructions-state">Not saved.</p>
+      </section>`;
+    }
+    return html`<section class="cvt-instructions-card" aria-label="New instructions">
+      <h3>New instructions for every chat</h3>
+      <textarea
+        class="cvt-instructions-text"
+        aria-label="New instructions"
+        maxlength=${CUSTOM_INSTRUCTIONS_MAX}
+        rows="5"
+        .value=${text}
+        @input=${(event: Event) => edited.set(part.toolCallId, (event.currentTarget as HTMLTextAreaElement).value)}
+        @change=${rerender}
+      ></textarea>
+      <div class="cvt-instructions-actions">
+        <civitai-button size="sm" @click=${() => {
+          const value = (edited.get(part.toolCallId) ?? proposed).trim();
+          if (value) emit(ctx.host, 'cvt-settings-change', { customInstructions: value });
+        }}>Save</civitai-button>
+        <civitai-button
+          size="sm"
+          variant="subtle"
+          @click=${() => {
+            declined.add(part.toolCallId);
+            rerender();
+          }}
+          >Not now</civitai-button
+        >
+      </div>
+    </section>`;
+  },
+};
+
 const choice: ToolView = {
   render(part, ctx) {
     // The same reading the tool reported on, so a choice it called shown is one that renders.
@@ -99,6 +159,7 @@ const SUBAGENT_STATUS: Record<SubagentStatus | 'calling' | 'refused', string> = 
   stopped: 'Stopped',
   error: 'Failed',
   interrupted: 'Interrupted',
+  unreceived: 'Result not received',
   refused: 'Not started',
 };
 
@@ -133,7 +194,8 @@ function renderSubagent(part: ToolPart, ctx: ToolViewContext): TemplateResult | 
   const problem = result?.error ?? (part.state === 'error' ? part.error : refusal) ?? '';
   const writes = result ? result.mode === 'write' : live?.mode === 'write';
   const changed = result?.changed ?? [];
-  const files = result ? new Set(changed.map((change) => change.path)).size : (live?.changed ?? 0);
+  // An `unreceived` result has no paths, only how many there were when last seen.
+  const files = result ? (result.changedCount ?? new Set(changed.map((change) => change.path)).size) : (live?.changed ?? 0);
   const commands = (result ? result.ranCommands : live?.ranCommands) ?? 0;
   return html`<div class="cvt-subagent" data-status=${status} data-call=${part.toolCallId}>
     <button type="button" class="cvt-subagent-head" aria-expanded=${open ? 'true' : 'false'} aria-controls=${body} @click=${() => rows?.toggle(key)}>
@@ -180,6 +242,8 @@ export const BUILT_IN_VIEWS: Record<string, ToolView> = {
   ...Object.fromEntries([...JOB_TOOLS].map((name) => [name, job])),
   [OPEN_PANEL]: { activity: 'Setting up the controls…', render: renderPanel },
   [UPDATE_PANEL]: { activity: 'Changing the controls…', render: renderPanel },
+  [UPDATE_INSTRUCTIONS]: instructions,
+  [CLOSE_PANEL]: { activity: 'Closing…', render: () => nothing },
   [POST_TOOL]: post,
   [ASK_CHOICE]: choice,
   find_services: { activity: 'Checking what fits best…' },
@@ -216,18 +280,19 @@ function recommended(part: ToolPart): ModelRecommendation[] | undefined {
 }
 
 /** A tool without a view of its own that answered with model recommendations shows them as cards. */
-export function modelCards(part: ToolPart, models: ModelDirectory): TemplateResult | undefined {
+export function modelCards(part: ToolPart, models: ModelDirectory, panel?: Panel): TemplateResult | undefined {
   const found = recommended(part);
   if (!found) return undefined;
+  const use = (model: ModelRecommendation) => (panel ? { action: 'Generate with', onUse: () => panel.useModel(model) } : { action: '', onUse: () => undefined });
   return html`<div class="cvt-models">
     ${found.slice(0, 8).map(
       (model) =>
         html`${until(
           models.get(model.id).then(
             (details) =>
-              html`<civitai-chat-model-card .name=${model.name} .creator=${details.creator ?? ''} .image=${details.image ?? ''} .href=${details.href} .kind=${details.kind ?? ''}></civitai-chat-model-card>`,
+              html`<civitai-chat-model-card .name=${model.name} .creator=${details.creator ?? ''} .image=${details.image ?? ''} .href=${details.href} .kind=${details.kind ?? ''} .action=${use(model).action} @model-use=${use(model).onUse}></civitai-chat-model-card>`,
           ),
-          html`<civitai-chat-model-card .name=${model.name}></civitai-chat-model-card>`,
+          html`<civitai-chat-model-card .name=${model.name} .action=${use(model).action} @model-use=${use(model).onUse}></civitai-chat-model-card>`,
         )}`,
     )}
   </div>`;

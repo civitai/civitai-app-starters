@@ -1,9 +1,10 @@
 import { ulid } from 'ulid';
 
 import type { SavedPanel } from '../panels/panel.js';
+import type { ConversationPatchRequest } from '../runner-protocol.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, TitleSource, Turn } from '../types.js';
-import { supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation } from './conversation-store.js';
+import { notFoundError, supersededError, type ChatConversation, type ChatConversationStore, type ConversationStore, type ListedConversation, type OpenOptions } from './conversation-store.js';
 import { clampTitle, firstMessageTitle, persistable, saved, turnFrom, type OpenedConversation } from './thread-store.js';
 
 export interface HostThreadStoreDeps {
@@ -11,6 +12,15 @@ export interface HostThreadStoreDeps {
   scope?: string;
   now?(): Date;
   newId?(): string;
+  /**
+   * Remote mode (`runner: 'remote'` with a store-only backend): the server runner is the only writer of
+   * every conversation in `store`, so this store saves none. It still lists, opens and deletes through
+   * `store`, and holds the open chat as the page changes it. A title the viewer or the assistant gave,
+   * and the chat's model, go to the runner as a patch (`patch`) once the chat has a turn; before that,
+   * the model goes with its first run and a title is kept for this page only, as are posts and panels.
+   * As `ThreadStore`'s remote mode does.
+   */
+  remote?: { patch(conversationId: string, patch: Omit<ConversationPatchRequest, 'v'>): Promise<void> };
 }
 
 /**
@@ -38,6 +48,8 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
   #deleting = new Map<string, number>();
   /** Bumped by every `open` and `startNew`: an `open` that finishes after a newer one is stale. */
   #generation = 0;
+  /** Chats read from the host's store, or saved to it from here (`isSaved`). */
+  #saved = new Set<string>();
   /** Deleted in this session. A write queued after the delete is dropped; the chat is never opened, listed or listed again. */
   #deleted = new Set<string>();
 
@@ -76,7 +88,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * A chat whose delete worked is refused, so it never becomes the open one, where nothing could save
    * it; one whose delete failed still exists and opens as usual.
    */
-  async open(id: string): Promise<OpenedConversation> {
+  async open(id: string, options: OpenOptions = {}): Promise<OpenedConversation> {
     const generation = ++this.#generation;
     let record: ChatConversation | null;
     try {
@@ -89,6 +101,9 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     }
     // The viewer opened or started another chat meanwhile: this one must not take its place.
     if (generation !== this.#generation) throw supersededError();
+    if (options.existing && !record) throw notFoundError();
+    options.ready?.();
+    if (record) this.#saved.add(id);
     const now = this.#now().toISOString();
     const turns = (Array.isArray(record?.turns) ? record.turns : []).map(turnFrom).sort((a, b) => a.seq - b.seq);
     this.current = {
@@ -178,6 +193,11 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     if (id) conversation.model = id;
     else delete conversation.model;
     this.#emit('conversation-change');
+    // Remote: the runner writes it, now or with the run that is live; a chat with nothing saved yet sends it with its first run.
+    if (this.#deps.remote) {
+      if (conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { model: id || null });
+      return;
+    }
     // A reply still streaming saves it with that reply; a chat with nothing saved keeps it for its first save.
     if (conversation.turns.at(-1)?.assistant.status === 'streaming' || conversation.turns.length === 0) return;
     await this.#save(conversation);
@@ -190,12 +210,17 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     conversation.titleSource = source;
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
+    if (this.#deps.remote) {
+      if (source !== 'first-message' && conversation.turns.length > 0) await this.#deps.remote.patch(conversation.id, { title: conversation.title, titleSource: source });
+      return;
+    }
     const newest = conversation.turns.at(-1);
     if (newest && newest.assistant.status !== 'streaming') await this.#finish(conversation, false);
   }
 
   async rename(id: string, title: string): Promise<void> {
     if (this.current?.id === id) return this.setTitle(title, 'user');
+    if (this.#deps.remote) return this.#renameRemote(id, title);
     // Loaded in the chat's queue, so a save still on its way lands first and is not overwritten, and a
     // rename after a delete finds the chat gone.
     const step = this.#queue(id, async () => {
@@ -209,6 +234,19 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     const renamed = await step;
     if (!renamed) return;
     this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: renamed.title } : s));
+    this.#emit('list-change');
+  }
+
+  /** Remote: the runner renames it in the host's store; in the chat's queue, so it lands after a delete asked before it, and not at all if that worked. */
+  async #renameRemote(id: string, title: string): Promise<void> {
+    const clamped = clampTitle(title);
+    const renamed = await this.#queue(id, async () => {
+      if (this.#deleted.has(id)) return false;
+      await this.#deps.remote!.patch(id, { title: clamped, titleSource: 'user' });
+      return true;
+    });
+    if (!renamed) return;
+    this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: clamped } : s));
     this.#emit('list-change');
   }
 
@@ -237,9 +275,14 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
       throw error;
     }
     this.summaries = this.summaries.filter((summary) => summary.id !== id);
+    this.#saved.delete(id);
     if (this.current?.id === id) this.current = null;
     this.#emit('list-change');
     this.#emit('conversation-change');
+  }
+
+  isSaved(id: string): boolean {
+    return this.#saved.has(id);
   }
 
   #delete(id: string): Promise<void> {
@@ -264,8 +307,14 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
    * chat no longer exists for anything to be lost from it.
    */
   #save(conversation: Conversation): Promise<void> {
+    // Remote: the runner is the only writer of a conversation in the host's store.
+    if (this.#deps.remote) return Promise.resolve();
     return this.#queue(conversation.id, async () => {
-      if (!this.#deleted.has(conversation.id)) await this.#deps.store.save(this.#record(conversation));
+      if (this.#deleted.has(conversation.id)) return;
+      await this.#deps.store.save(this.#record(conversation));
+      if (this.#saved.has(conversation.id)) return;
+      this.#saved.add(conversation.id);
+      this.#emit('saved-change');
     });
   }
 
@@ -314,7 +363,7 @@ export class HostThreadStore extends EventTarget implements ConversationStore {
     return this.#deps.now?.() ?? new Date();
   }
 
-  #emit(type: 'list-change' | 'conversation-change'): void {
+  #emit(type: 'list-change' | 'conversation-change' | 'saved-change'): void {
     this.dispatchEvent(new Event(type));
   }
 }

@@ -101,6 +101,17 @@ describe('Agent', () => {
     for (const system of systems) expect(system).toContain('<user_instructions>\nTalk like a pirate.\n</user_instructions>');
   });
 
+  it("dates the system prompt in the host's time zone, read at every reply", async () => {
+    let zone: string | undefined = 'America/Chicago';
+    const { agent, prompts } = setup([text('Hi.'), text('Hi.')], undefined, {}, { now: () => new Date('2026-10-23T03:30:00Z'), timeZone: () => zone });
+    await agent.send('hello');
+    zone = undefined;
+    await agent.send('again');
+    const systems = prompts.map((prompt) => (prompt as { role: string; content: string }[]).find((m) => m.role === 'system')?.content ?? '');
+    const dated = systems.map((system) => system.split('\n').filter((line) => line.startsWith('Today is')));
+    expect(dated).toEqual([['Today is Thursday 2026-10-22 (America/Chicago).'], ['Today is 2026-10-23.']]);
+  });
+
   it('tells the assistant what the embedding app says as of each reply, without changing the system prompt', async () => {
     let pins = 0;
     const { agent, prompts } = setup([text('Sure.'), text('Sure.')], undefined, { instructions: () => `The board has ${pins} pins.`, tools: ['generate_image'] });
@@ -230,7 +241,7 @@ describe('Agent', () => {
     await agent.send('write me a haiku');
     const turn = store.current!.turns[0]!;
     expect(turn.assistant.errorKind).toBe('free_tier_exhausted');
-    expect(turn.assistant.error).toMatch(/^Your free replies are used up until /);
+    expect(turn.assistant.error).toMatch(/^Your free allowance is used up until /);
 
     await agent.retry();
 

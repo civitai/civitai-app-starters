@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { partsFromMessages } from './agent/parts.js';
-import type { ChatBackend } from './backend.js';
+import { hasTranscribe, transcribeOnHost, type ChatBackend, type ChatStoreBackend, type ChatTranscribeOptions } from './backend.js';
 import { chatConfig, configureChat } from './config.js';
 import { ChatSession } from './session.js';
 import { HostThreadStore } from './store/host-store.js';
@@ -215,7 +215,6 @@ describe('ChatSession on a host backend', () => {
 
   it("uses a chat's own model only when the backend names it", async () => {
     const { session, sent } = setup({ models: [{ id: 'host/big', label: 'Big' }], replies: Array.from({ length: 8 }, () => () => textReply('ok')) });
-    session.updateSettings({ assistantModel: 'civitai/viewer-default' });
     session.newConversation();
     await session.send('one');
     await session.setChatModel('host/big');
@@ -223,7 +222,6 @@ describe('ChatSession on a host backend', () => {
     await session.setChatModel('somewhere/else');
     await session.send('three');
     const replies = sent.filter((request) => (request.body as { stream?: boolean }).stream === true);
-    // The viewer's stored default is Civitai's setting: a backend's chat never follows it.
     expect(replies.map((request) => request.body.model)).toEqual(['host/default-model', 'host/big', 'host/default-model']);
     expect(session.modelChoices().map((entry) => entry.id)).toEqual(['host/default-model', 'host/big']);
   });
@@ -303,9 +301,51 @@ describe('ChatSession without a backend (the default)', () => {
     );
     const app = { getToken: async () => 'viewer-token', site: {}, orchestration: { submitWorkflow: vi.fn(async () => ({ id: '7-1', cost: { total: 0 } })), queryWorkflows: vi.fn(async () => ({ items: [], next: '' })) } } as never;
     const session = new ChatSession(app, { mcp: () => ({ orchestration: false, site: false }) });
-    session.updateSettings({ assistantTier: 'paid' });
     session.newConversation();
     await session.send('hi');
     expect(bodies[0]).toMatchObject({ url: 'https://orchestration.civitai.com/v1/chat/completions', auth: 'Bearer viewer-token', body: { chat_template_kwargs: { enable_thinking: false } } });
+  });
+});
+
+describe("a backend's own speech-to-text (transcribe)", () => {
+  const audio = new Blob(['said'], { type: 'audio/webm' });
+  const store = memoryStore();
+
+  it('hands the recording and options to transcribe, as a method of the backend, and trims the words', async () => {
+    const seen: { self: unknown; audio: Blob; options: ChatTranscribeOptions }[] = [];
+    const backend: ChatStoreBackend = {
+      model: 'host/m',
+      store,
+      transcribe(this: unknown, recording, options) {
+        seen.push({ self: this, audio: recording, options });
+        return Promise.resolve({ text: '  hello there \n' });
+      },
+    };
+    const signal = new AbortController().signal;
+    await expect(transcribeOnHost(backend, audio, { language: 'fr', signal })).resolves.toBe('hello there');
+    expect(seen).toEqual([{ self: backend, audio, options: { language: 'fr', signal } }]);
+  });
+
+  it('rejects an answer without a text string, and a backend without transcribe', async () => {
+    for (const answer of [{ transcript: 'x' }, { text: 3 }, null, undefined, 'bare string']) {
+      const backend: ChatStoreBackend = { model: 'host/m', store, transcribe: (async () => answer) as never };
+      await expect(transcribeOnHost(backend, audio, {})).rejects.toThrow('backend.transcribe must resolve to { text: string }.');
+    }
+    await expect(transcribeOnHost({ model: 'host/m', store }, audio, {})).rejects.toThrow('its backend sets no transcribe');
+    expect(hasTranscribe({ model: 'host/m', store, transcribe: 'nope' as never })).toBe(false);
+  });
+
+  it("is who the session dictates through: the host's with transcribe, none without, Civitai's with no backend", async () => {
+    const transcribe = vi.fn(async (_audio: Blob, _options: ChatTranscribeOptions) => ({ text: 'words' }));
+    const withHook = new ChatSession(null, { backend: { url: GATEWAY, model: 'host/m', store, transcribe } satisfies ChatBackend });
+    expect(withHook.dictation).toBe('host');
+    await expect(withHook.transcribe(audio)).resolves.toBe('words');
+    expect(transcribe).toHaveBeenCalledWith(audio, { language: expect.any(String) });
+
+    expect(new ChatSession(null, { backend: { url: GATEWAY, model: 'host/m', store } }).dictation).toBeNull();
+    const remote = new ChatSession(null, { runner: 'remote', remote: { url: 'https://runner.example/v1' }, backend: { model: 'host/m', store, transcribe } });
+    expect(remote.dictation).toBe('host');
+    const app = { getToken: async () => 'token', site: {}, orchestration: { queryWorkflows: vi.fn(), submitWorkflow: vi.fn() } } as never;
+    expect(new ChatSession(app).dictation).toBe('civitai');
   });
 });

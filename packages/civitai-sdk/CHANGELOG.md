@@ -1,5 +1,39 @@
 # @civitai/sdk
 
+## 0.20.0
+
+### Minor Changes
+
+- e32da6a: Add `estimatedCost(snapshot)`: the price an `app.workflows.estimate()` reply quotes, in whole Buzz, or `null` when it quotes none. An estimate is priced when its `status` is not `'failed'` and it carries a numeric `cost.total` — a priced estimate is not `'succeeded'` (it is `'pending'` in practice), so a check for `'succeeded'` reads every price as missing. `0` is a price; a `'failed'` snapshot carrying the cost it refused is not. The `estimate` doc comment and the README examples now price with it.
+
+## 0.19.1
+
+### Patch Changes
+
+- 84bcbe6: `requestGrants` in a dev-tunnel preview no longer asks the host for the document-store scopes. When the host marks the frame `storageMode: 'local-preview'`, the in-tab local store serves `app.storage.collection(name)`, and a preview token never carries `apps:storage` or `apps:storage:publish`, so the host could only refuse them. That refusal took the rest of the request with it: `requestGrants(['ai:write:budgeted', 'apps:storage'])` resolved `false` even though the spend scope was grantable.
+
+  In a local preview those two scopes now count as held. A request for only them resolves `true` without contacting the host, and a mixed request asks only for the rest and resolves with the host's answer for those. Shared storage and the deprecated key/value scopes are still requested from the host, because they keep the real routes in a preview. Outside a local preview nothing changes. The token is unchanged, and so is what the server enforces.
+
+## 0.19.0
+
+### Minor Changes
+
+- 994b502: **BREAKING (0.x minor): App Blocks `kind: 'training'` now trains on images the viewer uploads, not on a server-prepared dataset** — the SDK half of civitai/civitai#6461.
+
+  The training run is unchanged; how its dataset is named is not:
+
+  - `WorkflowBodyTraining.items: BlockTrainingDatasetItem[]` (`{ air, caption }`, 1–50, one blob at most once) **replaces** `datasetId`. `BLOCK_TRAINING_CAPTION_MAX_CHARS` is now 8,192.
+  - Upload the images with `useImageUpload({ purpose: 'trainingData' }).open()` (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to 50 images in a Civitai modal; `open()` resolves with `[{ url, air }]` (`BlockTrainingDataImage[]`), or `null` on cancel. Pair each `air` with a caption.
+  - `RUN_TRAINING` gains the host code `training data not uploaded here`: the host refuses, before any dialog, a quote naming a blob it did not upload for this block (e.g. after a reload). `RunTrainingError.trainingDataNotUploaded` flags it; no run, nothing charged — upload again and estimate again.
+
+  Removed, with no replacement beyond the above:
+
+  - `@civitai/blocks-react`: `usePrepareTrainingDataset`, `UsePrepareTrainingDataset`, `PrepareTrainingDatasetError`, `PREPARE_TRAINING_DATASET_ERROR_CODES`, `isPrepareTrainingDatasetErrorCode`, and the `BlockPrepareTrainingDatasetHostError` / `BlockTrainingDatasetResult` / `BlockTrainingRejectionReason` re-exports. Mock host: the `trainingDatasetRejected` and `trainingDatasetError` options are gone; `cannedTrainingDataUpload` (the images an upload returns) and `trainingDataNotUploadedHere` (refuse every run as a host that forgot its uploads) are new, and the mock now checks a run's whole body against its quote.
+  - `@civitai/app-sdk/blocks`: the `PREPARE_TRAINING_DATASET` / `TRAINING_DATASET_RESULT` message pair, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason` and `BlockPrepareTrainingDatasetHostError`. New: the `'trainingData'` upload purpose, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult` (the multi-image `IMAGE_UPLOAD_RESULT.selected` shape), and `BlockRunTrainingHostError` member `'training data not uploaded here'`.
+  - `@civitai/sdk`: the copied `WorkflowBodyTraining` follows (`items`, not `datasetId`), and `BlockTrainingDatasetItem` is exported from the package root. The host reply ledger is regenerated from civitai/civitai#6461.
+
+  Training from apps stays behind the host flag `app-blocks-training-kind` (off by default), page apps only.
+
 ## 0.18.0
 
 ### Minor Changes

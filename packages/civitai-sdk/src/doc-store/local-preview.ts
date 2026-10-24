@@ -1,5 +1,6 @@
 import type { ViewerInfo } from '../core/handshake.js';
 import type { Http } from '../http/index.js';
+import type { Scope } from '../session/index.js';
 import { createDocumentStorage, StorageError, type DocumentStorage, type StorageCollection } from './index.js';
 
 /**
@@ -25,6 +26,19 @@ import { createDocumentStorage, StorageError, type DocumentStorage, type Storage
  * `tests/guards/local-preview-manifest-global.test.mjs`.
  */
 export const LOCAL_PREVIEW_MANIFEST_GLOBAL = '__CIVITAI_LOCAL_PREVIEW_MANIFEST__';
+
+/**
+ * The scopes the local document store serves: the two the server's document
+ * store checks (`fake.ts` enforces the same pair). A preview token never
+ * carries them and no grant can add them, so `requestGrants` treats them as
+ * held in a local preview instead of asking the host. Shared storage
+ * (`apps:storage:shared:*`) and the deprecated key/value scopes are NOT here:
+ * they keep the real routes in a preview.
+ */
+export const LOCAL_PREVIEW_STORAGE_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
+  'apps:storage',
+  'apps:storage:publish',
+]);
 
 /** What a local preview reads from the manifest: the scopes it declares and its `storage` block. */
 export interface LocalPreviewManifest {

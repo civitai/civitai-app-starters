@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import { SubagentTracker } from '../agent/subagents.js';
+import { unreceivedSubagent } from '../remote/remote-agent.js';
 import type { CivitaiChatSpend } from './civitai-chat-spend.js';
 import type { CivitaiChatTurn } from './civitai-chat-turn.js';
 import { defineElements } from './define.js';
@@ -132,6 +133,19 @@ describe('a write subagent’s card', () => {
     expect([...card.querySelectorAll('[data-subagent="changed"] li')].map(text)).toEqual(['write game/scene.ts', 'write game/hud.ts', 'edit game/scene.ts']);
   });
 
+  it('shows a write subagent whose result never reached the page (a remote reply ended on the page) as not received, with its edits as last seen', async () => {
+    // The result the remote runner's client builds when the reply ends on the page.
+    const output = unreceivedSubagent({ task: 'Split the scene', steps: 4, toolCalls: 7, mode: 'write', changed: 3, ranCommands: 2 });
+    const unreceived: TurnPart = { kind: 'tool', toolCallId: 'd8', toolName: 'dispatch_agent', input: { task: 'Split the scene', mode: 'write' }, state: 'done', output };
+    const el = await turnWith([unreceived]);
+    const card = el.querySelector('.cvt-subagent')!;
+    expect(card.getAttribute('data-status')).toBe('unreceived');
+    expect(text(card.querySelector('[data-subagent="status"]'))).toBe('Result not received');
+    expect(text(card.querySelector('.cvt-subagent-kind'))).toBe('Subagent · edits');
+    expect(text(card.querySelector('[data-subagent="counts"]'))).toBe('4 steps · 7 tool calls');
+    expect(text(card.querySelector('[data-subagent="edits"]'))).toBe('3 files changed · 2 commands');
+  });
+
   it('shows an interrupted write subagent as interrupted, with what it had changed', async () => {
     const el = await turnWith([part('interrupted')]);
     const card = el.querySelector('.cvt-subagent')!;
@@ -165,7 +179,7 @@ describe('a page tool of its own named dispatch_agent', () => {
     const own: TurnPart = { kind: 'tool', toolCallId: 'p1', toolName: 'dispatch_agent', input: { task: 'Ship it' }, state: 'done', output: { status: 'done', steps: 3, summary: 'shipped', toolCalls: 0, activity: [] } };
     const failed: TurnPart = { kind: 'tool', toolCallId: 'p2', toolName: 'dispatch_agent', input: {}, state: 'done', output: { error: 'no truck' } };
     const running: TurnPart = { kind: 'tool', toolCallId: 'p3', toolName: 'dispatch_agent', input: {}, state: 'calling' };
-    const el = await turnWith([own, failed, running], { subagents: new SubagentTracker(), live: true });
+    const el = await turnWith([own, failed, running], { subagents: new SubagentTracker(), live: false });
     expect(el.querySelector('.cvt-subagent')).toBeNull();
     expect(text(el.querySelector('.cvt-step-failed summary'))).toBe("A step didn't work");
     expect(text(el.querySelector('.cvt-activity'))).toBe('Working on it…');

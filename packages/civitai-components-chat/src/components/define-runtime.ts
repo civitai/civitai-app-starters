@@ -11,8 +11,10 @@ import '@civitai/components/civitai-switch/define';
 import '@civitai/components/civitai-text-input/define';
 import '@civitai/components/civitai-textarea/define';
 
+import { CivitaiChatBalance } from './civitai-chat-balance.js';
 import { CivitaiChatChoiceCard } from './civitai-chat-choice-card.js';
 import { CivitaiChatPanel } from './civitai-chat-panel.js';
+import { CivitaiChatReplyStatus } from './civitai-chat-reply-status.js';
 import { CivitaiChatGenerationDetails } from './civitai-chat-generation-details.js';
 import { CivitaiChatModelPicker } from './civitai-chat-model-picker.js';
 import { CivitaiChatSettingsDialog } from './civitai-chat-settings-dialog.js';
@@ -26,10 +28,12 @@ import { defineCivitaiChatModelCard } from './lib/civitai-chat-model-card.js';
 import { defineCivitaiChatPostCard } from './lib/civitai-chat-post-card.js';
 
 const RUNTIME: Array<[string, CustomElementConstructor]> = [
+  ['civitai-chat-balance', CivitaiChatBalance],
   ['civitai-chat-choice-card', CivitaiChatChoiceCard],
   ['civitai-chat-generation-details', CivitaiChatGenerationDetails],
   ['civitai-chat-model-picker', CivitaiChatModelPicker],
   ['civitai-chat-panel', CivitaiChatPanel],
+  ['civitai-chat-reply-status', CivitaiChatReplyStatus],
   ['civitai-chat-turn', CivitaiChatTurn],
   ['civitai-chat-thread', CivitaiChatThread],
   ['civitai-chat-sidebar', CivitaiChatSidebar],

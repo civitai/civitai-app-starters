@@ -730,6 +730,20 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
+ * The `purpose:'trainingData'` `IMAGE_UPLOAD_RESULT.selected` shape
+ * (civitai/civitai#6461): `{ images: [{ url, air }] }`, each `url` and `air` a
+ * non-empty string. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
+ * its key format is the host's to check, at the estimate — so only its type is
+ * pinned here.
+ */
+function isTrainingDataUpload(s: Record<string, unknown>): boolean {
+  if (!Array.isArray(s.images)) return false;
+  return s.images.every(
+    (img) => isObject(img) && isNonEmptyString(img.url) && isNonEmptyString(img.air),
+  );
+}
+
+/**
  * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
  * user dismissed the upload modal (the block's hook resolves to `null`). When
  * present it is a UNION keyed by the request's `purpose`:
@@ -738,7 +752,8 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
  *     value, `url` non-empty).
  *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
  *     dimensions, non-empty url; no imageId/nsfwLevel).
- * The guard accepts EITHER shape (the result carries no purpose discriminator).
+ *   • `'trainingData'` → `{ images: [{ url, air }] }` (non-empty strings).
+ * The guard accepts ANY of the shapes (the result carries no purpose discriminator).
  * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
  * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /
  * `BlockGenerationSourceUploadModal.tsx`).
@@ -750,7 +765,8 @@ export function isValidImageUploadResult(
   selected?:
     | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
     | { url: string; width: number; height: number }
-    | { status: 'pending'; imageId: number; url: string };
+    | { status: 'pending'; imageId: number; url: string }
+    | { images: Array<{ url: string; air: string }> };
   error?: string;
 } {
   if (!isObject(p)) return false;
@@ -762,11 +778,19 @@ export function isValidImageUploadResult(
   // out its whole timeout on a refusal the host already sent.
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
-  // one of the purpose-keyed shapes (moderated / generationSource / pending).
+  // one of the purpose-keyed shapes (moderated / generationSource / pending /
+  // trainingData).
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
-    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s) && !isPendingUpload(s)) return false;
+    if (
+      !isModeratedUpload(s) &&
+      !isGenerationSourceUpload(s) &&
+      !isPendingUpload(s) &&
+      !isTrainingDataUpload(s)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -1380,41 +1404,6 @@ export function isValidCreatePostResult(p: unknown): boolean {
     if (!Array.isArray(r.imageIds)) return false;
     for (const id of r.imageIds) {
       if (!isFiniteNumber(id)) return false;
-    }
-  }
-  if (p.result === undefined && p.error === undefined) return false;
-  return true;
-}
-
-/**
- * Reply to `PREPARE_TRAINING_DATASET`. A well-formed reply carries EITHER a
- * `result` (`{ datasetId: non-empty string, count: integer ≥ 0, rejected: [{
- * imageId: number, reason: string }] }`) OR an `error`; one with neither is
- * malformed and dropped.
- *
- * 🔴 `error` IS SHAPE-CHECKED ONLY — the same decision as
- * {@link isValidCreatePostResult}: the host's closed codes share the field with
- * any server message it forwards, and a membership check would drop those
- * replies before correlation, leaving the request to its timer.
- *
- * `rejected[].reason` is checked as a STRING, not against today's six members —
- * the host adding a reason must not make every prepare reply that carries it a
- * dropped one (the forward-compatibility rule in {@link isValidWorkflowSnapshot}).
- */
-export function isValidTrainingDatasetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.result !== undefined) {
-    const r = p.result;
-    if (!isObject(r)) return false;
-    if (!isNonEmptyString(r.datasetId)) return false;
-    if (!Number.isInteger(r.count) || (r.count as number) < 0) return false;
-    if (!Array.isArray(r.rejected)) return false;
-    for (const x of r.rejected) {
-      if (!isObject(x) || !isFiniteNumber(x.imageId) || typeof x.reason !== 'string') {
-        return false;
-      }
     }
   }
   if (p.result === undefined && p.error === undefined) return false;
@@ -2069,8 +2058,6 @@ export function payloadValidatorFor(
     // Same caveat as CREATE_POST_RESULT: presence is compiler-enforced, the
     // identity is pinned by test (`validate.test.ts`). TRAINING_RESULT settles a
     // charged run.
-    case 'TRAINING_DATASET_RESULT':
-      return isValidTrainingDatasetResult;
     case 'TRAINING_RESULT':
       return isValidTrainingResult;
     // Settles a charged job, like TRAINING_RESULT directly above.
