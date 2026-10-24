@@ -3,6 +3,7 @@ import { getTransport } from '../core/get-transport.js';
 import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/handshake.js';
 import { isLocalPreviewStorage, type BlockSnapshot, type BlockTransport } from '../core/transport.js';
 import { createHost, createHostSession, type Host } from '../host/index.js';
+import { reportViewerActivity } from '../host/viewer-activity.js';
 import { ApiError, createHttp, type Http } from '../http/index.js';
 import {
   createOrchestrationClient,
@@ -172,6 +173,8 @@ export async function initialize(
 
   const transport = options.transport ?? getTransport();
   await ready(transport, options.timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, options.signal);
+  // The host page cannot see input in this frame; it learns of it from this (at most once a minute).
+  reportViewerActivity(transport);
 
   const snapshot = () => transport.snapshot.get();
   const holdsBlockTokenNow = holdsBlockToken(snapshot);

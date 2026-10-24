@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "05f1d1fa8f",
-  "capturedAt": "2026-10-20",
+  "capturedFrom": "755e93ab44",
+  "capturedAt": "2026-10-24",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -838,6 +838,10 @@
       "failure": null
     },
     "TRACK_EVENT": {
+      "request": false,
+      "reply": ""
+    },
+    "VIEWER_ACTIVITY": {
       "request": false,
       "reply": ""
     }

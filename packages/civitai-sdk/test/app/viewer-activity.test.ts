@@ -4,15 +4,13 @@ import { initialize } from '../../src/index.js';
 import { createFakeTransport } from '../../src/testing.js';
 
 // The host page cannot see input inside the app's frame, so the SDK reports it:
-// `VIEWER_ACTIVITY`, no payload, at most once a minute, only while the page is
-// visible. civitai's App Assistant preview counts it as someone working in the app.
+// `VIEWER_ACTIVITY`, no payload, at most once a minute. civitai's App Assistant
+// preview counts it as someone working in the app (and judges visibility itself).
 
-type FakeDocument = EventTarget & { visibilityState: 'visible' | 'hidden' };
-
-let doc: FakeDocument;
+let doc: EventTarget;
 
 beforeEach(() => {
-  doc = Object.assign(new EventTarget(), { visibilityState: 'visible' as const });
+  doc = new EventTarget();
   vi.stubGlobal('document', doc);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(1_000_000);
@@ -52,10 +50,18 @@ describe('initialize() in a block reports the viewer’s input to the host', () 
     expect(reports()).toHaveLength(2);
   });
 
+  it('initialize() again on the same transport does not add a second reporter', async () => {
+    const transport = createFakeTransport();
+    await initialize({ transport });
+    await initialize({ transport });
+    fire('pointerdown');
+    expect(transport.sent.filter((m) => m.type === 'VIEWER_ACTIVITY')).toHaveLength(1);
+  });
+
   it('each of pointerdown, keydown, wheel and focusin counts', async () => {
     for (const type of ['pointerdown', 'keydown', 'wheel', 'focusin']) {
       vi.unstubAllGlobals();
-      doc = Object.assign(new EventTarget(), { visibilityState: 'visible' as const });
+      doc = new EventTarget();
       vi.stubGlobal('document', doc);
       const { reports } = await start();
       fire(type);
@@ -70,18 +76,6 @@ describe('initialize() in a block reports the viewer’s input to the host', () 
     expect(reports()).toHaveLength(0);
     // Positive control: a press on the same document does.
     fire('pointerdown');
-    expect(reports()).toHaveLength(1);
-  });
-
-  it('nothing while the page is hidden, and that does not use up the minute', async () => {
-    const { reports } = await start();
-    doc.visibilityState = 'hidden';
-    fire('pointerdown');
-    fire('keydown');
-    expect(reports()).toHaveLength(0);
-
-    doc.visibilityState = 'visible';
-    fire('keydown');
     expect(reports()).toHaveLength(1);
   });
 });
