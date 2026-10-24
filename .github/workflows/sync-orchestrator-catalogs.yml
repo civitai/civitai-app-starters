@@ -207,12 +207,18 @@ jobs:
             - `packages/civitai-app-sdk/test/orchestrator.test.ts` — the pinned
               `toHaveLength` counts.
             - `packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts`
-              — the `CatalogStepTypesWithoutAGeneratedType` ledger, but only when
-              this run added step types. A new step type widens
-              `WorkflowStepType`, so the ledger of catalog entries with no
-              `@civitai/client` template yet goes stale in the same edit; without
-              this the SDK type test fails, the `Validate SDK` step below fails,
-              and no PR opens at all.
+              — the `CatalogStepTypesWithoutAGeneratedType` ledger and one
+              `@ts-expect-error` `_NoGeneratedTemplateFor_<$type>` pin per entry.
+            - `packages/civitai-app-sdk/src/orchestrator/steps.ts` and
+              `packages/civitai-app-sdk/README.md` — the numbers and `$type`
+              names inside the step-count sentences
+              `test/orchestrator/step-count-prose.test.ts` pins; no other word.
+
+              Those three only when this run added step types. A new step type
+              widens `WorkflowStepType`, so the gap between the catalog and the
+              `@civitai/client` templates moves in the same edit; without them
+              the SDK tests fail, the `Validate SDK` step below fails, and no PR
+              opens at all.
             - `.changeset/orchestrator-catalog-sync-*.md` — `minor`, per
               `RELEASING.md`: a new key widens the exported `WorkflowStepType` /
               `ImageGenEngine` union, which is additive API.
@@ -254,9 +260,10 @@ jobs:
             4. Leave the `CatalogStepTypesWithoutAGeneratedType` entries alone
                unless you have checked npm: each one says the orchestrator
                accepts that step type and `@civitai/client` has no generated
-               template for it yet. Delete an entry only once a republished
-               client carries it, and add its key to the `StepTemplateMap`
-               rows in `src/orchestrator/steps.ts` in the same commit.
+               template for it yet. Once a republished client carries one, add
+               its key to the `StepTemplateMap` rows in
+               `src/orchestrator/steps.ts` and run `pnpm sync:catalogs`, which
+               drops it from the ledger, its pin and the prose in one go.
                (`StepTemplateMap` is the unexported interface that holds the
                literal `$type` rows; the exported `WorkflowStepTemplates` is a
                mapped type over it and has no keys of its own to edit.)

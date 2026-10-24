@@ -51,6 +51,7 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { WORKFLOW_STEP_TYPES } from '../../src/orchestrator/index.js';
+import { CLAIMS as SHARED_CLAIMS } from './step-count-claims.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, '..', '..');
@@ -176,104 +177,22 @@ interface Claim {
 }
 
 /**
- * 🔴 WHOLE CLAIMS, NOT NUMBERS. Each entry is the full sentence as it appears
- * in the file, with `{catalog}` / `{mapped}` / `{gapCount}` / `{gapList}` where
- * a derived value goes. Pinning the sentence is what makes the check
- * machine-readable: a reword that keeps a stale number, or a number fix that
- * quietly drops the qualifier ("all 50" for a map that covers 47), both fail.
+ * 🔴 WHOLE CLAIMS, NOT NUMBERS. The sentences live in `./step-count-claims.mjs`
+ * (see its docblock for the full rule) because the daily catalog-sync script
+ * rewrites the values in exactly these sentences and must read the same list
+ * this test pins. Only the sentences are shared; the derivation above stays
+ * this file's own. Add or reword a claim THERE.
  */
-const CLAIMS: Claim[] = [
-  {
-    id: 'catalog-1',
-    files: [STEPS_TS],
-    text: '(`WORKFLOW_STEP_TYPES` — {catalog} `$type` names and what each one does)',
-  },
-  {
-    id: 'catalog-2',
-    files: [STEPS_TS],
-    text: 'of its {catalog} entries, exactly THREE sit under its "Platform internals" heading',
-  },
-  {
-    id: 'catalog-3',
-    files: [README],
-    text: '`imageUpscaler` among them ({catalog} in total)',
-  },
-  {
-    id: 'catalog-4',
-    files: [README],
-    text:
-      'Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its {catalog} ' +
-      'entries exactly three',
-  },
-  {
-    id: 'mapped-1',
-    files: [STEPS_TS],
-    text: 'The practical consequence: a number of the {mapped} step types below exist to serve',
-  },
-  {
-    id: 'mapped-2',
-    files: [STEPS_TS],
-    text: 'Enumerated over all {mapped} mapped templates',
-  },
-  {
-    id: 'mapped-3',
-    files: [STEPS_TS],
-    text: 'The {mapped} wire-name → generated-template rows, UNGUARDED and NOT exported.',
-  },
-  {
-    id: 'mapped-4',
-    files: [STEPS_TS],
-    text:
-      'This is why neither the {mapped} `*Input` types nor the {mapped} `*StepTemplate` ' +
-      'types are re-exported one by one',
-  },
-  {
-    id: 'mapped-5',
-    files: [README],
-    text: 'Discriminated union of all {mapped} mapped templates',
-  },
-  {
-    id: 'mapped-6',
-    files: [README],
-    text: 'it is `false` for all {mapped} generated templates',
-  },
-  {
-    id: 'mapped-7',
-    files: [README],
-    text: "Several of the {mapped} exist to serve Civitai's own pipelines",
-  },
-  {
-    id: 'map-coverage-docblock',
-    files: [STEPS_TS],
-    text: "`$type` → its step-template type, for {mapped} of the catalog's {catalog} step types.",
-  },
-  {
-    id: 'map-coverage-readme-row',
-    files: [README],
-    text: "`$type` → template type, for {mapped} of the catalog's {catalog} step types.",
-  },
-  /**
-   * 🔴 THE INVARIANT CLAIM. This is the sentence #382 is really about: the docs
-   * used to argue totality, the map is partial, and the three uncovered
-   * `$type`s were undocumented. Pinned identically in both files so neither can
-   * drift from the other, and every number in it is derived — including the
-   * NAMES, so a client republish that closes one third of the gap fails here
-   * until the prose says so.
-   */
-  {
-    id: 'gap',
-    files: [STEPS_TS, README],
-    text:
-      '`WORKFLOW_STEP_TYPES` documents {catalog} `$type`s; this map covers {mapped}. ' +
-      'The {gapCount} with no generated template in the pinned `@civitai/client` are ' +
-      '{gapList}, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.',
-  },
-  {
-    id: 'gap-derivation-note',
-    files: [README],
-    text: 'derives all four numbers ({catalog}, {mapped}, {gapCount}, and the names)',
-  },
-];
+const CLAIM_FILES: Record<string, string> = { steps: STEPS_TS, readme: README };
+const CLAIMS: Claim[] = SHARED_CLAIMS.map((c: { id: string; files: string[]; text: string }) => ({
+  id: c.id,
+  files: c.files.map((tag) => {
+    const file = CLAIM_FILES[tag];
+    if (!file) throw new Error(`claim ${c.id}: unknown file tag ${tag}`);
+    return file;
+  }),
+  text: c.text,
+}));
 
 /**
  * Numbers in [30, 199] that are NOT step-type counts. Each is the literal text
