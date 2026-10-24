@@ -1,5 +1,15 @@
 # @civitai/components-chat
 
+## 0.30.0
+
+### Minor Changes
+
+- 5490038: `<civitai-chat>` takes the page's own content in two named slots: `composer-top`, just above the message box, and `thread-end`, after the last message inside the thread's scroll, brought into view like a new message. Nothing slotted takes no space.
+
+### Patch Changes
+
+- cd1844c: `send()` no longer puts a message it cannot send now (the chat holds, or the Buzz grant is refused) into the empty message box while the viewer is `dictating`: the box is hidden behind the recording bar and their words are joined onto it, so the message landed glued to the front of what they said. Not dictating, it is kept in the empty box as before.
+
 ## 0.29.1
 
 ### Patch Changes
