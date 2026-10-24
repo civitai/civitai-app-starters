@@ -76,7 +76,7 @@ export type {
   StorageUsage,
   WriteOptions,
 } from './doc-store/index.js';
-export { SubmissionUnconfirmedError } from './workflows/index.js';
+export { estimatedCost, SubmissionUnconfirmedError } from './workflows/index.js';
 export type {
   WorkflowCallOptions,
   WorkflowGetOptions,

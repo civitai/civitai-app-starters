@@ -175,6 +175,7 @@ export class CivitaiChat extends LitElement {
     toolCalls: { attribute: 'tool-calls' },
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
+    timeZone: { attribute: 'time-zone' },
     mcp: { attribute: false },
     mcpServers: { attribute: false },
     holdReason: { attribute: 'hold-reason' },
@@ -247,6 +248,12 @@ export class CivitaiChat extends LitElement {
   declare instructions?: string | (() => string | undefined);
   /** Replaces the built-in persona and rules, or edits them (a function gets the defaults); read at every reply. */
   declare systemPrompt?: string | ((defaults: string) => string);
+  /**
+   * The viewer's time zone, an IANA name such as `America/Chicago`: the assistant is told that zone's
+   * date and weekday (and its name) instead of UTC's, so "today" late in the evening is still today.
+   * Read at every reply; unset, or a name the browser does not know, the date is UTC's.
+   */
+  declare timeZone?: string;
   /**
    * Switches the assistant's Civitai tool servers: `orchestration` makes things, `site` finds Civitai models.
    * `orchestration: { exclude: [...] }` keeps it on without the named tools, e.g. `['run_step', 'run_workflow']`.
@@ -1025,6 +1032,7 @@ export class CivitaiChat extends LitElement {
         hostTools: () => this.tools,
         hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
         systemPrompt: () => this.systemPrompt,
+        timeZone: () => this.timeZone,
         mcp: () => ({ ...this.mcp, mcpServers: this.mcpServers }),
         beforeToolCall: () => this.beforeToolCall,
         subagents: () => this.subagents,
@@ -1582,7 +1590,7 @@ export class CivitaiChat extends LitElement {
   /**
    * Sends `text` as the viewer's. While the chat holds (`holdReason`, a chat opening, a new session
    * starting, a server listing its tools, another message on its way or waiting) it is kept in an
-   * empty message box. A page whose `before-send` calls `queue()` keeps it back, shown waiting.
+   * empty message box, unless the viewer is dictating (`#keepInEmptyBox`). A page whose `before-send` calls `queue()` keeps it back, shown waiting.
    */
   async #send(text: string): Promise<void> {
     const session = this.#session;
@@ -1592,8 +1600,7 @@ export class CivitaiChat extends LitElement {
     if (!session || this.#busy(session)) return;
     if (this.#held(session)) {
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
-      const composer = await this.#composer();
-      if (composer && !composer.draft) composer.draft = text;
+      await this.#keepInEmptyBox(text);
       return;
     }
     // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
@@ -1613,8 +1620,7 @@ export class CivitaiChat extends LitElement {
         return;
       }
       if (!granted) {
-        const composer = await this.#composer();
-        if (composer && !composer.draft) composer.draft = text;
+        await this.#keepInEmptyBox(text);
         this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
         return;
       }
@@ -1653,6 +1659,17 @@ export class CivitaiChat extends LitElement {
         this.requestUpdate();
       }
     }
+  }
+
+  /**
+   * Puts a message `#send` could not send now into the message box, when it is empty and the viewer is
+   * not dictating. While they dictate the box is hidden behind the recording or transcribing bar and
+   * what they say is joined to the end of it, so the message would land glued to the front of their
+   * words: it is left out, as it is when the box already holds something.
+   */
+  async #keepInEmptyBox(text: string): Promise<void> {
+    const composer = await this.#composer();
+    if (composer && !composer.draft && !this.dictating) composer.draft = text;
   }
 
   /** Adds files to the next message, uploading them right away. */
@@ -2012,6 +2029,7 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
+                  thread-end
                   .examples=${this.examples}
                   @cvt-example=${(e: CustomEvent<ChatExample>) =>
                     void this.#composer().then((composer) => {
@@ -2032,6 +2050,7 @@ export class CivitaiChat extends LitElement {
               <civitai-button size="sm" variant="subtle" @click=${() => this.#dismissUnsent(unsent)}>Dismiss</civitai-button>
             </civitai-alert>`,
           )}
+          <slot name="composer-top" class="cvt-composer-top"></slot>
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

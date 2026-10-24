@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components-chat",
-  "version": "0.27.0",
+  "version": "0.29.1",
   "description": "<civitai-chat>: a Civitai assistant that makes images, video and music, as one element for any page. Companion to @civitai/components.",
   "license": "MIT",
   "type": "module",

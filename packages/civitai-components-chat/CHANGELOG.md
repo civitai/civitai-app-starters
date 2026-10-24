@@ -1,5 +1,33 @@
 # @civitai/components-chat
 
+## 0.29.1
+
+### Patch Changes
+
+- 831fd6e: A panel's slider shows its track: the theme's dark track colour is the surface a panel sits on, so only the handle was visible. Panel fields now use the border colour for it.
+
+## 0.29.0
+
+### Minor Changes
+
+- 8e6868c: The chat can tell the assistant the viewer's date in their own time zone. `<civitai-chat>` takes a `time-zone` attribute (also `timeZone`), an IANA name such as `America/Chicago`: the system prompt's date line then gives that zone's calendar day, weekday and name ("Today is Thursday 2026-10-22 (America/Chicago).") instead of UTC's date, so late in the evening west of UTC "today" is still the viewer's today. Subagents get the same line. Unset, or a name the runtime does not know, the line is UTC's date exactly as before. A server runner on `/core` passes the same zone as `buildSystemPrompt({ timeZone })`; `dateLine(now, timeZone)` is that one line.
+
+## 0.28.0
+
+### Minor Changes
+
+- d6c6c35: The chat balance has **Withdraw**, which pays what is left back to the viewer, and a balance left unused for 7 days is now paid back rather than lost. Needs the orchestrator release that refunds a single depositor's fund (`POST /v2/consumer/funds/{id}/refund`, and on expiry). Balances opened before it keep the old rule.
+- aaed7ea: A reply step whose stream the network cut no longer pays for a second orchestration workflow when it is asked for again. The chat reads the step's workflow id from orchestration's `X-Civitai-Workflow-Id` response header and, before asking again, reads that workflow back: one that succeeded has its answer (words and tool calls) rebuilt with no new request, and what it cost counted on the reply, one still running is waited for (at most 10 minutes), and one that failed, has no answer, or is still running after that is canceled when still running before the step is asked for again. Stop (or any request given up on mid-answer) now cancels the step's workflow, so the model stops working on it. An orchestration without the header gets the old behaviour.
+
+  `createAssistantModel` takes a new, opt-in `recoverWorkflows: boolean` option (`<civitai-chat>` turns it on; other callers are unchanged).
+
+- 7101b12: An image in an added MCP server's tool result (a JPEG, PNG, WebP or GIF, such as a screenshot of the app) is now shown to the assistant once, in the next step, instead of being dropped. It goes to the model as a message right after that step's tool results, and the result itself keeps a one-line note in its place: the saved conversation holds only the note, never the image. A result shows at most 2 images and 512 KiB in all; anything past that, other image types and other binary content (which was dropped silently) are left out with a note saying why. A model that takes no images refuses that request; the step is then asked for again without the image, and no image is sent for the rest of the reply. A server runner on `/core` gets this through `AgentCore` and `extraToolSet` with no change.
+
+### Patch Changes
+
+- d6c6c35: The free allowance shows as a percentage ("74% free", "26% used") instead of a count of replies, and is called the free allowance: one reply can take several model calls (a search, a price check), each drawing on it, so a count of "replies" read as double charging. The top-up card and the balance details say that each step the assistant takes uses about 1 Buzz.
+- d6c6c35: A reopened chat no longer shows Buzz spent on free replies: saving a turn was assumed to cost 1 Buzz until a save in the session said otherwise, but saves cost nothing.
+
 ## 0.27.0
 
 ### Minor Changes

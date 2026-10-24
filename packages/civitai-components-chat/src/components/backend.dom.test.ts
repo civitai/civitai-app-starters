@@ -93,6 +93,31 @@ describe('<civitai-chat> on a host backend', () => {
     await vi.waitFor(() => expect([...store.records.keys()]).toEqual([]));
   });
 
+  it("tells the assistant the date in the page's time-zone, and UTC's date without one", async () => {
+    const systems: string[] = [];
+    spyOnRequests((_url, body) => {
+      const messages = (body as { messages?: { role: string; content: unknown }[] }).messages ?? [];
+      systems.push(String(messages.find((m) => m.role === 'system')?.content ?? ''));
+      return textReply('Hello ', 'there.');
+    });
+    const dateLines = (system: string) => system.split('\n').filter((line) => line.startsWith('Today is'));
+    const zoned = await mount((c) => {
+      c.backend = backendOf();
+      c.setAttribute('time-zone', 'America/Chicago');
+    });
+    expect(zoned.timeZone).toBe('America/Chicago');
+    await zoned.send('hello');
+    await vi.waitFor(() => expect(systems).toHaveLength(1));
+    // The day itself is pinned in system-prompt.test.ts at a fixed instant; here, that the attribute reaches the prompt.
+    expect(dateLines(systems[0]!)).toEqual([expect.stringMatching(/^Today is (Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d{4}-\d{2}-\d{2} \(America\/Chicago\)\.$/)]);
+    zoned.remove();
+
+    const plain = await mount((c) => (c.backend = backendOf()));
+    await plain.send('hello');
+    await vi.waitFor(() => expect(systems).toHaveLength(2));
+    expect(dateLines(systems[1]!)).toEqual([expect.stringMatching(/^Today is \d{4}-\d{2}-\d{2}\.$/)]);
+  });
+
   it('makes no request to Civitai or OpenRouter through a send, the model list, Settings and a reload', async () => {
     const urls = spyOnRequests();
     const store = memoryStore();

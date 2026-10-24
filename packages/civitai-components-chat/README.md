@@ -386,6 +386,7 @@ reopened from storage groups the same as it did live.
 | `tool-calls` | `activity` (the default: a line while a call runs, then nothing) or `details` (each call with no view of its own as a row to open, calls in a row as one group). Also `toolCalls`. See [Showing what the assistant called](#showing-what-the-assistant-called). |
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
+| `time-zone` | The viewer's time zone, an IANA name such as `America/Chicago` (also `timeZone`). The assistant is then told that zone's date, weekday and name ("Today is Thursday 2026-10-22 (America/Chicago).") instead of UTC's date, so late in the evening "today" is still the viewer's today. Read at every reply; unset, or a name the browser does not know, the date is UTC's. |
 | `mcp` | `{ orchestration?: boolean \| { exclude: string[] }, site?: boolean }`, both on by default: making media, and Civitai model search. `orchestration: { exclude: ['run_step', 'run_workflow'] }` keeps the service lookups but never runs (or charges for) a generation; the panels, which run through `run_step`, go with it. Other tools that charge per call, such as `transcribe_audio`, stay unless they are listed too; the microphone button transcribes on its own, not through the assistant, so neither `exclude` nor `beforeToolCall` stops voice input from charging. |
 | `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
 | `holdReason` | While set (also `hold-reason`), nothing is sent to the assistant: the message box keeps what the viewer typed, Send is off and the box shows this text, e.g. "The sandbox is starting…". Stop still works. The chat also holds by itself, as "Connecting to *label*…", while an added server is listing its tools (at most 15 s). |
@@ -404,7 +405,8 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)`
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
-in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
+in an empty message box (not while the viewer is `dictating`: what they say would be joined onto
+it, so the box is left alone); while a reply is still running it sends nothing. It fires `before-send`
 like a typed message. `canSend` says whether it would send now, and `can-send-change` when that
 changes: see [When a message can go](#when-a-message-can-go).
 
@@ -616,6 +618,28 @@ on a host's own `backend` greets the viewer plainly and shows only the page's `e
 shows none, since the built-in ones are about making things on Civitai. It takes no files, so
 `wantsFile` opens no picker there. Slot `welcome` replaces the whole greeting
 instead, examples included, and then clicking does nothing the page does not wire itself.
+
+### The page's own content in the chat
+
+Two slots put the page's own content inside the chat, as light-DOM children of the element:
+
+```html
+<civitai-chat>
+  <div slot="composer-top">Your app is paused. <button>Start app</button></div>
+  <div slot="thread-end"><!-- e.g. a card asking the viewer to choose something --></div>
+</civitai-chat>
+```
+
+- `composer-top` sits just above the message box, at its width (below any "This message was not
+  sent" notice). Use it for something about what the chat is working on right now.
+- `thread-end` sits after the last message, inside the thread's scroll, at the messages' width. It
+  stays after the newest message as the conversation grows. Content put in it is brought into view,
+  even when the viewer had scrolled back; content that grows while the viewer is at the end stays in
+  view. With no messages yet it shows under the greeting, scrolling with it.
+
+Both take no space with nothing slotted. The page styles its content itself: it is in the page's
+DOM, so the page's own stylesheet applies. Neither shows before the chat has started or while it is
+signed out, and `thread-end` does not show while a saved chat is opening.
 
 ### Gating tool calls
 
@@ -1218,7 +1242,7 @@ chat.app = app;
 What changes in remote mode:
 
 - **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
-  `beforeToolCall`, `subagents`, `systemPrompt`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
+  `beforeToolCall`, `subagents`, `systemPrompt`, `timeZone`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
   anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide
   on (the app open in the page, say) goes in `pageState`. The settings that shape a reply (model,
   custom instructions, `instructions`, output cap, free or paid, mature content, auto-run limit) go
@@ -1348,6 +1372,17 @@ import { McpServerPool, extraToolSet, gateToolSet } from '@civitai/components-ch
 const pool = new McpServerPool({ onError: (server, error) => console.warn(server.id, error) });
 pool.sync([{ id: 'docs', url: 'https://example.com/mcp', fetch: signedFetch, label: 'Docs' }]);
 const tools = extraToolSet(await pool.tools(), { taken: {} }); // { docs__search, … }
+```
+
+The system prompt is `buildSystemPrompt`, as the page builds it. Its `timeZone` (an IANA name) is the
+page's `time-zone`: the date line then gives that zone's day, weekday and name instead of UTC's date
+(`dateLine(now, timeZone)` is that one line):
+
+```js
+import { buildSystemPrompt } from '@civitai/components-chat/core';
+
+const system = buildSystemPrompt({ now: new Date(), timeZone: 'America/Chicago', rules: myRules });
+// … "Today is Thursday 2026-10-22 (America/Chicago)." …
 ```
 
 ## Where chats live
