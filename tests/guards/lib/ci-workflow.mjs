@@ -295,7 +295,8 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
   if (lanes) {
     if (lanes.if !== null) out.push(`[lanes-conditional] the \`${LANES_JOB}\` job has an \`if:\`; it must run on every event`);
     if (lanes.needs.length) out.push(`[lanes-needs] the \`${LANES_JOB}\` job has \`needs:\`; it must be first`);
-    const wantOutputs = ['lane', ...ledgerIds];
+    // `name-prefix` is the one output that is not a job switch: the Starter job's `name:` reads it.
+    const wantOutputs = ['lane', ...ledgerIds, 'name-prefix'];
     for (const key of wantOutputs.filter((k) => !(k in lanes.outputs))) {
       out.push(
         `[output-missing] the \`${LANES_JOB}\` job declares no output \`${key}\`; a job reading it gets an empty string and always runs`,

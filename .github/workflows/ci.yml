@@ -7,7 +7,11 @@ on:
   # A manual run with `only: all` (the default) takes no lane: every job runs.
   #
   # `only: <job-id>` runs that one job and skips the rest, so a re-check of one
-  # job does not put every job in the org's shared runner queue. Selection
+  # job does not put every job in the org's shared runner queue. A narrowed run
+  # still writes check runs for this commit under the job names, so it narrows
+  # only when no open pull request has this commit as its head (`lanes` asks the
+  # API; an open one or a failed lookup runs every job), and the guard-only
+  # Starter legs report as `[only <job>] Starter (<name>)`. Selection
   # is decided where every other lane is, in `scripts/ci-lanes.mjs` (lane
   # `only`), and reaches the jobs through the same `lanes` outputs and the same
   # `!= 'false'` conditions; no job condition reads `inputs`. So it fails open
@@ -58,6 +62,11 @@ on:
 # `scripts/ci-lanes.mjs` compares each push with the previous tip, so a run
 # cancelled mid-flight would leave a main commit with no verdict and could let
 # a lockfile change go without the install that seeds the PR cache.
+# A dispatch never cancels a pull_request run (different groups). One that is
+# cancelled at a pull request's head leaves `cancelled` check runs on that
+# commit: replaced when the newer dispatch is at the same commit, otherwise
+# left in place. Either way the PR shows a blocking `cancelled`, never a false
+# pass, until something re-runs it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
@@ -128,6 +137,8 @@ jobs:
       examples: ${{ steps.decide.outputs.examples }}
       packaging: ${{ steps.decide.outputs.packaging }}
       public-types: ${{ steps.decide.outputs.public-types }}
+      # '' except in a narrowed dispatch; read by the Starter job's `name:`.
+      name-prefix: ${{ steps.decide.outputs.name-prefix }}
     steps:
       - uses: actions/checkout@v7
 
@@ -570,7 +581,13 @@ jobs:
       - run: pnpm typecheck:readme:selftest
 
   starter:
-    name: Starter
+    # `Starter (<name>)` on every event: the prefix is '' except in a dispatch
+    # narrowed by `only` to another job, where these legs run only their guards
+    # and must not report under the five REQUIRED `Starter (<name>)` contexts.
+    # GitHub skips evaluating a skipped job's `name:`, which is fine here: this
+    # job is never lane-skipped (see below), and the matrix-skipped name was
+    # never a required context anyway. Pinned by ci-lanes-ledger.test.mjs.
+    name: ${{ format('{0}Starter ({1})', needs.lanes.outputs.name-prefix, matrix.starter) }}
     # 🔴 THIS JOB IS GATED PER STEP, NOT PER JOB, AND BOTH HALVES OF THAT ARE
     # LOAD-BEARING.
     #   - It is a MATRIX. A matrix job skipped at job level is never expanded:

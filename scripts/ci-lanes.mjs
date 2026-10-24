@@ -31,7 +31,10 @@
  *              re-check of one job does not queue every job on the org's shared
  *              runners. (`starter` still starts all five legs either way: it is
  *              step-gated, so for any other `only` its legs run the every-lane
- *              guards only.)
+ *              guards only, under `[only <job>] Starter (<name>)`.) It narrows
+ *              ONLY after `commits/{sha}/pulls` positively says no open pull
+ *              request has this commit as its head; an open one, or a failed
+ *              lookup, is the full lane (see `decideLane`).
  *   release    the changesets Version Packages PR, when its diff is ONLY release
  *              machinery (`RELEASE_FILES`) AND every package.json in it changed
  *              only `version` and workspace-dependency versions (read from the
@@ -222,6 +225,25 @@ export const TREE_LANE = 'tree-already-tested';
 
 /** A manual run narrowed to one job by its `only` input. */
 export const ONLY_LANE = 'only';
+
+/**
+ * The `lanes` output the `Starter` job's `name:` reads. Empty in every lane but
+ * a narrowed dispatch (`only` naming a job other than `starter`), so on
+ * pull_request, push, release, tree-skip and unnarrowed dispatch runs the five
+ * legs keep their required names `Starter (<name>)` byte for byte. In a
+ * narrowed run the legs do only their guards, and the prefix keeps that
+ * success off the required contexts.
+ *
+ * Why only Starter is renamed: GitHub never evaluates a `name:` expression of
+ * a job it skips (the check run shows the literal `${{ ... }}`), and the
+ * release and tree-skip lanes skip required jobs, which must still report
+ * `skipped` under their exact names. Starter is never skipped by its lane (it
+ * is step-gated), so its name expression is always evaluated. The skipped jobs
+ * of a narrowed run keep their names; `decide` refuses to narrow at the head of
+ * an open pull request instead.
+ */
+export const NAME_PREFIX_OUTPUT = 'name-prefix';
+export const narrowedNamePrefix = (only) => `[only ${only}] `;
 
 export const ADVISORY_JOBS = Object.freeze(
   Object.keys(JOBS).filter((id) => JOBS[id] === 'advisory'),
@@ -447,14 +469,48 @@ export async function checkReleaseContent(files, { fetchBlob, workspaceNames }) 
  *        `skip === true` skips anything, and only on `push`
  * @param {string} [input.only] workflow_dispatch only: the `only` input. Only
  *        an own key of `JOBS` narrows anything, and only on `workflow_dispatch`
- * @returns {{ lane: string, reason: string, jobs: Record<string, boolean> }}
+ * @param {number[]} [input.openPrsAtSha] workflow_dispatch only: open pull
+ *        requests whose head is this commit. Narrowing needs an EMPTY list;
+ *        absent (lookup failed or not made) is the full lane
+ * @param {string} [input.prLookupError] why that lookup failed, for the reason
+ * @returns {{ lane: string, reason: string, jobs: Record<string, boolean>, namePrefix: string }}
  */
-export function decide({ event, files, filesError, release, pushGate, only } = {}) {
+export function decide(input = {}) {
+  // `namePrefix` is '' in every lane but a narrowed one; see NAME_PREFIX_OUTPUT.
+  return { namePrefix: '', ...decideLane(input) };
+}
+
+function decideLane({ event, files, filesError, release, pushGate, only, openPrsAtSha, prLookupError } = {}) {
   if (event === 'workflow_dispatch' && typeof only === 'string' && Object.hasOwn(JOBS, only)) {
+    // A narrowed run writes check runs for this commit under the SAME names a
+    // full run does: the jobs it turns off come back `skipped` (branch
+    // protection counts that as passing), and the Starter legs succeed having
+    // run only their guards. At the head of an open pull request those would
+    // become the newest results for its required contexts and could turn a
+    // failed one green. So narrowing needs a POSITIVE "no open pull request
+    // has this head"; an open one, or a lookup that failed, runs everything.
+    if (!Array.isArray(openPrsAtSha)) {
+      return {
+        lane: 'full',
+        reason: `workflow_dispatch with only=${only}, but whether this commit heads an open pull request is unknown (${prLookupError ?? 'not looked up'}): every job runs`,
+        jobs: everyJob(true),
+      };
+    }
+    if (openPrsAtSha.length > 0) {
+      return {
+        lane: 'full',
+        reason: `workflow_dispatch with only=${only}, but this commit is the head of open pull request ${openPrsAtSha.map((n) => `#${n}`).join(', ')}: a narrowed run would report under its required check names, so every job runs`,
+        jobs: everyJob(true),
+      };
+    }
     return {
       lane: ONLY_LANE,
       reason: `workflow_dispatch with only=${only}: ${only} runs, every other job is off`,
       jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, id === only])),
+      // The Starter legs still run (step-gated), so give them names no required
+      // context matches. `only=starter` runs them in full: their real verdict
+      // under their real names.
+      namePrefix: only === 'starter' ? '' : narrowedNamePrefix(only),
     };
   }
   if (event === 'push' && pushGate?.skip === true) {
@@ -545,6 +601,35 @@ export async function fetchPullRequestFiles({ api, repo, number, token, fetchImp
 }
 
 const HEX40 = /^[0-9a-f]{40}$/;
+
+/**
+ * Numbers of the OPEN pull requests whose head is exactly `sha`, or a thrown
+ * error. Never a guess: a malformed sha, a non-200, a non-list body or a full
+ * first page (more may exist) all throw, and the caller then runs every job.
+ *
+ * `commits/{sha}/pulls` lists every pull request associated with the commit,
+ * whichever branch it was dispatched on, so a second branch at the same sha
+ * still finds the pull request. Known edge: for a commit already on the
+ * default branch the endpoint lists only the merged pull request that brought
+ * it in, so an open pull request whose head is a commit already on `main`
+ * is not seen.
+ */
+export async function openPullRequestsAtSha({ api, repo, sha, token, fetchImpl = fetch }) {
+  if (typeof sha !== 'string' || !HEX40.test(sha)) throw new Error(`no commit sha (${sha})`);
+  const res = await fetchImpl(`${api}/repos/${repo}/commits/${sha}/pulls?per_page=100`, {
+    headers: {
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`commits/${sha}/pulls answered HTTP ${res.status}`);
+  const list = await res.json();
+  if (!Array.isArray(list)) throw new Error(`commits/${sha}/pulls is not a list`);
+  if (list.length >= 100) throw new Error(`commits/${sha}/pulls filled a page; the list may be incomplete`);
+  return list.filter((p) => p?.state === 'open' && p?.head?.sha === sha).map((p) => p.number);
+}
 
 /**
  * May this push to main skip its core jobs? Returns `{ skip, reason, tree?, runId? }`
@@ -769,6 +854,19 @@ async function main() {
     } catch {
       // full lane
     }
+    // Only a narrowing `only` needs to know; a failed lookup runs everything.
+    if (typeof input.only === 'string' && Object.hasOwn(JOBS, input.only)) {
+      try {
+        input.openPrsAtSha = await openPullRequestsAtSha({
+          api: env.GITHUB_API_URL ?? 'https://api.github.com',
+          repo: env.GITHUB_REPOSITORY,
+          sha: env.GITHUB_SHA,
+          token: env.GITHUB_TOKEN,
+        });
+      } catch (err) {
+        input.prLookupError = String(err?.message ?? err);
+      }
+    }
   }
 
   if (event === 'push') {
@@ -788,7 +886,11 @@ async function main() {
   }
 
   const d = decide(input);
-  const lines = [`lane=${d.lane}`, ...Object.entries(d.jobs).map(([id, run]) => `${id}=${run}`)];
+  const lines = [
+    `lane=${d.lane}`,
+    ...Object.entries(d.jobs).map(([id, run]) => `${id}=${run}`),
+    `${NAME_PREFIX_OUTPUT}=${d.namePrefix}`,
+  ];
   console.log(`lane: ${d.lane}\nreason: ${d.reason}`);
   for (const [id, run] of Object.entries(d.jobs)) console.log(`  ${run ? 'run ' : 'skip'}  ${id}`);
   if (input.filesError) console.log(`::warning title=ci-lanes failed open::${d.reason}`);

@@ -46,6 +46,7 @@ import {
   RECORD_JOB_NAME,
   classifyPath,
   decide,
+  narrowedNamePrefix,
 } from '../../scripts/ci-lanes.mjs';
 import {
   parseJobs,
@@ -79,18 +80,61 @@ const ADVISORY_PINNED = [
 ];
 
 /**
- * The contexts branch protection on `main` requires, by job id. They may never
- * be advisory (path-scoped), and their display names may never change.
+ * The contexts branch protection on `main` requires, written out as GitHub
+ * matches them (exact strings), from `branches/main/protection` on 2026-10-24.
+ * The jobs behind them may never be advisory (path-scoped), and what they
+ * report on pull_request and push may never change.
  */
-const REQUIRED = {
-  sdk: 'SDK (typecheck + test + build)',
-  'blocks-react': 'blocks-react (typecheck + test + build)',
-  'readme-snippets': 'README snippets (typecheck)',
-  starter: 'Starter',
-  'design-system': 'design-system (theme + components + components-react)',
-  packaging: 'Packaging (shipped sourcemaps)',
-  'public-types': 'Public type closure (built .d.ts)',
-};
+const REQUIRED_CONTEXTS = [
+  'SDK (typecheck + test + build)',
+  'blocks-react (typecheck + test + build)',
+  'README snippets (typecheck)',
+  'Starter (civitai-block-starter)',
+  'Starter (next-app)',
+  'Starter (react-pwa)',
+  'Starter (svelte-pwa)',
+  'Starter (sveltekit-app)',
+  'design-system (theme + components + components-react)',
+  'Packaging (shipped sourcemaps)',
+  'Public type closure (built .d.ts)',
+];
+const REQUIRED_JOBS = ['sdk', 'blocks-react', 'readme-snippets', 'starter', 'design-system', 'packaging', 'public-types'];
+
+/** The one `name:` expression a job may carry: the Starter legs', fed by `lanes`. */
+const STARTER_NAME = "${{ format('{0}Starter ({1})', needs.lanes.outputs.name-prefix, matrix.starter) }}";
+
+/** `[key, values]` of a one-key `strategy.matrix` list, or null. */
+function matrixOf(job) {
+  const at = job.body.findIndex((l) => /^ {6}matrix:\s*$/.test(l));
+  if (at === -1) return null;
+  const key = job.body[at + 1]?.match(/^ {8}([\w-]+):\s*$/)?.[1];
+  if (!key) return null;
+  const values = [];
+  for (const l of job.body.slice(at + 2)) {
+    const m = l.match(/^ {10}- (\S+)\s*$/);
+    if (!m) break;
+    values.push(m[1]);
+  }
+  return [key, values];
+}
+
+/**
+ * The check-run names a job writes when it RUNS, given the `name-prefix`
+ * output of `lanes`. A static name gets GitHub's ` (<value>)` matrix suffix;
+ * the Starter expression is evaluated the way GitHub would, and any other
+ * expression is reported as unevaluable rather than guessed at.
+ */
+function reportedNames(job, prefix) {
+  const matrix = matrixOf(job);
+  const base = job.name ?? job.id;
+  if (!base.includes('${{')) return matrix ? matrix[1].map((v) => `${base} (${v})`) : [base];
+  const m = base.match(/^\$\{\{ format\('([^']*)', needs\.lanes\.outputs\.name-prefix, matrix\.([\w-]+)\) \}\}$/);
+  if (!m || !matrix || matrix[0] !== m[2]) return [`UNEVALUABLE ${base}`];
+  return matrix[1].map((v) => m[1].replace('{0}', prefix).replace('{1}', v));
+}
+
+/** Every name a run of `src` writes, for that run's `lanes` decision. */
+const namesFor = (src, d) => parseJobs(src).flatMap((j) => reportedNames(j, d.namePrefix));
 
 describe('ci.yml agrees with the lane ledger', () => {
   test('POSITIVE CONTROL: the walk finds the jobs, their conditions and the lanes outputs', () => {
@@ -147,16 +191,98 @@ describe('ci.yml agrees with the lane ledger', () => {
     assert.ok(!RELEASE_LANE_JOBS.includes('starter'), 'starter is step-gated; listing it would run its heavy steps');
   });
 
-  test('no required context is path-scoped, and none was renamed', () => {
-    const jobs = parseJobs(text);
-    for (const [id, name] of Object.entries(REQUIRED)) {
-      assert.equal(JOBS[id], 'core', `required job \`${id}\` must be core, not ${JOBS[id]}`);
-      assert.equal(
-        jobs.find((j) => j.id === id)?.name,
-        name,
-        `job \`${id}\` is a required context under the name "${name}"; renaming it leaves that context pending on every PR`,
-      );
+  test('no required context is path-scoped', () => {
+    for (const id of REQUIRED_JOBS) assert.equal(JOBS[id], 'core', `required job \`${id}\` must be core, not ${JOBS[id]}`);
+  });
+});
+
+/**
+ * REQUIRED CONTEXTS: unchanged wherever they are a verdict, never written by a
+ * narrowed dispatch's guard-only Starter legs.
+ *
+ * Branch protection matches a required context by its exact name, and takes the
+ * newest check run of that name on the head commit. Two ways to get that wrong:
+ * rename a required job (the context then stays pending on every PR), or let a
+ * dispatch narrowed by `only` write a SUCCESS that tested nothing under a
+ * required name. The skipped jobs of a narrowed run keep their names on purpose
+ * (GitHub writes a skipped job's `name:` expression literally, and the release
+ * and tree-skip lanes rely on skipped required jobs matching), so for those the
+ * guard is `decide` refusing to narrow at an open pull request's head; see
+ * ci-lanes.test.mjs.
+ */
+describe('required contexts across lanes', () => {
+  const NOT_NARROWED = {
+    'pull_request, full lane': decide({ event: 'pull_request', files: [{ filename: 'packages/civitai-sdk/src/x.ts' }] }),
+    'pull_request, docs only': decide({ event: 'pull_request', files: [{ filename: 'README.md' }] }),
+    'pull_request, release lane': decide({
+      event: 'pull_request',
+      files: [{ filename: 'packages/civitai-sdk/package.json' }],
+      release: { problem: null },
+    }),
+    push: decide({ event: 'push' }),
+    'push, tree already tested': decide({ event: 'push', pushGate: { skip: true, tree: 't', runId: 1 } }),
+    'dispatch, only=all': decide({ event: 'workflow_dispatch', only: 'all', openPrsAtSha: [] }),
+    'dispatch, only=starter': decide({ event: 'workflow_dispatch', only: 'starter', openPrsAtSha: [] }),
+    'dispatch, only=sdk at an open PR head': decide({ event: 'workflow_dispatch', only: 'sdk', openPrsAtSha: [757] }),
+    'dispatch, only=sdk, PR lookup failed': decide({ event: 'workflow_dispatch', only: 'sdk', prLookupError: 'HTTP 502' }),
+  };
+
+  test('POSITIVE CONTROL: the lanes the table claims to cover are the ones it covers', () => {
+    assert.equal(NOT_NARROWED['pull_request, release lane'].lane, 'release');
+    assert.equal(NOT_NARROWED['push, tree already tested'].lane, 'tree-already-tested');
+    assert.equal(NOT_NARROWED['dispatch, only=starter'].lane, 'only');
+    assert.equal(decide({ event: 'workflow_dispatch', only: 'sdk', openPrsAtSha: [] }).lane, 'only');
+  });
+
+  test('a job a lane can skip carries a static name (a skipped job\'s name expression is never evaluated)', () => {
+    for (const job of parseJobs(text)) {
+      if (job.id === 'starter') {
+        assert.equal(job.name, STARTER_NAME);
+        assert.equal(job.if, '${{ !cancelled() }}', 'Starter must never be lane-skipped, or its name is written unevaluated');
+        continue;
+      }
+      assert.ok(!(job.name ?? '').includes('${{'), `job \`${job.id}\` has an expression name: ${job.name}`);
     }
+  });
+
+  for (const [label, d] of Object.entries(NOT_NARROWED)) {
+    test(`${label}: every required context is reported under its exact name`, () => {
+      assert.equal(d.namePrefix, '', label);
+      const names = new Set(namesFor(text, d));
+      assert.deepEqual(REQUIRED_CONTEXTS.filter((c) => !names.has(c)), [], label);
+    });
+  }
+
+  test('a narrowed dispatch: the guard-only Starter legs write no required context, under a visible prefix', () => {
+    for (const only of Object.keys(JOBS).filter((id) => id !== 'starter')) {
+      const d = decide({ event: 'workflow_dispatch', only, openPrsAtSha: [] });
+      assert.equal(d.lane, 'only', only);
+      assert.equal(d.jobs.starter, false, only);
+      const starter = reportedNames(parseJobs(text).find((j) => j.id === 'starter'), d.namePrefix);
+      assert.deepEqual(starter.filter((n) => REQUIRED_CONTEXTS.includes(n)), [], only);
+      assert.deepEqual(starter, ['next-app', 'sveltekit-app', 'react-pwa', 'svelte-pwa', 'civitai-block-starter'].map((s) => `[only ${only}] Starter (${s})`));
+    }
+    assert.equal(narrowedNamePrefix('sdk'), '[only sdk] ');
+  });
+
+  test('NEGATIVE CONTROLS: a static Starter name, a renamed required job, an expression on a skippable job', () => {
+    const once = (from, to) => {
+      assert.equal(text.split(from).length - 1, 1, `control anchor occurs ${text.split(from).length - 1} times: ${from}`);
+      return text.replace(from, to);
+    };
+    const narrowed = decide({ event: 'workflow_dispatch', only: 'sdk', openPrsAtSha: [] });
+    // Back to the static name: the narrowed run's guard-only legs claim the required contexts.
+    const staticStarter = once(`    name: ${STARTER_NAME}\n`, '    name: Starter\n');
+    assert.ok(namesFor(staticStarter, narrowed).includes('Starter (next-app)'));
+    // A required job renamed: its context goes missing on pull_request.
+    const renamed = once('    name: Packaging (shipped sourcemaps)\n', '    name: Packaging\n');
+    assert.ok(!namesFor(renamed, NOT_NARROWED['pull_request, full lane']).includes('Packaging (shipped sourcemaps)'));
+    // An expression name on a lane-skippable job is caught by the static-name rule.
+    const expr = once('    name: SDK (typecheck + test + build)\n', "    name: ${{ format('{0}SDK (typecheck + test + build)', needs.lanes.outputs.name-prefix) }}\n");
+    assert.ok(parseJobs(expr).some((j) => j.id === 'sdk' && j.name.includes('${{')));
+    // An expression the evaluator does not know is reported, never guessed.
+    const odd = once(`    name: ${STARTER_NAME}\n`, "    name: ${{ matrix.starter }}\n");
+    assert.ok(namesFor(odd, narrowed).some((n) => n.startsWith('UNEVALUABLE')));
   });
 });
 
