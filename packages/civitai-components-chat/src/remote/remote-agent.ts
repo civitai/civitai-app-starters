@@ -225,6 +225,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     if (store.editUserTurn) store.editUserTurn(turn, content);
     else editTurn(conversation, turn, content, new Date().toISOString());
     this.#edited = turn;
+    // A start of this turn given up on kept its key for Retry; that key names the run of the OLD
+    // message, so a Retry of the edit asking with it would get that run back and drop the edit.
+    this.#unanswered.delete(turn);
     await this.#start(conversation.id, turn, false);
   }
 
