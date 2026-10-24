@@ -865,6 +865,26 @@ export declare class SubmissionUnconfirmedError extends CivitaiError {
     constructor(snapshot: BlockWorkflowSnapshot | undefined);
 }
 
+/**
+ * The price an {@link WorkflowsClient.estimate} reply quotes, in whole Buzz, or
+ * `null` when it quotes none.
+ *
+ * An estimate is priced when its `status` is not `'failed'` AND it carries a
+ * numeric `cost.total`. That is the whole rule, and it is the one to branch on:
+ * - Do not require `'succeeded'`. Nothing runs on an estimate, so a priced one
+ *   comes back with a status that has not finished (`'pending'` in practice),
+ *   and a check for `'succeeded'` reads every price as missing.
+ * - `0` is a price.
+ * - A `'failed'` snapshot is never priced, even one carrying a `cost.total`: a
+ *   budget refusal carries the total it would not charge.
+ * - A snapshot with no numeric `cost.total` is not priced, whatever its status.
+ *
+ * `null` does not predict a refused {@link WorkflowsClient.submit}: a body the
+ * host cannot price can still be submitted. Read `error` / `errorCode` on the
+ * snapshot for why.
+ */
+export declare function estimatedCost(snapshot: Pick<BlockWorkflowSnapshot, 'status' | 'cost'>): number | null;
+
 export interface WorkflowCallOptions {
     signal?: AbortSignal;
 }
@@ -945,6 +965,16 @@ export interface WorkflowsClient {
      * The price is `snapshot.cost.total`. A refused estimate resolves with
      * `status: 'failed'` and no `cost`; a body the host cannot price fails this
      * way without that predicting a refused {@link WorkflowsClient.submit}.
+     *
+     * 🔴 DO NOT REQUIRE `'succeeded'`. Nothing runs on an estimate, so a priced
+     * one comes back with a status that has not finished (`'pending'` in
+     * practice). Read the price with {@link estimatedCost}, which is `null`
+     * exactly when there is none to show:
+     *
+     * ```ts
+     * const price = estimatedCost(await app.workflows.estimate(body));
+     * if (price === null) showMessage('This generation could not be priced.');
+     * ```
      */
     estimate(body: WorkflowBody, opts?: WorkflowCallOptions): Promise<BlockWorkflowSnapshot>;
     /**

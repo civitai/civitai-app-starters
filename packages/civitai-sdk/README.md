@@ -559,7 +559,7 @@ A `kind: 'workflow'` body runs several steps as **one** workflow, and a later
 step can consume an earlier step's result through a `{ $ref, path }` reference:
 
 ```ts
-import { initialize, type WorkflowBody } from '@civitai/sdk';
+import { estimatedCost, initialize, type WorkflowBody } from '@civitai/sdk';
 
 const app = await initialize();
 
@@ -587,11 +587,13 @@ const body: WorkflowBody = {
 
 // 1. Price it. Nothing is charged or reserved.
 const estimate = await app.workflows.estimate(body);
-if (estimate.status === 'failed') {
+// A priced estimate is not 'succeeded' ('pending' in practice): read the price, not the status.
+const price = estimatedCost(estimate);
+if (price === null) {
   // A refusal RESOLVES — see below.
   throw new Error(estimate.error ?? 'This workflow could not be priced.');
 }
-if (!(await confirmSpend(estimate.cost?.total))) throw new Error('Not confirmed.');
+if (!(await confirmSpend(price))) throw new Error('Not confirmed.');
 
 // 2. Run it. One key per press of the button, reused on every retry.
 const idempotencyKey = crypto.randomUUID();
@@ -617,7 +619,7 @@ submitted. `app.workflows` has no call for that confirmation step.
 
 | Call | Does |
 |---|---|
-| `estimate(body)` | Prices the body. `snapshot.cost.total` is whole Buzz |
+| `estimate(body)` | Prices the body. `estimatedCost(snapshot)` is the price in whole Buzz, or `null` when there is none |
 | `submit(body, { idempotencyKey })` | Runs it, spending the viewer's Buzz |
 | `get(workflowId)` | The workflow as it stands now |
 | `watch(workflowId)` | An async iterator: the workflow now, then each time it changes, until a final status |
@@ -633,12 +635,18 @@ branch on the snapshot rather than wrapping the call in `try`:
 
 ```ts
 const estimate = await app.workflows.estimate(body);
-if (estimate.status === 'failed') {
+if (estimatedCost(estimate) === null) {
   estimate.error; // a sentence for the viewer, e.g. which step is at fault
   estimate.errorCode; // a stable code to branch on, when the refusal defines one
-  estimate.cost; // absent: nothing was priced
 }
 ```
+
+`estimatedCost` is the check to use: the price when the estimate has one, else
+`null`. An estimate is priced when its `status` is not `'failed'` and it carries
+a numeric `cost.total`. 🔴 **Do not require `'succeeded'`**: nothing runs on an
+estimate, so a priced one comes back with a status that has not finished
+(`'pending'` in practice), and a check for `'succeeded'` treats every price as
+missing. `0` is a price.
 
 Three things follow from that shape:
 

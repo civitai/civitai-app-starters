@@ -248,13 +248,19 @@ separate.
       if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
 
       // 1. Price it. Nothing is charged or reserved. A refusal RESOLVES, with no `cost`.
+      // 🔴 A priced estimate is not 'succeeded' ('pending' in practice): never require it.
+      // Priced = status is not 'failed' AND cost.total is a number (0 is a price).
+      // `estimatedCost(estimate)` from '@civitai/sdk' is this same check, in the
+      // SDK versions that export it.
       const estimate = await app.workflows.estimate(workflowBody);
-      if (estimate.status === 'failed') {
+      const price =
+        estimate.status !== 'failed' && typeof estimate.cost?.total === 'number' ? estimate.cost.total : null;
+      if (price === null) {
         console.warn('estimate refused:', estimate.errorCode, estimate.error); // server text: log it, never render it
         showMessage('This generation could not be priced.');
         return;
       }
-      if (!(await confirmSpend(estimate.cost?.total))) return; // the viewer said no: nothing was sent
+      if (!(await confirmSpend(price))) return; // the viewer said no: nothing was sent
 
       // 2. ONE key for this press, minted outside the retry loop.
       const idempotencyKey = crypto.randomUUID();
