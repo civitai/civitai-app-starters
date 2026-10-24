@@ -618,6 +618,28 @@ shows none, since the built-in ones are about making things on Civitai. It takes
 `wantsFile` opens no picker there. Slot `welcome` replaces the whole greeting
 instead, examples included, and then clicking does nothing the page does not wire itself.
 
+### The page's own content in the chat
+
+Two slots put the page's own content inside the chat, as light-DOM children of the element:
+
+```html
+<civitai-chat>
+  <div slot="composer-top">Your app is paused. <button>Start app</button></div>
+  <div slot="thread-end"><!-- e.g. a card asking the viewer to choose something --></div>
+</civitai-chat>
+```
+
+- `composer-top` sits just above the message box, at its width (below any "This message was not
+  sent" notice). Use it for something about what the chat is working on right now.
+- `thread-end` sits after the last message, inside the thread's scroll, at the messages' width. It
+  stays after the newest message as the conversation grows. Content put in it is brought into view,
+  even when the viewer had scrolled back; content that grows while the viewer is at the end stays in
+  view. With no messages yet it shows under the greeting, scrolling with it.
+
+Both take no space with nothing slotted. The page styles its content itself: it is in the page's
+DOM, so the page's own stylesheet applies. Neither shows before the chat has started or while it is
+signed out, and `thread-end` does not show while a saved chat is opening.
+
 ### Gating tool calls
 
 `beforeToolCall` and the `tool-result` event let a page decide on, and watch, every tool call the

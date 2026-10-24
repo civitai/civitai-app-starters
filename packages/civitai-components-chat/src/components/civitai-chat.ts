@@ -2020,6 +2020,7 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
+                  thread-end
                   .examples=${this.examples}
                   @cvt-example=${(e: CustomEvent<ChatExample>) =>
                     void this.#composer().then((composer) => {
@@ -2040,6 +2041,7 @@ export class CivitaiChat extends LitElement {
               <civitai-button size="sm" variant="subtle" @click=${() => this.#dismissUnsent(unsent)}>Dismiss</civitai-button>
             </civitai-alert>`,
           )}
+          <slot name="composer-top" class="cvt-composer-top"></slot>
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

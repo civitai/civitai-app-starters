@@ -21,11 +21,15 @@ export const EXAMPLES: Example[] = [
   { title: 'Say it out loud', prompt: 'Read "Welcome aboard!" in a warm, friendly voice' },
 ];
 
+/** As the thread's: this close to the end counts as at the end. */
+const NEAR_END_PX = 48;
+
 export class CivitaiChatWelcome extends LightElement {
   static override properties: PropertyDeclarations = {
     userName: {},
     plain: { type: Boolean },
     examples: { attribute: false },
+    threadEnd: { type: Boolean, attribute: 'thread-end' },
   };
 
   declare userName: string;
@@ -36,12 +40,61 @@ export class CivitaiChatWelcome extends LightElement {
   declare plain: boolean;
   /** The page's own examples in place of {@link EXAMPLES}; an empty list shows none. */
   declare examples?: readonly Example[];
+  /**
+   * Shows the page's `thread-end` slot under the greeting, in the greeting's own scroll, as a chat
+   * with messages shows it after the last one.
+   */
+  declare threadEnd: boolean;
 
   constructor() {
     super();
     this.userName = '';
     this.plain = false;
+    this.threadEnd = false;
   }
+
+  // The greeting is its own scroll. Content in thread-end that grows while the viewer is at the end
+  // is followed, as the thread follows it once there are messages.
+  #atEnd = true;
+  #endSlot?: HTMLSlotElement;
+  // Only for content the page put there: the empty slot's own first size report must not scroll.
+  #resize = new ResizeObserver(() => {
+    if (this.#atEnd && this.#endSlot?.assignedElements({ flatten: true }).length) this.scrollTop = this.scrollHeight;
+  });
+  #onScroll = (): void => {
+    this.#atEnd = this.scrollHeight - this.scrollTop - this.clientHeight < NEAR_END_PX;
+  };
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.addEventListener('scroll', this.#onScroll);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.removeEventListener('scroll', this.#onScroll);
+    this.#resize.disconnect();
+    this.#endSlot = undefined;
+  }
+
+  protected override updated(): void {
+    const slot = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]') ?? undefined;
+    if (slot === this.#endSlot) return;
+    if (this.#endSlot) this.#resize.unobserve(this.#endSlot);
+    this.#endSlot = slot;
+    if (slot) this.#resize.observe(slot);
+  }
+
+  #end(): TemplateResult | typeof nothing {
+    return this.threadEnd
+      ? html`<slot name="thread-end" class="cvt-thread-end" @slotchange=${this.#onEndChange}></slot>`
+      : nothing;
+  }
+
+  // Brought into view as it is after the last message.
+  #onEndChange = (event: Event): void => {
+    if ((event.target as HTMLSlotElement).assignedElements({ flatten: true }).length) this.scrollTop = this.scrollHeight;
+  };
 
   #examples(examples: readonly Example[]): TemplateResult | typeof nothing {
     return examples.length
@@ -64,13 +117,13 @@ export class CivitaiChatWelcome extends LightElement {
         <h1>${this.userName ? `Hi ${this.userName}, how can I help?` : 'How can I help?'}</h1>
         <p>Ask in your own words.</p>
         ${this.#examples(this.examples ?? [])}
-      </div></slot>`;
+      </div></slot>${this.#end()}`;
     }
     return html`<slot name="welcome"><div class="cvt-welcome-inner">
       <h1>${this.userName ? `Hi ${this.userName}, what shall we make?` : 'What shall we make?'}</h1>
       <p>Describe what you want in your own words. Add your own photos, videos or audio with the + button, or drop them here.</p>
       ${this.#examples(this.examples ?? EXAMPLES)}
       <p class="cvt-fineprint">Making things spends Buzz from your Civitai account; you'll see the price first. Chats are kept for ${RETENTION_DAYS} days.</p>
-    </div></slot>`;
+    </div></slot>${this.#end()}`;
   }
 }
