@@ -39,7 +39,7 @@ function head(turn: { content: string; reply: ModelMessage[] }): Workflow {
   });
 }
 
-function setup(features?: unknown) {
+function setup(features?: unknown, reconnectDelaysMs: readonly number[] = [0]) {
   const runner = fakeRunner();
   if (features !== undefined) runner.knobs.features = features;
   const heads: Workflow[] = [head({ content: ORIGINAL, reply: ORIGINAL_REPLY })];
@@ -56,7 +56,7 @@ function setup(features?: unknown) {
   });
   let keys = 0;
   const agent = new RemoteAgent({
-    client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs: [0] }),
+    client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, reconnectDelaysMs }),
     store,
     model: () => 'model-a',
     settings: () => SETTINGS,
@@ -72,8 +72,8 @@ function setup(features?: unknown) {
 }
 
 /** Opens the saved chat and looks for a run in it, as the page does on opening a chat. */
-async function opened(features?: unknown) {
-  const made = setup(features);
+async function opened(features?: unknown, reconnectDelaysMs?: readonly number[]) {
+  const made = setup(features, reconnectDelaysMs);
   await made.store.open('c1');
   await made.agent.reattach('c1');
   return made;
@@ -186,5 +186,36 @@ describe('RemoteAgent edit', () => {
     void agent.retry();
     await vi.waitFor(() => expect(starts()).toHaveLength(3));
     expect(starts()[2]!.turn).toEqual({ seq: 1, user: { content: EDITED, attachments: [] }, retry: true });
+  });
+
+  it('an edit of a turn whose start was given up on asks with a fresh key, so Retry never brings back the run of the old message', async () => {
+    // A first wait longer than START_GIVE_UP_MS: a start that gets no answer is given up at once.
+    const { agent, runner, store, starts } = await opened(['edit'], [61_000]);
+    // The next message reaches the runner (its run r1 starts, with key-1) but the answer is lost: given
+    // up with Retry, and its key kept so a Retry finds r1 rather than being refused as run-active.
+    runner.knobs.refuseConcurrent = true;
+    runner.knobs.loseStartAnswers = 1;
+    await agent.send(ORIGINAL);
+    const turn = store.current!.turns.at(-1)!;
+    await vi.waitFor(() => expect(turn.assistant.status).toBe('error'));
+    expect(starts().map((start) => start.idempotencyKey)).toEqual(['key-1']);
+    expect(runner.runs.get('r1')!.live).toBe(true);
+
+    // The viewer edits that message instead: the runner refuses it while r1 runs.
+    await agent.edit(EDITED);
+    await vi.waitFor(() => expect(starts()).toHaveLength(2));
+    expect(starts()[1]).toMatchObject({ idempotencyKey: 'key-2', turn: { user: { content: EDITED }, edit: true } });
+    expect(turn.assistant.status).toBe('error');
+
+    // Retry asks for the edit again, never with key-1: that key is r1's, the run of the OLD message, and
+    // the runner would answer with it, dropping the edit without a word.
+    void agent.retry();
+    await vi.waitFor(() => expect(starts()).toHaveLength(3));
+    expect(starts()[2]).toMatchObject({ turn: { user: { content: EDITED }, edit: true } });
+    expect(starts()[2]!.idempotencyKey).not.toBe('key-1');
+    await vi.waitFor(() => expect(agent.running).toBe(false));
+    expect(runner.openStreams('r1')).toBe(0);
+    expect(runner.runs.size).toBe(1);
+    agent.leave();
   });
 });
