@@ -138,6 +138,8 @@ export class CivitaiChatTurn extends LightElement {
   #draft = '';
   /** The returned edit already reopened. */
   #returned: { seq: number; text: string } | undefined;
+  /** The save waiting for the chat's answer (`done`). */
+  #save: object | undefined;
   /** Where focus goes once the edit box is drawn or gone. */
   #focusNext: 'editor' | 'edit-button' | undefined;
 
@@ -168,7 +170,12 @@ export class CivitaiChatTurn extends LightElement {
     if (!this.editing || !this.#canSave()) return;
     this.saving = true;
     const text = this.#draft;
+    const save = {};
+    this.#save = save;
     const done = (sent: boolean) => {
+      // An answer for a save the box has moved on from (its edit came back meanwhile) changes nothing.
+      if (this.#save !== save) return;
+      this.#save = undefined;
       this.saving = false;
       if (sent) this.editing = false;
     };
@@ -344,6 +351,9 @@ export class CivitaiChatTurn extends LightElement {
     if (back && back !== this.#returned && this.canEdit) {
       this.#returned = back;
       this.#draft = back.text;
+      // A save still waiting for its answer is over: its edit is this one, come back.
+      this.#save = undefined;
+      this.saving = false;
       this.editing = true;
       this.#focusNext = 'editor';
       // Taken: the chat lets go of it, so it never opens again (another chat, a later visit).

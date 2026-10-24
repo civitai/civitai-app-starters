@@ -308,6 +308,20 @@ describe('Edit on the latest message', () => {
     expect(asked).toHaveLength(2);
   });
 
+  it('an edit the page queues and gives back at once, before Save has its answer, stays open with the words', async () => {
+    const { chat, asked } = await twoExchanges();
+    chat.addEventListener('before-send', (event) => {
+      (event as CustomEvent<BeforeSendDetail>).detail.queue('Waking your app…').cancel();
+    });
+    await editTo(chat, EDITED);
+    saveButton(chat)!.click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => expect(editor(chat)?.value).toBe(EDITED));
+    expect(saveButton(chat)!.hasAttribute('loading')).toBe(false);
+    expect(chat.draft).toBe('');
+    expect(asked).toHaveLength(2);
+  });
+
   it('a returned edit opens its edit box once: not again when the chat is opened again', async () => {
     const { chat, store } = await twoExchanges();
     let waiting: QueuedMessage | undefined;
@@ -317,6 +331,7 @@ describe('Edit on the latest message', () => {
     await editTo(chat, EDITED);
     saveButton(chat)!.click();
     await vi.waitFor(() => expect(waiting).toBeDefined());
+    await vi.waitFor(() => expect(editor(chat)).toBeNull());
     waiting!.cancel();
     await vi.waitFor(() => expect(editor(chat)?.value).toBe(EDITED));
     cancelButton(chat)!.click();
