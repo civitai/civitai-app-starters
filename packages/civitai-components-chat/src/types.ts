@@ -207,6 +207,8 @@ export interface Settings {
   lastConversationId?: string;
   /** Top up the chat balance by itself when a reply finds it empty. */
   autoTopUp?: boolean;
+  /** Lets a chat pick a premium model (one Civitai routes to another provider); off, every chat uses the default. */
+  premiumModels?: boolean;
 }
 
 export interface ModelRecommendation {

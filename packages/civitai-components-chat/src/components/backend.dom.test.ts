@@ -500,6 +500,7 @@ describe('<civitai-chat> without a backend (the default)', () => {
   });
 
   it("says /model applies until reload when the orchestrator could not save the chat's model, and switches it", async () => {
+    localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     // Every orchestrator route but the model answers 404, so saving the model on the chat's head fails.
     spyOnRequests();
@@ -535,6 +536,7 @@ describe('<civitai-chat> without a backend (the default)', () => {
     expect(composer.voice).toBe(true);
     expect(composer.noFiles).toBe(false);
     expect(composer.querySelector('[aria-label="Add a photo, video or audio file"]')).not.toBeNull();
-    expect(root(chat).querySelector('civitai-chat-model-picker')).not.toBeNull();
+    // Premium models are off until the viewer turns them on in Settings.
+    expect(root(chat).querySelector('civitai-chat-model-picker')).toBeNull();
   });
 });
