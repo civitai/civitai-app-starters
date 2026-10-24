@@ -26,9 +26,9 @@ import { createDocumentStorage, type DocumentStorage } from './index.js';
  * Moderation is the server's ENFORCE mode, which the contract's moderation cases
  * describe: a hit refuses `content_rejected` and a scanner outage
  * `moderation_unavailable`. The host picks each app's shared-data moderation mode,
- * and in `shadow` (the scan runs after the write) or `off` (no scan) neither a hit nor
- * an outage refuses the write. The fake has no mode of its own: `moderate: () => null`
- * is what a shadow or off app sees.
+ * and enforce is not its default: in `shadow` (the scan runs after the write) or `off`
+ * (no scan) neither a hit nor an outage refuses the write. The fake has no mode of its
+ * own: `moderate: () => null` is what a shadow or off app sees.
  *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview

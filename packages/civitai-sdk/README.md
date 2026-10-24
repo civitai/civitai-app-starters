@@ -1048,9 +1048,11 @@ Where it differs from the server on purpose:
 `consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom
 `moderate`; by default the scanner refuses the words in `FAKE_STORAGE_MODERATION`.
 That default is the server's enforced moderation. The host picks each app's
-moderation mode for shared data, and where it runs in shadow (scanned after the
-write) or is off, neither a hit nor a scanner outage refuses a write. Pass
-`moderate: () => null` to test an app that runs that way. The fake does not model
+moderation mode for shared data, and enforce is not the default there: expect
+shadow (scanned after the write) or off, where neither a hit nor a scanner outage
+refuses a write. So never rely on a refusal to keep content out of shared data:
+a write the fake refuses may land on the server, and other viewers read it. Pass
+`moderate: () => null` to test what such an app sees. The fake does not model
 moderator hides or the review-preview namespace, and at the `Http` seam there is no
 URL resolution — the client refuses the segments a URL would
 rewrite (`''`, `.`, `..`) before sending.
