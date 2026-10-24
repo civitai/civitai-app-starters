@@ -405,7 +405,8 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)`
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
-in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
+in an empty message box (not while the viewer is `dictating`: what they say would be joined onto
+it, so the box is left alone); while a reply is still running it sends nothing. It fires `before-send`
 like a typed message. `canSend` says whether it would send now, and `can-send-change` when that
 changes: see [When a message can go](#when-a-message-can-go).
 
