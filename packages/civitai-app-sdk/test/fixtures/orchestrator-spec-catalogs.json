@@ -18,11 +18,13 @@
     ".discriminator.mapping."
   ],
   "specUrl": "https://orchestration.civitai.com/openapi/v2-consumers.json",
-  "readOn": "2026-10-16",
+  "readOn": "2026-10-24",
   "workflowStepTypes": [
     "aceStepAudio",
     "ageClassification",
+    "archiveExtraction",
     "audioCaptioning",
+    "audioModeration",
     "blobArchive",
     "chatCompletion",
     "comfy",
@@ -50,6 +52,7 @@
     "modelHash",
     "modelParseMetadata",
     "modelPickleScan",
+    "multimodalEmbedding",
     "polyGen",
     "preprocessImage",
     "preprocessVideo",

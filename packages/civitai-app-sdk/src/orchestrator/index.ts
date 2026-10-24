@@ -217,6 +217,14 @@ export const WORKFLOW_STEP_TYPES = {
   imageScanning: 'Unified image moderation scan (NSFW level, AI/anime recognition, tagging, age detection)',
   /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
   shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
+  /**
+   * Transcribe the audio at `mediaUrl` and classify the lyrics for sexualized
+   * minors. `transcriber` is `auto`, `aceStep` or `asr`; `auto` sends speech in
+   * a supported language to ASR and everything else to ACE-Step. The output
+   * carries the `lyrics`, a `score`, `sexualizedMinors` and `blocked`, plus
+   * `hasAudio` and a `skippedReason`.
+   */
+  audioModeration: 'Audio moderation — transcribe lyrics and flag sexualized minors',
   /** ClamAV scan a model file for malware. */
   modelClamScan: 'Antivirus scan a model file',
   /** Pickle-scan a model file for unsafe pickles. */
@@ -229,6 +237,13 @@ export const WORKFLOW_STEP_TYPES = {
   chatCompletion: 'LLM chat completion',
   /** Generate a richer prompt from a short seed prompt. */
   promptEnhancement: 'Prompt expansion via LLM',
+  /**
+   * Embed 1–128 `inputs` (each a unique `id` carrying `text`, an `imageUrl` or
+   * a `videoUrl` of at most 60 s / 100 MiB, audio ignored) into normalized
+   * vectors with `wemm-2b`. `dimensions` is 64–2048 in powers of two, default
+   * 256.
+   */
+  multimodalEmbedding: 'Text / image / video embeddings (wemm-2b)',
 
   // ----- Web ---------------------------------------------------------------
   /**
@@ -253,6 +268,13 @@ export const WORKFLOW_STEP_TYPES = {
   echo: 'Echo step — round-trip the input for testing',
   /** Package multiple blobs into a zip archive. */
   blobArchive: 'Zip multiple blobs into an archive',
+  /**
+   * Unpack a `.zip`, `.tar` or `.tar.gz` at `sourceUrl`. `mediaTypes` limits
+   * which kinds of entry are extracted (default all) and `maxEntries` caps the
+   * count (1–2000, default 2000); anything filtered or over the cap comes back
+   * in `rejected` rather than failing the step. `entries` are in archive order.
+   */
+  archiveExtraction: 'Extract the entries of a zip / tar / tar.gz archive',
   /** Combine fields from earlier steps' outputs into a single result. */
   merge: "Merge — combine fields from earlier steps' outputs into one result",
 
@@ -306,21 +328,20 @@ export const IMAGE_GEN_ENGINES = {
    * workers) — picking this engine pins the first-party vendor path.
    */
   krea: 'Krea (Krea 2, first-party API)',
+  /**
+   * Krea 3: text-to-image, or an edit of up to six `images`. `resolution` is
+   * `1k` or `2k` (default `2k`), `thinkingMode` is `instant` / `medium` /
+   * `ultra`, and `quantity` is capped at 4. Omit `aspectRatio` to let Krea
+   * choose. Note the spec marks `images` required (no minimum length) while
+   * its own description says to omit it for text-to-image.
+   */
+  krea3: 'Krea 3 (generation and editing, 1K / 2K)',
   /** Self-hosted SDCpp (stable-diffusion.cpp) gen. */
   sdcpp: 'SDCpp (self-hosted diffusion)',
   /** fal.ai routed gen. */
   fal: 'fal.ai',
   /** Comfy graph as an imageGen step (vs. the top-level `comfy` step). */
   comfy: 'Comfy (engine-style)',
-  // ----- Auto-added 2026-10-16 from the orchestrator spec ----------------------
-  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
-  // these and this catalog did not list them. MOVE each entry into the right
-  // section above, and replace any TODO(catalog) line with a real one-line
-  // description — `pnpm check:catalogs` names every placeholder that is left.
-  // (That check is advisory, so it will not stop this merging. It is a
-  // reminder, not a gate.)
-  /** Description taken verbatim from the spec's engine schema — confirm it reads well here. */
-  krea3: "Krea 3 generation and editing at 1K or 2K.",
 } as const;
 
 export type ImageGenEngine = keyof typeof IMAGE_GEN_ENGINES;
