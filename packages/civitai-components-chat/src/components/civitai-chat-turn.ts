@@ -40,6 +40,10 @@ export class CivitaiChatTurn extends LightElement {
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     latest: { type: Boolean },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    canEdit: { type: Boolean, attribute: 'can-edit' },
+    returnedEdit: { attribute: false },
+    editing: { state: true },
+    saving: { state: true },
     jobs: { attribute: false },
     posts: { attribute: false },
     panels: { attribute: false },
@@ -66,6 +70,17 @@ export class CivitaiChatTurn extends LightElement {
   declare latest: boolean;
   /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
   declare canRetry: boolean;
+  /**
+   * The viewer's message can be edited: it is the latest, and no reply runs. Its Edit shows; Save sends
+   * only while the chat can send (`canRetry`).
+   */
+  declare canEdit: boolean;
+  /** An edit of this message that waited and came back: the edit box reopens with its words, once per object. */
+  declare returnedEdit: { seq: number; text: string } | undefined;
+  /** The message is being edited: a box with its words in place of its bubble. */
+  declare editing: boolean;
+  /** Save was pressed and the chat has not yet said whether the edit went. */
+  declare saving: boolean;
   declare jobs: JobManager;
   declare posts: PostManager;
   declare panels?: PanelManager;
@@ -110,10 +125,95 @@ export class CivitaiChatTurn extends LightElement {
     this.awaitingApproval = false;
     this.latest = false;
     this.canRetry = false;
+    this.canEdit = false;
+    this.editing = false;
+    this.saving = false;
     this.files = () => [];
     this.views = {};
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
+  }
+
+  /** The words in the edit box. */
+  #draft = '';
+  /** The returned edit already reopened. */
+  #returned: { seq: number; text: string } | undefined;
+  /** The save waiting for the chat's answer (`done`). */
+  #save: object | undefined;
+  /** Where focus goes once the edit box is drawn or gone. */
+  #focusNext: 'editor' | 'edit-button' | undefined;
+
+  #startEdit(): void {
+    if (!this.canEdit || this.editing) return;
+    this.#draft = this.turn.user.content;
+    this.editing = true;
+    this.#focusNext = 'editor';
+  }
+
+  #cancelEdit(): void {
+    if (!this.editing) return;
+    this.editing = false;
+    this.saving = false;
+    this.#focusNext = 'edit-button';
+  }
+
+  /** Whether the edit can go now: the chat can send, and the message would not be empty (it may be files only). */
+  #canSave(): boolean {
+    return this.canRetry && !this.saving && (this.#draft.trim() !== '' || this.#userFiles().length > 0);
+  }
+
+  /**
+   * Save: the chat sends the edited message (`cvt-edit`) and says whether it went (`done`). The box stays
+   * until then, and stays open with the words when it did not go.
+   */
+  #saveEdit(): void {
+    if (!this.editing || !this.#canSave()) return;
+    this.saving = true;
+    const text = this.#draft;
+    const save = {};
+    this.#save = save;
+    const done = (sent: boolean) => {
+      // An answer for a save the box has moved on from (its edit came back meanwhile) changes nothing.
+      if (this.#save !== save) return;
+      this.#save = undefined;
+      this.saving = false;
+      if (sent) this.editing = false;
+    };
+    emit(this, 'cvt-edit', { text, done });
+  }
+
+  #onEditKey(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#cancelEdit();
+      return;
+    }
+    // Enter saves, Shift+Enter is a new line; not while an input method is composing a word.
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      this.#saveEdit();
+    }
+  }
+
+  #editor(): TemplateResult {
+    return html`<div class="cvt-user-editor" role="group" aria-label="Edit your message">
+      <textarea
+        aria-label="Your message"
+        aria-describedby="cvt-edit-hint-${this.turn.seq}"
+        .value=${this.#draft}
+        @input=${(event: Event) => {
+          this.#draft = (event.target as HTMLTextAreaElement).value;
+          this.requestUpdate();
+        }}
+        @keydown=${(event: KeyboardEvent) => this.#onEditKey(event)}
+      ></textarea>
+      <div class="cvt-user-editor-actions">
+        <span id="cvt-edit-hint-${this.turn.seq}" class="cvt-hint">Enter to save, Escape to cancel</span>
+        <civitai-button class="cvt-edit-cancel" size="sm" variant="subtle" @click=${() => this.#cancelEdit()}>Cancel</civitai-button>
+        <civitai-button class="cvt-edit-save" size="sm" ?disabled=${!this.#canSave()} ?loading=${this.saving} @click=${() => this.#saveEdit()}>Save</civitai-button>
+      </div>
+    </div>`;
   }
 
   #userFiles(): StripItem[] {
@@ -247,12 +347,27 @@ export class CivitaiChatTurn extends LightElement {
 
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
+    const back = this.returnedEdit;
+    if (back && back !== this.#returned && this.canEdit) {
+      this.#returned = back;
+      this.#draft = back.text;
+      // A save still waiting for its answer is over: its edit is this one, come back.
+      this.#save = undefined;
+      this.saving = false;
+      this.editing = true;
+      this.#focusNext = 'editor';
+      // Taken: the chat lets go of it, so it never opens again (another chat, a later visit).
+      emit(this, 'cvt-edit-returned');
+    }
+    // A reply started, or a newer message came: the edit can no longer go, so its box goes.
+    if (this.editing && !this.canEdit && !this.saving) this.editing = false;
     if (!this.live) this.#liveSince = undefined;
     else this.#liveSince ??= Date.now();
   }
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    this.#moveFocus();
     clearTimeout(this.#liveTimer);
     const state = this.latest && !this.live ? replyElsewhere(this.turn) : undefined;
     // Drawn live before and gone now: the chat reads itself once more, as the reply may have ended or
@@ -272,6 +387,17 @@ export class CivitaiChatTurn extends LightElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     clearTimeout(this.#liveTimer);
+  }
+
+  /** Into the edit box as it opens (at the end of its words); back on Edit once it is cancelled. */
+  #moveFocus(): void {
+    const next = this.#focusNext;
+    this.#focusNext = undefined;
+    if (next === 'editor') {
+      const area = this.querySelector<HTMLTextAreaElement>('.cvt-user-editor textarea');
+      area?.focus();
+      area?.setSelectionRange(area.value.length, area.value.length);
+    } else if (next === 'edit-button') this.querySelector<HTMLButtonElement>('.cvt-edit-button')?.focus();
   }
 
   #footer(): TemplateResult | typeof nothing {
@@ -339,7 +465,10 @@ export class CivitaiChatTurn extends LightElement {
     const files = this.#userFiles();
     return html`<div class="cvt-user">
         ${files.length ? html`<civitai-chat-attachment-strip size="sm" .items=${files}></civitai-chat-attachment-strip>` : nothing}
-        ${this.turn.user.content ? html`<div class="cvt-bubble">${this.turn.user.content}</div>` : nothing}
+        ${this.editing ? this.#editor() : this.turn.user.content ? html`<div class="cvt-bubble">${this.turn.user.content}</div>` : nothing}
+        ${this.canEdit && !this.editing
+          ? html`<div class="cvt-user-actions"><button class="cvt-edit-button" type="button" aria-label="Edit your message" @click=${() => this.#startEdit()}>Edit</button></div>`
+          : nothing}
       </div>
       <div class="cvt-assistant">
         ${this.#assistantParts()}

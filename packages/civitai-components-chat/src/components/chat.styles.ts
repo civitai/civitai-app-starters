@@ -561,6 +561,75 @@ civitai-chat-turn {
   color: var(--civitai-color-text-dimmed);
 }
 
+/* The latest message's Edit, under its bubble; editing, a box in the bubble's place. */
+.cvt-user-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cvt-edit-button {
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-edit-button:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-edit-button:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-user-editor {
+  display: grid;
+  gap: 8px;
+  /* As wide as a bubble may be, and the whole row in a narrow chat. */
+  width: min(100%, 600px);
+  padding: 10px 12px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 16px;
+  background: var(--civitai-color-surface);
+  box-sizing: border-box;
+}
+
+.cvt-user-editor:focus-within {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-user-editor textarea {
+  width: 100%;
+  min-height: 3em;
+  max-height: 240px;
+  field-sizing: content;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.cvt-user-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cvt-user-editor-actions .cvt-hint {
+  flex: 1 1 120px;
+}
+
 .cvt-unsent {
   display: flex;
   flex-wrap: wrap;

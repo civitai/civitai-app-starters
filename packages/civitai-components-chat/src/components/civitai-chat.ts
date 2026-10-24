@@ -80,6 +80,12 @@ export interface ModelChangeDetail {
  */
 export interface BeforeSendDetail {
   text: string;
+  /**
+   * `true` when the viewer edited their latest message (Edit, then Save): `text` replaces that message,
+   * and its reply is asked for afresh. Cancelled, the edit does not go and the message stays as it was;
+   * queued, it goes as the same edit once released. Absent for a new message.
+   */
+  edit?: boolean;
   queue(waiting?: string): QueuedMessage;
 }
 
@@ -112,6 +118,8 @@ interface Queued extends MessageFiles {
   chatId: string | null;
   /** Set while the page holds it, to the words it gave (maybe `''`); unset once released. */
   held?: string;
+  /** An edit of the viewer's message `edit` (its turn's `seq`), not a new message. */
+  edit?: number;
   timer?: ReturnType<typeof setTimeout>;
   handle: QueuedMessage;
 }
@@ -416,6 +424,11 @@ export class CivitaiChat extends LitElement {
   /** Messages that could not go and could not go back into the box, oldest first. */
   #unsent: Unsent[] = [];
   #unsentIds = 0;
+  /**
+   * An edit that waited and came back: its message's edit box reopens with these words, only in the
+   * chat and session it was written in, and once (the turn says it took it: `cvt-edit-returned`).
+   */
+  #returnedEdit: { seq: number; text: string; chatId: string; start: number } | undefined;
 
   constructor() {
     super();
@@ -552,6 +565,40 @@ export class CivitaiChat extends LitElement {
     // A reply that may still be running in another tab or window is not asked for again: it would be paid twice.
     if (replyElsewhere(turn) === 'live') return undefined;
     return turn;
+  }
+
+  /**
+   * The viewer's latest message when it can be edited now: no reply runs (nor waits to start: a message
+   * on its way or waiting), the reply's runner takes edits (`agent.canEdit`), and its reply is not one
+   * that may still be running in another tab or window.
+   */
+  #editable(session: ChatSession): Turn | undefined {
+    return this.#queued || this.#sendingFor ? undefined : this.#editTarget(session);
+  }
+
+  /** `#editable` but for a message on its way or waiting: for that message itself, an edit, as it goes. */
+  #editTarget(session: ChatSession): Turn | undefined {
+    const turn = session.store.current?.turns.at(-1);
+    if (!turn || session.agent.running || !session.agent.canEdit) return undefined;
+    return replyElsewhere(turn) === 'live' ? undefined : turn;
+  }
+
+  /**
+   * The viewer saved an edit of their latest message: it goes as a send does (`before-send` first, which
+   * may cancel or queue it), replacing that message. `done(true)` once it went or waits to go, else
+   * `done(false)`, and the edit box stays open with the words.
+   */
+  async #saveEdit(text: string, done: (sent: boolean) => void): Promise<void> {
+    const session = this.#session;
+    const turn = session ? this.#editable(session) : undefined;
+    const edit: { seq: number; sent?: boolean } = { seq: turn?.seq ?? 0 };
+    try {
+      if (turn) await this.#send(text, edit);
+    } finally {
+      done(edit.sent === true);
+    }
+    // The box the viewer wrote in is gone: they carry on in the message box.
+    if (edit.sent) this.#composerNow()?.focus();
   }
 
   /** The viewer pressed Retry on the latest reply's error. */
@@ -816,10 +863,11 @@ export class CivitaiChat extends LitElement {
   }
 
   /** Keeps `text` back for the page, shown at once and waiting until it is released or comes back. */
-  #enqueue(session: ChatSession, text: string, files: MessageFiles, held: string): Queued {
+  #enqueue(session: ChatSession, text: string, files: MessageFiles, held: string, edit?: number): Queued {
     const queued: Queued = {
       text,
       ...files,
+      ...(edit !== undefined ? { edit } : {}),
       start: this.#sessionStart,
       source: this.#sessionFor,
       chatId: session.store.current?.id ?? null,
@@ -858,7 +906,25 @@ export class CivitaiChat extends LitElement {
   }
 
   #giveBackQueued(queued: Queued): void {
-    if (this.#unqueue(queued)) this.#returnToViewer(queued.text, queued);
+    if (!this.#unqueue(queued)) return;
+    if (queued.edit !== undefined) this.#giveBackEdit(queued, queued.edit);
+    else this.#returnToViewer(queued.text, queued);
+  }
+
+  /**
+   * An edit that waited and will not go never comes back into the message box, where it would go as a
+   * new message after the one it edits: it reopens that message's edit box with its words while the
+   * message can still be edited, in the chat and session it was written in, and is otherwise dropped
+   * with a notice.
+   */
+  #giveBackEdit(queued: Queued, seq: number): void {
+    const session = this.#session;
+    const chatId = session?.store.current?.id;
+    // Not while a chat opens: the chat it was written in is being left.
+    if (session && chatId && !this.loading && chatId === queued.chatId && queued.start === this.#sessionStart && this.#editTarget(session)?.seq === seq) {
+      this.#returnedEdit = { seq, text: queued.text, chatId, start: queued.start };
+      this.requestUpdate();
+    } else this.#toast('Your edit was not sent.');
   }
 
   /**
@@ -896,6 +962,8 @@ export class CivitaiChat extends LitElement {
   /** Edit: the waiting message goes back into the box, ahead of anything typed there, and does not go. */
   #editQueued(): void {
     const queued = this.#queued;
+    // A waiting edit goes back into its own message's edit box.
+    if (queued?.edit !== undefined) return this.#giveBackQueued(queued);
     const composer = this.#composerNow();
     if (!queued || !composer || !this.#unqueue(queued)) return;
     composer.draft = putBack(queued.text, composer.draft);
@@ -925,6 +993,7 @@ export class CivitaiChat extends LitElement {
    * signed out or someone else signed in, who must never see or send another viewer's words.
    */
   #forgetMessages(): void {
+    this.#returnedEdit = undefined;
     if (this.#queued) this.#unqueue(this.#queued);
     if (this.#unsent.length) {
       this.#unsent = [];
@@ -954,6 +1023,17 @@ export class CivitaiChat extends LitElement {
       return;
     }
     if (queued.held !== undefined || this.#busy(session) || this.#held(session, true) !== undefined) return;
+    if (queued.edit !== undefined) {
+      // An edit goes only onto the message it was written for, still the latest and editable.
+      if (this.#editTarget(session)?.seq !== queued.edit) {
+        queueMicrotask(() => this.#giveBackQueued(queued));
+        return;
+      }
+      this.#unqueue(queued);
+      this.#dropUnsent(queued.text);
+      session.agent.edit(queued.text).catch((error: unknown) => this.#toast('That edit did not go through.', error));
+      return;
+    }
     this.#unqueue(queued);
     this.#dropUnsent(queued.text);
     // The reply starts inside this call, so from here the running reply keeps sends out.
@@ -1592,13 +1672,19 @@ export class CivitaiChat extends LitElement {
    * starting, a server listing its tools, another message on its way or waiting) it is kept in an
    * empty message box, unless the viewer is dictating (`#keepInEmptyBox`). A page whose `before-send` calls `queue()` keeps it back, shown waiting.
    */
-  async #send(text: string): Promise<void> {
+  async #send(text: string, edit?: { seq: number; sent?: boolean }): Promise<void> {
+    // With `edit`, `text` is an edit of the viewer's message `edit.seq` (their latest), not a new
+    // message: it takes none of the message box's files, it is never put into the message box (the
+    // edit box keeps one that cannot go now, and gets back one that waited and will not go:
+    // `#giveBackEdit`), and `edit.sent` is set once it went or waits to go.
     const session = this.#session;
+    if (!session && edit) return;
     if (!session && this.#signsIn) return this.#signInThen(() => this.#send(text), text);
     // With a backend there is no Civitai sign-in to ask for a grant: the host's gateway decides.
     const app = session?.backend ? undefined : this.app;
     if (!session || this.#busy(session)) return;
     if (this.#held(session)) {
+      if (edit) return;
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
       await this.#keepInEmptyBox(text);
       return;
@@ -1616,38 +1702,47 @@ export class CivitaiChat extends LitElement {
       // dropped, never shown to them. The same viewer, whose chat started again: back in their box.
       // (Every new session follows a start, so the count also says the session was replaced.)
       if (this.#starts !== takenFor.start || !this.#source()) {
-        if (this.#source() && this.#source() === takenFor.source) this.giveBack(text);
+        if (this.#source() && this.#source() === takenFor.source && !edit) this.giveBack(text);
         return;
       }
+      if (!granted && edit) return this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
       if (!granted) {
         await this.#keepInEmptyBox(text);
         this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
         return;
       }
+      // The message being edited is no longer the latest one that can be (the grant may have waited on the viewer).
+      if (edit && this.#editTarget(session)?.seq !== edit.seq) return;
       // The last moment before the message goes: a page that cancels it keeps it out of the chat, and
       // the files and earlier results added to it stay for the next message. A page that queues it
       // keeps it back, shown waiting with its files, until it releases it. `queue()` works only while
       // the listener runs (a later call would send the message twice), and once per message.
       let open = true;
       let queued: Queued | undefined;
+      // An edit keeps the message's own files, and leaves the box's for the next message.
+      const takeFiles = (): MessageFiles => (edit ? { uploads: [], refs: [] } : this.#takeFiles());
       const detail: BeforeSendDetail = {
         text,
+        ...(edit ? { edit: true } : {}),
         queue: (waiting?: string) => {
           if (queued) return queued.handle;
           if (!open) throw new Error('queue() is called from the before-send listener itself, before it returns');
-          queued = this.#enqueue(session, text, this.#takeFiles(), waiting ?? '');
+          queued = this.#enqueue(session, text, takeFiles(), waiting ?? '', edit?.seq);
           return queued.handle;
         },
       };
       const go = this.dispatchEvent(new CustomEvent<BeforeSendDetail>('before-send', { detail, bubbles: true, composed: true, cancelable: true }));
       open = false;
+      if (edit) edit.sent = queued !== undefined || go;
       if (queued || !go) return;
-      const { uploads, refs } = this.#takeFiles();
+      const { uploads, refs } = takeFiles();
       this.#dropUnsent(text);
       // The reply starts inside this call, so from here the running reply keeps sends out, not the hold.
-      const sent = session.send(text, uploads, refs.map((ref) => ref.id));
+      const sent = edit ? session.agent.edit(text) : session.send(text, uploads, refs.map((ref) => ref.id));
       this.#sendingFor = undefined;
       this.requestUpdate();
+      // An edit has gone once its reply started: the edit box closes now, not when the reply ends.
+      if (edit) return void sent.catch((error: unknown) => this.#toast('That edit did not go through.', error));
       try {
         await sent;
       } catch (error) {
@@ -2039,7 +2134,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit?.chatId === conversation?.id && this.#returnedEdit?.start === this.#sessionStart ? this.#returnedEdit : undefined} @cvt-edit-returned=${() => (this.#returnedEdit = undefined)} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>

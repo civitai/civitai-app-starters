@@ -420,7 +420,8 @@ at once as the viewer's, marked with `waiting`, and goes when you call `release(
 returns, with no second `before-send` (see [A message that waits](#a-message-that-waits)).
 
 - **It fires for** a typed message (Enter or Send), the voice recorder's "Send what you said",
-  `send(text)`, a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
+  `send(text)`, an edit of the viewer's latest message (with `edit: true`, see
+  [Editing the latest message](#editing-the-latest-message)), a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
   for something (such as making a video of it), a message the assistant's own tools send for the
   viewer, and a page command's `send`.
 - **It does not fire for** a slash command the chat handles itself (`/clear`, `/model`, `/help`),
@@ -1167,6 +1168,27 @@ asks again, unless the page's `retryReply()` came first. `retryReply()` asks for
 the way Retry does, without `reply-resume`, and only where Retry would be offered and the chat can send;
 it resolves `true` when it asked and `false` when it asked nothing.
 
+### Editing the latest message
+
+While no reply runs (after one finished, after Stop, after an error), the viewer's latest message
+shows **Edit**. It opens the message's words in a box in place of its bubble, with focus at the end;
+**Save** (or Enter; Shift+Enter is a new line) replaces the message's words, drops the reply that
+followed it, and asks for a reply afresh: a new reply, from its start, charged like any other (what the
+dropped reply cost stays charged). **Cancel** (or Escape) leaves the message as it was and puts focus
+back on Edit. Only the words change: the message's files and earlier results stay with it. The chat is
+saved at once with the edited message and no reply, as a new message is, so a reload mid-reply never
+shows the old reply; a chat still named after its first message is named after the edited one.
+
+An edit goes as a message does: `before-send` fires first with `edit: true`, and the page may cancel
+it (the edit box stays open with the words) or `queue()` it (it goes as the same edit on `release()`;
+one that cannot go reopens its message's edit box with the words, never the message box, where it
+would go as a new message). Save is off while the chat holds (`canSend`).
+Edit does not show while a reply runs, nor on a reply that may still be running in another tab.
+
+With `runner="remote"`, Edit shows only once the runner has said it takes edits (`features: ['edit']`
+on a start's or a lookup's answer, see [Server runner](#server-runner)): a runner that does not say so
+would keep the old message.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)
@@ -1326,12 +1348,20 @@ The protocol, briefly (`runner-protocol.ts` has every field):
 
 | Call | Body | Answer |
 |---|---|---|
-| `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
-| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run with the latest event id in its journal (`lastEventId`), or `null` |
+| `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`, `edit?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`, `features?`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
+| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run with the latest event id in its journal (`lastEventId`), or `null`; `features?` |
 | `GET /runs/<id>/events` | `Last-Event-ID` to resume | `RunEvent`s as SSE, `id:` the journal position |
 | `POST /runs/<id>/stop` | `{ v: 1 }` | `202` |
 | `POST /runs/stop` | `idempotencyKey`, `conversationId` | `202`: stops the run that start started, or keeps a later start with that key from replying |
 | `POST /conversations/<id>/patch` | `title`, `titleSource`, `model` | `204` |
+
+A runner lists what it can do beyond that in `features` on a start's and a lookup's answer; the page
+uses a feature only once a runner listed it, so older runners and older pages keep working. The one
+feature so far is `edit` (`RUN_FEATURE_EDIT`): a start with `turn.edit` replaces the saved message of
+turn `seq` (the head's latest, or the next when the head ends just before it) with `turn.user`, drops
+its reply and replies afresh, carrying nothing on from the old reply. The page sends it without
+`retry`, so a runner that does not know `edit` answers `stale-turn` instead of replying to the old
+message.
 
 Every request and response carries `v: 1`. The events are `run-started`, the parts' edits
 (`text-delta`, `tool-call`, `tool-result`, `tool-error`, `parts-truncate`), `subagent-progress`,

@@ -59,12 +59,15 @@ export function fakeRunner() {
     hangLookups: false,
     /** The parts `run-started` carries. */
     startParts: [] as TurnPart[],
+    /** What the runner lists in `features` on a start's and a lookup's answer; none (an older runner) unless set. */
+    features: undefined as unknown,
   };
   let count = 0;
   let releaseLookups: () => void = () => {};
   let held = new Promise<void>((resolve) => (releaseLookups = resolve));
 
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  // A start's and a lookup's answer (the only successful JSON ones) carry `features` when set.
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(status < 300 && knobs.features !== undefined ? { ...(body as object), features: knobs.features } : body), { status, headers: { 'content-type': 'application/json' } });
 
   function create(request: StartRunRequest): FakeRun {
     const existing = [...runs.values()].find((run) => (run.request.idempotencyKey === request.idempotencyKey));
