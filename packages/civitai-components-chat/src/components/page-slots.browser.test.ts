@@ -37,12 +37,13 @@ function backend(): ChatBackend {
   return { url: '/api/llm', model: 'host/default-model', store: memoryStore() };
 }
 
-async function mount(width: number, height = 420): Promise<CivitaiChat> {
+async function mount(width: number, height = 420, set?: (chat: CivitaiChat) => void): Promise<CivitaiChat> {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const frame = document.createElement('div');
   frame.style.cssText = `width:${width}px;height:${height}px;`;
   const chat = document.createElement('civitai-chat');
   chat.backend = backend();
+  set?.(chat);
   frame.append(chat);
   document.body.append(frame);
   await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('civitai-chat-composer')).not.toBeNull(), { timeout: 15_000 });
@@ -188,10 +189,11 @@ describe('<civitai-chat> page slots', () => {
 
   it('an empty chat with nothing slotted opens at the top of its greeting, even where the greeting overflows', async () => {
     await page.viewport(375, 667);
-    const chat = await mount(341, 300);
-    // On a host backend the greeting is plain and short: the page's own examples make it overflow.
-    chat.examples = Array.from({ length: 8 }, (_, i) => ({ title: `Example ${i + 1}`, prompt: `Build me app number ${i + 1}` }));
-    await chat.updateComplete;
+    // On a host backend the greeting is plain and short: the page's own examples make it overflow. Set
+    // before the chat starts, so it overflows already when the empty slot first reports its size.
+    const chat = await mount(341, 300, (c) => {
+      c.examples = Array.from({ length: 8 }, (_, i) => ({ title: `Example ${i + 1}`, prompt: `Build me app number ${i + 1}` }));
+    });
     const welcome = await vi.waitFor(() => {
       const el = root(chat).querySelector<HTMLElement>('civitai-chat-welcome');
       expect(el).not.toBeNull();
