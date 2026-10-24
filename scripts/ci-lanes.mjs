@@ -25,6 +25,13 @@
  *   full       every `core` job, plus the `advisory` jobs whose inputs the PR
  *              touches. `push` (to main) and `workflow_dispatch` run everything,
  *              and so does any other event (there is no `schedule` trigger).
+ *   only       a `workflow_dispatch` whose `only` input names one job id in
+ *              `JOBS`: that job runs, every other job is `false`. `all`, an
+ *              empty value, or a name not in `JOBS` -> `full`. Exists so a manual
+ *              re-check of one job does not queue every job on the org's shared
+ *              runners. (`starter` still starts all five legs either way: it is
+ *              step-gated, so for any other `only` its legs run the every-lane
+ *              guards only.)
  *   release    the changesets Version Packages PR, when its diff is ONLY release
  *              machinery (`RELEASE_FILES`) AND every package.json in it changed
  *              only `version` and workspace-dependency versions (read from the
@@ -75,7 +82,8 @@ import { fileURLToPath } from 'node:url';
  * ci.yml's job set and this map differ in EITHER direction, so a job cannot be
  * added, removed or renamed without deciding its lane here.
  *
- *   core      runs on every pull_request, push and workflow_dispatch.
+ *   core      runs on every pull_request, push and workflow_dispatch (except a
+ *             dispatch narrowed by `only` to another job).
  *   advisory  path-scoped on pull_request; always on push and dispatch.
  */
 export const JOBS = Object.freeze({
@@ -211,6 +219,9 @@ export const MAX_RECORD_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** What runs on main when the exact tree already passed: the advisory five, nothing else. */
 export const TREE_LANE = 'tree-already-tested';
+
+/** A manual run narrowed to one job by its `only` input. */
+export const ONLY_LANE = 'only';
 
 export const ADVISORY_JOBS = Object.freeze(
   Object.keys(JOBS).filter((id) => JOBS[id] === 'advisory'),
@@ -434,9 +445,18 @@ export async function checkReleaseContent(files, { fetchBlob, workspaceNames }) 
  *        null when `checkReleaseContent` found nothing but a version bump
  * @param {object} [input.pushGate] push only: `pushGate`'s verdict; ONLY
  *        `skip === true` skips anything, and only on `push`
+ * @param {string} [input.only] workflow_dispatch only: the `only` input. Only
+ *        an own key of `JOBS` narrows anything, and only on `workflow_dispatch`
  * @returns {{ lane: string, reason: string, jobs: Record<string, boolean> }}
  */
-export function decide({ event, files, filesError, release, pushGate } = {}) {
+export function decide({ event, files, filesError, release, pushGate, only } = {}) {
+  if (event === 'workflow_dispatch' && typeof only === 'string' && Object.hasOwn(JOBS, only)) {
+    return {
+      lane: ONLY_LANE,
+      reason: `workflow_dispatch with only=${only}: ${only} runs, every other job is off`,
+      jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, id === only])),
+    };
+  }
   if (event === 'push' && pushGate?.skip === true) {
     return {
       lane: TREE_LANE,
@@ -737,6 +757,17 @@ async function main() {
       }
     } catch (err) {
       input.filesError = String(err?.message ?? err);
+    }
+  }
+
+  if (event === 'workflow_dispatch') {
+    // The dispatch inputs ride in the event payload; an unreadable payload
+    // leaves `only` unset, which is the full lane (fail open).
+    try {
+      const only = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))?.inputs?.only;
+      if (typeof only === 'string') input.only = only;
+    } catch {
+      // full lane
     }
   }
 

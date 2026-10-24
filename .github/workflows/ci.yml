@@ -4,7 +4,18 @@ on:
   pull_request:
   push:
     branches: [main]
-  # A manual run takes no lane: every job runs.
+  # A manual run with `only: all` (the default) takes no lane: every job runs.
+  #
+  # `only: <job-id>` runs that one job and skips the rest, so a re-check of one
+  # job does not put every job in the org's shared runner queue. Selection
+  # is decided where every other lane is, in `scripts/ci-lanes.mjs` (lane
+  # `only`), and reaches the jobs through the same `lanes` outputs and the same
+  # `!= 'false'` conditions; no job condition reads `inputs`. So it fails open
+  # like they do: a failed `lanes` runs everything. The `Starter` legs always
+  # start (they are step-gated, see that job) and run only their every-lane
+  # guards unless `only` is `starter`. The options are pinned against `JOBS` by
+  # `tests/guards/ci-lanes-ledger.test.mjs`. On push and pull_request
+  # `inputs.only` is empty and nothing changes.
   #
   # There is deliberately NO `schedule:` here. Every push to main runs all five
   # advisory jobs, which is what notices drift nobody's PR caused (push runs
@@ -15,11 +26,41 @@ on:
   # (the push run is red), and, for schema and catalog drift, as the PR the
   # re-sync workflow above opens. Nothing else: no issue, no notification, and
   # no pull request unless it touches that job's inputs.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Run only this job (default: all)'
+        type: choice
+        default: all
+        options:
+          - all
+          - sdk
+          - schema-drift
+          - starter-pins
+          - orchestrator-catalog-drift
+          - civitai-sdk
+          - blocks-react
+          - design-system
+          - design-system-cross-browser
+          - design-system-drift-guard
+          - readme-snippets
+          - starter
+          - examples
+          - packaging
+          - public-types
 
+# A manual run gets its own group per ref AND `only` value, and a newer one
+# with the same pair cancels the older: it no longer queues behind (or
+# displaces the pending) push run on main, and two dispatches for different
+# jobs do not cancel each other. Push stays grouped by ref WITHOUT
+# cancel-in-progress, unchanged on purpose: main's push run is where an
+# advisory red shows up (see the trigger comment above), and the push gate in
+# `scripts/ci-lanes.mjs` compares each push with the previous tip, so a run
+# cancelled mid-flight would leave a main commit with no verdict and could let
+# a lockfile change go without the install that seeds the PR cache.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 env:
   NODE_VERSION: '24'

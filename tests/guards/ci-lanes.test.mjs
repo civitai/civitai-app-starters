@@ -254,6 +254,51 @@ describe('the command, as the workflow runs it', () => {
     const { outputs } = run({ vars: { GITHUB_EVENT_NAME: 'pull_request', GITHUB_REPOSITORY: 'o/r' }, payload: {} });
     for (const id of Object.keys(JOBS)) assert.equal(outputs[id], 'true');
   });
+
+  // The `only` input is read from the event payload (`inputs.only`), which is
+  // where GitHub puts dispatch inputs; these pin that read, not just `decide`.
+  test('a dispatch with only=examples writes true for examples and false for the rest', () => {
+    const { outputs } = run({ vars: { GITHUB_EVENT_NAME: 'workflow_dispatch' }, payload: { inputs: { only: 'examples' } } });
+    assert.equal(outputs.lane, 'only');
+    assert.deepEqual(Object.keys(JOBS).filter((id) => outputs[id] === 'true'), ['examples']);
+    assert.deepEqual(Object.keys(JOBS).filter((id) => outputs[id] !== 'true' && outputs[id] !== 'false'), []);
+  });
+
+  test('a dispatch with only=all, or with no inputs, runs every job', () => {
+    for (const payload of [{ inputs: { only: 'all' } }, {}]) {
+      const { outputs } = run({ vars: { GITHUB_EVENT_NAME: 'workflow_dispatch' }, payload });
+      assert.equal(outputs.lane, 'full', JSON.stringify(payload));
+      for (const id of Object.keys(JOBS)) assert.equal(outputs[id], 'true', `${id} on ${JSON.stringify(payload)}`);
+    }
+  });
+});
+
+describe('only lane: a manual run narrowed to one job', () => {
+  const ran = (d) => Object.keys(d.jobs).filter((id) => d.jobs[id]);
+
+  test('each named job runs alone (literal rows, not derived from JOBS)', () => {
+    for (const id of ['sdk', 'schema-drift', 'starter', 'design-system-cross-browser', 'public-types']) {
+      const d = decide({ event: 'workflow_dispatch', only: id });
+      assert.equal(d.lane, 'only', id);
+      assert.deepEqual(ran(d), [id]);
+    }
+  });
+
+  test('all, empty, unknown or inherited names fail open to the full lane', () => {
+    for (const only of ['all', '', 'no-such-job', 'constructor', 'toString', undefined, null, 7]) {
+      const d = decide({ event: 'workflow_dispatch', only });
+      assert.equal(d.lane, 'full', String(only));
+      assert.deepEqual(ran(d), Object.keys(JOBS));
+    }
+  });
+
+  test('`only` narrows a dispatch and nothing else', () => {
+    assert.equal(decide({ event: 'push', only: 'sdk' }).lane, 'full');
+    assert.deepEqual(ran(decide({ event: 'push', only: 'sdk' })), Object.keys(JOBS));
+    const d = decide({ event: 'pull_request', files: [{ filename: 'README.md' }], only: 'sdk' });
+    assert.equal(d.lane, 'full');
+    assert.deepEqual(ran(d), CORE_JOBS);
+  });
 });
 
 describe('release lane: the Version Packages PR, when it is ONLY a version bump', () => {

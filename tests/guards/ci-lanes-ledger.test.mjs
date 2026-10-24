@@ -281,6 +281,63 @@ describe('every file an advisory job reads selects that job', () => {
   }
 });
 
+/**
+ * The `workflow_dispatch` `only` input's options, read from the `on:` block by
+ * the same kind of line walk as `lib/ci-workflow.mjs`. Null when the input or
+ * its options list is absent.
+ */
+function dispatchOnlyOptions(src) {
+  const lines = src.split('\n');
+  const on = lines.indexOf('on:');
+  const end = lines.findIndex((l, i) => i > on && /^\S/.test(l));
+  const block = lines.slice(on + 1, end === -1 ? undefined : end);
+  const only = block.findIndex((l) => /^ {6}only:\s*$/.test(l));
+  if (only === -1) return null;
+  const opts = block.findIndex((l, i) => i > only && /^ {8}options:\s*$/.test(l));
+  if (opts === -1) return null;
+  const out = [];
+  for (const l of block.slice(opts + 1)) {
+    const m = l.match(/^ {10}- (\S+)\s*$/);
+    if (!m) break;
+    out.push(m[1]);
+  }
+  return out;
+}
+
+describe('workflow_dispatch `only`: one option per ledger job, plus `all`', () => {
+  // A job missing here cannot be run alone; an option the ledger does not know
+  // silently runs EVERY job (decide() fails open on an unknown name). Both
+  // directions fail, as sets, under different messages.
+  const check = (src) => {
+    const opts = dispatchOnlyOptions(src);
+    if (opts === null) return ['no-only-input'];
+    const want = new Set(['all', ...Object.keys(JOBS)]);
+    const got = new Set(opts);
+    return [
+      ...[...want].filter((o) => !got.has(o)).map((o) => `option-missing:${o}`),
+      ...[...got].filter((o) => !want.has(o)).map((o) => `option-unknown:${o}`),
+      ...(opts.length !== got.size ? ['option-duplicate'] : []),
+    ];
+  };
+
+  test('the real ci.yml matches the ledger', () => {
+    assert.deepEqual(check(text), []);
+    // Positive control on the walk itself: it read a non-trivial list.
+    assert.equal(dispatchOnlyOptions(text).length, Object.keys(JOBS).length + 1);
+  });
+
+  test('negative controls', () => {
+    const once = (from, to) => {
+      assert.equal(text.split(from).length - 1, 1, `control anchor occurs ${text.split(from).length - 1} times: ${from}`);
+      return text.replace(from, to);
+    };
+    assert.deepEqual(check(once('          - examples\n', '')), ['option-missing:examples']);
+    assert.deepEqual(check(once('          - examples\n', '          - examples\n          - ghost\n')), ['option-unknown:ghost']);
+    assert.deepEqual(check(once('          - examples\n', '          - examples\n          - examples\n')), ['option-duplicate']);
+    assert.deepEqual(check(once('      only:\n', '      lane:\n')), ['no-only-input']);
+  });
+});
+
 describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () => {
   // Only what the breakage ADDS. If the real ci.yml is itself broken, that is
   // the ledger test's failure to report, once, and these stay about the controls.
@@ -384,7 +441,7 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
   });
 
   test('a schedule trigger put back', () => {
-    assert.deepEqual(tags(mutate('  workflow_dispatch: {}\n', "  workflow_dispatch: {}\n  schedule:\n    - cron: '17 5 * * *'\n")), ['schedule-trigger']);
+    assert.deepEqual(tags(mutate('  workflow_dispatch:\n', "  schedule:\n    - cron: '17 5 * * *'\n  workflow_dispatch:\n")), ['schedule-trigger']);
   });
 
   test('a job added to ci.yml AND the ledger but not to record-tree', () => {
@@ -394,7 +451,9 @@ describe('NEGATIVE CONTROLS: each breakage is reported under its own tag', () =>
   });
 
   test('a job dropped from record-tree needs, and a condition conjunct dropped', () => {
-    assert.deepEqual(tags(mutate('      - examples\n', '')), ['record-needs-missing']);
+    // Leading newline: the dispatch `only` options list carries `- examples`
+    // too, more deeply indented, and the anchor must name record-tree's line.
+    assert.deepEqual(tags(mutate('\n      - examples\n', '\n')), ['record-needs-missing']);
     assert.deepEqual(tags(mutate("      && needs.lanes.outputs.lane == 'full'\n", '')), ['record-condition-missing']);
     // The seam: a starter that SUCCEEDED with its heavy steps off.
     assert.deepEqual(
