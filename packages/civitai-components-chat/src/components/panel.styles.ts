@@ -6,6 +6,8 @@ export const panelStyles = css`
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  /* The theme's dark track is the surface colour a panel sits on, so a slider's track would vanish. */
+  --civitai-color-track: var(--civitai-color-border);
 }
 
 .cvt-panel-row {

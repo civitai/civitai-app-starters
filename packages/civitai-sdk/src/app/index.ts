@@ -1,7 +1,7 @@
 import { BridgeError, CivitaiError } from '../core/errors.js';
 import { getTransport } from '../core/get-transport.js';
 import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/handshake.js';
-import type { BlockSnapshot, BlockTransport } from '../core/transport.js';
+import { isLocalPreviewStorage, type BlockSnapshot, type BlockTransport } from '../core/transport.js';
 import { createHost, createHostSession, type Host } from '../host/index.js';
 import { ApiError, createHttp, type Http } from '../http/index.js';
 import {
@@ -181,14 +181,22 @@ export async function initialize(
   // from `token.scopes`. A published app whose manifest forgot `apps:storage`
   // holds a token that looks the same as a preview's, and must keep getting the
   // real route's `insufficient_scope` rather than a silent local store.
-  const local =
-    snapshot().storageMode === 'local-preview'
-      ? // The manifest arrives only from `blockManifestPlugin()`'s dev-server
-        // global: there is deliberately no option to pass one.
-        await createLocalPreviewStorage(readInjectedManifest(), snapshot().viewer)
-      : undefined;
+  const localPreview = isLocalPreviewStorage(snapshot());
+  // The same latched answer configures the session below, so `requestGrants`
+  // and the store agree on whether the document store is local.
+  const local = localPreview
+    ? // The manifest arrives only from `blockManifestPlugin()`'s dev-server
+      // global: there is deliberately no option to pass one.
+      await createLocalPreviewStorage(readInjectedManifest(), snapshot().viewer)
+    : undefined;
   return {
-    ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow, holdsOAuthTokenNow, local),
+    ...createAppClient(
+      createHostSession(transport, { localPreviewStorage: localPreview }),
+      options,
+      holdsBlockTokenNow,
+      holdsOAuthTokenNow,
+      local,
+    ),
     host: createHost(transport),
     get viewer() {
       return snapshot().viewer;

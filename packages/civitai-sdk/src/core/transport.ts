@@ -90,6 +90,18 @@ export const EMPTY_SNAPSHOT: BlockSnapshot = {
 
 
 
+/**
+ * Did the host mark this frame a dev-tunnel preview whose document store is
+ * served locally? THE predicate for that question. `initialize()` reads it once
+ * and the one latched answer selects the local document store AND tells the
+ * host session which scopes no grant can add (`requestGrants`), so the two
+ * cannot disagree. Never inferred from `token.scopes`: a published app whose
+ * token lacks `apps:storage` looks the same as a preview's.
+ */
+export function isLocalPreviewStorage(snapshot: Pick<BlockSnapshot, 'storageMode'>): boolean {
+  return snapshot.storageMode === LOCAL_PREVIEW_STORAGE;
+}
+
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string): BlockSnapshot {
   return {

@@ -347,3 +347,67 @@ describe('the local store stays out of a normal bundle', () => {
     }
   });
 });
+
+/**
+ * `app.requestGrants` follows the SAME latched signal as the store: a dev-tunnel
+ * preview never mints a document-store scope onto the token, so asking the host
+ * for one could only be refused — and an app that asked for storage alongside
+ * a grantable scope (`ai:write:budgeted`) was refused everything.
+ */
+describe('dev-tunnel preview: requestGrants and the document-store scopes', () => {
+  const consentRequests = (transport: ReturnType<typeof block>) =>
+    transport.sent.filter((m) => m.type === 'REQUEST_CONSENT');
+
+  it('resolves a document-store-only request true and sends no REQUEST_CONSENT', async () => {
+    const transport = block({ storageMode: 'local-preview' });
+    const { fetch } = fakeFetch([]);
+    const app = await initialize({ transport, fetch });
+
+    const granted = app.requestGrants(['apps:storage:publish', 'apps:storage']);
+    // First, so a build that still asks the host fails HERE rather than timing out.
+    expect(consentRequests(transport)).toEqual([]);
+    await expect(granted).resolves.toBe(true);
+  });
+
+  it('asks the host only for the rest of a mixed request', async () => {
+    const transport = block({ storageMode: 'local-preview' });
+    const { fetch } = fakeFetch([]);
+    const app = await initialize({ transport, fetch });
+
+    const pending = app.requestGrants(['ai:write:budgeted', 'apps:storage', 'apps:storage:publish']);
+    expect(consentRequests(transport)).toEqual([
+      { type: 'REQUEST_CONSENT', payload: { scopes: ['ai:write:budgeted'] } },
+    ]);
+    transport.setSnapshot({
+      token: { raw: 'tunnel-token-2', scopes: [...TOKEN_SCOPES, 'ai:write:budgeted'], expiresAt: new Date(0), kind: 'block' },
+    });
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('is latched at init, like the store', async () => {
+    const transport = block({ storageMode: 'local-preview' });
+    const { fetch } = fakeFetch([]);
+    const app = await initialize({ transport, fetch });
+
+    transport.setSnapshot({ storageMode: undefined });
+    const granted = app.requestGrants(['apps:storage']);
+    expect(consentRequests(transport)).toEqual([]);
+    await expect(granted).resolves.toBe(true);
+  });
+
+  // Invariant guard (already true before the change): the wiring half of the
+  // condition guard in test/host/host.test.ts — `initialize()` must not hand the
+  // session `localPreviewStorage: true` without the host's signal.
+  it('without the host signal, a document-store scope is asked for as before', async () => {
+    const transport = block();
+    const { fetch } = fakeFetch([]);
+    const app = await initialize({ transport, fetch });
+
+    const pending = app.requestGrants(['apps:storage', 'models:read:self']);
+    expect(consentRequests(transport)).toEqual([
+      { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage', 'models:read:self'] } },
+    ]);
+    transport.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage'] });
+    await expect(pending).resolves.toBe(false);
+  });
+});

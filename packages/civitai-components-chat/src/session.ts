@@ -99,6 +99,8 @@ export interface SessionOptions {
   mcp?(): ChatMcpOptions;
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** The viewer's time zone (IANA name): the prompt's date is that zone's day. UTC's unless set; read at every reply. */
+  timeZone?(): string | undefined;
   /** Asked before every tool call; read at the start of every reply. Each result is reported as a `tool-result` event. */
   beforeToolCall?(): ChatToolGate | undefined;
   /** Subagents (`dispatch_agent`): read ones, and write ones with `write`; off unless set. Read at the start of every reply. */
@@ -302,6 +304,7 @@ export class ChatSession extends EventTarget {
       isHostTool: (name) => this.#hostToolNames.has(name),
       panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
+      timeZone: () => this.#options.timeZone?.(),
       ...(backend ? { describeError: humanizeHost } : {}),
     });
   }
@@ -741,6 +744,7 @@ export class ChatSession extends EventTarget {
         ended: replyEnded.signal,
         model: () => this.#model(subagents.model ?? this.assistantModel()),
         maxOutputTokens: () => outputTokenCap(this.settings.maxOutputTokens),
+        timeZone: () => this.#options.timeZone?.(),
         progress: this.subagents,
         // A write subagent's progress rides on the reply's own saves, so Continue after a closed page gets its `changed`.
         checkpoint: (id, progress) => {

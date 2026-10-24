@@ -386,6 +386,7 @@ reopened from storage groups the same as it did live.
 | `tool-calls` | `activity` (the default: a line while a call runs, then nothing) or `details` (each call with no view of its own as a row to open, calls in a row as one group). Also `toolCalls`. See [Showing what the assistant called](#showing-what-the-assistant-called). |
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
+| `time-zone` | The viewer's time zone, an IANA name such as `America/Chicago` (also `timeZone`). The assistant is then told that zone's date, weekday and name ("Today is Thursday 2026-10-22 (America/Chicago).") instead of UTC's date, so late in the evening "today" is still the viewer's today. Read at every reply; unset, or a name the browser does not know, the date is UTC's. |
 | `mcp` | `{ orchestration?: boolean \| { exclude: string[] }, site?: boolean }`, both on by default: making media, and Civitai model search. `orchestration: { exclude: ['run_step', 'run_workflow'] }` keeps the service lookups but never runs (or charges for) a generation; the panels, which run through `run_step`, go with it. Other tools that charge per call, such as `transcribe_audio`, stay unless they are listed too; the microphone button transcribes on its own, not through the assistant, so neither `exclude` nor `beforeToolCall` stops voice input from charging. |
 | `mcpServers` | More MCP servers whose tools the assistant may use (property only); see [More MCP servers](#more-mcp-servers). |
 | `holdReason` | While set (also `hold-reason`), nothing is sent to the assistant: the message box keeps what the viewer typed, Send is off and the box shows this text, e.g. "The sandbox is starting…". Stop still works. The chat also holds by itself, as "Connecting to *label*…", while an added server is listing its tools (at most 15 s). |
@@ -1219,7 +1220,7 @@ chat.app = app;
 What changes in remote mode:
 
 - **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
-  `beforeToolCall`, `subagents`, `systemPrompt`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
+  `beforeToolCall`, `subagents`, `systemPrompt`, `timeZone`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
   anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide
   on (the app open in the page, say) goes in `pageState`. The settings that shape a reply (model,
   custom instructions, `instructions`, output cap, free or paid, mature content, auto-run limit) go
@@ -1341,6 +1342,17 @@ import { McpServerPool, extraToolSet, gateToolSet } from '@civitai/components-ch
 const pool = new McpServerPool({ onError: (server, error) => console.warn(server.id, error) });
 pool.sync([{ id: 'docs', url: 'https://example.com/mcp', fetch: signedFetch, label: 'Docs' }]);
 const tools = extraToolSet(await pool.tools(), { taken: {} }); // { docs__search, … }
+```
+
+The system prompt is `buildSystemPrompt`, as the page builds it. Its `timeZone` (an IANA name) is the
+page's `time-zone`: the date line then gives that zone's day, weekday and name instead of UTC's date
+(`dateLine(now, timeZone)` is that one line):
+
+```js
+import { buildSystemPrompt } from '@civitai/components-chat/core';
+
+const system = buildSystemPrompt({ now: new Date(), timeZone: 'America/Chicago', rules: myRules });
+// … "Today is Thursday 2026-10-22 (America/Chicago)." …
 ```
 
 ## Where chats live

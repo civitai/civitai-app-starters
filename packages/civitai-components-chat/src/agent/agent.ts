@@ -39,6 +39,8 @@ export interface AgentDeps {
   /** The words the viewer sees for a reply that failed; `humanize` unless set. */
   describeError?(error: unknown): HumanError;
   now?(): Date;
+  /** The viewer's time zone for the prompt's date (`dateLine`), read at the start of every reply; UTC's date unless set. */
+  timeZone?(): string | undefined;
   /**
    * The wait before each automatic retry of one drop of the browser's network (see
    * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
@@ -144,6 +146,7 @@ export class Agent extends EventTarget implements ChatAgent {
         const hostInstructions = this.#deps.hostInstructions?.();
         const system = buildSystemPrompt({
           now: this.#deps.now?.() ?? new Date(),
+          timeZone: this.#deps.timeZone?.(),
           customInstructions: this.#deps.customInstructions?.(),
           canPost: this.#deps.posts?.available ?? false,
           tools: Object.keys(tools),
