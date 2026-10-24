@@ -5,6 +5,8 @@ import {
   BLOCK_TRAINING_CAPTION_MAX_CHARS,
   BLOCK_TRAINING_DATASET_MAX_ITEMS,
   BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
+  type BlockTrainingDataImage,
+  type BlockTrainingDatasetItem,
   type BlockWorkflowSnapshot,
   type WorkflowBody,
   type WorkflowBodyTraining,
@@ -15,15 +17,12 @@ import {
   useBuzzWorkflow,
   WorkflowEstimateError,
 } from '../src/hooks/useBuzzWorkflow.js';
-import {
-  PrepareTrainingDatasetError,
-  usePrepareTrainingDataset,
-} from '../src/hooks/usePrepareTrainingDataset.js';
+import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { RunTrainingError, useRunTraining } from '../src/hooks/useRunTraining.js';
 import {
-  MOCK_TRAINING_DATASET_GONE_ERROR,
-  MOCK_TRAINING_NONE_ELIGIBLE_ERROR,
-  MOCK_TRAINING_NONE_IMPORTED_ERROR,
+  MOCK_TRAINING_AIR_ERROR,
+  MOCK_TRAINING_DUPLICATE_ERROR,
+  MOCK_TRAINING_ITEMS_ERROR,
   MOCK_TRAINING_QUOTE_GONE_ERROR,
   MOCK_TRAINING_BOUNDS,
   MOCK_SPEND_SCOPE_ERROR,
@@ -33,15 +32,16 @@ import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
 /**
- * The App Blocks `kind: 'training'` flow — prepare → estimate → run → watch —
- * driven through the REAL hooks and the REAL iframe transport (so every reply
- * asserted here also passed the inbound validators) against `createMockHost`.
+ * The App Blocks `kind: 'training'` flow — upload → estimate → run → watch
+ * (civitai/civitai#6461) — driven through the REAL hooks and the REAL iframe
+ * transport (so every reply asserted here also passed the inbound validators)
+ * against `createMockHost`.
  *
- * 🔴 WHAT THIS CANNOT PROVE: the consent dialog is HOST chrome and the mock has
- * none — it settles `RUN_TRAINING` immediately where the real host waits on a
- * click and shows server-read numbers. `declined` is an outcome here, never a
- * wait. Image ownership, moderation, the flag and the page-only / dev-token
- * refusals are server-side and not modelled.
+ * 🔴 WHAT THIS CANNOT PROVE: the upload modal and the consent dialog are HOST
+ * chrome and the mock has neither — it answers `OPEN_IMAGE_UPLOAD` and settles
+ * `RUN_TRAINING` immediately where the real host waits on the viewer. Blob
+ * storage, the flag and the page-only / dev-token refusals are server-side and
+ * not modelled.
  */
 
 const ORIGIN = window.location.origin;
@@ -64,9 +64,9 @@ const PARAMS: WorkflowBodyTraining['params'] = {
   keepTokens: 0,
 };
 
-const bodyFor = (datasetId: string): WorkflowBodyTraining => ({
+const bodyFor = (items: BlockTrainingDatasetItem[]): WorkflowBodyTraining => ({
   kind: 'training',
-  datasetId,
+  items,
   engine: 'ai-toolkit',
   model: 'sdxl',
   params: PARAMS,
@@ -74,11 +74,11 @@ const bodyFor = (datasetId: string): WorkflowBodyTraining => ({
   samplePrompts: ['a photo of tok'],
 });
 
-const ITEMS = [
-  { imageId: 11, caption: 'one' },
-  { imageId: 12, caption: 'two' },
-  { imageId: 13, caption: 'three' },
-];
+const captioned = (images: BlockTrainingDataImage[]): BlockTrainingDatasetItem[] =>
+  images.map((img, i) => ({ air: img.air, caption: `caption ${i}` }));
+
+/** A key the mock never handed out — a blob "not uploaded here". */
+const FOREIGN_ITEMS: BlockTrainingDatasetItem[] = [{ air: 'foreignkey0001.png', caption: 'x' }];
 
 type Outbound = { type: string; payload?: unknown };
 
@@ -95,7 +95,7 @@ function install(opts: MockHostOptions = {}) {
 
 function hooks() {
   return renderHook(() => ({
-    prep: usePrepareTrainingDataset(),
+    upload: useImageUpload({ purpose: 'trainingData' }),
     wf: useBuzzWorkflow(),
     run: useRunTraining(),
   }));
@@ -115,14 +115,16 @@ async function settle<T>(p: () => Promise<T>): Promise<{ value?: T; error?: unkn
   return out;
 }
 
-/** prepare → estimate, returning the dataset, the estimate and the body to run. */
-async function prepareAndQuote(result: Hooks) {
-  const prepared = await settle(() => result.current.prep.prepareDataset(ITEMS));
-  expect(prepared.error).toBeUndefined();
-  const body = bodyFor(prepared.value!.datasetId);
+/** upload → estimate, returning the uploaded images, the estimate and the body to run. */
+async function uploadAndQuote(result: Hooks) {
+  const uploaded = await settle(() => result.current.upload.open());
+  expect(uploaded.error).toBeUndefined();
+  const images = uploaded.value!;
+  expect(images).not.toBeNull();
+  const body = bodyFor(captioned(images!));
   const estimated = await settle(() => result.current.wf.estimate(body));
   expect(estimated.error).toBeUndefined();
-  return { dataset: prepared.value!, estimate: estimated.value!, body };
+  return { images: images!, estimate: estimated.value!, body };
 }
 
 describe('mock training bounds', () => {
@@ -132,10 +134,35 @@ describe('mock training bounds', () => {
       captionMaxChars: BLOCK_TRAINING_CAPTION_MAX_CHARS,
       maxBuzzPerRun: BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
     });
+    // The host's caption bound, not merely "whatever the SDK says" — a copy that
+    // drifted together with the SDK constant would pass the equality above.
+    expect(MOCK_TRAINING_BOUNDS.captionMaxChars).toBe(8192);
+    expect(MOCK_TRAINING_BOUNDS.datasetMaxItems).toBe(50);
   });
 });
 
-describe('kind:training — prepare → estimate → run → watch', () => {
+describe('RunTrainingError — the "not uploaded here" refusal', () => {
+  it('carries the host code and its own flag, and no money flag', () => {
+    const e = new RunTrainingError('training data not uploaded here');
+    expect(e.code).toBe('training data not uploaded here');
+    expect(e.trainingDataNotUploaded).toBe(true);
+    expect([e.declined, e.unconfirmed, e.signInRequired, e.timedOut, e.refused]).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('is false for every other code and for a server message', () => {
+    for (const msg of ['declined', 'submission-unconfirmed', 'training data not uploaded', 'x']) {
+      expect(new RunTrainingError(msg).trainingDataNotUploaded, msg).toBe(false);
+    }
+  });
+});
+
+describe('kind:training — upload → estimate → run → watch', () => {
   let uninstall: (() => void) | undefined;
 
   beforeEach(() => {
@@ -149,28 +176,24 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     vi.restoreAllMocks();
   });
 
-  it('runs end to end: dataset handle, a stored quote, a run, and trained epochs on watch', async () => {
-    const m = install({
-      trainingQuoteTotal: 1234,
-      trainingDatasetRejected: [
-        { imageId: 12, reason: 'pending-scan' },
-        // Not in the request — the server reports only images it was asked about.
-        { imageId: 99, reason: 'unavailable' },
-      ],
-      generation: { trainedEpochs: 2 },
-      pollsUntilDone: 1,
-    });
+  it('runs end to end: uploaded blobs, a stored quote, a run, and trained epochs on watch', async () => {
+    const m = install({ trainingQuoteTotal: 1234, generation: { trainedEpochs: 2 }, pollsUntilDone: 1 });
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const { dataset, estimate, body } = await prepareAndQuote(result);
-    expect(dataset.datasetId).toMatch(/^tds_[0-9a-f]{32}$/);
-    expect(dataset.count).toBe(2);
-    expect(dataset.rejected).toEqual([{ imageId: 12, reason: 'pending-scan' }]);
+    const { images, estimate, body } = await uploadAndQuote(result);
+    // The default canned upload: three images, each a url and a distinct key.
+    expect(images).toHaveLength(3);
+    expect(new Set(images.map((i) => i.air)).size).toBe(3);
+    for (const img of images) {
+      expect(img.url.endsWith(`/v2/consumer/blobs/${img.air}`)).toBe(true);
+    }
+    const uploadMsg = m.outbound.find((o) => o.type === 'OPEN_IMAGE_UPLOAD');
+    expect((uploadMsg!.payload as { purpose?: string }).purpose).toBe('trainingData');
 
     expect(estimate.cost?.total).toBe(1234);
-    expect(estimate.trainingQuote).toMatchObject({ total: 1234, imageCount: 2 });
+    expect(estimate.trainingQuote).toMatchObject({ total: 1234, imageCount: 3 });
     expect(estimate.trainingQuote!.quoteId).toMatch(/^tq_[0-9a-f]{32}$/);
     expect(Date.parse(estimate.trainingQuote!.expiresAt)).toBeGreaterThan(Date.now());
 
@@ -197,11 +220,154 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     ]);
   });
 
+  it('each default upload hands out NEW keys — two uploads never collide', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const a = (await settle(() => result.current.upload.open())).value!;
+    const b = (await settle(() => result.current.upload.open())).value!;
+    const keys = [...a!, ...b!].map((i) => i.air);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('`cannedTrainingDataUpload` is returned verbatim; `null` is a cancel', async () => {
+    const canned: BlockTrainingDataImage[] = [
+      { url: 'https://example.test/v2/consumer/blobs/AbC123.png', air: 'AbC123.png' },
+    ];
+    const m = install({ cannedTrainingDataUpload: canned });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    expect((await settle(() => result.current.upload.open())).value).toEqual(canned);
+
+    m.host.setScenario({ cannedTrainingDataUpload: null });
+    const cancelled = await settle(() => result.current.upload.open());
+    expect(cancelled.error).toBeUndefined();
+    expect(cancelled.value).toBeNull();
+  });
+
+  it('a quote naming a blob NOT uploaded here is refused before any dialog, and the quote is kept', async () => {
+    const m = install();
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    // The estimate does not check uploads (neither does the server's); the run does.
+    const body = bodyFor(FOREIGN_ITEMS);
+    const est = await settle(() => result.current.wf.estimate(body));
+    expect(est.error).toBeUndefined();
+    const quoted = { ...body, quoteId: est.value!.trainingQuote!.quoteId };
+
+    const r = await settle(() => result.current.run.runTraining(quoted));
+    const e = r.error as RunTrainingError;
+    expect(e).toBeInstanceOf(RunTrainingError);
+    expect(e.message).toBe('training data not uploaded here');
+    expect(e.code).toBe('training data not uploaded here');
+    expect(e.trainingDataNotUploaded).toBe(true);
+    expect(e.unconfirmed).toBe(false);
+    expect(e.declined).toBe(false);
+
+    // Uploading that blob here makes the SAME quote runnable: the refusal settled
+    // before the server claimed it.
+    m.host.setScenario({
+      cannedTrainingDataUpload: [
+        { url: 'https://example.test/v2/consumer/blobs/foreignkey0001.png', air: 'foreignkey0001.png' },
+      ],
+    });
+    await settle(() => result.current.upload.open());
+    const ran = await settle(() => result.current.run.runTraining(quoted));
+    expect(ran.error).toBeUndefined();
+    expect(ran.value!.status).toBe('pending');
+  });
+
+  it('upload keys compare case-insensitively, and an item may name the blob by its url', async () => {
+    const m = install({
+      cannedTrainingDataUpload: [
+        { url: 'https://example.test/v2/consumer/blobs/MiXeD01.png', air: 'MiXeD01.png' },
+        { url: 'https://example.test/v2/consumer/blobs/plain02.webp', air: 'plain02.webp' },
+      ],
+    });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    await settle(() => result.current.upload.open());
+
+    const body = bodyFor([
+      { air: 'mixed01.PNG', caption: 'a' },
+      { air: 'https://example.test/v2/consumer/blobs/plain02.webp?x=1', caption: 'b' },
+    ]);
+    const est = await settle(() => result.current.wf.estimate(body));
+    expect(est.error).toBeUndefined();
+    expect(est.value!.trainingQuote!.imageCount).toBe(2);
+    const ran = await settle(() =>
+      result.current.run.runTraining({ ...body, quoteId: est.value!.trainingQuote!.quoteId }),
+    );
+    expect(ran.error).toBeUndefined();
+  });
+
+  it('`trainingDataNotUploadedHere` refuses even uploaded blobs (the host forgot them), and clears', async () => {
+    const m = install({ trainingDataNotUploadedHere: true });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { estimate, body } = await uploadAndQuote(result);
+    const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
+
+    const refused = await settle(() => result.current.run.runTraining(quoted));
+    expect((refused.error as RunTrainingError).trainingDataNotUploaded).toBe(true);
+
+    m.host.setScenario({ trainingDataNotUploadedHere: undefined });
+    const ran = await settle(() => result.current.run.runTraining(quoted));
+    expect(ran.error).toBeUndefined();
+  });
+
+  it('estimate refuses items outside the host schema; the boundary passes', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const key = (i: number) => `k${i}`;
+
+    const cases: Array<[unknown, string]> = [
+      [[], MOCK_TRAINING_ITEMS_ERROR],
+      [Array.from({ length: 51 }, (_, i) => ({ air: key(i), caption: '' })), MOCK_TRAINING_ITEMS_ERROR],
+      [[{ air: 'k1', caption: 'x'.repeat(8193) }], MOCK_TRAINING_ITEMS_ERROR],
+      [[{ air: 'k1', caption: 'x', extra: true }], MOCK_TRAINING_ITEMS_ERROR],
+      [[{ air: 'k1' }], MOCK_TRAINING_ITEMS_ERROR],
+      [[{ imageId: 1, caption: 'x' }], MOCK_TRAINING_ITEMS_ERROR],
+      [[{ air: 'not a key!', caption: 'x' }], MOCK_TRAINING_AIR_ERROR],
+      [[{ air: 'https://example.test/some/other/path.png', caption: 'x' }], MOCK_TRAINING_AIR_ERROR],
+      [
+        [
+          { air: 'Dup1.png', caption: 'a' },
+          { air: 'dup1.PNG', caption: 'b' },
+        ],
+        MOCK_TRAINING_DUPLICATE_ERROR,
+      ],
+    ];
+    for (const [items, message] of cases) {
+      const r = await settle(() =>
+        result.current.wf.estimate({ ...bodyFor([]), items } as unknown as WorkflowBody),
+      );
+      const e = r.error as WorkflowEstimateError;
+      expect(e, JSON.stringify(items).slice(0, 60)).toBeInstanceOf(WorkflowEstimateError);
+      expect(e.snapshot.error, JSON.stringify(items).slice(0, 60)).toBe(message);
+    }
+
+    // Boundary that must PASS: 50 items, an 8,192-char caption.
+    const ok = await settle(() =>
+      result.current.wf.estimate(
+        bodyFor(Array.from({ length: 50 }, (_, i) => ({ air: key(i), caption: 'x'.repeat(8192) }))),
+      ),
+    );
+    expect(ok.error).toBeUndefined();
+    expect(ok.value?.trainingQuote?.imageCount).toBe(50);
+  });
+
   it('a quote runs at most once — the second run is the server message, not a code', async () => {
     uninstall = install().uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
     const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
 
     expect((await settle(() => result.current.run.runTraining(quoted))).error).toBeUndefined();
@@ -219,7 +385,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
     const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
 
     const r = await settle(() => result.current.run.runTraining(quoted));
@@ -229,6 +395,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     expect(e.declined).toBe(true);
     expect(e.unconfirmed).toBe(false);
     expect(e.signInRequired).toBe(false);
+    expect(e.trainingDataNotUploaded).toBe(false);
     await waitFor(() => expect(result.current.run.error).toBe(e));
     expect(m.outbound.filter((o) => o.type === 'RUN_TRAINING')).toHaveLength(1);
   });
@@ -237,7 +404,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = install({ runTrainingError: 'submission-unconfirmed' }).uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
 
     const r = await settle(() =>
       result.current.run.runTraining({ ...body, quoteId: estimate.trainingQuote!.quoteId }),
@@ -256,7 +423,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = install({ runTrainingCapRefusal: reason, trainingQuoteTotal: 500 }).uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
 
     const r = await settle(() =>
       result.current.run.runTraining({ ...body, quoteId: estimate.trainingQuote!.quoteId }),
@@ -283,7 +450,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
     const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
 
     const first = await settle(() => result.current.run.runTraining(quoted));
@@ -310,7 +477,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
     const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
     expect(((await settle(() => result.current.run.runTraining(quoted))).error as RunTrainingError).declined).toBe(true);
     m.host.setScenario({ runTrainingError: undefined });
@@ -323,7 +490,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { body } = await prepareAndQuote(result);
+    const { body } = await uploadAndQuote(result);
 
     const runFresh = async (forced: string) => {
       const q = await settle(() => result.current.wf.estimate(body));
@@ -342,49 +509,38 @@ describe('kind:training — prepare → estimate → run → watch', () => {
         MOCK_TRAINING_QUOTE_GONE_ERROR,
       );
     }
-    // Before it → the same quote still runs.
-    for (const forced of ['declined', 'no block token']) {
+    // Before it → the same quote still runs. `training data not uploaded here` is
+    // a host refusal made before any dialog, so it keeps the quote too.
+    for (const forced of ['declined', 'no block token', 'training data not uploaded here']) {
       const again = await runFresh(forced);
       expect(again.error, forced).toBeUndefined();
       expect(again.value?.status, forced).toBe('pending');
     }
   });
 
-  it('a body mismatch consumes the quote (the server claims before it compares)', async () => {
+  it('a body that differs from the quoted one is refused, and that consumes the quote', async () => {
     uninstall = install().uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
-    const other = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    const { estimate, body } = await uploadAndQuote(result);
     const quoteId = estimate.trainingQuote!.quoteId;
 
-    const mismatch = await settle(() =>
-      result.current.run.runTraining({ ...bodyFor(other.value!.datasetId), quoteId }),
-    );
+    // Same blobs, one caption changed — the server hashes the whole body.
+    const edited = {
+      ...body,
+      items: body.items.map((it, i) => (i === 0 ? { ...it, caption: 'edited' } : it)),
+    };
+    const mismatch = await settle(() => result.current.run.runTraining({ ...edited, quoteId }));
     expect((mismatch.error as RunTrainingError).message).toMatch(/differs from the one that was quoted/);
     const again = await settle(() => result.current.run.runTraining({ ...body, quoteId }));
     expect((again.error as RunTrainingError).message).toBe(MOCK_TRAINING_QUOTE_GONE_ERROR);
-  });
-
-  it('`trainingDatasetError` clears on `setScenario({ trainingDatasetError: undefined })`', async () => {
-    const m = install({ trainingDatasetError: 'training from apps is not enabled' });
-    uninstall = m.uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    expect((await settle(() => result.current.prep.prepareDataset(ITEMS))).error).toBeInstanceOf(
-      PrepareTrainingDatasetError,
-    );
-    m.host.setScenario({ trainingDatasetError: undefined });
-    const ok = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect(ok.error).toBeUndefined();
-    expect(ok.value?.count).toBe(3);
   });
 
   it('a free-text server message on RUN_TRAINING has no code and no money flag', async () => {
     uninstall = install({ runTrainingError: 'the training body differs' }).uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate, body } = await prepareAndQuote(result);
+    const { estimate, body } = await uploadAndQuote(result);
     const r = await settle(() =>
       result.current.run.runTraining({ ...body, quoteId: estimate.trainingQuote!.quoteId }),
     );
@@ -400,137 +556,18 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     ]);
   });
 
-  it('a body whose dataset differs from the quoted one is refused', async () => {
-    uninstall = install().uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { estimate } = await prepareAndQuote(result);
-    const other = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    const r = await settle(() =>
-      result.current.run.runTraining({
-        ...bodyFor(other.value!.datasetId),
-        quoteId: estimate.trainingQuote!.quoteId,
-      }),
-    );
-    expect((r.error as RunTrainingError).message).toMatch(/differs from the one that was quoted/);
-  });
-
-  it('a signed-out viewer gets `sign in to train` → .signInRequired on BOTH bridges', async () => {
+  it('a signed-out viewer gets `sign in to train` → .signInRequired', async () => {
     uninstall = install({ viewer: null }).uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const p = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    const pe = p.error as PrepareTrainingDatasetError;
-    expect(pe).toBeInstanceOf(PrepareTrainingDatasetError);
-    expect(pe.code).toBe('sign in to train');
-    expect(pe.signInRequired).toBe(true);
-
     const r = await settle(() =>
-      result.current.run.runTraining({
-        ...bodyFor(`tds_${'0'.repeat(32)}`),
-        quoteId: `tq_${'0'.repeat(32)}`,
-      }),
+      result.current.run.runTraining({ ...bodyFor(FOREIGN_ITEMS), quoteId: `tq_${'0'.repeat(32)}` }),
     );
     const re = r.error as RunTrainingError;
     expect(re.code).toBe('sign in to train');
     expect(re.signInRequired).toBe(true);
     expect(re.unconfirmed).toBe(false);
-  });
-
-  it('`invalid training dataset` for items outside the host bounds, before any server step', async () => {
-    uninstall = install().uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const cases: unknown[] = [
-      [],
-      Array.from({ length: 51 }, (_, i) => ({ imageId: i + 1, caption: '' })),
-      [{ imageId: 0, caption: 'x' }],
-      [{ imageId: 1.5, caption: 'x' }],
-      [{ imageId: 1, caption: 'x'.repeat(1001) }],
-      [{ imageId: 1, caption: 'x', extra: true }],
-      [{ imageId: 1 }],
-    ];
-    for (const items of cases) {
-      const r = await settle(() =>
-        result.current.prep.prepareDataset(items as Parameters<typeof result.current.prep.prepareDataset>[0]),
-      );
-      expect((r.error as PrepareTrainingDatasetError).code, JSON.stringify(items).slice(0, 60)).toBe(
-        'invalid training dataset',
-      );
-    }
-    // Boundary that must PASS: 50 items, a 1000-char caption.
-    const ok = await settle(() =>
-      result.current.prep.prepareDataset(
-        Array.from({ length: 50 }, (_, i) => ({ imageId: i + 1, caption: 'x'.repeat(1000) })),
-      ),
-    );
-    expect(ok.value?.count).toBe(50);
-  });
-
-  it('nothing admitted → the server\'s refusal, never a resolved count of 0', async () => {
-    const m = install({
-      trainingDatasetRejected: ITEMS.map((i) => ({ imageId: i.imageId, reason: 'not-eligible' as const })),
-    });
-    uninstall = m.uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-
-    const a = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect(a.value).toBeUndefined();
-    const ae = a.error as PrepareTrainingDatasetError;
-    expect(ae).toBeInstanceOf(PrepareTrainingDatasetError);
-    expect(ae.message).toBe(MOCK_TRAINING_NONE_ELIGIBLE_ERROR);
-    expect(ae.code).toBeUndefined();
-
-    // Some passed eligibility and then failed the import → the import refusal.
-    m.host.setScenario({
-      trainingDatasetRejected: [
-        { imageId: 11, reason: 'not-eligible' },
-        { imageId: 12, reason: 'import-failed' },
-        { imageId: 13, reason: 'import-unavailable' },
-      ],
-    });
-    const b = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect((b.error as PrepareTrainingDatasetError).message).toBe(
-      MOCK_TRAINING_NONE_IMPORTED_ERROR,
-    );
-
-    // One admitted → resolves, count 1.
-    m.host.setScenario({ trainingDatasetRejected: [{ imageId: 11, reason: 'pending-scan' }, { imageId: 12, reason: 'import-failed' }] });
-    const c = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect(c.value?.count).toBe(1);
-  });
-
-  it('`trainingDatasetError` surfaces a code as .code and a server message without one', async () => {
-    const m = install({ trainingDatasetError: 'no block token' });
-    uninstall = m.uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const a = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect((a.error as PrepareTrainingDatasetError).code).toBe('no block token');
-
-    m.host.setScenario({ trainingDatasetError: 'training from apps is not enabled' });
-    const b = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    const be = b.error as PrepareTrainingDatasetError;
-    expect(be.message).toBe('training from apps is not enabled');
-    expect(be.code).toBeUndefined();
-    expect(be.signInRequired).toBe(false);
-  });
-
-  it('prepare prompts for ai:write:budgeted and retries ONCE on the grant', async () => {
-    const m = install({ consentGranted: false });
-    uninstall = m.uninstall;
-    const { result } = hooks();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-
-    const r = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    expect(r.error).toBeUndefined();
-    expect(r.value!.count).toBe(3);
-    expect(m.outbound.filter((o) => o.type === 'PREPARE_TRAINING_DATASET')).toHaveLength(2);
-    const consent = m.outbound.filter((o) => o.type === 'REQUEST_CONSENT');
-    expect(consent).toHaveLength(1);
-    expect(consent[0]!.payload).toEqual({ scopes: ['ai:write:budgeted'] });
   });
 
   it('runTraining NEVER prompts or re-sends, even on a token without the scope', async () => {
@@ -540,39 +577,26 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
     const r = await settle(() =>
-      result.current.run.runTraining({
-        ...bodyFor(`tds_${'0'.repeat(32)}`),
-        quoteId: `tq_${'0'.repeat(32)}`,
-      }),
+      result.current.run.runTraining({ ...bodyFor(FOREIGN_ITEMS), quoteId: `tq_${'0'.repeat(32)}` }),
     );
     expect((r.error as RunTrainingError).message).toBe(MOCK_SPEND_SCOPE_ERROR);
     expect(m.outbound.filter((o) => o.type === 'RUN_TRAINING')).toHaveLength(1);
     expect(m.outbound.filter((o) => o.type === 'REQUEST_CONSENT')).toHaveLength(0);
   });
 
-  it('estimate refuses an unknown dataset, and a quote above the 5,000 per-run ceiling', async () => {
+  it('estimate refuses a quote above the 5,000 per-run ceiling; exactly at it is allowed', async () => {
     const m = install({ trainingQuoteTotal: 5001 });
     uninstall = m.uninstall;
     const { result } = hooks();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const unknown = await settle(() => result.current.wf.estimate(bodyFor(`tds_${'f'.repeat(32)}`)));
-    const ue = unknown.error as WorkflowEstimateError;
-    expect(ue).toBeInstanceOf(WorkflowEstimateError);
-    expect(ue.code).toBe('failed');
-    expect(ue.snapshot.error).toBe(MOCK_TRAINING_DATASET_GONE_ERROR);
-
-    const prepared = await settle(() => result.current.prep.prepareDataset(ITEMS));
-    const over = await settle(() =>
-      result.current.wf.estimate(bodyFor(prepared.value!.datasetId)),
-    );
+    const over = await settle(() => result.current.wf.estimate(bodyFor(FOREIGN_ITEMS)));
     expect((over.error as WorkflowEstimateError).snapshot.error).toBe(
       'this training run costs 5001 Buzz, above the per-run limit of 5000 for apps',
     );
 
-    // Exactly AT the ceiling is allowed.
     m.host.setScenario({ trainingQuoteTotal: 5000 });
-    const at = await settle(() => result.current.wf.estimate(bodyFor(prepared.value!.datasetId)));
+    const at = await settle(() => result.current.wf.estimate(bodyFor(FOREIGN_ITEMS)));
     expect(at.value?.trainingQuote?.total).toBe(5000);
   });
 
@@ -583,9 +607,7 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
     const before = m.outbound.length;
 
-    const r = await settle(() =>
-      result.current.wf.submit(bodyFor(`tds_${'0'.repeat(32)}`) as WorkflowBody),
-    );
+    const r = await settle(() => result.current.wf.submit(bodyFor(FOREIGN_ITEMS) as WorkflowBody));
     expect((r.error as Error).message).toBe(TRAINING_BODY_SUBMIT_REFUSAL);
     expect(m.outbound.slice(before)).toEqual([]);
     await waitFor(() => expect(result.current.wf.status).toBe('error'));

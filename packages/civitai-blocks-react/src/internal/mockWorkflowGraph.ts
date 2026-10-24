@@ -11,6 +11,8 @@
  * still be refused by the real host or by the orchestrator.
  */
 
+import { PASS_THROUGH_INPUT_BYTES_MAX } from './stepInputLimits.js';
+
 /**
  * The bounds the mock enforces. `maxSteps` is a COPY of
  * `@civitai/app-sdk/blocks`'s `BLOCK_WORKFLOW_MAX_STEPS`, deliberately not
@@ -28,8 +30,11 @@ export const MOCK_WORKFLOW_BOUNDS = {
   maxInputDepth: 32,
   /** How deep a `repeat` template may nest another `repeat`. */
   maxRepeatNesting: 4,
-  /** Serialized bytes of every step `input` plus `arguments`, summed. */
-  maxInputBytes: 262_144,
+  /**
+   * Serialized bytes of every step `input` plus `arguments`, summed. The host's
+   * `WORKFLOW_INPUT_BYTES_MAX`, which is its pass-through cap by definition.
+   */
+  maxInputBytes: PASS_THROUGH_INPUT_BYTES_MAX,
   /** Characters of a step `$type`, and of a step `name` on the wire. */
   maxTypeChars: 64,
   /**
@@ -392,15 +397,21 @@ export function mockUnquotedWorkflowEstimateRefusal(failure: MockWorkflowQuoteFa
   };
 }
 
-/** The host's wire schema, mirrored: exact keys, types and sizes. No `errorCode`. */
-function isWellFormedBody(body: unknown): body is {
+type WellFormedWorkflowBody = {
   steps: Array<{ name?: string; $type: string; input: Record<string, unknown>; suppressOutput?: boolean }>;
   arguments?: Record<string, unknown>;
-} {
+};
+
+/**
+ * The host's wire schema, mirrored: exact keys, types and sizes — everything
+ * but the summed byte cap. Exported so the step-input gate
+ * (`mockHostStepInput.ts`) runs its rules only on a body the schema's shape
+ * accepts, as zod runs a refinement only after the shape parses.
+ */
+export function isWellFormedWorkflowShape(body: unknown): body is WellFormedWorkflowBody {
   if (!isPlainObject(body) || !Object.keys(body).every((key) => BODY_KEYS.has(key))) return false;
   if (!Array.isArray(body.steps) || body.steps.length === 0) return false;
   if (body.arguments !== undefined && !isPlainObject(body.arguments)) return false;
-  let bytes = body.arguments ? JSON.stringify(body.arguments).length : 0;
   for (const step of body.steps) {
     if (!isPlainObject(step) || !Object.keys(step).every((key) => STEP_KEYS.has(key))) return false;
     const { name, $type, input, suppressOutput } = step;
@@ -415,8 +426,15 @@ function isWellFormedBody(body: unknown): body is {
     }
     if (!isPlainObject(input)) return false;
     if (suppressOutput !== undefined && typeof suppressOutput !== 'boolean') return false;
-    bytes += JSON.stringify(input).length;
   }
+  return true;
+}
+
+/** The host's wire schema, mirrored in full: the shape, then the summed byte cap. No `errorCode`. */
+function isWellFormedBody(body: unknown): body is WellFormedWorkflowBody {
+  if (!isWellFormedWorkflowShape(body)) return false;
+  let bytes = body.arguments ? JSON.stringify(body.arguments).length : 0;
+  for (const step of body.steps) bytes += JSON.stringify(step.input).length;
   return bytes <= MOCK_WORKFLOW_BOUNDS.maxInputBytes;
 }
 

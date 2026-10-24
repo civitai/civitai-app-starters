@@ -8,6 +8,7 @@ import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
 import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
 import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
+import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
@@ -85,6 +86,10 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => useImageUpload());
     return () => result.current.open();
   },
+  OPEN_MEDIA_UPLOAD: () => {
+    const { result } = renderHook(() => useMediaUpload());
+    return () => result.current.open({ kind: 'video' });
+  },
   OPEN_RESOURCE_PICKER: () => {
     const { result } = renderHook(() => useResourcePicker());
     return () => result.current.open({ resourceType: 'LORA' });
@@ -120,7 +125,7 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     return () =>
       result.current.runTraining({
         kind: 'training',
-        datasetId: `tds_${'0'.repeat(32)}`,
+        items: [{ air: 'k1.png', caption: 'c' }],
         engine: 'ai-toolkit',
         model: 'sdxl',
         params: {
@@ -153,6 +158,7 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   OPEN_CHECKPOINT_PICKER: { type: 'CHECKPOINT_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_PICKER: { type: 'IMAGE_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_UPLOAD: { type: 'IMAGE_UPLOAD_RESULT', extra: {} },
+  OPEN_MEDIA_UPLOAD: { type: 'MEDIA_UPLOAD_RESULT', extra: {} },
   OPEN_RESOURCE_PICKER: { type: 'RESOURCE_PICKER_RESULT', extra: {} },
   PUBLISH_GENERATION_OUTPUTS: {
     type: 'PUBLISH_RESULT',
@@ -214,6 +220,7 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_CHECKPOINT_PICKER',
       'OPEN_IMAGE_PICKER',
       'OPEN_IMAGE_UPLOAD',
+      'OPEN_MEDIA_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
       // The host shows the viewer a job's price in its own confirm and submits

@@ -19,10 +19,15 @@ import { createDocumentStorage, type DocumentStorage } from './index.js';
  * the fake is CREATED rather than per request; and a list cursor is an opaque token
  * bound to its whole query, not the server's sort-bound keyset string.
  *
+ * A collection's `ownedModelVersions` rule is enforced; the fake has no model
+ * versions of its own, so which ones a viewer owns is `FakeStorageViewer.modelVersions`
+ * (default none).
+ *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
- * namespace, and the token middleware's other refusals (revoked instance, context
- * binding, an approval read that fails).
+ * namespace, the token middleware's other refusals (revoked instance, context
+ * binding, an approval read that fails), and a failed ownership lookup (the
+ * server's retryable 503 `service_unavailable`).
  */
 
 // ---------------------------------------------------------------------------
@@ -95,6 +100,7 @@ const STATUS: Record<string, number> = {
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
+  resource_not_owned: 403,
   not_found: 404,
   collection_not_declared: 404,
   method_not_allowed: 405,
@@ -125,6 +131,13 @@ export interface FakeStorageViewer {
   trusted?: boolean;
   /** `details.reason` when untrusted. Default `account_too_new`. */
   untrustedReason?: string;
+  /**
+   * Ids of the model versions whose model this viewer owns — what a collection's
+   * `ownedModelVersions` rule checks a write against. Default: none, so every id
+   * at a declared field is refused `resource_not_owned`, as the server refuses a
+   * version that is not the writer's (or does not exist).
+   */
+  modelVersions?: readonly number[];
 }
 
 /** Who is calling: a viewer (or `null`, anonymous) holding a token of some kind and scopes. */
@@ -205,7 +218,15 @@ interface Decl {
   marks: string[];
   indexes: Map<string, IndexType>;
   showAuthor: boolean;
+  /** Pointers into `data` whose ids must be the writer's own model versions; empty when undeclared. */
+  ownedModelVersions: string[];
 }
+
+/** The manifest's `ownedModelVersions` pointer: 1 to 4 plain identifier segments. */
+const OWNED_POINTER = /^(\/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$/u;
+const MAX_OWNED_POINTERS = 4;
+/** Postgres `integer`: the server refuses a larger id before querying for it. */
+const INT4_MAX = 2_147_483_647;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -253,12 +274,32 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
       if ((INDEX_TYPES as readonly unknown[]).includes(type)) indexes.set(path, type as IndexType);
       else errors.push(`${at}.indexes.${path}: type must be one of ${INDEX_TYPES.join(', ')}`);
     }
+    const ownedModelVersions: string[] = [];
+    if (raw.ownedModelVersions !== undefined) {
+      const list = raw.ownedModelVersions;
+      if (!shared || raw.write !== 'own') {
+        errors.push(`${at}.ownedModelVersions: applies only to shared collections with write "own"`);
+      } else if (
+        !Array.isArray(list) ||
+        list.length < 1 ||
+        list.length > MAX_OWNED_POINTERS ||
+        !list.every((p) => typeof p === 'string' && OWNED_POINTER.test(p)) ||
+        new Set(list).size !== list.length
+      ) {
+        errors.push(
+          `${at}.ownedModelVersions: must be 1 to ${MAX_OWNED_POINTERS} distinct pointers such as "/workflow/modelVersionId"`,
+        );
+      } else {
+        ownedModelVersions.push(...(list as string[]));
+      }
+    }
     const decl: Decl = {
       visibility: raw.visibility,
       counters: shared ? names(raw.counters) : [],
       marks: shared ? names(raw.marks) : [],
       indexes,
       showAuthor: shared && raw.showAuthor === true,
+      ownedModelVersions,
     };
     if (shared && (raw.write === 'own' || raw.write === 'none')) decl.write = raw.write;
     out.set(name, decl);
@@ -1035,6 +1076,39 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
   }
 
+  /**
+   * The collection's `ownedModelVersions` rule, as the server's
+   * `doc-store-ownership.ts` applies it: a pointer that resolves to nothing is
+   * allowed; every value found must be a positive `integer` id — all of them are
+   * checked before any ownership — and then the writer's own version. One code
+   * and message for every reason, so a refusal reveals nothing about whether a
+   * version exists.
+   */
+  function assertOwnedModelVersions(decl: Decl, data: Record<string, unknown>, viewer: FakeStorageViewer) {
+    if (decl.ownedModelVersions.length === 0) return;
+    const notOwned = (pointer: string) =>
+      refuse('resource_not_owned', 'the model version at this field is not one the author owns', { pointer });
+    const claimed: { pointer: string; id: number }[] = [];
+    for (const pointer of decl.ownedModelVersions) {
+      let cur: unknown = data;
+      let found = true;
+      for (const seg of pointer.split('/').slice(1)) {
+        if (!isObject(cur) || !Object.prototype.hasOwnProperty.call(cur, seg)) {
+          found = false;
+          break;
+        }
+        cur = cur[seg];
+      }
+      if (!found) continue;
+      if (typeof cur !== 'number' || !Number.isInteger(cur) || cur < 1 || cur > INT4_MAX) throw notOwned(pointer);
+      claimed.push({ pointer, id: cur });
+    }
+    const owned = new Set(viewer.modelVersions ?? []);
+    for (const { pointer, id } of claimed) {
+      if (!owned.has(id)) throw notOwned(pointer);
+    }
+  }
+
   /** The server's refusals that are ITS fault: refunded without a rejection charge. */
   const isOurFault = (err: unknown) =>
     !(err instanceof Refusal) ||
@@ -1180,6 +1254,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           if (Array.isArray(raw) || !/^[0-9]{1,15}$/.test(raw)) throw invalid('ifVersion must be a non-negative integer');
           deleteVersion = Number(raw);
         }
+        // Every write that sets `data`, before the trust gate, the write budget and the
+        // moderation scan (and so before the store's own checks), as the server orders it.
+        const newData = created?.data ?? putIn?.data;
+        if (newData) assertOwnedModelVersions(decl, newData as Record<string, unknown>, viewer!);
         const write = (moderated: boolean, landed: () => void) => {
           if (created) {
             if (moderated) moderateWrite({ data: created.data as Record<string, unknown> });

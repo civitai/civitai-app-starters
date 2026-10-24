@@ -39,6 +39,10 @@ const KEY = /^[A-Za-z_][A-Za-z0-9_]{0,39}$/;
 const RESERVED = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
 const ASPECT = /^(\d{1,2}):(\d{1,2})$/;
 const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.(width|height))?\s*\}\}/g;
+const SPREAD = '...';
+const OPTION_MAX = 60;
+/** An option as the panel keeps it: its label, its settings' key and a value picking it are all cut alike. */
+const optionLabel = (label: string): string => label.slice(0, OPTION_MAX);
 const WHOLE = /^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.(width|height))?\s*\}\}$/;
 const KINDS = new Set<PanelInputKind>(['text', 'choice', 'slider', 'aspect', 'count', 'seed', 'toggle', 'image']);
 
@@ -47,11 +51,13 @@ const isObj = (value: unknown): value is Obj => typeof value === 'object' && val
 const isNum = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const optString = (value: unknown, max: number): string | undefined => (typeof value === 'string' && value.trim() ? value.slice(0, max) : undefined);
 
-export type Checked = { spec: PanelSpec; errors?: undefined } | { spec?: undefined; errors: string[] };
+export type Checked = { spec: PanelSpec; errors?: undefined; dropped?: string[] } | { spec?: undefined; errors: string[]; dropped?: undefined };
 
 /** Checks a definition written by the assistant; errors are worded for it to fix and call again. */
 export function checkPanelSpec(raw: unknown): Checked {
   const errors: string[] = [];
+  // Inputs run never reads: harmless, so left out of the panel rather than refused.
+  const dropped: string[] = [];
   if (!isObj(raw)) return { errors: ['The panel must be an object with title, inputs and run.'] };
   const title = typeof raw.title === 'string' ? raw.title.trim() : '';
   if (!title || title.length > 80) errors.push('title must be 1-80 characters.');
@@ -92,7 +98,8 @@ export function checkPanelSpec(raw: unknown): Checked {
     const used = new Set<string>();
     // A choice may stand for a whole block of inputs, whose own placeholders count as used.
     const mapped = Object.values(inputs).flatMap((input) => (input.kind === 'choice' ? Object.values(input.map ?? {}).filter(isObj) : []));
-    for (const { key, part } of placeholdersIn([run, ...mapped])) {
+    const mappedText = Object.values(inputs).flatMap((input) => (input.kind === 'choice' || input.kind === 'toggle' ? Object.values(input.map ?? {}).filter((text) => typeof text === 'string') : []));
+    for (const { key, part } of placeholdersIn([run, ...mapped, ...mappedText])) {
       used.add(key);
       const input = inputs[key];
       if (!input) {
@@ -102,19 +109,26 @@ export function checkPanelSpec(raw: unknown): Checked {
       }
     }
     const blocks = Object.keys(inputs).filter((key) => isBlockChoice(inputs[key]!));
-    for (const key of misplacedBlocks(run, blocks)) {
-      errors.push(`{{${key}}} stands for a whole input (each of its options is a block of settings), so it can only be the whole input: "input": "{{${key}}}". To add a control, put its {{name}} inside each of ${key}'s option blocks.`);
+    // Inside an option's settings every value is a field, so a block there would nest its settings in one.
+    const nested = new Set(mapped.flatMap((block) => misplacedBlocks({ input: block }, blocks, false)));
+    for (const key of new Set([...misplacedBlocks(run, blocks), ...nested])) {
+      errors.push(`{{${key}}} stands for a whole input (each of its options is a block of settings), so it can only be the whole input: "input": "{{${key}}}", or one of the blocks spread into it: "input": {"...": [${(blocks.length > 1 ? blocks : [key, 'lora']).map((block) => `"{{${block}}}"`).join(', ')}]}. To add a control, put its {{name}} inside each of ${key}'s option blocks.`);
     }
     const unused = Object.keys(inputs).filter((key) => !used.has(key));
     const whole = !ask && typeof run.input === 'string' ? WHOLE.exec(run.input)?.[1] : undefined;
-    if (unused.length && whole && blocks.includes(whole)) {
+    const unusedBlocks = unused.filter((key) => blocks.includes(key));
+    if (unusedBlocks.length && whole && blocks.includes(whole)) {
+      errors.push(`Inputs ${unusedBlocks.join(', ')} are not used in run. Each is a block of settings, so spread it beside {{${whole}}}: "input": {"...": [${[whole, ...unusedBlocks].map((key) => `"{{${key}}}"`).join(', ')}]}.`);
+    } else if (unused.length && whole && blocks.includes(whole)) {
       errors.push(`Inputs ${unused.join(', ')} are not used in run. The input is {{${whole}}}, so put ${unused.map((key) => `{{${key}}}`).join(', ')} inside each of ${whole}'s option blocks.`);
     } else if (unused.length) {
-      errors.push(`Inputs ${unused.join(', ')} are not used in run; put {{name}} where each value belongs, or remove them.`);
+      dropped.push(...unused);
     }
   }
 
   if (errors.length) return { errors };
+  for (const key of dropped) delete inputs[key];
+  if (layout) layout = layout.map((row) => row.filter((key) => key in inputs)).filter((row) => row.length > 0);
   const description = optString(raw.description, 500);
   const button = optString(raw.button, 24);
   return {
@@ -126,6 +140,7 @@ export function checkPanelSpec(raw: unknown): Checked {
       run: ask ? { ask: (run as { ask: string }).ask } : (run as PanelRun),
       ...(button ? { button } : {}),
     },
+    ...(dropped.length ? { dropped } : {}),
   };
 }
 
@@ -156,7 +171,13 @@ function checkInput(raw: unknown, err: (message: string) => void): PanelInput | 
         err('a choice needs 2 to 12 distinct options.');
         return undefined;
       }
-      const map = isObj(raw.map) ? (Object.fromEntries(Object.entries(raw.map).filter(([k, v]) => options.includes(k) && (typeof v === 'string' || isObj(v)))) as Record<string, string | Record<string, unknown>>) : undefined;
+      const map = isObj(raw.map)
+        ? (Object.fromEntries(
+            Object.entries(raw.map)
+              .map(([k, v]) => [optionLabel(k), v] as const)
+              .filter(([k, v]) => options.includes(k) && (typeof v === 'string' || isObj(v))),
+          ) as Record<string, string | Record<string, unknown>>)
+        : undefined;
       return { kind: 'choice', ...base, options, default: options.includes(raw.default as string) ? (raw.default as string) : options[0]!, ...(map && Object.keys(map).length ? { map } : {}) };
     }
     case 'slider': {
@@ -195,7 +216,7 @@ function checkInput(raw: unknown, err: (message: string) => void): PanelInput | 
 
 function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.slice(0, 60)))];
+  return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map(optionLabel))];
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -206,16 +227,21 @@ function isBlockChoice(input: PanelInput): boolean {
   return input.kind === 'choice' && Object.values(input.map ?? {}).some(isObj);
 }
 
-/** Block choices used anywhere but as a step's whole input, where they would put an object in a field. */
-function misplacedBlocks(run: Obj, blocks: string[]): string[] {
+/** Block choices used anywhere but as a step's whole input or a block spread into it, where they would put an object in a field. */
+function misplacedBlocks(run: Obj, blocks: string[], wholeInput = true): string[] {
   if (blocks.length === 0) return [];
   const found = new Set<string>();
-  const walk = (node: unknown, isInput: boolean): void => {
+  const walk = (node: unknown, whole: boolean): void => {
     if (typeof node === 'string') {
-      if (isInput && WHOLE.test(node)) return;
+      if (whole && WHOLE.test(node)) return;
       for (const { key } of placeholdersIn(node)) if (blocks.includes(key)) found.add(key);
     } else if (Array.isArray(node)) node.forEach((item) => walk(item, false));
-    else if (isObj(node)) for (const [key, item] of Object.entries(node)) walk(item, key === 'input' && (node === run || steps.includes(node)));
+    else if (isObj(node)) {
+      for (const [key, item] of Object.entries(node)) {
+        if (key === SPREAD) [item].flat().forEach((block) => walk(block, true));
+        else walk(item, wholeInput && key === 'input' && (node === run || steps.includes(node)));
+      }
+    }
   };
   const steps: unknown[] = Array.isArray(run.steps) ? run.steps : [];
   walk(run, false);
@@ -260,6 +286,7 @@ export function normalizeValues(spec: PanelSpec, given: Record<string, unknown> 
 }
 
 function inRange(input: PanelInput, value: unknown): unknown {
+  if ((input.kind === 'choice' || input.kind === 'aspect') && typeof value === 'string') return optionLabel(value);
   if (!isNum(value)) return value;
   switch (input.kind) {
     case 'slider':
@@ -347,17 +374,28 @@ export function renderRun(spec: PanelSpec, values: PanelValues): { tool: 'run_st
   const fill = (node: unknown, depth = 0): unknown => {
     if (typeof node === 'string') {
       const whole = WHOLE.exec(node);
-      if (!whole) return node.replace(PLACEHOLDER, (_, key: string, part?: string) => String(valueOf(key, part)));
+      if (!whole) {
+        // Mapped text may hold placeholders of its own ("a {{mood}} voice").
+        return node.replace(PLACEHOLDER, (_, key: string, part?: string) => {
+          const value = valueOf(key, part);
+          return String(typeof value === 'string' && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value);
+        });
+      }
       const value = valueOf(whole[1]!, whole[2]);
       // A mapped block is filled in turn; the depth cap ends a block that names its own choice.
-      return isObj(value) && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value;
+      return (isObj(value) || typeof value === 'string') && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value;
     }
     if (Array.isArray(node)) {
       // An optional input left empty drops out, and so does a list it emptied.
       const items = node.map((item) => fill(item, depth)).filter((item) => item !== '');
       return items.length === 0 && node.length > 0 ? '' : items;
     }
-    if (isObj(node)) return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, fill(item, depth)]).filter(([, item]) => item !== ''));
+    if (isObj(node)) {
+      // "...": blocks of settings merged into this object in turn (a model's, then a LoRA's), its own fields over them.
+      const spread = SPREAD in node ? [node[SPREAD]].flat().map((block) => fill(block, depth)).filter(isObj) : [];
+      const own = Object.entries(node).filter(([key]) => key !== SPREAD).map(([key, item]) => [key, fill(item, depth)] as const).filter(([, item]) => item !== '');
+      return Object.assign({}, ...spread, Object.fromEntries(own));
+    }
     return node;
   };
   const args = fill(spec.run) as Record<string, unknown>;
@@ -378,6 +416,15 @@ export function mergeSpec(spec: PanelSpec, patch: Obj): Obj {
     for (const [key, input] of Object.entries(patch.inputs)) {
       if (input === null) delete inputs[key];
       else inputs[key] = input;
+    }
+  }
+  // New options for a choice, kept beside its old ones: replacing the input would mean resending every option's settings.
+  if (isObj(patch.addOptions)) {
+    for (const [key, added] of Object.entries(patch.addOptions)) {
+      const input = inputs[key] as PanelInput | undefined;
+      if (input?.kind !== 'choice' || !isObj(added)) continue;
+      const labels = Object.keys(added).filter((label) => !input.options.includes(label));
+      inputs[key] = { ...input, options: [...input.options, ...labels], map: { ...input.map, ...added } };
     }
   }
   return {

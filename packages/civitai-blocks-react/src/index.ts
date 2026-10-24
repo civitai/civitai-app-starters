@@ -144,6 +144,14 @@ export {
 } from './hooks/useCollectionFollow.js';
 export type { UseCollectionFollow } from './hooks/useCollectionFollow.js';
 export {
+  useReactions,
+  ReactionError,
+  REACTIONS,
+  REACTION_ERROR_CODES,
+  isReactionErrorCode,
+} from './hooks/useReactions.js';
+export type { UseReactions, UseReactionsOptions } from './hooks/useReactions.js';
+export {
   useCreatePostFromApp,
   CreatePostError,
   CREATE_POST_ERROR_CODES,
@@ -157,19 +165,6 @@ export type {
   BlockCreatePostHostError,
 } from './hooks/useCreatePostFromApp.js';
 export {
-  usePrepareTrainingDataset,
-  PrepareTrainingDatasetError,
-  PREPARE_TRAINING_DATASET_ERROR_CODES,
-  isPrepareTrainingDatasetErrorCode,
-} from './hooks/usePrepareTrainingDataset.js';
-export type {
-  UsePrepareTrainingDataset,
-  BlockPrepareTrainingDatasetHostError,
-  BlockTrainingDatasetItem,
-  BlockTrainingDatasetResult,
-  BlockTrainingRejectionReason,
-} from './hooks/usePrepareTrainingDataset.js';
-export {
   useRunTraining,
   RunTrainingError,
   RUN_TRAINING_ERROR_CODES,
@@ -181,6 +176,7 @@ export type {
   RunTrainingErrorCode,
   BlockRunTrainingHostError,
   BlockTrainingQuote,
+  BlockTrainingDatasetItem,
   WorkflowBodyTraining,
 } from './hooks/useRunTraining.js';
 export {
@@ -210,6 +206,14 @@ export type {
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
   BlockCollectionFollowResult,
+  BlockAppReaction,
+  BlockStoredReaction,
+  BlockReactionEntityType,
+  BlockEntityReactionErrorCode,
+  BlockReactionCounts,
+  BlockEntityReactionState,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export type { UseCheckpointPicker } from './hooks/useCheckpointPicker.js';
@@ -224,13 +228,21 @@ export type {
   UseImageUpload,
   UseImageUploadAsyncScan,
   UseImageUploadGenerationSource,
+  UseImageUploadTrainingData,
   UseImageUploadOptions,
+  BlockTrainingDataImage,
 } from './hooks/useImageUpload.js';
 export { useUploadImageBytes } from './hooks/useUploadImageBytes.js';
 export type {
   UploadImageBytesOptions,
   UseUploadImageBytes,
 } from './hooks/useUploadImageBytes.js';
+export { useMediaUpload } from './hooks/useMediaUpload.js';
+export type {
+  UseMediaUpload,
+  MediaUploadOpenOptions,
+  MediaUploadBytesOptions,
+} from './hooks/useMediaUpload.js';
 export { useImagePicker, IMAGE_PICKER_MULTIPLE_MAX } from './hooks/useImagePicker.js';
 export type {
   UseImagePicker,

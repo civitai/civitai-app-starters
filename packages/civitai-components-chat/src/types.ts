@@ -39,8 +39,54 @@ export interface Turn {
    * `errorDetail` is what the service said, shown only under Details; `errorTrace` is where the reply
    * failed, kept for this session only. `ranOut`: the reply used every step it may take. `stopped`:
    * the page ended the reply (`beforeToolCall` answered `stop: true`), and these are the words shown.
+   * `networkRetries`: where the browser's network cut the reply off each time it then retried by
+   * itself, oldest first; kept for this session only, like `errorTrace`. `resume`: on a failed reply,
+   * where asking for it again can carry on from without running a tool twice; also kept for this
+   * session only (see {@link ResumePoint}).
    */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string; errorTrace?: ErrorTrace; ranOut?: boolean; stopped?: string };
+  assistant: {
+    messages: ModelMessage[];
+    status: TurnStatus;
+    error?: string;
+    errorDetail?: string;
+    errorKind?: string;
+    errorTrace?: ErrorTrace;
+    networkRetries?: ErrorTrace[];
+    resume?: ResumePoint;
+    ranOut?: boolean;
+    stopped?: string;
+    /** What this reply's model calls were charged, as the orchestrator reported them; missing on replies saved before it did. */
+    buzz?: number;
+    /**
+     * On a reply read back from a save made before it ended (cut off): when that save was made (ISO).
+     * The turn's start for a v2 save, the latest step's save for a v3 one. While it is recent the reply
+     * may still be running in another tab or window (see `replyElsewhere`). Not saved again.
+     */
+    savedAt?: string;
+    /**
+     * Read back unfinished, it is the reply this tab started, and no one saved it since this tab last
+     * did: nothing runs it now (the tab reloaded), so it reads as gone at once. Not saved.
+     */
+    orphaned?: boolean;
+    /**
+     * Read back unfinished while a tab of this browser holds its lock: it runs there, so it reads as still
+     * replying whatever the save times say. Not saved.
+     */
+    heldElsewhere?: boolean;
+  };
+}
+
+/**
+ * Where a failed reply can be asked for again from: the steps that finished before the failure (their
+ * messages, with every tool call and its result) and how many there were. A failed reply has one only
+ * when the step that failed had called no tool, so asking again never runs a tool a second time: a
+ * call in the failed step may have run and is in no finished step to send as it is. `at` is when the
+ * reply failed (ms since the epoch).
+ */
+export interface ResumePoint {
+  messages: ModelMessage[];
+  steps: number;
+  at: number;
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */
@@ -72,7 +118,7 @@ export interface ConversationSummary {
   title: string;
   titleSource: TitleSource;
   updatedAt: string;
-  head: { workflowId: string; metadata: ConversationMetadata };
+  head: { workflowId: string; metadata: StoredConversationMetadata };
 }
 
 /** A turn still streaming is saved without its reply, so a reload shows it as cut off. */
@@ -97,6 +143,39 @@ export interface ConversationMetadata {
   scope?: string;
   model?: string;
 }
+
+/**
+ * A saved reply's status in a v3 head: v2's, plus `running`, a reply that had not ended when it was
+ * saved. Its `messages` are the steps it had finished by then (each with every tool call and its
+ * result), so a reader shows the progress made instead of losing the whole reply.
+ */
+export type SavedTurnStatusV3 = TurnStatus | 'running';
+
+/**
+ * A turn in a v3 head; as {@link SavedTurn}, except that its reply may be saved `running`, with
+ * `savedAt` (ISO), when that save was made. A `running` reply's `messages` are whole finished steps
+ * only: every tool call in them comes with its result.
+ */
+export interface SavedTurnV3 extends Omit<SavedTurn, 'assistant'> {
+  /**
+   * `subagents`: on a `running` reply, the write subagents its step had started, by `dispatch_agent` call
+   * id, as far as each had got by that save (see `SubagentCheckpoint`).
+   */
+  assistant?: { messages: ModelMessage[]; status: SavedTurnStatusV3; error?: string; savedAt?: string; subagents?: Record<string, unknown> };
+}
+
+/**
+ * The v3 conversation head: v2 with replies that may be saved while they run (one save after each
+ * step that finished). This version reads v3 and still writes v2: a v2 reader leaves a v3 head out
+ * of its list, so readers ship before any writer does.
+ */
+export interface ConversationMetadataV3 extends Omit<ConversationMetadata, 'v' | 'turns'> {
+  v: 3;
+  turns: SavedTurnV3[];
+}
+
+/** Every head this version reads. */
+export type StoredConversationMetadata = ConversationMetadata | ConversationMetadataV3;
 
 export interface JobMetadata {
   v: 1;
@@ -123,16 +202,11 @@ export interface Settings {
   maxOutputTokens?: number;
   /** Sent with every request as the user's standing instructions to the assistant. */
   customInstructions?: string;
-  /** The model a chat uses when it has none of its own; the configured default when unset. */
-  assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
-  /**
-   * How replies are paid for: `auto` (the default) uses free replies while they last and then Buzz,
-   * `free` uses only free replies, `paid` always uses Buzz.
-   */
-  assistantTier?: 'auto' | 'free' | 'paid';
   lastConversationId?: string;
+  /** Top up the chat balance by itself when a reply finds it empty. */
+  autoTopUp?: boolean;
 }
 
 export interface ModelRecommendation {

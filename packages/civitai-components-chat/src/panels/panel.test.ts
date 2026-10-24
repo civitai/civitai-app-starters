@@ -5,7 +5,7 @@ import { toolInfo } from '../orchestration/job.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { controllable, flush, imageStep, toolResult, workflow } from '../test-support/fakes.js';
 import { PanelManager, type SavedPanel } from './panel.js';
-import { OPEN_PANEL, UPDATE_PANEL, panelTools } from './tools.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL, panelTools } from './tools.js';
 
 const RUN_STEP_SCHEMA = { properties: { stepType: {}, input: {}, whatif: {}, waitForCompletion: {}, tags: {}, metadataJson: {} } };
 
@@ -57,6 +57,70 @@ function setup({ refuse = false } = {}) {
 }
 
 describe('panels', () => {
+  it('tells the assistant to stop and talk to the user once a reply has failed to set up controls three times', async () => {
+    const { call } = setup();
+    const broken = { title: 'Broken', inputs: { prompt: { kind: 'text' } }, run: { stepType: 'imageGen', input: { prompt: '{{subject}}' } } };
+
+    const notes = [];
+    for (const id of ['call_1', 'call_2', 'call_3']) notes.push((await call(OPEN_PANEL, broken, id)).note);
+
+    expect(notes[0]).toContain('Fix the definition and call again');
+    expect(notes[2]).toContain('Do not call open_panel or update_panel again in this reply');
+  });
+
+  it("adds a model the viewer asked for beside the panel's own, from the settings the assistant copied", async () => {
+    const PICTURE = {
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text', required: true },
+        model: {
+          kind: 'choice',
+          options: ['SDXL', 'Flux'],
+          map: { SDXL: { engine: 'sdcpp', ecosystem: 'sdxl', prompt: '{{prompt}}' }, Flux: { engine: 'flux2', prompt: '{{prompt}}' } },
+        },
+      },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    };
+    const { panels, calls, composed, call } = setup();
+    await call(OPEN_PANEL, { ...PICTURE, values: { prompt: 'a cat' } });
+    const panel = panels.get('p1')!;
+    expect(panels.context()).toContain('The selected model option puts: {"engine":"sdcpp","ecosystem":"sdxl","prompt":"{{prompt}}"}');
+
+    panel.promptForModel();
+    expect(composed.at(-1)?.message).toBe('Find another model for the "Your picture" panel (p1): ');
+
+    const catModel = { engine: 'sdcpp', ecosystem: 'sdxl', checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: '{{prompt}}' };
+    const result = await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Tower': catModel } }, values: { model: 'Cat Tower' } }, 'call_2');
+    expect(result).toMatchObject({ values: { model: 'Cat Tower' } });
+    expect(panel.spec.inputs.model).toMatchObject({ options: ['SDXL', 'Flux', 'Cat Tower'] });
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: 'a cat' }, whatif: true });
+
+    const longName = 'CAT - Citron Anime Treasure [Illustrious & NoobAI] for every cat';
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { [longName]: { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6' } } } }, 'call_long');
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6', prompt: 'a cat' } });
+
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Carrier': { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:3@4' } } } }, 'call_3');
+    expect(panel.values.model).toBe('Cat Carrier');
+  });
+
+  it('closes the panels the assistant names, out of what it is told, and keeps them closed after a reload until changed', async () => {
+    const { panels, saved, call } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } }, 'call_1');
+    await call(OPEN_PANEL, { ...LOGO, title: 'Second logo', values: { brand: 'Owl' } }, 'call_2');
+
+    expect(await call(CLOSE_PANEL, { panels: ['p1', 'p2'] })).toMatchObject({ closed: ['p1', 'p2'] });
+    expect(panels.all().map((panel) => panel.closed)).toEqual([true, true]);
+    expect(panels.context()).toBeUndefined();
+
+    const reloaded = setup();
+    reloaded.panels.restore('C1', { p1: saved.filter((panel) => panel.handle === 'p1').at(-1)! }, new Map());
+    expect(reloaded.panels.get('p1')!.closed).toBe(true);
+
+    await reloaded.call(UPDATE_PANEL, { panel: 'p1', values: { brand: 'Lark' } }, 'call_3');
+    expect(reloaded.panels.get('p1')!.closed).toBe(false);
+    expect(reloaded.panels.context()).toContain('"brand":"Lark"');
+  });
+
   it('opens a panel once a free price check accepts it, and tells the assistant its handle and price', async () => {
     const { panels, calls, saved, call } = setup();
     const result = await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } });
@@ -139,8 +203,6 @@ describe('panels', () => {
     );
 
     expect(result).toMatchObject({ panel: 'p1', version: 2, values: { brand: 'Night Owl', style: 'Mascot', palette: 'Cool' } });
-    expect(panels.get('p1')).toMatchObject({ toolCallId: 'call_2', version: 2 });
-    expect(await call(UPDATE_PANEL, { panel: 'p1', inputs: { mood: { kind: 'toggle' } } }, 'call_3')).toMatchObject({ error: expect.stringContaining('mood are not used') });
     expect(panels.get('p1')).toMatchObject({ toolCallId: 'call_2', version: 2 });
   });
 

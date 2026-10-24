@@ -22,6 +22,7 @@ import { missingCapabilities } from '../src/elements/capabilities.js';
 import '../src/elements/register-site.js';
 import '../src/sdk/civitai-sign-in-button.define.js';
 import '../src/sdk/civitai-workflow-button.define.js';
+import '../src/sdk/civitai-resource-picker.define.js';
 
 const FORM_ASSOCIATED = [
   'civitai-button',

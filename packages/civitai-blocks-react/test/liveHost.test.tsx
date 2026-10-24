@@ -8,8 +8,13 @@ import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useS
 import { createLiveHost } from '../src/live.js';
 import { resetTransport } from '../src/testing.js';
 import { getTransport } from '../src/transport/singleton.js';
-import { IMAGE_PICKER_UNSUPPORTED_ERROR, decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import {
+  IMAGE_PICKER_UNSUPPORTED_ERROR,
+  MEDIA_UPLOAD_UNSUPPORTED_ERROR,
+  decodeBlockTokenPayload,
+} from '../src/internal/liveHost.js';
 import { useImagePicker } from '../src/hooks/useImagePicker.js';
+import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
@@ -844,6 +849,33 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(payload.error).toBe('collection-unavailable');
     expect(payload.result).toBeUndefined();
     // No HTTP was attempted for it at all.
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('SET_ENTITY_REACTION and GET_ENTITY_REACTIONS are REFUSED without any HTTP', async () => {
+    // The reaction procedures need the viewer's civitai.com SESSION and refuse a
+    // token as authentication, so there is nothing this harness could call.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('SET_ENTITY_REACTION', {
+      requestId: 'r-react',
+      entityType: 'image',
+      entityId: 7,
+      reaction: 'Like',
+      reacted: true,
+      ticket: 't',
+    });
+    const set = await waitForMessage(inbound, 'ENTITY_REACTION_RESULT');
+    expect(set).toEqual({ requestId: 'r-react', error: 'entity-unavailable' });
+
+    post('GET_ENTITY_REACTIONS', { requestId: 'r-read', entityType: 'image', ids: [7] });
+    const get = await waitForMessage(inbound, 'ENTITY_REACTIONS_RESULT');
+    expect(get).toEqual({ requestId: 'r-read', error: 'entity-unavailable' });
+
     expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
     expect(warnSpy).toHaveBeenCalled();
   });
@@ -2903,13 +2935,8 @@ describe('createLiveHost — training bridges (refused: the server refuses dev t
   // Every `kind: 'training'` procedure refuses a dev token server-side, and a run
   // is confirmed in host chrome this harness does not have. Each bridge must
   // refuse on ITS OWN reply channel, immediately, without a network call — a
-  // missing case would hang the hook to its bound (120s / 10 min).
+  // missing case would hang the hook to its 10-minute bound.
   for (const [type, replyType, payload] of [
-    [
-      'PREPARE_TRAINING_DATASET',
-      'TRAINING_DATASET_RESULT',
-      { items: [{ imageId: 1, caption: 'c' }] },
-    ],
     ['RUN_TRAINING', 'TRAINING_RESULT', { body: { kind: 'training', quoteId: 'tq_x' } }],
   ] as const) {
     it(`${type} replies ${replyType} with a refusal and makes no network call`, async () => {
@@ -3004,6 +3031,33 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     const logged = warn.mock.calls.map((c) => String(c[0]));
     expect(logged.filter((m) => m.includes('resolving the upload as dismissed (null)'))).toHaveLength(1);
     expect(logged.filter((m) => m.includes('uploadImageBytesResult'))).toHaveLength(0);
+  });
+
+  it("a `purpose: 'trainingData'` upload is answered as a cancel, and the log names the TRAINING mock option", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-train', purpose: 'trainingData' });
+    const payload = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+    expect(payload.requestId).toBe('r-train');
+    expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    // The WHOLE message, so a reword that drops the option name fails here.
+    expect(logged).toContain(
+      "[createLiveHost] OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+        'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+        'Test the training flow against the real site, or use ' +
+        'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+    );
+    expect(logged.filter((m) => m.includes('cannedImageUpload'))).toHaveLength(0);
   });
 
   it('a `useUploadImageBytes()` upload rejects with the no-image error, never hangs', async () => {
@@ -3159,6 +3213,78 @@ describe('createLiveHost — OPEN_IMAGE_PICKER (refused: nothing lists the viewe
       expect(multi).toEqual({
         rejected: 'the image picker is not supported in dev:live — use dev:mock',
       });
+    } finally {
+      resetTransport();
+    }
+  });
+});
+
+describe('createLiveHost — OPEN_MEDIA_UPLOAD (refused: the upload needs the viewer\'s session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_MEDIA_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('replies MEDIA_UPLOAD_RESULT with an error and no upload, and logs once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-1', kind: 'video', purpose: 'generationSource' });
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-2', kind: 'audio', purpose: 'generationSource' });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT')).toHaveLength(2),
+    );
+    expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT').map((m) => m.payload)).toEqual([
+      { requestId: 'r-media-1', error: 'media upload is not supported in dev:live — use dev:mock' },
+      { requestId: 'r-media-2', error: 'media upload is not supported in dev:live — use dev:mock' },
+    ]);
+    expect(MEDIA_UPLOAD_UNSUPPORTED_ERROR).toBe('media upload is not supported in dev:live — use dev:mock');
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_MEDIA_UPLOAD received'))).toEqual([
+      '[createLiveHost] OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+        '— useMediaUpload() REJECTS. Test it against the real site, ' +
+        'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+    ]);
+  });
+
+  it('useMediaUpload() rejects with the refusal in both modes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      const { result } = renderHook(() => useMediaUpload());
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          (value) => ({ resolved: value }),
+          (err: Error) => ({ rejected: err.message }),
+        );
+      expect(await settle(result.current.open({ kind: 'image' }))).toEqual({
+        rejected: 'media upload is not supported in dev:live — use dev:mock',
+      });
+      expect(
+        await settle(result.current.upload({ kind: 'audio', bytes: new Uint8Array([0x49, 0x44, 0x33]).buffer })),
+      ).toEqual({ rejected: 'media upload is not supported in dev:live — use dev:mock' });
     } finally {
       resetTransport();
     }

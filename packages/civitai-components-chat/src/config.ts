@@ -1,5 +1,12 @@
 export const ORCH_URL = 'https://orchestration.civitai.com';
 export const SITE_URL = 'https://civitai.com';
+/** civitai.com shows safe content only; the same site with mature content is civitai.red. */
+export const MATURE_SITE_URL = 'https://civitai.red';
+
+export const siteUrl = (allowMature: boolean): string => (allowMature ? MATURE_SITE_URL : SITE_URL);
+
+/** Points links to either Civitai site at `site`; other civitai.com hosts (mcp., orchestration.) are left alone. */
+export const onSite = (text: string, site: string): string => text.replace(/https?:\/\/(?:www\.)?civitai\.(?:com|red)(?![\w-]|\.\w)/g, site);
 export const BUY_BUZZ_URL = `${SITE_URL}/purchase/buzz`;
 
 export interface ChatModelOption {
@@ -13,7 +20,7 @@ export interface ChatModelOption {
 export interface ChatConfig {
   /** What the chat calls itself to the viewer and to its assistant. */
   name: string;
-  /** The chat model, as an AIR the orchestrator serves through its OpenAI-compatible endpoint. */
+  /** The chat model: an id or alias the orchestrator serves through its OpenAI-compatible endpoint. */
   model: string;
   /** Other models the viewer may pick in Settings, besides the default and a custom id. */
   models: ChatModelOption[];
@@ -38,7 +45,15 @@ export interface ChatConfig {
    * estimate; {@link CONTEXT_BUDGET_TOKENS} when unset. Raise it for a model with a large window.
    */
   contextBudgetTokens?: number;
+  /** The voice a spoken conversation replies in: a Qwen3 TTS speaker, and how it should speak. */
+  conversationVoice: { speaker: string; instruct?: string };
 }
+
+/** The limits a viewer may pick for spending without being asked, besides always asking and never. */
+export const AUTO_RUN_STEPS = [25, 50, 100, 250];
+
+/** What one top-up moves from the viewer's Buzz into their chat balance. */
+export const TOP_UP_BUZZ = 100;
 
 /** The output-token cap a viewer or page may choose: fewer starves reasoning models and long file writes. */
 export const OUTPUT_TOKENS_MIN = 1_024;
@@ -47,12 +62,13 @@ export const DEFAULT_OUTPUT_TOKENS = 16_384;
 
 export const chatConfig: ChatConfig = {
   name: 'Civitai Chat',
-  model: 'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar',
+  model: 'civitai/qwen3.8',
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
-  autoRunLimit: 100,
+  autoRunLimit: 0,
   maxOutputTokens: DEFAULT_OUTPUT_TOKENS,
   models: [],
+  conversationVoice: { speaker: 'vivian', instruct: 'Speak quickly, at a brisk and energetic pace.' },
 };
 
 /**

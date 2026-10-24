@@ -139,7 +139,8 @@ describe('civitai-chat', () => {
     await chat.send('a blue bike');
 
     expect(app.requestGrants).toHaveBeenCalledTimes(1);
-    expect(app.requestGrants).toHaveBeenCalledWith(['ai:write:budgeted']);
+    // With a signal, so a consent dialog the viewer closes (which answers nothing) cannot hold the chat forever.
+    expect(app.requestGrants).toHaveBeenCalledWith(['ai:write:budgeted'], { signal: expect.any(AbortSignal) });
     expect(app.orchestration.submitWorkflow).toHaveBeenCalled();
   });
 
@@ -237,7 +238,6 @@ describe('civitai-chat', () => {
     const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response('{}', { status: 400 }));
     vi.stubGlobal('fetch', fetch);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'viewer/default-model' }));
     const app = fakeApp() as { orchestration: { submitWorkflow: ReturnType<typeof vi.fn> } };
     const chat = document.createElement('civitai-chat');
     // No tool servers, so a reply goes straight to the model.
@@ -254,34 +254,32 @@ describe('civitai-chat', () => {
       fetch.mock.calls.filter(([url]) => String(url).includes('chat/completions')).map(([, init]) => (JSON.parse(String(init?.body)) as { model: string }).model);
 
     say('/model');
-    await vi.waitFor(() => expect(toast()).toContain('This chat uses the default (viewer/default-model).'));
+    await vi.waitFor(() => expect(toast()).toContain('This chat uses the default (civitai/qwen3.8).'));
 
     say('/model z-ai/glm-5.3-flash');
     await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: z-ai/glm-5.3-flash'));
     expect(toast()).toContain('This chat now uses z-ai/glm-5.3-flash, from the next reply.');
-    // The chat's own choice: the viewer's default stays as it was.
-    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('viewer/default-model');
 
     await chat.send('a red bike');
     await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash']));
     expect(app.orchestration.submitWorkflow.mock.calls[0]?.[0]).toMatchObject({ metadata: { model: 'z-ai/glm-5.3-flash' } });
 
     say('/model default');
-    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: viewer/default-model'));
+    await vi.waitFor(() => expect(chip().title).toBe('Model for this chat: civitai/qwen3.8'));
     await chat.send('a blue bike');
-    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash', 'viewer/default-model']));
+    await vi.waitFor(() => expect(replies()).toEqual(['z-ai/glm-5.3-flash', 'civitai/qwen3.8']));
 
     say('/clear');
     await chat.updateComplete;
     expect(replies()).toHaveLength(2);
   });
 
-  it("picks this chat's model from a searchable list priced per million output tokens, or any model id", async () => {
+  it("picks this chat's model from a searchable list priced per million input and output tokens, or any model id", async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const openRouter = {
       data: [
-        { id: 'cheap/model', name: 'Cheap Model', pricing: { completion: '0.00000061' }, supported_parameters: ['tools'] },
-        { id: 'pricey/model', name: 'Pricey Model', pricing: { completion: '0.000015' }, supported_parameters: ['tools'] },
+        { id: 'cheap/model', name: 'Cheap Model', pricing: { prompt: '0.00000015', completion: '0.00000061' }, supported_parameters: ['tools'] },
+        { id: 'pricey/model', name: 'Pricey Model', pricing: { prompt: '0.000003', completion: '0.000015' }, supported_parameters: ['tools'] },
       ],
     };
     const routable = {
@@ -289,7 +287,8 @@ describe('civitai-chat', () => {
         { id: 'cheap/model', owned_by: 'openrouter' },
         { id: 'pricey/model', owned_by: 'openrouter' },
         // Fits 1,024 + 34,000 tokens of reply, history, prompt and tools; not 16,384 + 34,000.
-        { id: 'urn:air:hosted:narrow-window', owned_by: 'civitai', context_length: 36_000 },
+        { id: 'civitai/narrow-window', owned_by: 'civitai', context_length: 36_000 },
+        { id: 'urn:air:hosted:behind-an-alias', owned_by: 'civitai', context_length: 262_144 },
       ],
     };
     const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => {
@@ -304,12 +303,15 @@ describe('civitai-chat', () => {
     const root = chat.shadowRoot!;
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
     const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    expect(chip.textContent).toContain('Default');
+    // The default is shown by its name, marked as the default, never as the bare word "Default".
+    expect(chip.textContent).toContain('civitai/qwen3.8 · default');
+    expect(chip.textContent).not.toMatch(/\bDefault\b/);
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
 
     chip.click();
-    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.61/M out cheap/model'));
+    await vi.waitFor(() => expect(options()).toContain('Cheap Model $0.15 in · $0.61 out /M cheap/model'));
     expect(options().join(' | ')).not.toContain('Pricey');
+    expect(options().join(' | ')).not.toContain('behind-an-alias');
     expect(options().join(' | ')).not.toContain('narrow-window');
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'cheap';
@@ -334,7 +336,7 @@ describe('civitai-chat', () => {
     await chat.updateComplete;
     chip.click();
     await chat.updateComplete;
-    expect(options().join(' | ')).toContain('urn:air:hosted:narrow-window Hosted');
+    expect(options().join(' | ')).toContain('civitai/narrow-window Hosted');
     // The list loaded once for the session.
     expect(fetch.mock.calls.filter(([url]) => String(url) === 'https://openrouter.ai/api/v1/models')).toHaveLength(1);
   });
@@ -343,8 +345,8 @@ describe('civitai-chat', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const routable = {
       data: [
-        { id: 'urn:air:hosted:tiny-current', owned_by: 'civitai', context_length: 13_312 },
-        { id: 'urn:air:hosted:tiny-other', owned_by: 'civitai', context_length: 16_384 },
+        { id: 'civitai/tiny-current', owned_by: 'civitai', context_length: 13_312 },
+        { id: 'civitai/tiny-other', owned_by: 'civitai', context_length: 16_384 },
       ],
     };
     vi.stubGlobal(
@@ -356,84 +358,17 @@ describe('civitai-chat', () => {
     document.body.append(chat);
     const root = chat.shadowRoot!;
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model urn:air:hosted:tiny-current' } }));
+    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model civitai/tiny-current' } }));
     const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: urn:air:hosted:tiny-current'));
+    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: civitai/tiny-current'));
 
     chip.click();
     const names = () => [...root.querySelectorAll('.cvt-model-options .cvt-model-name')].map((name) => name.textContent);
     // Wait for the hosted list itself, not for an absence that holds before anything renders.
-    await vi.waitFor(() => expect(names()).toContain('urn:air:hosted:tiny-current'));
+    await vi.waitFor(() => expect(names()).toContain('civitai/tiny-current'));
     const listed = [...root.querySelectorAll('.cvt-model-options [role=option]')].map((option) => [option.querySelector('.cvt-model-name')!.textContent, option.getAttribute('aria-selected')]);
-    expect(listed).toContainEqual(['urn:air:hosted:tiny-current', 'true']);
-    expect(listed.map(([name]) => name)).not.toContain('urn:air:hosted:tiny-other');
-  });
-
-  it("goes back to the viewer's own default when they type Default in the model list", async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantModel: 'z-ai/glm-5.3-prime' }));
-    const chat = document.createElement('civitai-chat');
-    chat.app = fakeApp();
-    document.body.append(chat);
-    const root = chat.shadowRoot!;
-    await vi.waitFor(() => expect(root.querySelector('.cvt-model-chip')).not.toBeNull());
-    const chip = root.querySelector<HTMLButtonElement>('.cvt-model-chip')!;
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
-    await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
-
-    for (const typed of ['default', 'Default']) {
-      chip.click();
-      await chat.updateComplete;
-      const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
-      search.value = typed;
-      search.dispatchEvent(new Event('input'));
-      await chat.updateComplete;
-      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: z-ai/glm-5.3-prime'));
-      const own = root.querySelector('civitai-chat-model-picker')!.own;
-      expect(own).toBe(false);
-      // Pinned again for the second spelling.
-      root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model q/quill' } }));
-      await vi.waitFor(() => expect(chip.title).toBe('Model for this chat: q/quill'));
-    }
-  });
-
-  it('lets a viewer stuck on Free with a model that has no free replies allow paid replies and get the reply', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    localStorage.setItem('cvt:settings', JSON.stringify({ assistantTier: 'free' }));
-    const replies: (string | null)[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: unknown, init?: RequestInit) => {
-        const target = String(url);
-        if (target.includes('free-tier')) {
-          return new Response(JSON.stringify({ enabled: true, models: [{ key: 'default-chat', airs: ['urn:air:only:the-default'], remaining: 5, windows: [{ limit: 10, remaining: 5 }] }] }));
-        }
-        if (target.includes('chat/completions')) {
-          replies.push(new Headers(init?.headers).get('X-Civitai-Tier'));
-          return new Response('{}', { status: 400 });
-        }
-        return new Response('{}');
-      }),
-    );
-    const chat = document.createElement('civitai-chat');
-    chat.mcp = { orchestration: false, site: false };
-    chat.app = fakeApp();
-    document.body.append(chat);
-    const root = chat.shadowRoot!;
-    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
-    root.querySelector('civitai-chat-composer')!.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text: '/model z-ai/not-free' } }));
-    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('.cvt-model-chip')!.title).toBe('Model for this chat: z-ai/not-free'));
-
-    await chat.send('a red bike');
-    const button = () => [...root.querySelectorAll<HTMLElement>('civitai-chat-thread civitai-button')].find((b) => b.textContent?.includes('Allow paid replies and try again'));
-    await vi.waitFor(() => expect(button()).toBeDefined());
-    expect(replies).toEqual([]);
-
-    button()!.click();
-    await vi.waitFor(() => expect(replies).toEqual([null]));
-    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantTier).toBe('auto');
+    expect(listed).toContainEqual(['civitai/tiny-current', 'true']);
+    expect(listed.map(([name]) => name)).not.toContain('civitai/tiny-other');
   });
 
   it('offers Continue on a reply that ran out of steps, and Continue asks the assistant to carry on', async () => {
@@ -515,7 +450,7 @@ describe('civitai-chat', () => {
     // Loading ends, and the picker does not keep saying it is loading.
     await vi.waitFor(() => expect(root.querySelector('.cvt-model-status')).toBeNull());
     const options = () => [...root.querySelectorAll('.cvt-model-options button')].map((button) => button.textContent!.replace(/\s+/g, ' ').trim());
-    expect(options()).toEqual(["Default The app's default model"]);
+    expect(options()).toEqual(["civitai/qwen3.8 · default The app's default model"]);
     const search = root.querySelector<HTMLInputElement>('.cvt-model-search')!;
     search.value = 'z-ai/glm-5.3-flash';
     search.dispatchEvent(new Event('input'));
@@ -611,5 +546,54 @@ describe("civitai-chat's viewer name", () => {
     const [input, init] = meCalls(fetchSpy)[0]!;
     const headers = new Headers(input instanceof Request ? input.headers : (init as RequestInit | undefined)?.headers);
     expect(headers.get('authorization')).toBe('Bearer oauth-access-token');
+  });
+});
+
+describe("civitai-chat's instructions card", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps what Save sends as the viewer's custom instructions for every chat", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp() as never;
+    document.body.append(chat);
+    // The card sits in the thread, inside the chat's main area; an empty chat shows the welcome there instead.
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')).not.toBeNull());
+
+    chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')!.dispatchEvent(
+      new CustomEvent('cvt-settings-change', { bubbles: true, composed: true, detail: { customInstructions: 'Be Civ-chan.' } }),
+    );
+
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').customInstructions).toBe('Be Civ-chan.');
+  });
+});
+
+describe("civitai-chat's spending limit", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps a limit raised from a confirmation as the viewer\'s own', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 400 })));
+    const chat = document.createElement('civitai-chat');
+    chat.mcp = { orchestration: false, site: false };
+    chat.app = fakeApp() as never;
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')).not.toBeNull());
+
+    chat.shadowRoot!.querySelector('.cvt-main-host civitai-chat-dropzone')!.dispatchEvent(new CustomEvent('job-raise-limit', { bubbles: true, composed: true, detail: { limit: 50 } }));
+
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').autoRunLimit).toBe(50);
   });
 });

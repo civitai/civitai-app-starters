@@ -110,11 +110,17 @@ civitai-toast-region {
   height: 100%;
 }
 
+/* An implicit column sizes to its widest content, so a long title once widened the whole chat past a phone. */
 .cvt-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   height: 100%;
+}
+
+.cvt-main > * {
+  min-width: 0;
 }
 
 .cvt-main::part(overlay) {
@@ -409,6 +415,11 @@ civitai-chat-sidebar {
   border-radius: var(--civitai-radius, 8px);
 }
 
+/* Its reply is being stopped before its delete. */
+.cvt-chat-row[data-stopping] {
+  opacity: 0.6;
+}
+
 .cvt-chat-row:hover,
 .cvt-chat-row[data-current] {
   background: var(--civitai-color-surface-2);
@@ -525,14 +536,59 @@ civitai-chat-turn {
   overflow-wrap: anywhere;
 }
 
+/* A message that waits to go: the viewer's bubble, faded, with what it waits for under it. */
+.cvt-queued .cvt-bubble {
+  opacity: 0.7;
+}
+
+.cvt-queued-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-unsent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  /* Lined up with the message box: 16px gutters, centred at 800px. */
+  margin: 0 max(16px, calc((100% - 800px) / 2)) 8px;
+}
+
+.cvt-unsent-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * One minmax(0, 1fr) column, never the implicit auto one: an auto track sizes to its widest content,
+ * so a code block widened the reply, the turn and the thread past a phone and everything scrolled
+ * sideways. Pinned, a code block scrolls inside itself and the rest wraps.
+ */
 .cvt-assistant {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   justify-items: start;
 }
 
 .cvt-assistant > * {
   max-width: 100%;
+}
+
+/* The assistant's words sit in a bubble of their own, left, on the surface colour (the viewer's is
+   primary-light, right); its tool calls, cards and what it made stay outside it. */
+.cvt-assistant > .cvt-md {
+  padding: 10px 14px;
+  border-radius: 18px 18px 18px 4px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
 }
 
 .cvt-activity,
@@ -569,13 +625,22 @@ civitai-chat-turn {
   animation: cvt-pulse 1.2s ease-in-out infinite;
 }
 
-.cvt-typing {
+/* The live reply's status line (civitai-chat-reply-status): always there while the reply is. */
+civitai-chat-reply-status {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
   padding: 8px 0;
+  font-size: 12px;
+  color: var(--civitai-color-text-dimmed);
 }
 
-.cvt-typing span {
+.cvt-reply-status-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cvt-reply-status-dots span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -583,12 +648,34 @@ civitai-chat-turn {
   animation: cvt-pulse 1.2s ease-in-out infinite;
 }
 
-.cvt-typing span:nth-child(2) {
+.cvt-reply-status-dots span:nth-child(2) {
   animation-delay: 0.15s;
 }
 
-.cvt-typing span:nth-child(3) {
+.cvt-reply-status-dots span:nth-child(3) {
   animation-delay: 0.3s;
+}
+
+civitai-chat-reply-status[state='reconnecting'] .cvt-reply-status-dots span,
+civitai-chat-reply-status[state='approval'] .cvt-reply-status-dots span {
+  background: var(--civitai-color-warning);
+}
+
+civitai-chat-reply-status[state='reconnecting'],
+civitai-chat-reply-status[state='approval'] {
+  color: var(--civitai-color-text);
+}
+
+.cvt-reply-status-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Still dots, at full strength, for a viewer who asked for less motion: the words and time say it is live. */
+@media (prefers-reduced-motion: reduce) {
+  .cvt-reply-status-dots span {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 @keyframes cvt-pulse {
@@ -770,6 +857,83 @@ civitai-chat-panel {
   margin-left: auto;
 }
 
+.cvt-panel-close {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cvt-panel-share + .cvt-panel-close {
+  margin-left: 0;
+}
+
+.cvt-panel-close:hover {
+  color: var(--civitai-color-text);
+}
+
+.cvt-instructions-card {
+  display: grid;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 640px;
+  padding: 14px 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-instructions-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cvt-instructions-card blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--civitai-color-border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.cvt-instructions-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.cvt-instructions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cvt-instructions-state {
+  margin: 0;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-panel-closed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-panel-head p {
   flex-basis: 100%;
   margin: 0;
@@ -833,6 +997,302 @@ civitai-chat-panel {
   overflow-wrap: anywhere;
 }
 
+/* tool-calls="details": a row per call, and calls in a row as one group. Never wider than the thread. */
+.cvt-call,
+.cvt-tool-group {
+  justify-self: stretch;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cvt-tool-group {
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-call-head,
+.cvt-tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-tool-group-head {
+  min-height: 36px;
+}
+
+.cvt-call-head:hover,
+.cvt-tool-group-head:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-head:focus-visible,
+.cvt-tool-group-head:focus-visible,
+.cvt-call-pre:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-call-chevron {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+
+[aria-expanded='true'] > .cvt-call-chevron {
+  transform: rotate(45deg);
+}
+
+.cvt-call-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+}
+
+.cvt-call-server {
+  flex: none;
+  max-width: 25%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--civitai-color-surface-2);
+  font-size: 11px;
+}
+
+.cvt-call-summary,
+.cvt-tool-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-tool-group-label {
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-state {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.cvt-call[data-state='error'] > .cvt-call-head .cvt-call-state,
+.cvt-tool-group[data-state='error'] > .cvt-tool-group-head .cvt-call-state {
+  color: var(--civitai-color-error);
+}
+
+.cvt-call[data-state='calling'] > .cvt-call-head .cvt-call-state::before,
+.cvt-tool-group[data-state='calling'] > .cvt-tool-group-head .cvt-tool-group-label::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+/* Opens by animating the row track from 0 to its content's height. */
+.cvt-call-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.cvt-call-body[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.cvt-call-inner {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cvt-tool-group-list {
+  display: grid;
+  gap: 2px;
+  padding: 0 4px 4px;
+}
+
+.cvt-call-value {
+  min-width: 0;
+  padding: 4px 8px 4px 22px;
+}
+
+.cvt-call-label {
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-call-pre {
+  max-width: 100%;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A subagent's card: one tappable header (44px tall) that wraps rather than overflows on a phone. */
+.cvt-subagent {
+  justify-self: stretch;
+  min-width: 0;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+  font-size: 13px;
+}
+
+.cvt-subagent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-subagent-head:hover {
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-subagent-head:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-subagent-title {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cvt-subagent-kind {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--civitai-color-text-dimmed);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cvt-subagent-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-subagent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-subagent[data-status='error'] .cvt-subagent-status,
+.cvt-subagent[data-status='interrupted'] .cvt-subagent-status,
+.cvt-subagent[data-status='refused'] .cvt-subagent-status {
+  color: var(--civitai-color-error);
+}
+
+.cvt-subagent[data-status='calling'] .cvt-subagent-status::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+.cvt-subagent-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 10px 10px 24px;
+}
+
+.cvt-subagent-text {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+  min-width: 0;
+}
+
+.cvt-subagent-activity li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity .cvt-call-name {
+  max-width: none;
+  white-space: normal;
+}
+
+.cvt-subagent-arg {
+  color: var(--civitai-color-text-dimmed);
+}
+
 .cvt-panel-chip {
   display: inline-flex;
   align-items: center;
@@ -866,7 +1326,8 @@ civitai-chat-panel {
   justify-items: start;
 }
 
-.cvt-panel-runs > civitai-chat-generation-card {
+.cvt-panel-runs > civitai-chat-generation-card,
+civitai-chat-generation-card[audio] {
   justify-self: stretch;
 }
 
@@ -879,13 +1340,17 @@ civitai-chat-composer {
 }
 
 .cvt-composer-hold {
-  margin: 0 0 6px;
+  max-width: 800px;
+  margin: 0 auto 6px;
+  padding: 0 12px;
   font-size: 13px;
   color: var(--civitai-color-text-dimmed);
 }
 
 .cvt-composer-box {
   display: grid;
+  /* Bounded to the box, so a row wider than it shrinks to fit rather than widening the column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   max-width: 800px;
   margin: 0 auto;
@@ -919,8 +1384,19 @@ civitai-chat-composer {
   gap: 8px;
 }
 
+/* The buttons keep their full size; the hint, then the model's name, give way in a narrow chat. */
+.cvt-composer-actions > .cvt-icon-button,
+.cvt-composer-actions > .cvt-voice-language {
+  flex: none;
+}
+
+/* The hint is also the space pushing the buttons after it to the right: it stays, and can shrink to nothing. */
 .cvt-hint {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: var(--civitai-color-text-dimmed);
   opacity: 0;
@@ -1041,6 +1517,11 @@ civitai-chat-model-picker {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cvt-model-chip-marker {
+  flex: none;
+  white-space: pre;
 }
 
 .cvt-model-chip svg {
@@ -1178,6 +1659,10 @@ civitai-chat-model-picker {
   background: var(--civitai-color-text-dimmed);
 }
 
+.cvt-conversation-state {
+  color: var(--civitai-color-text);
+}
+
 .cvt-heard {
   margin: 0;
   max-height: 120px;
@@ -1261,19 +1746,155 @@ civitai-chat-model-picker {
   stroke: none;
 }
 
+/* Contents, so the breakdown is placed against the top bar (which is relative), inside the chat on a phone. */
+civitai-chat-spend,
+civitai-chat-balance {
+  display: contents;
+}
+
+.cvt-spend svg.cvt-balance-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.cvt-balance-panel section {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--civitai-color-border);
+}
+
+.cvt-balance-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cvt-balance-panel civitai-button {
+  justify-self: start;
+}
+
+.cvt-balance-panel .cvt-spend-note {
+  margin: 0;
+}
+
+/* On a phone the title keeps the room; the same figures are in Settings. */
+@container civitai-chat (max-width: 400px) {
+  civitai-chat-balance {
+    display: none;
+  }
+}
+
+.cvt-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cvt-top-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */
 .cvt-spend {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -6px 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cvt-spend-pill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  flex: none;
   padding: 3px 9px 3px 7px;
   border-radius: 999px;
   background: var(--civitai-color-surface-2);
-  color: var(--civitai-color-text-dimmed);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  cursor: default;
+}
+
+.cvt-spend:hover .cvt-spend-pill,
+.cvt-spend[aria-expanded='true'] .cvt-spend-pill {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: -4px;
+}
+
+.cvt-spend-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 30;
+  width: min(300px, calc(100% - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  font-size: 14px;
+}
+
+.cvt-spend-panel[hidden] {
+  display: none;
+}
+
+.cvt-spend-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.cvt-spend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cvt-spend-row dt {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-spend-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-spend-total {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--civitai-color-border);
+  font-weight: 600;
+}
+
+.cvt-spend-total dt {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend-note {
+  margin: 10px 0 0;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .cvt-spend svg {

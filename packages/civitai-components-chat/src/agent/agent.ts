@@ -1,38 +1,19 @@
-import { generateText, stepCountIs, streamText, type AssistantModelMessage, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
-import { outputTokenCap, stepLimit } from '../config.js';
+import { outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
-import type { Attachment, Turn } from '../types.js';
-import { endedReply } from '../tools/gate.js';
+import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
+import type { ChatAgent } from './chat-agent.js';
+import { AgentCore, type AgentCoreOutcome, type LiveTurn } from './core.js';
 import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
-import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
-import { stripToolMarkup } from './tool-markup.js';
 
-/**
- * A tool that hands the next move to the viewer (an ask panel, a choice shown) ends the reply, so the
- * assistant cannot act for them. A call whose result does not say so (a choice that could not be
- * shown) does not, so the assistant can fix it in the same reply.
- */
-const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
-  steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
-
-/** The words the page ended the reply on, when a call in its last step did (`beforeToolCall` with `stop: true`). */
-function endedByPage(steps: { toolResults: { output: unknown }[] }[]): string | undefined {
-  for (const result of steps.at(-1)?.toolResults ?? []) {
-    const message = endedReply(result.output);
-    if (message !== undefined) return message;
-  }
-  return undefined;
-}
-
-const LAST_STEP =
-  'This is your last step this turn: you cannot call tools now. Tell the user plainly what got done and what did not, and that they can ask you to carry on. Do not say you are about to do something.';
+export type { LiveTurn } from './core.js';
 
 export interface AgentDeps {
   /** Read at the start of every reply, so a change in Settings applies from the next one. */
@@ -49,6 +30,8 @@ export interface AgentDeps {
   customInstructions?(): string | undefined;
   /** Read at the start of every reply, so the embedding page can change them at any time. */
   hostInstructions?(): string | undefined;
+  /** Whether the user hears replies read aloud, read at the start of every reply. */
+  spokenReplies?(): boolean;
   isHostTool?(name: string): boolean;
   /** What the assistant is told about the panels on screen, read at the start of every reply. */
   panels?(): string | undefined;
@@ -56,6 +39,15 @@ export interface AgentDeps {
   /** The words the viewer sees for a reply that failed; `humanize` unless set. */
   describeError?(error: unknown): HumanError;
   now?(): Date;
+  /** The viewer's time zone for the prompt's date (`dateLine`), read at the start of every reply; UTC's date unless set. */
+  timeZone?(): string | undefined;
+  /**
+   * The wait before each automatic retry of one drop of the browser's network (see
+   * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
+   */
+  networkRetryDelaysMs?: readonly number[];
+  /** The most automatic retries one reply makes in all; `MAX_NETWORK_RETRIES_PER_REPLY` unless set. */
+  maxNetworkRetries?: number;
 }
 
 /** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
@@ -63,24 +55,39 @@ export interface AgentErrorDetail extends HumanError {
   trace: ErrorTrace;
 }
 
-export interface LiveTurn {
-  seq: number;
-  parts: TurnPart[];
+/** What the agent's `network-retry` event carries: which retry of the reply this is (from 1), and where the reply was cut. */
+export interface AgentRetryDetail {
+  attempt: number;
+  trace: ErrorTrace;
 }
 
-/** Runs one assistant reply at a time and records it on the thread store. */
-export class Agent extends EventTarget {
-  live: LiveTurn | null = null;
+/** Runs one assistant reply at a time and records it on the thread store; the reply's loop is {@link AgentCore}'s. */
+export class Agent extends EventTarget implements ChatAgent {
   #deps: AgentDeps;
-  #abort?: AbortController;
+  #core: AgentCore;
+  #turn: Turn | undefined;
 
   constructor(deps: AgentDeps) {
     super();
     this.#deps = deps;
+    this.#core = new AgentCore({ describeError: (error) => (this.#deps.describeError ?? humanize)(error), change: () => this.#emit() });
+  }
+
+  /** The reply now running, as shown so far; `null` between replies. */
+  get live(): LiveTurn | null {
+    return this.#core.live;
   }
 
   get running(): boolean {
-    return this.#abort !== undefined;
+    return this.#core.running;
+  }
+
+  /** Falls back to the last reply: the title call runs after the reply ends. */
+  charged(buzz: number): void {
+    const turn = this.#turn ?? this.#deps.store.current?.turns.at(-1);
+    if (!turn) return;
+    turn.assistant.buzz = (turn.assistant.buzz ?? 0) + buzz;
+    this.#emit();
   }
 
   async send(content: string, attachments: Attachment[] = [], refs: string[] = []): Promise<void> {
@@ -90,113 +97,87 @@ export class Agent extends EventTarget {
   }
 
   abort(): void {
-    this.#abort?.abort();
+    this.#core.abort();
   }
 
-  /** Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it. */
+  /** The page leaves the reply: in the page, that ends it as Stop does. */
+  leave(): void {
+    this.abort();
+  }
+
+  /** The session is replaced: in the page, that ends the reply as Stop does. */
+  dispose(): void {
+    this.abort();
+  }
+
+  /**
+   * Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it, or asked
+   * again after the connection was lost. The user's message is not sent again as a new one: the same
+   * turn is asked for again.
+   *
+   * When the failed reply has a resume point (`assistant.resume`, see {@link ResumePoint}) it carries
+   * on from there: the steps that finished, with every tool they ran and its result, are sent as they
+   * are and kept on screen, and only the step that failed is asked for again, as the automatic retry
+   * of a dropped connection does. Without one (a reply whose failed step had already called a tool,
+   * or a chat opened from storage), the reply starts over.
+   */
   async retry(): Promise<void> {
     const turn = this.#deps.store.current?.turns.at(-1);
     if (this.running || turn?.assistant.status !== 'error') return;
-    turn.assistant = { messages: [], status: 'streaming' };
-    await this.#run(turn);
+    const { resume: from, buzz } = turn.assistant;
+    turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
+    await this.#run(turn, from);
   }
 
-  async #run(turn: Turn): Promise<void> {
+  async #run(turn: Turn, from?: ResumePoint): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
-    const controller = new AbortController();
-    this.#abort = controller;
-    this.live = { seq: turn.seq, parts: [] };
-    this.#emit();
-
-    let completed: ModelMessage[] = [];
-    let stepText = '';
-    let streamError: unknown;
-    // Read once per reply, so a change applies from the next one.
-    const maxSteps = stepLimit();
-    // Steps whose answer started streaming; between one step's end and the next one's start its request is out.
-    let steps = 0;
-    let streaming = false;
-    let finished = 0;
-    let since = Date.now();
-    let toolsBuilt = false;
-    let failedAt: TraceContext | undefined;
-    let stopped: string | undefined;
-    const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
-    try {
-      const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
-      toolsBuilt = true;
-      const hostInstructions = this.#deps.hostInstructions?.();
-      const system = buildSystemPrompt({
-        now: this.#deps.now?.() ?? new Date(),
-        customInstructions: this.#deps.customInstructions?.(),
-        canPost: this.#deps.posts?.available ?? false,
-        tools: Object.keys(tools),
-        host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructs: Boolean(hostInstructions?.trim()) },
-        rules: this.#deps.systemPrompt?.(),
-      });
-      const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions });
-      const result = streamText({
-        model: this.#deps.model(),
-        system,
-        messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context }),
-        tools,
-        // A page that ended the reply ends it here: no further step is asked for (and paid).
-        stopWhen: [stepCountIs(maxSteps), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
-        abortSignal: controller.signal,
-        maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
-        temperature: 0.7,
-        providerOptions: PROVIDER_OPTIONS,
-        // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
-        prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
-        onStepFinish: (step) => {
-          completed = [...step.response.messages];
-        },
-      });
-      // Counted from the steps that started, not from what they said: a last step that returns nothing
-      // still started, so a reply cut off by the limit is known as one. (Thanks to #555 for the approach.)
-      let forcedAt = -1;
-      for await (const part of result.fullStream) {
-        if (part.type === 'start-step') {
-          stepText = '';
-          steps++;
-          streaming = true;
-          if (steps >= maxSteps && this.live) forcedAt = this.live.parts.length;
-        } else if (part.type === 'finish-step') {
-          finished++;
-          streaming = false;
-          since = Date.now();
-        }
-        if (part.type === 'text-delta') stepText += part.text;
-        // Where it was when the first error came: the stream may still close its step after it.
-        if (part.type === 'error' && streamError === undefined) failedAt = where();
-        if (part.type === 'error') streamError = part.error;
-        // The last step cannot call tools; tool-call syntax it writes as text is not shown (see tool-markup.ts).
-        if (forcedAt >= 0 && part.type === 'text-delta') this.#showForced(forcedAt, stripToolMarkup(stepText));
-        else this.#onPart(part);
-      }
-      if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else if (streamError !== undefined) this.#failed(turn, streamError, failedAt ?? where());
-      else {
-        turn.assistant.status = 'done';
-        if (stopped !== undefined) turn.assistant.stopped = stopped;
-        else if (steps >= maxSteps) turn.assistant.ranOut = true;
-      }
-    } catch (error) {
-      if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else this.#failed(turn, error, where());
+    if (!this.running) {
+      this.#deps.store.replyStarted?.(turn);
+      // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
+      if (from) this.#checkpoint(turn, from.messages);
     }
-
-    if (steps >= maxSteps) {
-      completed = withoutToolMarkup(completed);
-      stepText = stripToolMarkup(stepText);
-    }
-    // A step cut short never reached onStepFinish; keep what the user already read.
-    if (turn.assistant.status !== 'done' && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
-    turn.assistant.messages = completed;
-    this.live = null;
-    this.#abort = undefined;
-    this.#emit();
+    this.#turn = turn;
+    const outcome = await this.#core.run({
+      seq: turn.seq,
+      ...(from ? { from } : {}),
+      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq }),
+      request: (tools) => {
+        const hostInstructions = this.#deps.hostInstructions?.();
+        const system = buildSystemPrompt({
+          now: this.#deps.now?.() ?? new Date(),
+          timeZone: this.#deps.timeZone?.(),
+          customInstructions: this.#deps.customInstructions?.(),
+          canPost: this.#deps.posts?.available ?? false,
+          tools: Object.keys(tools),
+          host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructs: Boolean(hostInstructions?.trim()) },
+          rules: this.#deps.systemPrompt?.(),
+        });
+        const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions, spoken: this.#deps.spokenReplies?.() ?? false });
+        const history = buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context });
+        return {
+          model: this.#deps.model(),
+          system,
+          history,
+          maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
+          ...(this.#deps.networkRetryDelaysMs ? { networkRetryDelaysMs: this.#deps.networkRetryDelaysMs } : {}),
+          ...(this.#deps.maxNetworkRetries !== undefined ? { maxNetworkRetries: this.#deps.maxNetworkRetries } : {}),
+        };
+      },
+      retrying: (attempt, trace) => this.#retrying(turn, attempt, trace),
+      // Progress saved as the reply goes, so a page that sleeps or closes loses at most the step it was on.
+      // Every tool call is saved as it starts and as its result comes in (`toolProgress`), and each step
+      // that ran a tool as it finishes. So Continue elsewhere sends a call that finished with its result
+      // and marks one that started and did not finish as interrupted: neither runs again. The one gap is a
+      // call whose start was not saved yet when the page died (one save's round trip). A step that ran no
+      // tool is the reply's last, and is saved as it ends.
+      toolProgress: ({ messages }) => this.#checkpoint(turn, messages),
+      stepFinished: ({ messages, calledTools }) => calledTools && this.#checkpoint(turn, messages),
+      // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
+      settled: (ended) => this.#settle(turn, ended),
+    });
+    if (this.#turn === turn) this.#turn = undefined;
+    if (!outcome) return;
 
     try {
       await this.#deps.store.completeTurn(turn);
@@ -208,8 +189,23 @@ export class Agent extends EventTarget {
     }
   }
 
-  #failed(turn: Turn, error: unknown, where: TraceContext): void {
+  #checkpoint(turn: Turn, messages: ModelMessage[]): void {
+    this.#deps.store.checkpoint?.(turn, { messages }).catch((error: unknown) => console.warn('[chat-cvt] could not save the reply so far', error));
+  }
+
+  #settle(turn: Turn, ended: AgentCoreOutcome): void {
+    if (ended.status === 'error') this.#failed(turn, ended.error, ended.where!, ended.resume);
+    else {
+      turn.assistant.status = ended.status;
+      if (ended.stopped !== undefined) turn.assistant.stopped = ended.stopped;
+      else if (ended.ranOut) turn.assistant.ranOut = true;
+    }
+    turn.assistant.messages = ended.messages;
+  }
+
+  #failed(turn: Turn, error: unknown, where: TraceContext, resume?: ResumePoint): void {
     turn.assistant.status = 'error';
+    if (resume) turn.assistant.resume = { ...resume, messages: [...resume.messages] };
     const human = (this.#deps.describeError ?? humanize)(error);
     const trace = errorTrace(error, where);
     turn.assistant.error = human.message;
@@ -219,48 +215,10 @@ export class Agent extends EventTarget {
     this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { ...human, trace } }));
   }
 
-  /** Where the reply is, for an error's trace: a tool still running wins over the step's request or stream. */
-  #where(toolsBuilt: boolean, step: number, since: number, streaming: boolean): TraceContext {
-    const lastTool = [...(this.live?.parts ?? [])].reverse().find((part) => part.kind === 'tool');
-    const tool = lastTool?.kind === 'tool' ? { name: lastTool.toolName, state: lastTool.state } : undefined;
-    const stage = !toolsBuilt ? 'tools' : tool?.state === 'calling' ? 'tool' : streaming ? 'stream' : 'request';
-    return { stage, step: toolsBuilt ? step : 0, msIntoStep: Date.now() - since, ...(tool ? { lastTool: tool } : {}) };
-  }
-
-  /** The last step's words so far, cleaned, as one text part from where that step began. */
-  #showForced(at: number, text: string): void {
-    const live = this.live;
-    if (!live) return;
-    if (text === '') live.parts.splice(at);
-    else live.parts[at] = { kind: 'text', text };
-    this.#emit();
-  }
-
-  #onPart(part: TextStreamPart<ToolSet>): void {
-    const live = this.live;
-    if (!live) return;
-    switch (part.type) {
-      case 'text-delta': {
-        const last = live.parts.at(-1);
-        if (last?.kind === 'text') last.text += part.text;
-        else live.parts.push({ kind: 'text', text: part.text });
-        break;
-      }
-      case 'tool-call':
-        live.parts.push({ kind: 'tool', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input, state: 'calling' });
-        break;
-      case 'tool-result':
-      case 'tool-error': {
-        const tool = live.parts.find((p) => p.kind === 'tool' && p.toolCallId === part.toolCallId);
-        if (tool?.kind !== 'tool') break;
-        if (part.type === 'tool-result') Object.assign(tool, { state: 'done', output: part.output });
-        else Object.assign(tool, { state: 'error', error: (this.#deps.describeError ?? humanize)(part.error).message });
-        break;
-      }
-      default:
-        return;
-    }
-    this.#emit();
+  /** Notes a cut the reply recovers from by itself: kept on the turn for this session, and sent as `network-retry`. */
+  #retrying(turn: Turn, attempt: number, trace: ErrorTrace): void {
+    (turn.assistant.networkRetries ??= []).push(trace);
+    this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt, trace } }));
   }
 
   async #nameConversation(turn: Turn): Promise<void> {
@@ -287,21 +245,4 @@ export class Agent extends EventTarget {
   #emit(): void {
     this.dispatchEvent(new Event('change'));
   }
-}
-
-/** The reply's last assistant message with tool-call syntax taken out of its text, and dropped if nothing is left. */
-function withoutToolMarkup(messages: ModelMessage[]): ModelMessage[] {
-  const last = messages.at(-1);
-  if (last?.role !== 'assistant') return messages;
-  let cleaned: AssistantModelMessage;
-  if (typeof last.content === 'string') cleaned = { ...last, content: stripToolMarkup(last.content) };
-  else {
-    const content: Exclude<AssistantModelMessage['content'], string> = [];
-    for (const part of last.content) {
-      if (part.type !== 'text') content.push(part);
-      else if (stripToolMarkup(part.text) !== '') content.push({ ...part, text: stripToolMarkup(part.text) });
-    }
-    cleaned = { ...last, content };
-  }
-  return cleaned.content.length === 0 ? messages.slice(0, -1) : [...messages.slice(0, -1), cleaned];
 }

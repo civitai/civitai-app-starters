@@ -730,6 +730,20 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
+ * The `purpose:'trainingData'` `IMAGE_UPLOAD_RESULT.selected` shape
+ * (civitai/civitai#6461): `{ images: [{ url, air }] }`, each `url` and `air` a
+ * non-empty string. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
+ * its key format is the host's to check, at the estimate — so only its type is
+ * pinned here.
+ */
+function isTrainingDataUpload(s: Record<string, unknown>): boolean {
+  if (!Array.isArray(s.images)) return false;
+  return s.images.every(
+    (img) => isObject(img) && isNonEmptyString(img.url) && isNonEmptyString(img.air),
+  );
+}
+
+/**
  * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
  * user dismissed the upload modal (the block's hook resolves to `null`). When
  * present it is a UNION keyed by the request's `purpose`:
@@ -738,7 +752,8 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
  *     value, `url` non-empty).
  *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
  *     dimensions, non-empty url; no imageId/nsfwLevel).
- * The guard accepts EITHER shape (the result carries no purpose discriminator).
+ *   • `'trainingData'` → `{ images: [{ url, air }] }` (non-empty strings).
+ * The guard accepts ANY of the shapes (the result carries no purpose discriminator).
  * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
  * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /
  * `BlockGenerationSourceUploadModal.tsx`).
@@ -750,7 +765,8 @@ export function isValidImageUploadResult(
   selected?:
     | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
     | { url: string; width: number; height: number }
-    | { status: 'pending'; imageId: number; url: string };
+    | { status: 'pending'; imageId: number; url: string }
+    | { images: Array<{ url: string; air: string }> };
   error?: string;
 } {
   if (!isObject(p)) return false;
@@ -762,11 +778,19 @@ export function isValidImageUploadResult(
   // out its whole timeout on a refusal the host already sent.
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
-  // one of the purpose-keyed shapes (moderated / generationSource / pending).
+  // one of the purpose-keyed shapes (moderated / generationSource / pending /
+  // trainingData).
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
-    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s) && !isPendingUpload(s)) return false;
+    if (
+      !isModeratedUpload(s) &&
+      !isGenerationSourceUpload(s) &&
+      !isPendingUpload(s) &&
+      !isTrainingDataUpload(s)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -1254,6 +1278,97 @@ export function isValidCollectionFollowResult(p: unknown): boolean {
   return true;
 }
 
+/** A positive integer id: what a reaction reply keys UI state by. */
+function isPositiveIntId(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0;
+}
+
+/**
+ * One image's reaction state inside an `ENTITY_REACTION(S)_RESULT`: `counts` an
+ * object of finite numbers, `viewerReactions` an array of strings,
+ * `statsUnknown` a boolean.
+ *
+ * 🔴 The reaction NAMES are not membership-checked, in `counts` or in
+ * `viewerReactions`. The site stores five reactions and may add a sixth; a
+ * reply naming one this SDK does not know is still a true statement about the
+ * viewer, and dropping it would hang the request to its timeout instead.
+ */
+function isValidEntityReactionState(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (!isObject(v.counts)) return false;
+  for (const n of Object.values(v.counts)) {
+    if (!isFiniteNumber(n)) return false;
+  }
+  if (!Array.isArray(v.viewerReactions)) return false;
+  for (const r of v.viewerReactions) {
+    if (typeof r !== 'string') return false;
+  }
+  if (typeof v.statsUnknown !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `SET_ENTITY_REACTION`. A well-formed reply carries
+ * EITHER a `result` OR an `error`; one with neither is malformed and dropped.
+ *
+ * `error` is SHAPE-CHECKED ONLY, although the host's set is closed
+ * (`ENTITY_REACTION_ERROR_CODES`): a code a newer host adds must still reach
+ * the block as a rejection. A membership check would drop it, and a dropped
+ * reply on a request-style message does not reject, it waits out the timeout.
+ * `useReactions` turns an unknown string into a `ReactionError` with no `code`.
+ *
+ * `result` is checked as far as a consumer reads it: `entityId` a positive
+ * integer (state is keyed by it), `reaction` a non-empty string, `reacted` and
+ * `changed` booleans, plus the state fields.
+ */
+export function isValidEntityReactionResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isPositiveIntId(r.entityId)) return false;
+    if (!isNonEmptyString(r.reaction)) return false;
+    if (typeof r.reacted !== 'boolean') return false;
+    if (typeof r.changed !== 'boolean') return false;
+    if (!isValidEntityReactionState(r)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_ENTITY_REACTIONS`. Same one-of and shape-only
+ * `error` contract as {@link isValidEntityReactionResult}.
+ *
+ * `result.byId` must be an object whose every key is a positive-integer id
+ * spelled as a string and whose every value is a valid state;
+ * `result.unavailable` an array of positive-integer ids.
+ */
+export function isValidEntityReactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isObject(r.byId)) return false;
+    for (const [key, state] of Object.entries(r.byId)) {
+      if (!/^[1-9][0-9]*$/.test(key)) return false;
+      if (!isValidEntityReactionState(state)) return false;
+    }
+    if (!Array.isArray(r.unavailable)) return false;
+    for (const id of r.unavailable) {
+      if (!isPositiveIntId(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
 /**
  * Reply to a block-initiated `CREATE_POST_FROM_APP`. A well-formed reply carries
  * EITHER a `result` (`{ postId: positive int, url: non-empty string, imageIds:
@@ -1289,41 +1404,6 @@ export function isValidCreatePostResult(p: unknown): boolean {
     if (!Array.isArray(r.imageIds)) return false;
     for (const id of r.imageIds) {
       if (!isFiniteNumber(id)) return false;
-    }
-  }
-  if (p.result === undefined && p.error === undefined) return false;
-  return true;
-}
-
-/**
- * Reply to `PREPARE_TRAINING_DATASET`. A well-formed reply carries EITHER a
- * `result` (`{ datasetId: non-empty string, count: integer ≥ 0, rejected: [{
- * imageId: number, reason: string }] }`) OR an `error`; one with neither is
- * malformed and dropped.
- *
- * 🔴 `error` IS SHAPE-CHECKED ONLY — the same decision as
- * {@link isValidCreatePostResult}: the host's closed codes share the field with
- * any server message it forwards, and a membership check would drop those
- * replies before correlation, leaving the request to its timer.
- *
- * `rejected[].reason` is checked as a STRING, not against today's six members —
- * the host adding a reason must not make every prepare reply that carries it a
- * dropped one (the forward-compatibility rule in {@link isValidWorkflowSnapshot}).
- */
-export function isValidTrainingDatasetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.result !== undefined) {
-    const r = p.result;
-    if (!isObject(r)) return false;
-    if (!isNonEmptyString(r.datasetId)) return false;
-    if (!Number.isInteger(r.count) || (r.count as number) < 0) return false;
-    if (!Array.isArray(r.rejected)) return false;
-    for (const x of r.rejected) {
-      if (!isObject(x) || !isFiniteNumber(x.imageId) || typeof x.reason !== 'string') {
-        return false;
-      }
     }
   }
   if (p.result === undefined && p.error === undefined) return false;
@@ -1799,6 +1879,52 @@ export function isValidImagePickerResult(p: unknown): boolean {
   return true;
 }
 
+const MEDIA_UPLOAD_KINDS = new Set<string>(['image', 'video', 'audio']);
+
+const isPositiveInteger = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0;
+
+/**
+ * One `BlockMediaUploadInfo`: a non-empty `url`, a known `kind`, a string
+ * `mimeType`, a whole `sizeBytes` ≥ 0, and dimensions by kind. `width` and
+ * `height` are positive whole numbers when present, REQUIRED for `image` and
+ * `video` (the host always measures them) and ABSENT for `audio`. `durationMs`
+ * is a finite number ≥ 0 when present.
+ */
+function isValidMediaUploadInfo(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (typeof s.kind !== 'string' || !MEDIA_UPLOAD_KINDS.has(s.kind)) return false;
+  if (typeof s.mimeType !== 'string') return false;
+  if (!isFiniteNumber(s.sizeBytes) || !Number.isInteger(s.sizeBytes) || s.sizeBytes < 0) return false;
+  if (s.kind === 'audio') {
+    if (s.width !== undefined || s.height !== undefined) return false;
+  } else if (!isPositiveInteger(s.width) || !isPositiveInteger(s.height)) {
+    return false;
+  }
+  if (s.durationMs !== undefined && (!isFiniteNumber(s.durationMs) || s.durationMs < 0)) return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD`: `{ requestId, selected }`, `{ requestId, error }`
+ * or a bare `{ requestId }` (dismissed / declined).
+ *
+ * `error` must be a string when present, and a reply carrying one is accepted
+ * without looking further: `useMediaUpload` throws on a PRESENT `error` before
+ * it reads `selected`. 🔴 Accepting it is load-bearing: dropping
+ * `{ requestId, error }` would leave the hook waiting out its whole
+ * human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidMediaUploadResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `selected`
+  if (p.selected !== undefined && !isValidMediaUploadInfo(p.selected)) return false;
+  return true;
+}
+
 /**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
@@ -1919,6 +2045,10 @@ export function payloadValidatorFor(
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
       return isValidCollectionFollowResult;
+    case 'ENTITY_REACTION_RESULT':
+      return isValidEntityReactionResult;
+    case 'ENTITY_REACTIONS_RESULT':
+      return isValidEntityReactionsResult;
     // 🔴 PRESENCE of this entry IS compiler-enforced (the `never` bind in
     // `default:`); WHICH validator it names is not. This reply settles a PUBLIC
     // POST, so the identity is pinned by test as well — see the mapping pin in
@@ -1928,8 +2058,6 @@ export function payloadValidatorFor(
     // Same caveat as CREATE_POST_RESULT: presence is compiler-enforced, the
     // identity is pinned by test (`validate.test.ts`). TRAINING_RESULT settles a
     // charged run.
-    case 'TRAINING_DATASET_RESULT':
-      return isValidTrainingDatasetResult;
     case 'TRAINING_RESULT':
       return isValidTrainingResult;
     // Settles a charged job, like TRAINING_RESULT directly above.
@@ -1975,6 +2103,8 @@ export function payloadValidatorFor(
       return isValidResourcePickerResult;
     case 'IMAGE_PICKER_RESULT':
       return isValidImagePickerResult;
+    case 'MEDIA_UPLOAD_RESULT':
+      return isValidMediaUploadResult;
     case 'USER_CHECKPOINT_SET':
       return isValidUserCheckpointSetResult;
     case 'SUSPEND':

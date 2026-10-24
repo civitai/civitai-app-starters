@@ -69,6 +69,55 @@ async function useEverything(chat: CivitaiChat, sent: string): Promise<void> {
 }
 
 describe('<civitai-chat> on a host backend', () => {
+  it('deletes every chat, also those on later pages of the list, only once the viewer confirms', async () => {
+    spyOnRequests();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const saved = (id: string, day: number) => ({ id, title: id, titleSource: 'user' as const, createdAt: `2026-10-0${day}T00:00:00Z`, updatedAt: `2026-10-0${day}T00:00:00Z`, turns: [] });
+    const store = memoryStore([saved('A', 3), saved('B', 2), saved('C', 1)]);
+    const list = store.list.bind(store);
+    store.list = async (options) => {
+      const { items } = await list(options);
+      return options.cursor ? { items: items.slice(2) } : { items: items.slice(0, 2), next: 'page-2' };
+    };
+    const chat = await mount((c) => (c.backend = backendOf(store)));
+    const dialog = chat.shadowRoot!.querySelector<{ ask(): Promise<boolean> } & Element>('#cvt-delete-all-dialog')!;
+    const deleteAll = () => chat.shadowRoot!.querySelector('civitai-chat-settings-dialog')!.dispatchEvent(new CustomEvent('cvt-delete-all', { bubbles: true, composed: true }));
+
+    dialog.ask = async () => false;
+    deleteAll();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([...store.records.keys()]).toEqual(['A', 'B', 'C']);
+
+    dialog.ask = async () => true;
+    deleteAll();
+    await vi.waitFor(() => expect([...store.records.keys()]).toEqual([]));
+  });
+
+  it("tells the assistant the date in the page's time-zone, and UTC's date without one", async () => {
+    const systems: string[] = [];
+    spyOnRequests((_url, body) => {
+      const messages = (body as { messages?: { role: string; content: unknown }[] }).messages ?? [];
+      systems.push(String(messages.find((m) => m.role === 'system')?.content ?? ''));
+      return textReply('Hello ', 'there.');
+    });
+    const dateLines = (system: string) => system.split('\n').filter((line) => line.startsWith('Today is'));
+    const zoned = await mount((c) => {
+      c.backend = backendOf();
+      c.setAttribute('time-zone', 'America/Chicago');
+    });
+    expect(zoned.timeZone).toBe('America/Chicago');
+    await zoned.send('hello');
+    await vi.waitFor(() => expect(systems).toHaveLength(1));
+    // The day itself is pinned in system-prompt.test.ts at a fixed instant; here, that the attribute reaches the prompt.
+    expect(dateLines(systems[0]!)).toEqual([expect.stringMatching(/^Today is (Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d{4}-\d{2}-\d{2} \(America\/Chicago\)\.$/)]);
+    zoned.remove();
+
+    const plain = await mount((c) => (c.backend = backendOf()));
+    await plain.send('hello');
+    await vi.waitFor(() => expect(systems).toHaveLength(2));
+    expect(dateLines(systems[1]!)).toEqual([expect.stringMatching(/^Today is \d{4}-\d{2}-\d{2}\.$/)]);
+  });
+
   it('makes no request to Civitai or OpenRouter through a send, the model list, Settings and a reload', async () => {
     const urls = spyOnRequests();
     const store = memoryStore();
@@ -277,7 +326,7 @@ describe('<civitai-chat> on a host backend', () => {
     search.value = '';
     search.dispatchEvent(new Event('input'));
     await (picker as unknown as { updateComplete: Promise<unknown> }).updateComplete;
-    expect([...picker.querySelectorAll('.cvt-model-name')].map((name) => name.textContent)).toEqual(['Default', 'Big']);
+    expect([...picker.querySelectorAll('.cvt-model-name')].map((name) => name.textContent)).toEqual(['host/default-model · default', 'Big']);
   });
 
   it('switches /model only to a model the backend names, and has no /model with one model', async () => {
@@ -323,7 +372,7 @@ describe('<civitai-chat> leaving a chat that is loading or being deleted', () =>
     metadata: { v: 2, app: 'chat-cvt', conversationId, title: conversationId, titleSource: 'llm', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z', turns: [] },
   });
 
-  it('default mode, as on main: New chat while a chat loads keeps the loader, then that chat opens', async () => {
+  it('default mode: New chat while a chat loads clears the loader, and the late load changes nothing (as backend mode)', async () => {
     spyOnRequests();
     let answer!: () => void;
     const held = new Promise<void>((resolve) => (answer = resolve));
@@ -341,9 +390,13 @@ describe('<civitai-chat> leaving a chat that is loading or being deleted', () =>
     await vi.waitFor(() => expect(loader(chat)).not.toBeNull());
     chat.newChat();
     await chat.updateComplete;
-    expect(loader(chat)).not.toBeNull();
+    expect(loader(chat)).toBeNull();
+    const fresh = currentId(chat);
+    expect(fresh).not.toBe('CONV1');
     answer();
-    await vi.waitFor(() => expect(currentId(chat)).toBe('CONV1'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Civitai's own store drops the late open too, so the new chat stays.
+    expect(currentId(chat)).toBe(fresh);
     expect(loader(chat)).toBeNull();
   });
 

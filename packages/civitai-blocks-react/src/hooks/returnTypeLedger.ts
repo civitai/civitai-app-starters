@@ -80,9 +80,10 @@ import type {
   useHostOrigin,
   useImagePicker,
   useImageUpload,
+  useMediaUpload,
   useNestedDocument,
-  usePrepareTrainingDataset,
   usePublishGenerationOutputs,
+  useReactions,
   useRequestConsent,
   useRequestSignIn,
   useResourcePicker,
@@ -127,9 +128,10 @@ import type {
   UseHostOrigin,
   UseImagePicker,
   UseImageUpload,
+  UseMediaUpload,
   UseNestedDocument,
-  UsePrepareTrainingDataset,
   UsePublishGenerationOutputs,
+  UseReactions,
   UseRequestConsent,
   UseRequestSignIn,
   UseResourcePicker,
@@ -195,31 +197,30 @@ type _useGenerationResources = Assert<
 type _useGoodPurchase = Assert<Exact<ReturnType<typeof useGoodPurchase>, UseGoodPurchase>>;
 type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrigin>>;
 /**
- * 🔴 OVERLOADED, SO THIS LINE COVERS ONE ARM OF THREE — say so rather than let
+ * 🔴 OVERLOADED, SO THIS LINE COVERS ONE ARM OF FOUR — say so rather than let
  * it read as full coverage. `ReturnType` resolves an overloaded function to its
  * LAST signature, which here is the default `{ purpose?: 'display' }` call. No
- * conditional-type trick reaches the earlier two: overload resolution inside
+ * conditional-type trick reaches the earlier three: overload resolution inside
  * `infer` also picks the last signature, so an `Exact` written for them would
  * compare the display arm against the generationSource type and fail for a
  * reason that has nothing to do with the code.
  *
- * What covers them instead: {@link UseImageUploadGenerationSource} and
- * {@link UseImageUploadAsyncScan} are the LITERAL return annotations on their
- * overload signatures, and `tsc` checks every overload signature against the
- * implementation's. Rename or gut either one and the build fails at the
- * declaration, not here.
+ * What covers them instead: {@link UseImageUploadGenerationSource},
+ * {@link UseImageUploadTrainingData} and {@link UseImageUploadAsyncScan} are the
+ * LITERAL return annotations on their overload signatures, and `tsc` checks
+ * every overload signature against the implementation's. Rename or gut any one
+ * and the build fails at the declaration, not here.
  */
 type _useImageUpload = Assert<Exact<ReturnType<typeof useImageUpload>, UseImageUpload>>;
 type _useNestedDocument = Assert<Exact<ReturnType<typeof useNestedDocument>, UseNestedDocument>>;
-type _usePrepareTrainingDataset = Assert<
-  Exact<ReturnType<typeof usePrepareTrainingDataset>, UsePrepareTrainingDataset>
->;
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;
+type _useReactions = Assert<Exact<ReturnType<typeof useReactions>, UseReactions>>;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
 type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;
+type _useMediaUpload = Assert<Exact<ReturnType<typeof useMediaUpload>, UseMediaUpload>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
 type _useRunConfirmedStep = Assert<
   Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>

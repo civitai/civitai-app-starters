@@ -1,10 +1,11 @@
 import type { Workflow, WorkflowTemplate } from '@civitai/sdk';
+import type { ModelMessage } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flush, workflow } from '../test-support/fakes.js';
 import type { SavedPanel } from '../panels/panel.js';
-import type { ConversationMetadata, SavedTurn } from '../types.js';
-import { CUT_OFF, ThreadStore, firstMessageTitle } from './thread-store.js';
+import type { ConversationMetadata, SavedTurn, SavedTurnV3 } from '../types.js';
+import { CUT_OFF, INTERRUPTED_CALL, LIVE_REDRAW_MAX_MS, LIVE_REPLY_MS, ThreadStore, firstMessageTitle, liveRedrawIn, liveUntil, replyElsewhere, saved, turnFrom } from './thread-store.js';
 
 function setup(stored: Workflow[] = [], scope?: string) {
   const submitted: WorkflowTemplate[] = [];
@@ -69,15 +70,24 @@ describe('ThreadStore', () => {
     });
   });
 
-  it("leaves an errored reply's trace out of the save, keeping what the viewer was told", async () => {
+  it("leaves an errored reply's trace and resume point out of the save, keeping what the viewer was told", async () => {
     const { store, deps } = setup();
     const turn = store.appendUserTurn('hello', []);
-    turn.assistant = { messages: [], status: 'error', error: 'Lost the connection.', errorKind: 'network', errorTrace: { stage: 'request', step: 1, msIntoStep: 5, message: 'Failed to fetch' } };
+    turn.assistant = {
+      messages: [],
+      status: 'error',
+      error: 'Lost the connection.',
+      errorKind: 'network',
+      errorTrace: { stage: 'request', step: 1, msIntoStep: 5, message: 'Failed to fetch' },
+      // Where asking again would carry on from, for this session only.
+      resume: { messages: [{ role: 'assistant', content: 'kept' }], steps: 1, at: 1 },
+    };
     await store.completeTurn(turn);
     expect(deps.api.updateWorkflow).toHaveBeenCalledWith('7-1', {
       metadata: expect.objectContaining({ turns: [expect.objectContaining({ assistant: { messages: [], status: 'error', error: 'Lost the connection.', errorKind: 'network' } })] }),
     });
     expect(turn.assistant.errorTrace).toBeDefined();
+    expect(turn.assistant.resume).toBeDefined();
   });
 
   it('carries every turn into the next save and retires the previous one as the head', async () => {
@@ -271,4 +281,153 @@ describe('firstMessageTitle', () => {
     expect(standalone.store.summaries.map((s) => s.id)).toEqual(['PLAIN']);
   });
 
+});
+
+describe('conversation heads by version', () => {
+  // A reply saved while it ran (v3): the step it finished (a tool call, its result, and the words it
+  // said), and nothing of the step that was still going.
+  const partial: ModelMessage[] = [
+    { role: 'assistant', content: [{ type: 'text', text: 'Checking the bakery menu first.' }, { type: 'tool-call', toolCallId: 'call_menu', toolName: 'read_menu', input: { shop: 'Crumbs' } }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_menu', toolName: 'read_menu', output: { type: 'json', value: { items: 7 } } }] },
+  ];
+  const running: SavedTurnV3 = { seq: 2, createdAt: '2026-09-21T00:00:00Z', user: { content: 'now the logo', attachments: [] }, assistant: { messages: partial, status: 'running' } };
+  const versioned = (id: string, v: number, conversationId: string, turns: SavedTurnV3[] = [said(1, 'hi', 'hello'), running]): Workflow => {
+    const wf = head(id, { conversationId, title: `v${v} chat` });
+    return { ...wf, metadata: { ...(wf.metadata as object), v, turns } } as Workflow;
+  };
+
+  it('lists a v3 head and opens its running reply as cut off, with the steps it finished on screen', async () => {
+    const { store } = setup([versioned('3-1', 3, 'V3')]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => [s.id, s.title, s.head.workflowId])).toEqual([['V3', 'v3 chat', '3-1']]);
+    const { conversation } = await store.open('V3');
+    expect(conversation.title).toBe('v3 chat');
+    expect(conversation.turns.map((t) => [t.seq, t.assistant.status, t.assistant.error])).toEqual([
+      [1, 'done', undefined],
+      [2, 'error', CUT_OFF],
+    ]);
+    expect(conversation.turns[1]!.assistant.messages).toEqual(partial);
+    // Never asked for again by itself or with one press: whoever saved it may still be running it.
+    expect(conversation.turns[1]!.assistant).not.toHaveProperty('resume');
+  });
+
+  it('still lists and opens a v2 head', async () => {
+    const { store } = setup([versioned('2-1', 2, 'V2', [said(1, 'cats', 'meow')])]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => s.id)).toEqual(['V2']);
+    const { conversation } = await store.open('V2');
+    expect(conversation.turns.map((t) => [t.seq, t.assistant.status, t.assistant.messages])).toEqual([[1, 'done', [{ role: 'assistant', content: 'meow' }]]]);
+  });
+
+  it('leaves out a head of a version it does not know, in the list and when opened', async () => {
+    const { store } = setup([versioned('4-1', 4, 'V4'), versioned('1-1', 1, 'V1'), versioned('2-1', 2, 'V2', [said(1, 'cats', 'meow')])]);
+    await store.refreshList();
+    expect(store.summaries.map((s) => s.id)).toEqual(['V2']);
+    const { conversation } = await store.open('V4');
+    expect(conversation).toMatchObject({ id: 'V4', title: 'New chat', turns: [] });
+  });
+
+  // Invariant guard (not a regression test): this version reads v3 and must still write v2.
+  it('writes v2 after a v3 head was opened, with the running reply saved as cut off', async () => {
+    const { store, deps, submitted } = setup([versioned('3-1', 3, 'V3')]);
+    await store.open('V3');
+    const turn = store.appendUserTurn('try again', []);
+    await flush();
+    turn.assistant = { messages: [{ role: 'assistant', content: 'Here it is.' }], status: 'done' };
+    await store.completeTurn(turn);
+    const sent = submitted[0]!.metadata as unknown as ConversationMetadata;
+    const written = (deps.api.updateWorkflow.mock.calls.at(-1) as unknown as [string, { metadata: ConversationMetadata }])[1].metadata;
+    for (const metadata of [sent, written]) {
+      expect(metadata.v).toBe(2);
+      expect(metadata.turns[1]!.assistant).toEqual({ messages: partial, status: 'error', error: CUT_OFF });
+    }
+    expect(written.turns.map((t) => t.assistant?.status)).toEqual(['done', 'error', 'done']);
+  });
+});
+
+describe('a reply read back before it ended: still running elsewhere, or gone', () => {
+  // The fake "now" every case reads; fixtures sit well inside or well past LIVE_REPLY_MS (5 min), never on it.
+  const NOW = Date.parse('2026-10-19T15:00:00Z');
+  const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+  const v2Pending = (createdAt: string): SavedTurn => ({ seq: 2, createdAt, user: { content: 'build it', attachments: [] } });
+  const step: ModelMessage[] = [
+    { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_run', toolName: 'run_command', input: { cmd: 'npm test' } }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_run', toolName: 'run_command', output: { type: 'json', value: { exit: 0 } } }] },
+  ];
+  const v3Running = (savedAt: string | undefined, messages: ModelMessage[] = step): SavedTurnV3 => ({
+    seq: 2,
+    createdAt: ago(40),
+    user: { content: 'build it', attachments: [] },
+    assistant: { messages, status: 'running', ...(savedAt !== undefined ? { savedAt } : {}) },
+  });
+
+  it('dates a v2 reply saved as it started by the turn start: live under 5 minutes, gone after', () => {
+    expect(replyElsewhere(turnFrom(v2Pending(ago(1))), NOW)).toBe('live');
+    expect(replyElsewhere(turnFrom(v2Pending(ago(30))), NOW)).toBe('stale');
+    expect(liveUntil(turnFrom(v2Pending(ago(1))), NOW)).toBe(NOW - 60_000 + LIVE_REPLY_MS);
+    expect(liveUntil(turnFrom(v2Pending(ago(30))), NOW)).toBeUndefined();
+  });
+
+  it('dates a v3 running reply by its latest save, not by the turn start', () => {
+    // The turn began 40 minutes ago; its latest step was saved a minute ago.
+    expect(replyElsewhere(turnFrom(v3Running(ago(1))), NOW)).toBe('live');
+    expect(replyElsewhere(turnFrom(v3Running(ago(30))), NOW)).toBe('stale');
+    // No save time: the turn start stands in.
+    expect(replyElsewhere(turnFrom(v3Running(undefined)), NOW)).toBe('stale');
+  });
+
+  it('reads a time it cannot parse as gone, and says nothing of other replies', () => {
+    expect(replyElsewhere(turnFrom(v2Pending('not a date')), NOW)).toBe('stale');
+    expect(replyElsewhere(turnFrom(said(1, 'hi', 'hello')), NOW)).toBeUndefined();
+    // Saved again cut off (by a later save of the chat): no save time is kept, so it is not taken as running.
+    expect(replyElsewhere(turnFrom({ seq: 1, createdAt: ago(1), user: { content: 'x', attachments: [] }, assistant: { messages: [], status: 'error', error: CUT_OFF } }), NOW)).toBeUndefined();
+  });
+
+  it('lets a v3 running reply carry on from its saved steps, a call with no result going as interrupted (not run again)', () => {
+    expect(turnFrom(v3Running(ago(30))).assistant).toMatchObject({ errorKind: 'interrupted', resume: { messages: step, steps: 1, at: NOW - 30 * 60_000 } });
+    // A call with no result started and did not finish (its page died): it is not run again, and the model
+    // is told so in its result. (Before #712 such a reply could not carry on at all.)
+    const unfinished = turnFrom(v3Running(ago(30), [step[0]!])).assistant;
+    expect(unfinished.resume?.messages).toEqual([
+      step[0],
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_run', toolName: 'run_command', output: { type: 'error-text', value: INTERRUPTED_CALL } }] },
+    ]);
+    expect(unfinished.messages).toEqual(unfinished.resume?.messages);
+    // No save time, or no steps: nothing to carry on from.
+    expect(turnFrom(v3Running(undefined)).assistant).not.toHaveProperty('resume');
+    expect(turnFrom(v3Running(ago(30), [])).assistant).not.toHaveProperty('resume');
+  });
+
+  it('does not save the read-back time again', () => {
+    expect(saved(turnFrom(v2Pending(ago(1)))).assistant).toEqual({ messages: [], status: 'error', error: CUT_OFF });
+  });
+});
+
+describe('a save time from a clock that is ahead', () => {
+  const NOW = Date.parse('2026-10-19T15:00:00Z');
+  const at = (ms: number) => turnFrom({ seq: 2, createdAt: new Date(ms).toISOString(), user: { content: 'build it', attachments: [] } });
+  const DAY = 86_400_000;
+
+  it('does not believe a save 40 days ahead: it reads as gone at once, with nothing to wait for', () => {
+    const turn = at(NOW + 40 * DAY);
+    expect(replyElsewhere(turn, NOW)).toBe('stale');
+    expect(liveUntil(turn, NOW)).toBeUndefined();
+    expect(liveRedrawIn(turn, NOW)).toBeUndefined();
+  });
+
+  it('counts a save a little ahead (30 s) from now: live, and gone well within 5 minutes plus that', () => {
+    const turn = at(NOW + 30_000);
+    expect(replyElsewhere(turn, NOW)).toBe('live');
+    expect(replyElsewhere(turn, NOW + 2 * 60_000)).toBe('live');
+    expect(replyElsewhere(turn, NOW + 7 * 60_000)).toBe('stale');
+    expect(liveUntil(turn, NOW)).toBe(NOW + LIVE_REPLY_MS);
+  });
+
+  it('never waits longer than the cap for a live reply to go past, and waits just past it when that is sooner', () => {
+    // Saved a minute ago: it goes past in 4 minutes, so the wait is cut to the cap and waited again.
+    expect(liveRedrawIn(at(NOW - 60_000), NOW)).toBe(LIVE_REDRAW_MAX_MS);
+    // Saved 4.5 minutes ago: it goes past in 30 s.
+    expect(liveRedrawIn(at(NOW - 270_000), NOW)).toBe(30_250);
+    expect(liveRedrawIn(at(NOW - 30 * 60_000), NOW)).toBeUndefined();
+  });
 });

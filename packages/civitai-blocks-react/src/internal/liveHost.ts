@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 50, of which 12 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 52, of which 14 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -106,14 +106,16 @@
  *     links the real purchase page and replies `purchased: false`.
  *   • SET_COLLECTION_FOLLOW — needs the session-authed follow procedures plus
  *     host-chrome consent. Replies `collection-unavailable`.
+ *   • SET_ENTITY_REACTION — the server's reaction procedures take the viewer's
+ *     signed-in SESSION alongside the block token, and refuse any token as
+ *     authentication. Replies `entity-unavailable`.
+ *   • GET_ENTITY_REACTIONS — the same session-authed procedure pair. Replies
+ *     `entity-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
- *   • PREPARE_TRAINING_DATASET — the server refuses every `kind: 'training'`
- *     request from a dev token, so there is nothing to forward. Replies with a
- *     refusal.
- *   • RUN_TRAINING — the same dev-token refusal, plus the host-chrome consent
- *     dialog a run is confirmed in, which this harness does not have. Replies
- *     with a refusal.
+ *   • RUN_TRAINING — the server refuses every `kind: 'training'` request from a
+ *     dev token, and a run is confirmed in a host-chrome consent dialog this
+ *     harness does not have. Replies with a refusal.
  *   • RUN_CONFIRMED_STEP — the server refuses a confirmed step from a dev token
  *     and the estimate never returns a `stepQuote` for one, and the price is
  *     confirmed in host chrome this harness does not have. Replies with a
@@ -130,6 +132,9 @@
  *   • OPEN_IMAGE_PICKER — needs the host's picker over the viewer's own posted
  *     images and generator outputs, read off their signed-in session; no
  *     block-token endpoint lists either. Replies with a refusal.
+ *   • OPEN_MEDIA_UPLOAD — the generation-input upload runs in the host with the
+ *     viewer's signed-in session, which the local harness does not have.
+ *     Replies with a refusal.
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -168,12 +173,25 @@ import {
   type PickerResultChannel,
 } from './pickerOverlay.js';
 
+/** Logged once when a block sends either reaction message to the live host. */
+const REACTIONS_UNSUPPORTED_LOG =
+  'SET_ENTITY_REACTION / GET_ENTITY_REACTIONS are not supported in dev:live (the reaction ' +
+  'procedures need the signed-in civitai.com session). Replying `entity-unavailable`. Use ' +
+  'dev:mock to exercise the reaction bridge.';
+
 /**
  * The `error` the live host answers `OPEN_IMAGE_PICKER` with. `useImagePicker()`
  * rejects with it, so it says what to do instead.
  */
 export const IMAGE_PICKER_UNSUPPORTED_ERROR =
   'the image picker is not supported in dev:live — use dev:mock';
+
+/**
+ * The `error` the live host answers `OPEN_MEDIA_UPLOAD` with. `useMediaUpload()`
+ * rejects with it, so it says what to do instead.
+ */
+export const MEDIA_UPLOAD_UNSUPPORTED_ERROR =
+  'media upload is not supported in dev:live — use dev:mock';
 
 /** Default civitai backend the live host forwards to. */
 const DEFAULT_BACKEND_BASE_URL = 'https://civitai.com';
@@ -257,8 +275,7 @@ export interface LiveHostOptions {
 const BUDGETED_SCOPE = 'ai:write:budgeted';
 
 /**
- * The reply both training bridges get in dev:live — see their handlers. One
- * string so the two cannot drift.
+ * The reply `RUN_TRAINING` gets in dev:live — see its handler.
  */
 export const TRAINING_UNSUPPORTED_ERROR = 'training is not supported in dev:live — use dev:mock';
 
@@ -1375,6 +1392,40 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'SET_ENTITY_REACTION': {
+            // UNSUPPORTED in live: `blocks.setReactionFromApp` /
+            // `blocks.getReactionsForApp` are session procedures marked
+            // `blockApiKeys`, so the server refuses ANY token as the caller's
+            // authentication and then checks that the block token's subject IS
+            // the session user. A liveHost holds a token and no session.
+            //
+            // `entity-unavailable`: the closed code that already means "this
+            // request cannot be served, nothing was written". `sign-in-required`
+            // would send the block into a REQUEST_SIGN_IN loop against a harness
+            // with no sign-in; `needs-consent` into a consent ask that cannot
+            // help. Use dev:mock (`reactionStates` / `reactionError`, with
+            // `social:react:self` in `declaredScopes`) to exercise the bridge.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTION_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
+            });
+            return;
+          }
+
+          case 'GET_ENTITY_REACTIONS': {
+            // UNSUPPORTED in live, for the reason on SET_ENTITY_REACTION directly
+            // above: the read is the same session-authed procedure pair.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTIONS_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
+            });
+            return;
+          }
+
           case 'CREATE_POST_FROM_APP': {
             // UNSUPPORTED in live v1, for a STRONGER version of the
             // SET_COLLECTION_FOLLOW reason directly above. The real host makes
@@ -1414,35 +1465,25 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
-          case 'PREPARE_TRAINING_DATASET': {
+          case 'RUN_TRAINING': {
             // UNSUPPORTED in live, and here the SERVER decides it, not this
             // harness: every `kind: 'training'` procedure refuses a dev token
             // ("training is not available from a development or review session"
             // — `assertTrainingRequestAllowed` in civitai/civitai), because there
             // is no host page whose chrome can show the viewer a price. A
             // training ESTIMATE is still forwarded (ESTIMATE_WORKFLOW above) and
-            // comes back carrying that same server refusal.
+            // comes back carrying that same server refusal. A run is also
+            // CHARGED and confirmed in host chrome this harness does not have, so
+            // faking either half would let dev prove out a flow production does
+            // not have. The upload half (`OPEN_IMAGE_UPLOAD { purpose:
+            // 'trainingData' }`) is answered as a dismissal (`null`), like every
+            // other upload mode — see OPEN_IMAGE_UPLOAD below.
             //
             // FREE TEXT on the message's own reply channel; no host code is
             // honest about "this harness cannot do it". Use dev:mock — its
-            // `trainingDatasetError` / `trainingDatasetRejected` knobs cover the
-            // refusal set.
-            if (!isRoutableRequestId(requestId)) return;
-            logOnce('training-dataset', trainingUnsupportedLog('PREPARE_TRAINING_DATASET'));
-            dispatchToBlock({
-              type: 'TRAINING_DATASET_RESULT',
-              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
-            });
-            return;
-          }
-
-          case 'RUN_TRAINING': {
-            // UNSUPPORTED in live for the same server-side reason as
-            // PREPARE_TRAINING_DATASET directly above — and doubly so: a run is
-            // CHARGED and confirmed in host chrome this harness does not have, so
-            // faking either half would let dev prove out a flow production does
-            // not have. Use dev:mock — its `runTrainingError` knob covers
-            // `declined`, `submission-unconfirmed` and the rest.
+            // `cannedTrainingDataUpload`, `trainingDataNotUploadedHere` and
+            // `runTrainingError` knobs cover the upload, the not-uploaded-here
+            // refusal, `declined`, `submission-unconfirmed` and the rest.
             if (!isRoutableRequestId(requestId)) return;
             logOnce('training-run', trainingUnsupportedLog('RUN_TRAINING'));
             dispatchToBlock({
@@ -1698,6 +1739,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                   'Test the bytes upload against the real site, or use ' +
                   'createMockHost({ uploadImageBytesResult }) in dev:mock.',
               );
+            } else if ((typed.payload as { purpose?: unknown } | null)?.purpose === 'trainingData') {
+              logOnce(
+                'open-image-upload-training-data',
+                "OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+                  'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+                  'Test the training flow against the real site, or use ' +
+                  'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+              );
             } else {
               logOnce(
                 'open-image-upload',
@@ -1732,6 +1781,27 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'IMAGE_PICKER_RESULT',
               payload: { requestId, error: IMAGE_PICKER_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'OPEN_MEDIA_UPLOAD': {
+            // REFUSED. The host uploads the file with the viewer's signed-in
+            // session; this harness has none, and nothing a dev block token can
+            // call takes the upload. Rather than let `useMediaUpload()` hang to
+            // its 10-minute timeout, or hand back an invented URL a step would
+            // then fail on, answer with an error (the hook rejects).
+            logOnce(
+              'open-media-upload',
+              'OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+                '— useMediaUpload() REJECTS. Test it against the real site, ' +
+                'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+            );
+            // A refusal nobody can route is not worth sending.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'MEDIA_UPLOAD_RESULT',
+              payload: { requestId, error: MEDIA_UPLOAD_UNSUPPORTED_ERROR },
             });
             return;
           }

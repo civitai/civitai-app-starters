@@ -13,6 +13,22 @@ export declare function initialize(options?: BlockInitializeOptions): Promise<Bl
 
 export declare function initialize(options: TokenInitializeOptions): Promise<AppClient>;
 
+/**
+ * Which store serves `app.storage.collection(name)` and `app.storage.info()`.
+ *
+ * - `'remote'` — the server's document store, `/api/v1/blocks/storage/…`.
+ * - `'local-preview'` — an in-memory store in this tab, because the host marked
+ *   the frame a dev-tunnel preview (which has no server-side storage). It
+ *   enforces the server's rules against the LOCAL manifest, models ONE viewer,
+ *   and is gone on reload. Show the viewer a "preview data is local to this tab"
+ *   badge.
+ *
+ * Latched when `initialize()` resolves. Only the document store switches: the
+ * deprecated key/value methods on `app.storage`, `app.sharedStorage` and the
+ * `@civitai/blocks-react` storage hooks keep calling the real routes.
+ */
+export type StorageMode = 'remote' | 'local-preview';
+
 export interface AppClient {
     /**
      * The public Civitai REST API (`/api/v1`), as the viewer.
@@ -40,7 +56,9 @@ export interface AppClient {
      * with an OAuth access token is refused. The legacy store refuses an anonymous
      * viewer outright; the document store lets one read SHARED collections only.
      */
-    readonly storage: StorageClient & DocumentStorage;
+    readonly storage: StorageClient & DocumentStorage & {
+        readonly mode: StorageMode;
+    };
     /**
      * @deprecated Declare a `shared` collection under `storage.collections` and use
      * `app.storage.collection(name)`. This store keeps working, unchanged, until the
@@ -57,6 +75,16 @@ export interface AppClient {
      * clear a server-side minimum-trust gate.
      */
     readonly sharedStorage: SharedStorageClient;
+    /**
+     * The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`
+     * over the `blocks/sub-listings/*` routes. A refusal the server explained is a
+     * `SubListingError` with a typed `code`.
+     *
+     * 🔴 Requires the block token and `apps:store:items:write`, which is never
+     * minted for dev-token, dev-tunnel or review sessions and is refused to an
+     * anonymous viewer — so build the publish path to degrade quietly.
+     */
+    readonly subListings: SubListingsClient;
     /**
      * Generation for a BLOCK: estimate, submit, watch and cancel through the
      * host's `blocks/workflows/*` routes, which price, budget and attribute the
@@ -156,7 +184,7 @@ export interface SignIn extends TokenSessionOptions {
 }
 
 /** Every scope an app can hold, as the site names them. */
-export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'apps:store:items:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'goods:purchase:self', 'goods:read:self', 'models:read:self', 'posts:write:self', 'social:tip:self', 'user:read:self'];
+export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'apps:store:items:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'goods:purchase:self', 'goods:read:self', 'models:read:self', 'posts:write:self', 'social:react:self', 'social:tip:self', 'user:read:self'];
 
 export type Scope = (typeof SCOPES)[number];
 
@@ -463,6 +491,151 @@ export interface StorageClient {
 }
 
 /**
+ * A refusal from a sub-listing route, whose body is `{ error, code }`. Branch on
+ * `code`: `error` (this error's `message`) is a server sentence, not UI copy.
+ * `status` and `body` are {@link ApiError}'s, as sent.
+ *
+ * ⚠ A `429` carries a `Retry-After` header this client does not expose
+ * (`ApiError` keeps no headers).
+ */
+export declare class SubListingError extends ApiError {
+    readonly code: SubListingErrorCode;
+    constructor(status: number, code: SubListingErrorCode, message: string, body: unknown, options?: ErrorOptions);
+}
+
+export interface SubListingCallOptions {
+    signal?: AbortSignal;
+}
+
+/** A sub-listing's review state. Only `approved` items are in the store. */
+export type SubListingStatus = 'pending' | 'approved' | 'hidden' | 'withdrawn';
+
+/** The listing rating ladder, least to most mature. */
+export type SubListingContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
+
+/**
+ * What `upsert` publishes: one item the VIEWER made in this app, as its own
+ * App Store card under the viewer's name.
+ *
+ * The server owns every rule (lengths, the `subPath` shape, the rating floor)
+ * and answers a breach with a {@link SubListingError}; nothing is pre-checked
+ * here, so the rules have one home.
+ */
+export interface SubListingUpsertInput {
+    /**
+     * The key of a row in this app's SHARED storage (`app.sharedStorage`) that the
+     * viewer authored and that is not hidden. One sub-listing per key: publishing
+     * the same key again edits it, and every call REPLACES the whole item — an
+     * optional you leave out is cleared, so re-send the ones you want to keep.
+     */
+    itemKey: string;
+    title: string;
+    /** Optional. Left out (`null`/`undefined`), the item has no tagline. */
+    tagline?: string | null;
+    /**
+     * An image the viewer uploaded and that is publicly visible. Left out
+     * (`null`/`undefined`), the card shows the app's cover.
+     */
+    imageId?: number | null;
+    /**
+     * Where the card opens your app: `/apps/run/<your-app-slug>/<subPath>`. One to
+     * four `/`-separated segments of letters, digits, `_` and `-`.
+     */
+    subPath: string;
+    /**
+     * No less mature than the app's own rating. Left out (`null`/`undefined`), the
+     * item inherits the app's rating.
+     */
+    contentRating?: SubListingContentRating | null;
+}
+
+export interface SubListingUpsertResult {
+    id: string;
+    /**
+     * 🔴 `hidden` is an ANSWER, not a failure: a moderator took the item down, the
+     * app cannot lift it, and the upsert changed nothing.
+     */
+    status: SubListingStatus;
+    /** True while an edit to an approved item waits for a moderator; the card keeps serving the approved version. */
+    pendingEdit: boolean;
+}
+
+export interface SubListingWithdrawResult {
+    ok: true;
+    /**
+     * 🔴 `false` is a SUCCESS: nothing of this viewer's was active under that key —
+     * or a moderator has hidden it, which the app cannot change.
+     */
+    withdrawn: boolean;
+}
+
+/** One of the viewer's own items for this app, as `mine` lists it. */
+export interface MySubListing {
+    id: string;
+    itemKey: string;
+    status: SubListingStatus;
+    title: string;
+    pendingEdit: boolean;
+    /** Why a moderator hid it, when one said. */
+    statusReason: string | null;
+    /** Why a moderator rejected the last staged edit, when one said. */
+    editRejectionReason: string | null;
+    /** The wire's ISO string, revived once. */
+    updatedAt: Date;
+}
+
+/**
+ * The `code` of a sub-listing refusal.
+ *
+ * The named codes are the ones the three sub-listing routes raise themselves,
+ * plus the two token refusals an app should expect here: `insufficient_scope`
+ * (the token lacks `apps:store:items:write` — every dev-token, dev-tunnel and
+ * review session) and `context_binding` (an anonymous viewer). Any other wire
+ * code still arrives, as a plain string.
+ */
+export type SubListingErrorCode = 'invalid_body' | 'anonymous' | 'not_enabled' | 'untrusted' | 'item_not_found' | 'not_your_item' | 'text_rejected' | 'image_not_yours' | 'image_not_public' | 'rating_too_loose' | 'rate_limited' | 'author_cap' | 'conflict' | 'unavailable' | 'insufficient_scope' | 'context_binding' | (string & {});
+
+/**
+ * The viewer's own App Store items for THIS app — sub-listings of the app's
+ * listing, each published by the viewer under their name and reviewed by a
+ * moderator before it shows in the store.
+ *
+ * 🔴 Requires the block token and the scope `apps:store:items:write`, which is
+ * consent-exempt, signed-in viewers only, and never minted for dev-token,
+ * dev-tunnel or review sessions — so a refusal here is a normal outcome, and the
+ * publish path must degrade quietly. The app must also be enabled for
+ * sub-listings by Civitai (`not_enabled` until it is).
+ *
+ * 🔴 EVERY FAILURE REJECTS: a refusal the server explained is a
+ * {@link SubListingError}; any other failure is the {@link ApiError} or
+ * `CivitaiError` it was.
+ */
+export interface SubListingsClient {
+    /**
+     * Publishes, or edits, the item at `itemKey`. `POST blocks/sub-listings/upsert`.
+     *
+     * 🔴 The server's body is STRICT — an unknown key is `400 invalid_body` — so
+     * only the six fields of {@link SubListingUpsertInput} are sent. An optional
+     * that is `null` or `undefined` is left out rather than sent; the server stores
+     * either as empty.
+     *
+     * 🔴 It REPLACES, it does not patch: an edit that leaves out `tagline`,
+     * `imageId` or `contentRating` clears it (on an approved item, the cleared
+     * version is what goes to the moderator). Re-send every field you want to keep.
+     */
+    upsert(input: SubListingUpsertInput, opts?: SubListingCallOptions): Promise<SubListingUpsertResult>;
+    /** Takes the viewer's item at `itemKey` out of the store. `POST blocks/sub-listings/withdraw`. */
+    withdraw(itemKey: string, opts?: SubListingCallOptions): Promise<SubListingWithdrawResult>;
+    /**
+     * The viewer's items for this app, oldest first, at most 200, with their
+     * review state. `GET blocks/sub-listings/mine`.
+     */
+    mine(opts?: SubListingCallOptions): Promise<{
+        items: MySubListing[];
+    }>;
+}
+
+/**
  * A refusal from the document store, in its one envelope `{ code, message, error, details? }`.
  * Branch on `code`; `status` and `body` are {@link ApiError}'s, as sent.
  */
@@ -653,7 +826,16 @@ export interface DocumentStorage {
  * Every code the server documents for these routes. The type stays open
  * (`string & {}`) so a code a later server adds still reaches the caller.
  */
-export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable' | (string & {});
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
+/**
+ * LOCAL, never sent by the server: the host marked this frame a dev-tunnel
+ * local preview, and no manifest reached the SDK to say which collections exist.
+ */
+ | 'local_preview_no_manifest'
+/** LOCAL, never sent by the server: the local preview's manifest declares storage the local store cannot serve. */
+ | 'local_preview_invalid_manifest'
+/** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
+ | 'local_preview_unavailable' | (string & {});
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -682,6 +864,26 @@ export declare class SubmissionUnconfirmedError extends CivitaiError {
     readonly snapshot: BlockWorkflowSnapshot | undefined;
     constructor(snapshot: BlockWorkflowSnapshot | undefined);
 }
+
+/**
+ * The price an {@link WorkflowsClient.estimate} reply quotes, in whole Buzz, or
+ * `null` when it quotes none.
+ *
+ * An estimate is priced when its `status` is not `'failed'` AND it carries a
+ * numeric `cost.total`. That is the whole rule, and it is the one to branch on:
+ * - Do not require `'succeeded'`. Nothing runs on an estimate, so a priced one
+ *   comes back with a status that has not finished (`'pending'` in practice),
+ *   and a check for `'succeeded'` reads every price as missing.
+ * - `0` is a price.
+ * - A `'failed'` snapshot is never priced, even one carrying a `cost.total`: a
+ *   budget refusal carries the total it would not charge.
+ * - A snapshot with no numeric `cost.total` is not priced, whatever its status.
+ *
+ * `null` does not predict a refused {@link WorkflowsClient.submit}: a body the
+ * host cannot price can still be submitted. Read `error` / `errorCode` on the
+ * snapshot for why.
+ */
+export declare function estimatedCost(snapshot: Pick<BlockWorkflowSnapshot, 'status' | 'cost'>): number | null;
 
 export interface WorkflowCallOptions {
     signal?: AbortSignal;
@@ -763,6 +965,16 @@ export interface WorkflowsClient {
      * The price is `snapshot.cost.total`. A refused estimate resolves with
      * `status: 'failed'` and no `cost`; a body the host cannot price fails this
      * way without that predicting a refused {@link WorkflowsClient.submit}.
+     *
+     * 🔴 DO NOT REQUIRE `'succeeded'`. Nothing runs on an estimate, so a priced
+     * one comes back with a status that has not finished (`'pending'` in
+     * practice). Read the price with {@link estimatedCost}, which is `null`
+     * exactly when there is none to show:
+     *
+     * ```ts
+     * const price = estimatedCost(await app.workflows.estimate(body));
+     * if (price === null) showMessage('This generation could not be priced.');
+     * ```
      */
     estimate(body: WorkflowBody, opts?: WorkflowCallOptions): Promise<BlockWorkflowSnapshot>;
     /**
@@ -1465,8 +1677,14 @@ export type WorkflowBodyPassThroughStep = {
      *
      * Consequently the orchestrator's per-`$type` schema is the ONLY authority for
      * what a given `$type` accepts; nothing in this package or on the host mirrors
-     * it. Bounded only by size: at most **262144 bytes** (256 KB) serialized, which
-     * is a payload-DoS bound and not a shape gate.
+     * it. Its shape is not checked; its size is: at most **262144 bytes** (256 KB)
+     * serialized, which is a payload-DoS bound and not a shape gate.
+     *
+     * 🔴 **No inline media.** The host refuses a `data:image|video|audio` URI or a
+     * long raw base64 string anywhere in here: upload the image, video or audio
+     * with `useMediaUpload()` (an image also works with
+     * `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`)
+     * and pass the returned `url`.
      */
     input: Record<string, unknown>;
     /**
@@ -1795,16 +2013,16 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
 });
 
 /**
- * Train a LoRA with the ai-toolkit engine on a dataset Civitai prepared from the
- * VIEWER'S OWN images — the App Blocks `kind: 'training'` workflow body.
+ * Train a LoRA with the ai-toolkit engine on images the VIEWER uploaded through
+ * the host — the App Blocks `kind: 'training'` workflow body.
  *
  * ## Availability — read before building on it
  *
  *  - 🔴 Behind the host flag **`app-blocks-training-kind`**, which ships OFF and is
  *    evaluated per viewer. Where it is off, every training call is refused
  *    (`training from apps is not enabled`).
- *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers both training
- *    messages with an error, and the server refuses a non-page token.
+ *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers
+ *    `RUN_TRAINING` with an error, and the server refuses a non-page token.
  *  - The manifest must declare **`ai:write:budgeted`** and the viewer must have
  *    granted it; the viewer must be signed in.
  *  - **Not from a development or review session**: dev tokens (`dev:live`, dev
@@ -1813,17 +2031,22 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
  *
  * ## The flow
  *
- *  1. **Dataset** — `usePrepareTrainingDataset()` (`PREPARE_TRAINING_DATASET`)
- *     with `[{ imageId, caption }]`. Only the viewer's OWN scanned, unflagged
- *     images within the page's maturity ceiling are admitted; the rest come back
- *     in `rejected`. You get an opaque {@link WorkflowBodyTraining.datasetId}.
+ *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+ *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
+ *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
+ *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
  *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
  *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the
  *     orchestrator's own price for exactly this run, stored server-side.
  *  3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })`
  *     (`RUN_TRAINING`). Civitai shows the viewer a consent dialog in ITS chrome —
  *     price, base model, length, dataset size, all read back from the server,
- *     never from your body — and submits only on their click.
+ *     never from your body, with the host's own copies of the uploads as
+ *     thumbnails — and submits only on their click. A quote naming an image this
+ *     host did not upload for the block is refused with no dialog
+ *     (`training data not uploaded here`) — upload in the same page session as the
+ *     run; a reload forgets the uploads.
  *  4. **Follow** — `useBuzzWorkflow().watch(snapshot.workflowId)`.
  *
  * 🔴 `useBuzzWorkflow().submit()` REFUSES THIS BODY before sending it. The server
@@ -1839,8 +2062,12 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase & ({
  */
 export interface WorkflowBodyTraining {
     kind: 'training';
-    /** The handle `usePrepareTrainingDataset()` returned — `tds_` + 32 hex characters. */
-    datasetId: string;
+    /**
+     * The dataset: 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images this host
+     * uploaded for the viewer, each with its caption — see
+     * {@link BlockTrainingDatasetItem}. One blob may appear once.
+     */
+    items: BlockTrainingDatasetItem[];
     /** The only engine accepted. */
     engine: 'ai-toolkit';
     /**
@@ -1849,12 +2076,17 @@ export interface WorkflowBodyTraining {
      */
     model: string;
     params: AiToolkitTrainingParams;
-    /** At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. Moderated like a prompt. */
+    /**
+     * At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. The host runs
+     * it through the same trigger-word check Civitai's trainer and Training Studio
+     * use, at the estimate and again at the submit, before anything is reserved; a
+     * refused trigger word fails the estimate.
+     */
     triggerWord: string;
     /**
      * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
-     * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Moderated like
-     * prompts.
+     * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Checked for
+     * those bounds only, as in the Training Studio.
      */
     samplePrompts: string[];
     /**
@@ -1885,7 +2117,7 @@ export interface WorkflowBodyTraining {
  *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
  *    by a registry.
  *  - {@link WorkflowBodyTraining} (`kind: 'training'`) — an ai-toolkit LoRA run
- *    on a server-prepared dataset of the viewer's own images. ESTIMATE ONLY
+ *    on images the viewer uploaded through the host. ESTIMATE ONLY
  *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
  *    host-chrome consent dialog is the only way to confirm its quote.
  *  - {@link WorkflowBodyWorkflow} (`kind: 'workflow'`) — up to
@@ -2254,8 +2486,8 @@ export interface BlockWorkflowSnapshot {
      *
      * `cost.total` on the same snapshot equals `trainingQuote.total`.
      * `expiresAt` is an ISO-8601 timestamp: after it the run is refused and you
-     * estimate again. `imageCount` is the server-derived size of the prepared
-     * dataset, never a number the block sent.
+     * estimate again. `imageCount` is the size of the dataset the server quoted
+     * (`items.length`).
      *
      * Present ONLY on the reply to a `kind: 'training'` estimate. Absent on hosts
      * that predate civitai/civitai#5434.
@@ -2390,7 +2622,7 @@ export interface BlockTrainingQuote {
     quoteId: string;
     /** The quoted price, in Buzz. */
     total: number;
-    /** How many images the prepared dataset holds. */
+    /** How many images the quoted dataset holds. */
     imageCount: number;
     /** ISO-8601. The quote cannot be run after this. */
     expiresAt: string;
@@ -2580,6 +2812,24 @@ export interface AppWorkflow {
      * there are none (and on hosts that predate it).
      */
     model3dOutputs?: BlockModel3dOutput[];
+}
+
+/**
+ * One image of a training dataset ({@link WorkflowBodyTraining.items}) — a blob
+ * this host uploaded for the viewer, and the caption to train it with. The
+ * Training Studio's own `{ air, caption }` shape.
+ *
+ * Host bounds (`blockTrainingDatasetItemsSchema`, civitai/civitai#6461): `air`
+ * is the blob's key ({@link BlockTrainingDataImage.air}) or its Civitai-hosted
+ * blob url — the server keeps only the key; `caption` at most
+ * {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters; no other keys;
+ * 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per body, and one blob at
+ * most once (keys compare case-insensitively). A body outside them is refused at
+ * the estimate.
+ */
+export interface BlockTrainingDatasetItem {
+    air: string;
+    caption: string;
 }
 
 export declare function isTerminal(workflow: Workflow): boolean;
@@ -2843,6 +3093,12 @@ export interface BlockSnapshot {
     maxBrowsingLevel?: number;
     /** The domain ceiling narrowed to this viewer. Always a subset of `maxBrowsingLevel`. */
     effectiveBrowsingLevel?: number;
+    /**
+     * `'local-preview'` when the host said this frame is a dev-tunnel preview with
+     * no server-side storage; absent otherwise. `initialize()` reads it ONCE, so a
+     * later change cannot move an app's storage between stores mid-session.
+     */
+    storageMode?: 'local-preview';
 }
 
 export interface BlockTransport {
@@ -3135,6 +3391,13 @@ export interface FakeStorageViewer {
     trusted?: boolean;
     /** `details.reason` when untrusted. Default `account_too_new`. */
     untrustedReason?: string;
+    /**
+     * Ids of the model versions whose model this viewer owns — what a collection's
+     * `ownedModelVersions` rule checks a write against. Default: none, so every id
+     * at a declared field is refused `resource_not_owned`, as the server refuses a
+     * version that is not the writer's (or does not exist).
+     */
+    modelVersions?: readonly number[];
 }
 
 /** Who is calling: a viewer (or `null`, anonymous) holding a token of some kind and scopes. */

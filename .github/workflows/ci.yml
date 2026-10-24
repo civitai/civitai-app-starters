@@ -365,6 +365,10 @@ jobs:
       # already installed by the step above (one shared Playwright cache).
       - run: pnpm --filter @civitai/components test:browser
 
+      # <civitai-chat> layout in real Chromium (jsdom does no layout): the chat
+      # must fit a phone-width host. Same shared Chromium install as above.
+      - run: pnpm --filter @civitai/components-chat test:browser
+
   # ADVISORY cross-engine contract. The chromium half of this contract already
   # runs inside the REQUIRED `design-system` job, so nothing is only checked
   # here.

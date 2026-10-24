@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isMessage } from '../../src/blocks/messages.js';
+import { BLOCK_TO_PARENT_MESSAGE_TYPES, isMessage } from '../../src/blocks/messages.js';
 import type {
   BlockInitPayload,
   BlockToParentMessage,
@@ -12,6 +12,8 @@ import type {
   BlockGenerationSourceImageInfo,
   BlockImagePickerSource,
   BlockImageScanResult,
+  BlockMediaKind,
+  BlockMediaUploadInfo,
   BlockPendingImageInfo,
   BlockPickedImageInfo,
   BlockUploadedImageInfo,
@@ -262,6 +264,71 @@ describe('OPEN_IMAGE_PICKER / IMAGE_PICKER_RESULT message guards', () => {
     } else {
       expect.unreachable('both should narrow to IMAGE_PICKER_RESULT');
     }
+  });
+});
+
+describe('OPEN_MEDIA_UPLOAD / MEDIA_UPLOAD_RESULT message guards', () => {
+  const video: BlockMediaUploadInfo = {
+    url: 'https://media.example/generation-input/clip.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  // Audio has no dimensions.
+  const audio: BlockMediaUploadInfo = {
+    url: 'https://media.example/generation-input/voice.webm',
+    kind: 'audio',
+    mimeType: 'audio/webm',
+    sizeBytes: 96_000,
+  };
+
+  it('OPEN_MEDIA_UPLOAD is a declared block-to-parent message type', () => {
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES as readonly string[]).toContain('OPEN_MEDIA_UPLOAD');
+  });
+
+  it('a picker request carries kind + purpose and no bytes; a bytes request carries both', () => {
+    const kinds: BlockMediaKind[] = ['image', 'video', 'audio'];
+    for (const kind of kinds) {
+      const picker: BlockToParentMessage = {
+        type: 'OPEN_MEDIA_UPLOAD',
+        payload: { requestId: `m-${kind}`, kind, purpose: 'generationSource' },
+      };
+      expect(isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD'>(picker, 'OPEN_MEDIA_UPLOAD')).toBe(true);
+      expect(picker.payload).not.toHaveProperty('bytes');
+    }
+    const bytes = new ArrayBuffer(4);
+    const upload: BlockToParentMessage = {
+      type: 'OPEN_MEDIA_UPLOAD',
+      payload: { requestId: 'm-b', kind: 'audio', purpose: 'generationSource', bytes, mimeType: 'audio/webm' },
+    };
+    if (isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD'>(upload, 'OPEN_MEDIA_UPLOAD')) {
+      expect(upload.payload.bytes).toBe(bytes);
+      expect(upload.payload.mimeType).toBe('audio/webm');
+    } else {
+      expect.unreachable('upload should narrow to OPEN_MEDIA_UPLOAD');
+    }
+  });
+
+  it('MEDIA_UPLOAD_RESULT carries a selected file, an error, or nothing', () => {
+    const uploaded: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_RESULT',
+      payload: { requestId: 'm-1', selected: video },
+    };
+    const refused: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_RESULT',
+      payload: { requestId: 'm-2', error: 'busy' },
+    };
+    const dismissed: ParentToBlockMessage = { type: 'MEDIA_UPLOAD_RESULT', payload: { requestId: 'm-3' } };
+    for (const m of [uploaded, refused, dismissed]) {
+      expect(isMessage<ParentToBlockMessage, 'MEDIA_UPLOAD_RESULT'>(m, 'MEDIA_UPLOAD_RESULT')).toBe(true);
+      // A different message from the image upload reply, not an alias.
+      expect(isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(m, 'IMAGE_UPLOAD_RESULT')).toBe(false);
+    }
+    expect(audio).not.toHaveProperty('width');
+    expect(audio).not.toHaveProperty('height');
   });
 });
 

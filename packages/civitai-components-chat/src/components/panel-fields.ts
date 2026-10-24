@@ -2,13 +2,15 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 
 import type { GenerationJob, JobState } from '../orchestration/job.js';
-import type { Panel } from '../panels/panel.js';
+import { MODEL_INPUT, type Panel } from '../panels/panel.js';
 import { layoutRows, type PanelInput } from '../panels/spec.js';
 import type { Attachment } from '../types.js';
 
 const PICKER_IMAGES = 12;
 // Wider sets scroll sideways in a segmented control; a select shows them all.
 const SEGMENTS_MAX = 4;
+// A control character, so no option label can ever be the same.
+const FIND_MODEL = '\u0000find-model';
 const SEGMENTS_CHARS = 32;
 
 export interface FieldOptions {
@@ -123,11 +125,22 @@ function field(key: string, input: PanelInput, panel: Panel, files: () => Attach
         : html`<civitai-text-input label=${label} placeholder=${input.placeholder ?? ''} maxlength=${input.maxLen ?? 500} ?required=${input.required === true} .value=${live(String(value))} @input=${(e: Event) => set((e.currentTarget as HTMLInputElement).value)}></civitai-text-input>`;
     case 'choice':
     case 'aspect': {
-      const data = input.options.map((option) => ({ value: option, label: option }));
-      const segmented = input.options.length <= SEGMENTS_MAX && input.options.join('').length <= (options.segmentChars ?? SEGMENTS_CHARS);
+      const findsModel = key === MODEL_INPUT && panel.canPromptForModel;
+      const data = [...input.options.map((option) => ({ value: option, label: option })), ...(findsModel ? [{ value: FIND_MODEL, label: 'Find another model…' }] : [])];
+      const segmented = !findsModel && input.options.length <= SEGMENTS_MAX && input.options.join('').length <= (options.segmentChars ?? SEGMENTS_CHARS);
       return segmented
         ? html`<civitai-segmented-control size="sm" label=${label} .data=${data} .value=${live(String(value))} @change=${(e: Event) => set((e.target as HTMLInputElement).value)}></civitai-segmented-control>`
-        : html`<civitai-select label=${label} .data=${data} .value=${live(String(value))} @change=${(e: Event) => set((e.target as HTMLInputElement).value)}></civitai-select>`;
+        : html`<civitai-select
+            label=${label}
+            .data=${data}
+            .value=${live(String(value))}
+            @change=${(e: Event) => {
+              const select = e.target as HTMLInputElement;
+              if (select.value !== FIND_MODEL) return set(select.value);
+              select.value = String(value);
+              panel.promptForModel();
+            }}
+          ></civitai-select>`;
     }
     case 'slider':
       return html`<civitai-slider label=${label} show-value min=${input.min} max=${input.max} step=${input.step ?? 'any'} .value=${live(String(value))} @change=${(e: Event) => set(Number((e.target as HTMLInputElement).value))}></civitai-slider>`;

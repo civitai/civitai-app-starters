@@ -40,6 +40,8 @@ const CANONICAL_BLOCK_SCOPES = [
   // App Store sub-listings (civitai/civitai#5511). SENSITIVE + consent-EXEMPT
   // server-side (gated per call); 4-segment.
   'apps:store:items:write',
+  // App reactions (civitai/civitai#6144). SENSITIVE + consent-GATED.
+  'social:react:self',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {

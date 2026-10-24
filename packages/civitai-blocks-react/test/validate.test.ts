@@ -16,6 +16,7 @@ import {
   isValidCheckpointPickerResult,
   isValidImageUploadResult,
   isValidImagePickerResult,
+  isValidMediaUploadResult,
   isValidResourcePickerResult,
   isValidSharedAppendResult,
   isValidSharedCountResult,
@@ -113,6 +114,16 @@ describe('isValidBlockInitPayload', () => {
     expect(
       isValidBlockInitPayload({ ...validInit, effectiveBrowsingLevel: undefined })
     ).toBe(true);
+  });
+
+  it('accepts storageMode, and a value it does not know, without rejecting the init', () => {
+    // civitai-app-starters#710: the host adds `storageMode: 'local-preview'` for a
+    // dev-tunnel frame. This validator is compiled into deployed bundles, and a
+    // rejected BLOCK_INIT never becomes ready — so the field, and any future value
+    // of it, must pass through. Only `@civitai/sdk` acts on it.
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'local-preview' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'some-later-mode' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 7 })).toBe(true);
   });
 
   it.each([
@@ -1102,6 +1113,88 @@ describe('isValidImagePickerResult', () => {
   });
 });
 
+describe('isValidMediaUploadResult', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const video = {
+    url: 'https://media.example/generation-input/b.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  const audio = {
+    url: 'https://media.example/generation-input/c.webm',
+    kind: 'audio',
+    mimeType: 'audio/webm',
+    sizeBytes: 0,
+    durationMs: 0,
+  };
+
+  it('is the validator payloadValidatorFor routes MEDIA_UPLOAD_RESULT to', () => {
+    expect(payloadValidatorFor('MEDIA_UPLOAD_RESULT')).toBe(isValidMediaUploadResult);
+  });
+  it.each([
+    ['an image', image],
+    ['a video', video],
+    ['a video with no duration', { ...video, durationMs: undefined }],
+    ['an audio file with no dimensions, size 0 and duration 0', audio],
+    ['an audio file with no duration (a MediaRecorder WebM)', { ...audio, durationMs: undefined }],
+    ['a fractional duration', { ...video, durationMs: 4999.5 }],
+  ])('accepts %s', (_n, selected) => {
+    expect(isValidMediaUploadResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a bare reply (dismissed / declined)', () => {
+    expect(isValidMediaUploadResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts an error reply, including an empty one, without checking a selected beside it', () => {
+    expect(isValidMediaUploadResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidMediaUploadResult({ requestId: 'r', error: '' })).toBe(true);
+    expect(isValidMediaUploadResult({ requestId: 'r', error: 'no', selected: { kind: 'x' } })).toBe(true);
+  });
+  it.each([
+    ['not an object', 'MEDIA_UPLOAD_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7, selected: image }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['selected null', { requestId: 'r', selected: null }],
+    ['selected not an object', { requestId: 'r', selected: 'image' }],
+    ['url empty', { requestId: 'r', selected: { ...image, url: '' } }],
+    ['url missing', { requestId: 'r', selected: { ...image, url: undefined } }],
+    ['kind unknown', { requestId: 'r', selected: { ...image, kind: 'gif' } }],
+    ['kind wrong case', { requestId: 'r', selected: { ...image, kind: 'Image' } }],
+    ['mimeType missing', { requestId: 'r', selected: { ...image, mimeType: undefined } }],
+    ['mimeType not a string', { requestId: 'r', selected: { ...image, mimeType: 1 } }],
+    ['sizeBytes missing', { requestId: 'r', selected: { ...image, sizeBytes: undefined } }],
+    ['sizeBytes negative', { requestId: 'r', selected: { ...image, sizeBytes: -1 } }],
+    ['sizeBytes fractional', { requestId: 'r', selected: { ...image, sizeBytes: 1.5 } }],
+    ['sizeBytes infinite', { requestId: 'r', selected: { ...image, sizeBytes: Infinity } }],
+    ['image without width', { requestId: 'r', selected: { ...image, width: undefined } }],
+    ['image without height', { requestId: 'r', selected: { ...image, height: undefined } }],
+    ['video without width', { requestId: 'r', selected: { ...video, width: undefined } }],
+    ['video without height', { requestId: 'r', selected: { ...video, height: undefined } }],
+    ['video with zero width', { requestId: 'r', selected: { ...video, width: 0 } }],
+    ['video with fractional height', { requestId: 'r', selected: { ...video, height: 720.5 } }],
+    ['image with a string width', { requestId: 'r', selected: { ...image, width: '1024' } }],
+    ['audio with a width', { requestId: 'r', selected: { ...audio, width: 640 } }],
+    ['audio with a height', { requestId: 'r', selected: { ...audio, height: 480 } }],
+    ['durationMs negative', { requestId: 'r', selected: { ...video, durationMs: -1 } }],
+    ['durationMs NaN', { requestId: 'r', selected: { ...video, durationMs: NaN } }],
+    ['durationMs a string', { requestId: 'r', selected: { ...audio, durationMs: '5' } }],
+  ])('rejects %s', (_n, payload) => {
+    expect(isValidMediaUploadResult(payload)).toBe(false);
+  });
+});
+
 describe('isValidResourcePickerResult', () => {
   const selected = {
     versionId: 9001,
@@ -1498,6 +1591,7 @@ describe('payloadValidatorFor', () => {
       'CHECKPOINT_PICKER_RESULT',
       'RESOURCE_PICKER_RESULT',
       'IMAGE_PICKER_RESULT',
+      'MEDIA_UPLOAD_RESULT',
       'USER_CHECKPOINT_SET',
     ]) {
       expect(payloadValidatorFor(t)).toBeTypeOf('function');

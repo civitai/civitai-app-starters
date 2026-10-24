@@ -675,6 +675,14 @@ showImages(done.imageUrls ?? []);
   KB (262144 bytes) for every step's `input` plus `arguments` together. An
   unknown key on the body or on a step is rejected. The app's velocity limit
   counts one unit per step, and a `repeat` step one per iteration instead.
+- **No inline media** in a step `input` or in `arguments` — here or in a
+  pass-through `kind: 'step'` body's `input`: no `data:image|video|audio` URI
+  and no raw base64 string of 4096+ characters, at any depth. Upload the image,
+  video or audio with [`useMediaUpload()`](#usemediaupload) (an image also works
+  with `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`)
+  and pass the returned `url`. A body holding more than
+  262144 values in those fields is refused outright. `createMockHost` refuses
+  both as the host does, naming the path.
 - `suppressOutput: true` marks an intermediate step. Its images are left out of
   `snapshot.imageUrls` and out of its own `steps[i].imageUrls`. It still runs
   and is still charged.
@@ -1273,6 +1281,112 @@ async function toggle() {
 Most blocks want `<FollowButton>` from `@civitai/blocks-react/ui` instead, which
 wires all of the above.
 
+### `useReactions(entityType, ids, { tickets })`
+
+Read and set the **viewer's** reactions on images this app was served, over
+`GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION`. Returns
+`{ byId, unavailable, loading, error, toggle, pending }`.
+
+It reads on mount, then reads again only the images that need it: an id added
+to `ids`, or one whose ticket changed. An id that leaves `ids` costs nothing.
+Every read counts against the block instance's catalog rate limit on the host,
+which every viewer of a page app shares with its other catalog reads.
+
+A reaction made here **is** a reaction on civitai.com: it pays the reactor and
+the image owner exactly as the site's own button does, moves rankings, notifies,
+and lists the viewer among the reactors. It draws on the **same** per-viewer
+quota as the site. Apps may set `Like`, `Heart`, `Laugh` and `Cry`; never
+`Dislike`. Image is the only entity type today.
+
+🔴 **Scope `social:react:self`: consent-gated and sensitive.** Declare it with a
+`scopeJustifications` entry. Until the viewer grants it, every call fails with
+`needs-consent` (`err.needsConsent`): ask with `useRequestConsent()`. There is
+no per-tap confirm.
+
+🔴 **Tickets are required, and only the REST block endpoints supply them.** Each
+image that `/api/v1/blocks/images`, `/api/v1/blocks/gated-images` or
+`/api/v1/blocks/collections/{id}` serves, fetched with the block token for a
+signed-in viewer, carries a `reactTicket` signed for this app and this viewer
+for 24 hours. **No hook in this package supplies one yet:** `useGatedImages()`
+goes through the host bridge, whose reply carries no `reactTicket`
+([#687](https://github.com/civitai/civitai-app-starters/issues/687)). Pass the
+tickets as `tickets`, keyed by image id. An image without a valid one is not
+answered by the read (it lands in `unavailable`, which is **not** "not reacted")
+and a `toggle` on it is refused locally, before anything is sent.
+
+`toggle(id, reaction, reacted)` sets a **desired state**, moves `byId[id]`
+optimistically, and puts it back on failure. It rejects with a `ReactionError`:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.needsConsent` | the scope is not granted | `useRequestConsent()` |
+| `err.code === 'rate-limited'` | the viewer's reaction quota is spent | back off |
+| `err.code === 'entity-unavailable'` | no valid ticket, an image the viewer may not react to, the kill switch, or a network failure | retry later or give up |
+| `err.code` otherwise | `invalid-request` / `review-mode` / `not-ready` | a block bug, a review sandbox, or retry after `ready` |
+| `err.timedOut` | no reply within 30s | the write **may** have landed; the hook re-reads that image |
+| `err.busy` | the same image and reaction already has a request in flight. Rejects the call only: `error` is not set, because the write it collided with is still running | disable the control while `pending(id, reaction)` |
+
+🔴 **Bind `<civitai-reaction>` from `byId` on every render; never let it keep
+its own state.** The element flips `reacted` and `count` itself on a click. When
+the hook makes no optimistic move of its own (an image not read yet, or a
+refusal such as a missing ticket), `byId` does not change, so an element that
+only listens would keep showing a reaction that does not exist. Every rejected
+`toggle` re-renders the owner: a refusal or a failed write sets `error`, and a
+`busy` refusal is followed by the in-flight write's own settle, which clears
+`pending`. An element whose `reacted` and `count` come from `byId` on each
+render is then put back. Outside React, set the two properties back yourself
+after a rejection.
+
+```tsx
+import { useEffect, useState } from 'react';
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+import { useBlockToken, useHostOrigin, useReactions } from '@civitai/blocks-react';
+
+type ServedImage = { id: number; url: string; reactTicket?: string };
+
+function useReactableImages() {
+  const host = useHostOrigin();
+  const { raw } = useBlockToken();
+  const [images, setImages] = useState<ServedImage[]>([]);
+
+  // The tickets come from the REST endpoint, fetched with the block token.
+  useEffect(() => {
+    if (!host || !raw) return;
+    void fetch(`${host}/api/v1/blocks/images?limit=20`, {
+      headers: { Authorization: `Bearer ${raw}` },
+    })
+      .then((res) => res.json() as Promise<{ items: ServedImage[] }>)
+      .then((body) => setImages(body.items));
+  }, [host, raw]);
+
+  const reactions = useReactions(
+    'image',
+    images.map((image) => image.id),
+    { tickets: Object.fromEntries(images.map((image) => [image.id, image.reactTicket])) },
+  );
+
+  // Props for one `<civitai-reaction>` (e.g. `CivitaiReaction` from
+  // `@civitai/components-react`), derived from `byId` on every render.
+  const bind = (id: number, reaction: 'Like' | 'Heart' | 'Laugh' | 'Cry') => ({
+    reaction,
+    reacted: reactions.byId[id]?.viewerReactions.includes(reaction) ?? false,
+    count: reactions.byId[id]?.counts[reaction] ?? 0,
+    disabled: !reactions.byId[id] || reactions.pending(id, reaction),
+    onReact: (event: CustomEvent<{ reaction?: string; reacted: boolean }>) => {
+      const { reaction: which, reacted } = event.detail;
+      // `detail.reaction` is any string the element was given; narrow it.
+      if (!isAppReaction(which)) return;
+      // A rejection needs no handling here to put the element back: it
+      // re-renders, and `bind` reads `byId` again.
+      reactions.toggle(id, which, reacted).catch(() => {});
+    },
+  });
+
+  return { images, bind, error: reactions.error };
+}
+```
+
 ### `useCreatePostFromApp()`
 
 Publish a **real, published Post on the viewer's profile** from this app's own
@@ -1349,43 +1463,55 @@ options drive both arms (including `declined`). **`dev:live` refuses this bridge
 it has no civitai chrome to render the server-resolved confirm in, and driving
 the write without it would let dev prove out a flow production does not have.
 
-### `usePrepareTrainingDataset()` and `useRunTraining()` — LoRA training
+### `useImageUpload({ purpose: 'trainingData' })` and `useRunTraining()` — LoRA training
 
-Train a LoRA with the ai-toolkit engine on the **viewer's own images**, from
-inside a page app — the App Blocks `kind: 'training'` flow. Four steps, three
-hooks:
+Train a LoRA with the ai-toolkit engine on **images the viewer uploads**, from
+inside a page app — the App Blocks `kind: 'training'` flow, with the same upload
+path and `{ air, caption }` dataset shape as Civitai's own training form. Four
+steps, three hooks:
 
-1. **Dataset** — `usePrepareTrainingDataset().prepareDataset([{ imageId, caption }])`
-   (`PREPARE_TRAINING_DATASET`). Only the viewer's own scanned, unflagged images
-   within the page's maturity ceiling are admitted; the rest come back in
-   `rejected` with a reason (`unavailable`, `unsupported-media`, `not-eligible`,
-   `pending-scan`, `import-failed`, `import-unavailable`; `pending-scan` and
-   `import-unavailable` are retryable). You get an opaque `datasetId` and the
-   admitted `count`, always at least 1 — if **nothing** is admitted the call
-   rejects with the server's message instead. 1–50 images, captions up to 1,000 characters; captions are
-   moderated. No dialog, no charge.
+1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+   (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). Civitai opens an upload
+   modal in **its own chrome**; the viewer picks up to 50 PNG, JPEG or WebP
+   images, and each is uploaded as a private blob (not published). `open()`
+   resolves with every image that uploaded, `[{ url, air }]`, or `null` when
+   the viewer cancels. Pair each `air` with your caption — captions up to 8,192
+   characters, one blob at most once. The host answers only when its modal
+   closes, after every original has uploaded, so `open()` waits up to an hour,
+   not the ten minutes the other pickers use.
 2. **Quote** — `useBuzzWorkflow().estimate(body)` with a `WorkflowBodyTraining`
-   (`kind: 'training'`, no `quoteId`). The reply carries `trainingQuote:
-   { quoteId, total, imageCount, expiresAt }` — the orchestrator's own price for
-   exactly this run, stored server-side for 15 minutes.
+   (`kind: 'training'`, `items: [{ air, caption }]`, no `quoteId`). The reply
+   carries `trainingQuote: { quoteId, total, imageCount, expiresAt }` — the
+   orchestrator's own price for exactly this run, stored server-side for 15
+   minutes.
 3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })` (`RUN_TRAINING`).
    **Civitai shows the viewer a consent dialog in its own chrome** — price, base
    model, length and dataset size, all read back from the server, never from
-   your body — and submits only on their click. Change nothing in the body
-   between the estimate and the run; the server checks it against the quoted one.
+   your body, with the host's own copies of the uploads as thumbnails — and
+   submits only on their click. Change nothing in the body between the estimate
+   and the run; the server checks it against the quoted one.
 4. **Follow** — `useBuzzWorkflow().watch(workflowId)`. Once the run's moderation
    status is approved, `trainedEpochs` lists the epochs whose checkpoint is
    ready; send the viewer to the publish wizard with one of them (see
    `trainedEpochs` on `BlockWorkflowSnapshot`).
 
+🔴 **Upload and run in the same page session.** The host remembers the blobs
+its own upload modal uploaded for this block, and **refuses a quote naming any
+other** with `training data not uploaded here` — before any dialog, so no run
+and no charge. A page reload forgets the uploads: ask the viewer to upload
+again, then estimate again.
+
 🔴 **Availability.** Behind the host flag **`app-blocks-training-kind`**, which
 ships **off** and is evaluated per viewer. **Page apps only** — the model slot
-answers both messages with an error. The manifest must declare
+answers `RUN_TRAINING` with an error. The manifest must declare
 **`ai:write:budgeted`** and the viewer must be signed in and have granted it.
 **Refused from `dev:live` and from review sessions** (the server refuses
 development and review tokens); build the flow against the mock host. Requires a
 civitai.com host carrying civitai/civitai#5434 (`kind: 'training'`,
-`RUN_TRAINING`) and civitai/civitai#5438 (`PREPARE_TRAINING_DATASET`).
+`RUN_TRAINING`) and civitai/civitai#6461 (uploaded blobs as the dataset). The
+server-prepared dataset this flow used before #6461 (`usePrepareTrainingDataset`,
+`PREPARE_TRAINING_DATASET`) is **removed**; a host carrying #6461 answers that
+message with the error `removed`.
 
 🔴 **Money.** There is no `maxBuzz` and no timeout knob — the price is the quote.
 A confirmed run may cost more than the token's per-call `buzzBudget` (the viewer
@@ -1402,32 +1528,26 @@ saying anything about money:
 | `err.declined` | the viewer dismissed the dialog — **no run was submitted** | revert, say nothing |
 | `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the run **may be running and charged** | 🔴 **never retry automatically**: check the viewer's trainings first (`useAppWorkflows()` lists this app's runs). Re-running the same body after the server did start it is a **second, separately charged run** |
 | `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, a dev-session cap) or a **temporary-availability** deny. Refunded: **no run, nothing charged**; the quote is used up | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); estimate again before any retry — buying Buzz does not lift these caps |
+| `err.trainingDataNotUploaded` (`code: 'training data not uploaded here'`) | the quote names an image this host did not upload for this block (typically after a reload) — refused before any dialog: **no run, nothing charged** | ask the viewer to upload the images again, then estimate and run the new quote |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
 | `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid training request` / `no block token`) | show or ignore per case |
-| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, ineligible image) | estimate again, then retry |
+| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body) | estimate again, then retry |
 
-`prepareDataset` rejects with a `PrepareTrainingDatasetError` (`.code` for the
-host's refusals — `review-mode`, `block is not ready`, `sign in to train`,
-`invalid training dataset`, `no block token` — plus `.signInRequired` and
-`.timedOut`). Preparing charges nothing, so none of them cost Buzz. It prompts
-for `ai:write:budgeted` and retries once on a grant (see the table below);
-`runTraining` deliberately does not — it carries no idempotency key and has an
-outcome where a run may exist, so it never re-sends.
+`runTraining` never prompts for `ai:write:budgeted` or re-sends — it carries no
+idempotency key and has an outcome where a run may exist.
 
 ```tsx
-const { prepareDataset } = usePrepareTrainingDataset();
+const { open } = useImageUpload({ purpose: 'trainingData' });
 const { estimate, watch } = useBuzzWorkflow();
 const { runTraining } = useRunTraining();
 
-async function train(images: Array<{ id: number; caption: string }>) {
-  // Rejects (no `.code`) when NOTHING is admitted, e.g. "none of the requested
-  // images can be used for training"; a resolved dataset always has count >= 1.
-  const dataset = await prepareDataset(images.map((i) => ({ imageId: i.id, caption: i.caption })));
-  if (dataset.rejected.length > 0) showNotice(`${dataset.rejected.length} image(s) left out`);
+async function train(captionFor: (image: BlockTrainingDataImage) => string) {
+  const images = await open();
+  if (!images) return; // the viewer cancelled
 
   const body: WorkflowBodyTraining = {
     kind: 'training',
-    datasetId: dataset.datasetId,
+    items: images.map((image) => ({ air: image.air, caption: captionFor(image) })),
     engine: 'ai-toolkit',
     model: baseModelKey, // a key from Civitai's training catalog
     params: aiToolkitParams, // AiToolkitTrainingParams
@@ -1447,6 +1567,7 @@ async function train(images: Array<{ id: number; caption: string }>) {
     if (err.declined) return; // no run
     if (err.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
     if (err.refused) return showError(err.message); // a cap / availability refusal; no run, nothing charged
+    if (err.trainingDataNotUploaded) return showError('Upload the images again.'); // no run
     if (err.signInRequired) return requestSignIn();
     showError('Could not start training. Get a new price and try again.');
   }
@@ -1455,19 +1576,22 @@ async function train(images: Array<{ id: number; caption: string }>) {
 
 With the mock host — `createMockHost` or `Harness` from
 `@civitai/blocks-react/testing` — the training path is **kind-faithful**: it
-holds the datasets it prepared and the quotes it stored, refuses an unknown
-dataset, a dataset with nothing admitted, a quote above 5,000 and a quote run
-twice, and needs
-`ai:write:budgeted` on the token and a signed-in viewer. Its knobs are
-`trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`,
-`runTrainingError` (`'declined'`, `'submission-unconfirmed'`, or any server
-message), `runTrainingCapRefusal` (the server's resolved cap / availability refusal, which consumes the quote →
+remembers the blob keys its uploads handed out and refuses a run naming any
+other (`training data not uploaded here`, quote kept), refuses items outside the
+server's schema at the estimate, a quote above 5,000, a quote run twice and a
+body that differs from the quoted one, and needs `ai:write:budgeted` on the
+token and a signed-in viewer. Its knobs are `cannedTrainingDataUpload` (the
+images an upload returns; default three fresh ones per upload, `null` for a
+cancel), `trainingDataNotUploadedHere` (refuse every run as a host that forgot
+its uploads would), `trainingQuoteTotal`, `runTrainingError` (`'declined'`,
+`'submission-unconfirmed'`, or any server message), `runTrainingCapRefusal` (the
+server's resolved cap / availability refusal, which consumes the quote →
 `err.refused`) and `generation.trainedEpochs` for the finished run. It has no
-consent dialog, so `runTraining` settles at once where the real host waits on a
-click, and it checks a run's body against its quote by `datasetId` only — the
-server compares the whole body.
-**`dev:live` refuses both bridges**, because the server refuses every training
-request from a dev token.
+upload modal and no consent dialog, so `open()` and `runTraining` settle at once
+where the real host waits on the viewer; and it accepts any https blob url as an
+`air`, where the server accepts only Civitai-hosted ones — name items by `air`.
+**`dev:live` refuses the run** (the server refuses every training request from a
+dev token) and answers the upload as a cancel.
 
 ### `useRunConfirmedStep()` — one job above the per-call budget
 
@@ -2099,8 +2223,10 @@ answers a raw `multiple` + Checkpoint request with the host's error.
 
 Host-mediated image upload — the host opens its native upload modal and the
 iframe never handles the bytes. Resolves with a moderated image (or `null` on
-dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source
-or `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
+dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source,
+`{ purpose: 'trainingData' }` for several private training images in one call
+(`[{ url, air }] | null` — see the LoRA training section), or
+`{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
 
 ```tsx
 const { open } = useImageUpload();
@@ -2139,7 +2265,7 @@ render), with no picker, so the app can then post it. Returns `{ upload }`.
   sniffed type, whatever `filename` says.
 - **The cap is 40 MiB.** The hook refuses a larger buffer before sending it,
   with the host's error `file exceeds the maximum upload size`. The host also
-  allows at most 3 uploads and 80 MiB per 60 seconds per page, and replies
+  allows at most 8 uploads and 80 MiB per 60 seconds per page, and replies
   `busy` past that.
 - **The upload is blocking.** The host replies once the image is scanned, so
   allow for a wait of up to a few minutes. An image above the SFW ceiling or
@@ -2368,6 +2494,126 @@ an invalid `sources` or `multiple` with an error, and answers
 `unsupported on this host` when its `context` is a model slot. `dev:live` cannot
 list the viewer's images, so there `open` rejects with a message saying to use
 the mock host.
+
+### `useMediaUpload()`
+
+**The way to pass any media (image, video or audio) into a workflow step.** The
+host refuses data URIs and inline base64 in step inputs, so upload the file
+with this hook and pass the `url` it returns into the step input. Returns
+`{ open, upload }`.
+
+- **`open({ kind })`** opens the host's own file picker for that kind. The
+  viewer picks a file, the host uploads it, and `open` resolves with the
+  upload, or `null` if nothing was uploaded.
+- **`upload({ kind, bytes, mimeType? })`** uploads media your app already
+  holds in the tab, with no picker: a canvas export, a crop, a `MediaRecorder`
+  recording. It resolves with the upload, and never resolves without one.
+
+```tsx
+import { useMediaUpload } from '@civitai/blocks-react';
+
+function UseRecording({ recording }: { recording: Blob }) {
+  const { upload } = useMediaUpload();
+
+  async function onClick() {
+    const audio = await upload({
+      kind: 'audio',
+      bytes: await recording.arrayBuffer(),
+      mimeType: recording.type, // optional; checked against the content
+    });
+    // audio.url goes into the step's audio input
+    startStep({ audioUrl: audio.url });
+  }
+
+  return <button onClick={onClick}>Use this recording</button>;
+}
+```
+
+```tsx
+const { open } = useMediaUpload();
+
+const video = await open({ kind: 'video' }); // BlockMediaUploadInfo | null
+if (video) {
+  // video.url, video.width, video.height, video.durationMs (when known)
+}
+```
+
+What each kind accepts, decided by the file's **content** (its first bytes),
+never by its name or declared type:
+
+| `kind` | Accepted | What you get back |
+|---|---|---|
+| `'image'` | PNG, JPEG, WebP | Resized so both sides are 64 to 2048 pixels and re-encoded as JPEG: `mimeType` is always `'image/jpeg'`, and `sizeBytes`, `width` and `height` describe that JPEG. |
+| `'video'` | MP4, WebM | Uploaded as sent. `width` and `height` are always set (a file with no video track is refused). `durationMs` when the browser reports a duration. |
+| `'audio'` | MP3, WAV, WebM | Uploaded as sent. No `width` or `height`. `durationMs` when the browser reports a duration: a `MediaRecorder` WebM often reports none, so do not rely on it. |
+
+- **At most 24 MB per image, and 64 MB per video or audio file.** The image
+  cap is lower because the host decodes an image in full before it resizes it.
+  `upload` refuses a larger buffer before sending it, with the host's own
+  message: `file exceeds the 24 MB image upload limit` or
+  `file exceeds the 64 MB upload limit`.
+- **`upload` is rate-limited:** at most 8 uploads and 128 MB per 60 seconds
+  per page. Past that the host replies `busy`; wait and retry. A refused upload
+  does not count. `open` is not limited this way, because a person picks each
+  file.
+- **`mimeType` is optional.** When you pass it (for example `blob.type`) it
+  must match the content, or the upload is refused with
+  `mimeType does not match the file's content`. Case and parameters such as
+  `;codecs=opus` are ignored, and `audio/x-wav` counts as `audio/wav`.
+- Pass an `ArrayBuffer` (`await blob.arrayBuffer()`). A `Blob`, a typed array
+  or an empty buffer is refused before sending with
+  `invalid media-upload request`. The buffer is copied, not transferred.
+- A file whose content is not one of its kind's types is refused with
+  `images must be PNG, JPEG or WebP`, `videos must be MP4 or WebM` or
+  `audio must be MP3, WAV or WebM`. The host also refuses a file it cannot
+  read (`could not read this video file`, `could not read this audio file`), a
+  video with no video track (`this file has no video track`), and an image too
+  small to resize to 64 pixels. A failed upload rejects with
+  `media upload failed — please try again`, and a file the upload service
+  refuses with `this video was refused by the upload service` or
+  `this audio was refused by the upload service`. A bytes upload made while
+  the host holds no block token rejects with `no block token`.
+
+What `open` and `upload` resolve and reject with:
+
+- **`open` resolves `null` when nothing was uploaded.** Usually the viewer
+  closed the picker. The host also answers that way at once, without showing a
+  picker, while your app is viewed in review mode or is not ready yet. A
+  problem with the picked file is shown in the picker, where the viewer can
+  pick another one.
+- **`upload` never resolves `null`.** When the host declines without
+  uploading (review mode, not ready), `upload` rejects with
+  `the host did not upload the media (the app is in review mode or not ready)`.
+- **A refusal rejects** with the host's message, in both modes. On a surface
+  other than a page app the host answers at once with
+  `unsupported on this host`.
+- **Both wait up to 10 minutes** for the host (a person picking a file, or a
+  large upload), then reject with a `RequestTimeoutError`.
+
+For images only, `useImageUpload().open({ purpose: 'generationSource' })` still
+works and returns `{ url, width, height }`. Use `useMediaUpload` for video,
+audio, or bytes your app made in the tab.
+
+🔴 **Needs a host that answers `OPEN_MEDIA_UPLOAD`** (civitai/civitai#6149).
+On a civitai.com that predates it, the request gets no answer and both calls reject with a
+`RequestTimeoutError` after 10 minutes.
+
+With the mock host (`createMockHost` or `Harness` from
+`@civitai/blocks-react/testing`) there is no picker: `open` resolves at once
+with a built-in upload for the kind. Set `cannedMediaUploads: { video: {...} }`
+to choose what a kind returns, or `{ audio: null }` for a viewer who closes
+that picker. `upload` runs the host's checks in the host's order (kind,
+purpose, an invalid buffer, the per-kind cap, the rate window, the content type,
+a mismatching `mimeType`) and answers with that kind's upload, carrying the
+sniffed `mimeType` and the buffer's size for video and audio. The mock cannot
+decode media, so it never produces the host's decode-time refusals (an
+unreadable file, no video track, an image too small, an upload failure): set
+`mediaUploadError: 'this file has no video track'` to force one.
+`mediaUploadError: 'no block token'` is checked where the host checks it: a
+bytes upload is refused before the cap and the window, and is not counted. A model-slot
+`context` answers `unsupported on this host`. `dev:live` cannot upload
+generation inputs, so there both calls reject with a message saying to use the
+mock host.
 
 ### `useSaveImage()`
 
@@ -2629,7 +2875,6 @@ had just worked.
 |---|---|---|
 | `useBuzzWorkflow()` | `submit()` | `ai:write:budgeted` |
 | `useCreatePostFromApp()` | `createPost()` | `posts:write:self` |
-| `usePrepareTrainingDataset()` | `prepareDataset()` | `ai:write:budgeted` |
 | `useGoodPurchase()` | `purchase()` | `goods:purchase:self` |
 | `useTip()` | `tip()` | `social:tip:self` |
 
@@ -3013,11 +3258,13 @@ from `@civitai/app-sdk/blocks` is the same thing without the hook.
 ## The `/ui` subexport
 
 Opinionated components, imported separately so a transport-only block stays lean.
-Two surfaces live here:
+Three surfaces live here:
 
 1. The **W6 component pack** — a small, Civitai-looking, self-styled component
    set you drop straight into a block.
-2. The headless, manifest-driven **`SettingsForm`** (host-themed native controls).
+2. **`WorkflowPicker`** — lets the viewer pick a posted workflow, theirs or
+   anyone's, from the Civitai catalog.
+3. The headless, manifest-driven **`SettingsForm`** (host-themed native controls).
 
 ### W6 component pack
 
@@ -3108,6 +3355,92 @@ to inject the CSS yourself (SSR, or a non-React shell)? Call
 > content behind the overlay. That's fine for a simple confirm/settings dialog
 > inside the sandboxed block; a full focus-trap is a v1 follow-up (kept
 > dependency-free here on purpose).
+
+### `WorkflowPicker`
+
+`<civitai-resource-picker>` from `@civitai/components`, set up for workflows: it
+lists `Workflows` and the retired `ComfyWorkflows` type (so older posts can be
+picked), lets the viewer switch between **their own** published workflows and
+**anyone's**, and picks one **version** (the newest by default). It calls
+`GET /api/v1/blocks/models` at `useHostOrigin()` with `useBlockToken().raw` —
+no host bridge, no extra scope.
+
+```tsx
+import { useState } from 'react';
+import { WorkflowPicker, type PickedResource } from '@civitai/blocks-react/ui';
+
+export function ChooseWorkflow() {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<PickedResource | null>(null);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>Use a workflow</button>
+      <WorkflowPicker
+        open={open}
+        owner="mine"
+        onPick={(workflow) => {
+          setPicked(workflow);
+          setOpen(false);
+        }}
+        onDismiss={() => setOpen(false)}
+      />
+      {picked && <p>{picked.name} — {picked.versionName}</p>}
+    </>
+  );
+}
+```
+
+A pick is a `PickedResource` — `{ modelId, modelVersionId, name, versionName,
+creatorUsername, baseModel, earlyAccessDeadline?, access, owner }`; `/ui`
+re-exports it and the picker's other data types (`ResourceItem`,
+`ResourceSource`, …). Close the picker yourself in
+**both** callbacks: `open` is controlled. The picker closes itself on Escape or
+a backdrop click, and re-opens on the next render if `open` still says `true`.
+
+- 🔴 **`owner` is a UX hint, never proof of ownership.** It says which list the
+  viewer was looking at, and your app's own code can set it to anything. A
+  server that must know "this is the viewer's own workflow" checks that itself.
+- 🔴 **A "mine" list is only ever the server's.** The picker shows an error, not
+  a list, when a `mine` search comes back without `metadata.owner: 'mine'` — a
+  server older than the parameter ignores it and returns everybody's. It never
+  falls back to the public `/api/v1/models`.
+- **Early-access and paid versions are listed, with a badge.** `access` on a
+  pick is `'early-access'` (a timed paid-access gate, with its end date in
+  `earlyAccessDeadline` when the server knows it), `'paid'` (a permanent gate)
+  or `'open'`. The viewer may not be able to download a gated version later.
+- **Search is debounced** (300 ms), and a newer search cancels the one in
+  flight. A busy catalog (`429` / `503`, rate limit 150 requests per 10 s per
+  block) is retried after its `Retry-After`, twice, then offered as "Try again".
+- **An anonymous viewer** gets a sign-in message on the "mine" list as soon as
+  the catalog answers `401`, with no `REQUEST_TOKEN` to the host first — the
+  picker knows the viewer is anonymous from `useBlockContext()`. "All" works. An expired block token is not mistaken for
+  that: for a signed-in viewer, or on "All", a `401` makes the picker mint a
+  fresh token through `useBlockToken().refresh()` and retry once.
+- **Before `BLOCK_INIT`** the picker says it is not connected yet, and lists as
+  soon as the host origin lands.
+- **Under the mock host** there is no catalog to call. Pass canned results from
+  `/testing`:
+
+```tsx
+import { WorkflowPicker } from '@civitai/blocks-react/ui';
+import { fakeResourceSource } from '@civitai/blocks-react/testing';
+
+const source = fakeResourceSource({
+  mine: [
+    {
+      modelId: 1,
+      name: 'My upscale chain',
+      type: 'Workflows',
+      creatorUsername: 'me',
+      versions: [{ id: 11, name: 'v2', baseModel: 'SDXL 1.0' }],
+    },
+  ],
+});
+
+export const Picker = () => <WorkflowPicker open source={source} onPick={console.log} />;
+```
+
+Under `dev:live` it works for real: the dev token can read `/blocks/models`.
 
 ### `SettingsForm`
 
@@ -3202,6 +3535,7 @@ what went stale in [#334](https://github.com/civitai/civitai-app-starters/issues
 | `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
 | `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
 | `Harness` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
+| `fakeResourceSource` | Canned results for `<WorkflowPicker>` (from `/ui`) or `<civitai-resource-picker>`: `fakeResourceSource({ mine, any })` filters by owner, type and query, echoes the owner it applied, and records each search on `.calls`. The mock host has no catalog, so pass it as the picker's `source`. **No network.** |
 | `installPopoverShim` | Stands in for the HTML popover API, which neither `jsdom` nor `happy-dom` implements at any version. Needed only if your own code calls `showPopover`/`hidePopover`/`togglePopover` or queries `:popover-open` — `@civitai/components`' own elements do not. Returns a `PopoverShimHandle`; inert (`installed: false`) in a real browser. **Read [Testing overlay elements](#testing-overlay-elements) first: it does not make trigger clicks work.** |
 
 <!-- TESTING-SURFACE:VALUES:END -->
@@ -3216,6 +3550,8 @@ type.
 ```text
 CannedPick
 CostSpec
+FakeResourceCanned
+FakeResourceSource
 HarnessProps
 ImageSpec
 MockBuzzBalance
@@ -3227,6 +3563,8 @@ MockHost
 MockHostFailMode
 MockHostOptions
 MockHostScenarioPatch
+MockMediaUploads
+MockReactionSeed
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario

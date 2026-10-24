@@ -5,7 +5,7 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpConnection, McpStreamLostError, type McpCallOptions, type McpConnection } from '../mcp/clients.js';
 import { fakeMcpServers, type FakeTool } from '../test-support/fake-mcp.js';
 import { toolResult } from '../test-support/fakes.js';
-import { EXTRA_TOOL_TIMEOUT_MS, extraToolSet, keepEnds } from './extra.js';
+import { EXTRA_TOOL_TIMEOUT_MS, extraToolSet, keepEnds, limitResult, RESULT_HEAD_CHARS, RESULT_TAIL_CHARS } from './extra.js';
 
 const URL = 'https://sandbox.example/mcp';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,6 +68,60 @@ describe('extraToolSet', () => {
   it("returns a reply that fits whole", () => {
     expect(keepEnds('short', 2, 3)).toBe('short');
     expect(keepEnds('abcdefgh', 2, 3)).toBe('ab\n…(3 characters omitted)…\nfgh');
+  });
+
+  describe("a server's resultLimit", () => {
+    // Three distinct runs (a, b, c) so exactly which characters survive a cut is visible.
+    const reply = (head: number, middle: number, tail: number) => `${'a'.repeat(head)}${'b'.repeat(middle)}${'c'.repeat(tail)}`;
+    const callWith = async (limit: unknown, text: string, isError = false) => {
+      const connection = { url: URL, listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, text, isError)) } as McpConnection;
+      const tool = { name: 'run_command', inputSchema: { type: 'object' } };
+      const withLimit = limit === undefined ? server : { ...server, resultLimit: limit as never };
+      const set = extraToolSet([{ server: withLimit, connection, tools: [{ name: 'sandbox__run_command', tool }] }], { taken: {} });
+      return set.sandbox__run_command!.execute!({}, { toolCallId: 'c', messages: [] });
+    };
+
+    it('unset, keeps the first 2,000 and last 6,000 characters', async () => {
+      expect(await callWith(undefined, reply(2_000, 777, 6_000))).toBe(`${'a'.repeat(2_000)}\n…(777 characters omitted)…\n${'c'.repeat(6_000)}`);
+      // One character over the default cut is cut; exactly at it is whole.
+      expect(await callWith(undefined, reply(2_000, 0, 6_000))).toBe(reply(2_000, 0, 6_000));
+      expect(await callWith(undefined, reply(2_000, 1, 6_000))).toBe(`${'a'.repeat(2_000)}\n…(1 characters omitted)…\n${'c'.repeat(6_000)}`);
+    });
+
+    it('{ head, tail } keeps those counts instead, with the exact number left out', async () => {
+      expect(await callWith({ head: 30, tail: 50 }, reply(30, 9_919, 50))).toBe(`${'a'.repeat(30)}\n…(9919 characters omitted)…\n${'c'.repeat(50)}`);
+      // Only one set: the other keeps its default.
+      expect(await callWith({ head: 5 }, reply(5, 11, 6_000))).toBe(`aaaaa\n…(11 characters omitted)…\n${'c'.repeat(6_000)}`);
+      // A zero tail keeps nothing from the end (`slice(-0)` would be the whole text).
+      expect(await callWith({ head: 3, tail: 0 }, reply(3, 4, 0))).toBe('aaa\n…(4 characters omitted)…\n');
+    });
+
+    it('false passes a 50,000-character reply whole', async () => {
+      const long = reply(2_000, 42_000, 6_000);
+      expect(long.length).toBe(50_000);
+      expect(await callWith(false, long)).toBe(long);
+    });
+
+    it("applies to a tool's error the same way", async () => {
+      const long = reply(2_000, 42_000, 6_000);
+      expect(await callWith(false, long, true)).toMatchObject({ error: long });
+      expect(await callWith({ head: 1, tail: 2 }, 'abbbcc', true)).toMatchObject({ error: 'a\n…(3 characters omitted)…\ncc' });
+      expect(await callWith(undefined, long, true)).toMatchObject({ error: `${'a'.repeat(2_000)}\n…(42000 characters omitted)…\n${'c'.repeat(6_000)}` });
+    });
+
+    it('takes the default, with a warning, for a count that is not a whole number of characters', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      expect(await callWith({ head: -1, tail: 2.5 }, reply(2_000, 3, 6_000))).toBe(`${'a'.repeat(2_000)}\n…(3 characters omitted)…\n${'c'.repeat(6_000)}`);
+      expect(warn).toHaveBeenCalledWith('[chat-cvt] resultLimit.head -1 is not a whole number of characters; 2000 is used');
+      expect(warn).toHaveBeenCalledWith('[chat-cvt] resultLimit.tail 2.5 is not a whole number of characters; 6000 is used');
+      warn.mockRestore();
+    });
+
+    it('limitResult is the same rule outside a tool', () => {
+      expect(limitResult('abcdefgh', { head: 2, tail: 3 })).toBe('ab\n…(3 characters omitted)…\nfgh');
+      expect(limitResult('abcdefgh', false)).toBe('abcdefgh');
+      expect([RESULT_HEAD_CHARS, RESULT_TAIL_CHARS]).toEqual([2_000, 6_000]);
+    });
   });
 
   it("turns a tool's error into one the assistant reports, and never takes a name already in use", async () => {

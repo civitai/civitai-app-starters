@@ -1,7 +1,8 @@
-import type { ModelMessage, ToolModelMessage } from 'ai';
+import type { JSONValue, ModelMessage, ToolModelMessage } from 'ai';
 
 import { contextBudget } from '../config.js';
-import { OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
+import { DISPATCH_AGENT, subagentResultOf } from './subagent-result.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL } from '../panels/tools.js';
 import { POST_TOOL } from '../posting/post.js';
 import { ASK_CHOICE } from '../tools/build.js';
 import { isJobTool } from '../tools/catalog.js';
@@ -20,7 +21,7 @@ export const RESULT_LEFT_OUT = '(Left out to save room. If you still need it and
  * left out: calling one of these tools again would do it again, and some spend Buzz.
  */
 function keepsResult(toolName: string): boolean {
-  return isJobTool(toolName) || toolName === POST_TOOL || toolName === OPEN_PANEL || toolName === UPDATE_PANEL || toolName === ASK_CHOICE;
+  return isJobTool(toolName) || toolName === POST_TOOL || toolName === OPEN_PANEL || toolName === UPDATE_PANEL || toolName === CLOSE_PANEL || toolName === ASK_CHOICE;
 }
 /** At most this share of the budget goes to messages kept from turns that are otherwise left out. */
 export const PINNED_SHARE = 0.25;
@@ -132,11 +133,16 @@ function withoutLongResults(message: ModelMessage): ModelMessage {
   if (message.role !== 'tool') return message;
   return {
     ...message,
-    content: message.content.map((part) =>
-      part.type === 'tool-result' && !keepsResult(part.toolName) && JSON.stringify(part.output).length > LONG_RESULT_CHARS
-        ? { ...part, output: { type: 'text' as const, value: RESULT_LEFT_OUT } }
-        : part,
-    ),
+    content: message.content.map((part) => {
+      if (part.type !== 'tool-result' || keepsResult(part.toolName) || JSON.stringify(part.output).length <= LONG_RESULT_CHARS) return part;
+      // A subagent's conclusion stays (asking it again would pay for it again); only its activity log goes.
+      const subagent = part.toolName === DISPATCH_AGENT && part.output.type === 'json' ? subagentResultOf(part.output.value) : undefined;
+      if (subagent) {
+        const { activity: _activity, ...kept } = subagent;
+        return { ...part, output: { type: 'json' as const, value: kept as unknown as JSONValue } };
+      }
+      return { ...part, output: { type: 'text' as const, value: RESULT_LEFT_OUT } };
+    }),
   };
 }
 

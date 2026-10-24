@@ -1,6 +1,7 @@
 import type { SiteClient } from '@civitai/sdk';
 import { dynamicTool, jsonSchema, tool, type ToolSet } from 'ai';
 
+import { CUSTOM_INSTRUCTIONS_MAX } from '../config.js';
 import type { McpConnection, McpTool } from '../mcp/clients.js';
 import { mcpResultToText, structuredOf, textCapFor } from '../mcp/result.js';
 import { CACHE_HIT_NOTE, CACHED_TOOLS, cacheKey, cachedReply, forgetReply, rememberReply } from './fetch-cache.js';
@@ -9,6 +10,7 @@ import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
 import { panelTools } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
+import { UPDATE_INSTRUCTIONS, proposedInstructions } from './instructions.js';
 import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
@@ -117,6 +119,20 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
     },
   });
 
+  tools[UPDATE_INSTRUCTIONS] = tool({
+    description: `Propose new standing instructions for yourself, kept for every chat, when the user wants you to behave differently from now on: a personality, a tone, a name for you, something to always do or avoid. Pass the whole new text: the current <user_instructions> with their change made, or new ones when there are none. A card shows it; it applies from the next reply once the user presses Save there.`,
+    inputSchema: jsonSchema<{ instructions: string }>({
+      type: 'object',
+      properties: { instructions: { type: 'string', maxLength: CUSTOM_INSTRUCTIONS_MAX, description: `The complete instructions, at most ${CUSTOM_INSTRUCTIONS_MAX} characters, written to you ("Be playful…")` } },
+      required: ['instructions'],
+      additionalProperties: false,
+    }),
+    execute: async (input) =>
+      proposedInstructions(input)
+        ? { shown: true, note: 'A card shows the new instructions; the user can edit them there and they apply from the next reply only if the user presses Save. Do not say they are in effect. If the user asks to change them, call update_instructions again with the changed text.' }
+        : { error: `instructions must be 1 to ${CUSTOM_INSTRUCTIONS_MAX} characters.`, note: 'Nothing was shown. Shorten or fill in the text and call again.' },
+  });
+
   tools[ASK_CHOICE] = tool({
     description:
       'Show the user 2 to 4 clickable options when they need to pick a direction (a style, which picture to continue with, a mood). Stop after calling it; their pick comes back as their next message.',
@@ -165,7 +181,8 @@ function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolC
     execute: async (input, { abortSignal }) => {
       const raw = (input ?? {}) as Record<string, unknown>;
       const call = async () => {
-        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal });
+        // Asking for progress keeps a call alive past the 60s timeout while its job waits in a queue.
+        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal, onProgress: () => undefined });
         return { result, text: mcpResultToText(result, textCapFor(mcpTool.name)) };
       };
       // A page read twice in one chat costs the viewer twice and tells the assistant nothing new.

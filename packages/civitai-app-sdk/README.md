@@ -32,7 +32,7 @@ pnpm add @civitai/app-sdk
 | `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` | **Type-only** subpath (0 runtime bytes) keying the orchestrator's generated workflow-step shapes from `@civitai/client` by wire `$type`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
 | `blocks/*` — `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic and **zero runtime dependencies** — no React, no DOM types, nothing in your install graph. Hooks and the iframe transport live in a separate package. |
 | `manifest/*` — `defineBlock`, `SCHEMA_DIVERGENCES`, `KNOWN_GAPS` (**Node only**) | Build-time manifest validation. `defineBlock(config)` compiles the vendored canonical schema with [Ajv](https://ajv.js.org) and validates a `BlockManifestV1` against it, so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. It is **derived from the schema, not a hand-written mirror of it** — that mirror is what produced [#330](https://github.com/civitai/civitai-app-starters/issues/330). Needs `node:fs` and the optional peer `ajv`, which is why it is not on the browser-facing `./blocks` surface. |
-| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. Optional peers: `ajv` (runtime) and `vite` (types only). |
+| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. On the dev server only, it also exposes the manifest's `scopes` + `storage` to `@civitai/sdk` for a dev-tunnel local preview. Optional peers: `ajv` (runtime) and `vite` (types only). |
 
 ## Entry points, and what the root barrel is
 
@@ -151,7 +151,7 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -267,15 +267,21 @@ const rigged = pickModel(snapshot, 'fbx', 'riggedFbxModel');
 ```
 
 `WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
-run on a dataset Civitai prepared from the viewer's own images, mirroring the host's
-`blockTrainingBodySchema` (civitai/civitai#5434). There is no `maxBuzz` and no timeout — the
+run on images the viewer uploaded through the host, mirroring the host's
+`blockTrainingBodySchema` (civitai/civitai#5434, #6461). Its dataset is `items: [{ air, caption }]`
+(`BlockTrainingDatasetItem`; at most `BLOCK_TRAINING_DATASET_MAX_ITEMS` items and
+`BLOCK_TRAINING_CAPTION_MAX_CHARS` caption characters, one blob at most once). There is no `maxBuzz` and no timeout — the
 `estimate` reply carries `snapshot.trainingQuote` (`quoteId`, `total`, `imageCount`,
 `expiresAt`), and the run starts only through the `RUN_TRAINING` bridge, after the viewer
 confirms that price in Civitai's own dialog. A confirmed run may exceed the token's per-call
 budget, up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000). Page apps only, `ai:write:budgeted`,
 behind the host flag `app-blocks-training-kind` (off by default), and refused from development
-and review sessions. The dataset is prepared over `PREPARE_TRAINING_DATASET`
-(civitai/civitai#5438). Use it through `@civitai/blocks-react`'s `usePrepareTrainingDataset()`
+and review sessions. The images are uploaded over `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`,
+which replies `IMAGE_UPLOAD_RESULT { selected: { images: [{ url, air }] } }`
+(`BlockTrainingDataUploadResult`); the host refuses a run whose quote names a blob it did not
+upload for the block, with the `BlockRunTrainingHostError` `training data not uploaded here`.
+`PREPARE_TRAINING_DATASET` (the server-prepared dataset of civitai/civitai#5438) is removed from
+the protocol. Use it through `@civitai/blocks-react`'s `useImageUpload({ purpose: 'trainingData' })`
 and `useRunTraining()`.
 
 `WorkflowBodyWorkflow` (`kind: 'workflow'`) submits **several orchestrator steps as one
@@ -406,6 +412,15 @@ import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
 const plugins = [blockManifestPlugin()];
 ```
+
+**On the dev server only**, the plugin also puts the manifest's `scopes` and
+`storage` on the page (a `<script>` at the end of `index.html`'s `<head>`; `vite build` never
+emits it). `@civitai/sdk` reads it in a dev-tunnel preview, where the host marks the
+frame `storageMode: 'local-preview'` and `app.storage.collection(name)` is served by
+an in-memory store that enforces these declarations — see "In a dev-tunnel preview"
+in `@civitai/sdk`'s README. Nothing else of the manifest is exposed. Without the
+plugin, a preview's document store refuses every call `local_preview_no_manifest`:
+this plugin is the only way the manifest reaches `@civitai/sdk`.
 
 ### Web storage in a block (`@civitai/app-sdk/safe-storage`)
 

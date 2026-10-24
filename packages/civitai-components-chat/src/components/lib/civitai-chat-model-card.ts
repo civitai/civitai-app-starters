@@ -5,7 +5,7 @@ import { css, html, nothing, type PropertyDeclarations, type TemplateResult } fr
 
 const TAG = 'civitai-chat-model-card';
 
-/** A Civitai model as a picture and a name, linking to its page. */
+/** A Civitai model as a picture and a name, linking to its page; with `action`, a button for it emits `model-use`. */
 export class CivitaiChatModelCard extends CivitaiElement {
   static override styles = [
     hostBaseline,
@@ -35,6 +35,19 @@ export class CivitaiChatModelCard extends CivitaiElement {
         font-size: 12px;
         opacity: 0.85;
       }
+      .use {
+        justify-self: start;
+        margin-top: 6px;
+        padding: 4px 10px;
+        border: none;
+        border-radius: 999px;
+        background: var(--civitai-color-primary);
+        color: var(--civitai-color-primary-fg, #fff);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
     `,
   ];
 
@@ -44,6 +57,7 @@ export class CivitaiChatModelCard extends CivitaiElement {
     image: {},
     href: { reflect: true },
     kind: { reflect: true },
+    action: {},
   };
 
   declare name: string;
@@ -52,6 +66,8 @@ export class CivitaiChatModelCard extends CivitaiElement {
   declare href: string;
   /** A short label such as "LoRA · Illustrious". */
   declare kind: string;
+  /** A label such as "Use in panel"; empty for none. */
+  declare action: string;
 
   constructor() {
     super();
@@ -60,6 +76,7 @@ export class CivitaiChatModelCard extends CivitaiElement {
     this.image = '';
     this.href = '';
     this.kind = '';
+    this.action = '';
   }
 
   override render(): TemplateResult {
@@ -69,6 +86,13 @@ export class CivitaiChatModelCard extends CivitaiElement {
       <div slot="bottom" class="text">
         <span class="name" part="name">${this.name}</span>
         ${this.creator ? html`<span class="creator" part="creator">by ${this.creator}</span>` : nothing}
+        ${this.action
+          ? html`<button type="button" class="use" part="action" @click=${(event: Event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              this.dispatchEvent(new CustomEvent('model-use', { bubbles: true, composed: true }));
+            }}>${this.action}</button>`
+          : nothing}
       </div>
     </civitai-media-card>`;
   }

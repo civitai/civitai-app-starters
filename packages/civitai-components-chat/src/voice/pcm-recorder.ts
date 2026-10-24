@@ -24,7 +24,10 @@ export function canStreamPcm(): boolean {
 
 export interface PcmRecorderEvents {
   onLevel?(level: number): void;
+  /** Speech only: silence longer than the gate's hang is held back. */
   onAudio(pcm: Int16Array): void;
+  /** Everything the microphone heard, silence included. */
+  onSamples?(pcm: Int16Array): void;
   onLimit?(): void;
 }
 
@@ -45,6 +48,7 @@ export class PcmRecorder {
       if (this.#stopped) return;
       const pcm = resampler.push(event.data);
       const level = levelOf(pcm);
+      events.onSamples?.(pcm);
       events.onLevel?.(level);
       gate.push(pcm, level);
     };

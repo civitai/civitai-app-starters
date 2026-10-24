@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "464b2023e8",
-  "capturedAt": "2026-10-14",
+  "capturedFrom": "05f1d1fa8f",
+  "capturedAt": "2026-10-20",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -269,6 +269,22 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "GET_ENTITY_REACTIONS": {
+      "request": true,
+      "reply": "ENTITY_REACTIONS_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "GET_IMAGES_BY_IDS": {
       "request": true,
       "reply": "IMAGES_RESULT",
@@ -393,6 +409,24 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "OPEN_MEDIA_UPLOAD": {
+      "request": true,
+      "reply": "MEDIA_UPLOAD_RESULT",
+      "replyKeys": [
+        "selected"
+      ],
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "OPEN_RESOURCE_PICKER": {
       "request": true,
       "reply": "RESOURCE_PICKER_RESULT",
@@ -430,9 +464,7 @@
     "PREPARE_TRAINING_DATASET": {
       "request": true,
       "reply": "TRAINING_DATASET_RESULT",
-      "replyKeys": [
-        "result"
-      ],
+      "replyKeys": [],
       "optionalReplyKeys": [],
       "replyKeysFrom": "inventory",
       "framing": "legacy",
@@ -556,6 +588,22 @@
     "SET_COLLECTION_FOLLOW": {
       "request": true,
       "reply": "COLLECTION_FOLLOW_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "SET_ENTITY_REACTION": {
+      "request": true,
+      "reply": "ENTITY_REACTION_RESULT",
       "replyKeys": [
         "result"
       ],
@@ -811,6 +859,7 @@
     "goods:read:self",
     "models:read:self",
     "posts:write:self",
+    "social:react:self",
     "social:tip:self",
     "user:read:self"
   ]

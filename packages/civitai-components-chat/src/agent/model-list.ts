@@ -15,8 +15,8 @@ export interface ChatModelEntry {
    * `hosted`: one the orchestrator runs itself. `openrouter`: one it routes to OpenRouter.
    */
   source: 'default' | 'listed' | 'hosted' | 'openrouter';
-  /** USD per million output tokens, when known. */
-  pricePerMillion?: number;
+  /** USD per million tokens, when known. */
+  price?: { input: number; output: number };
   /** The most tokens a request may hold, prompt and reply together, when either list says. */
   contextLength?: number;
   note?: string;
@@ -25,7 +25,7 @@ export interface ChatModelEntry {
 interface OpenRouterModel {
   id?: unknown;
   name?: unknown;
-  pricing?: { completion?: unknown };
+  pricing?: { prompt?: unknown; completion?: unknown };
   supported_parameters?: unknown;
   context_length?: unknown;
 }
@@ -45,11 +45,29 @@ function contextOf(...models: ({ context_length?: unknown } | undefined)[]): { c
 }
 
 /** Per-token USD as OpenRouter writes it ("0.0000006") to USD per million, without float noise at the boundary. */
-function perMillion(completion: unknown): number | undefined {
-  const perToken = typeof completion === 'string' || typeof completion === 'number' ? Number(completion) : NaN;
+function perMillion(perTokenUsd: unknown): number | undefined {
+  const perToken = typeof perTokenUsd === 'string' || typeof perTokenUsd === 'number' ? Number(perTokenUsd) : NaN;
   // A negative price marks a router whose price depends on the model it picks: nothing to compare.
   if (!Number.isFinite(perToken) || perToken < 0) return undefined;
   return Math.round(perToken * 1e12) / 1e6;
+}
+
+/** What marks the default model's name where it is shown: "GPT-6 Luna · default". */
+export const DEFAULT_MARKER = ' · default';
+
+/** A name with the default marker. */
+export function defaultLabel(name: string): string {
+  return `${name}${DEFAULT_MARKER}`;
+}
+
+/**
+ * A readable name from a bare model id, for a model no list names: an AIR's last part, without the
+ * version or file after `@` ("urn:air:…:org/Qwen3.8-27B@main.tar" → "Qwen3.8-27B"); any other id as is.
+ */
+export function prettyModelId(id: string): string {
+  if (!id.startsWith('urn:air:')) return id;
+  const last = id.split(/[/:]/).filter(Boolean).at(-1) ?? id;
+  return last.replace(/@.*$/, '') || last || id;
 }
 
 function dataOf(body: unknown): unknown[] {
@@ -79,7 +97,10 @@ export function buildModelList({
   const add = (entry: ChatModelEntry) => {
     if (!entries.has(entry.id)) entries.set(entry.id, entry);
   };
-  add({ id: defaultModel, label: 'Default', source: 'default' });
+  // The default is named like any other model: a page label for it, else OpenRouter's name, else its
+  // id made readable. Its name is settled once both lists are read, below; `source` marks it the default.
+  let defaultName = listed.find((model) => model.id === defaultModel)?.label;
+  add({ id: defaultModel, label: '', source: 'default' });
   for (const model of listed) add({ id: model.id, label: model.label, source: 'listed', ...(model.note ? { note: model.note } : {}) });
 
   const routable = new Map<string, OrchestrationModel>();
@@ -87,20 +108,25 @@ export function buildModelList({
     if (typeof model?.id === 'string' && model.id) routable.set(model.id, model);
   }
   for (const [id, model] of routable) {
-    if (model.owned_by !== 'openrouter') add({ id, label: id, source: 'hosted', ...contextOf(model) });
+    // Hosted models are offered by alias (civitai/qwen3.8); the AIRs behind them stay usable when typed.
+    if (model.owned_by === 'openrouter' || (id.startsWith('urn:air:') && id !== defaultModel)) continue;
+    add({ id, label: id, source: 'hosted', ...contextOf(model) });
   }
 
   const priced: ChatModelEntry[] = [];
   for (const model of dataOf(openRouter) as OpenRouterModel[]) {
     if (typeof model?.id !== 'string' || !routable.has(model.id)) continue;
-    const price = perMillion(model.pricing?.completion);
-    if (price === undefined || price > MAX_PRICE_PER_MILLION) continue;
+    // A batch variant answers hours later, never within a chat reply.
+    if (model.id.endsWith(':batch')) continue;
+    const input = perMillion(model.pricing?.prompt);
+    const output = perMillion(model.pricing?.completion);
+    if (input === undefined || output === undefined || output > MAX_PRICE_PER_MILLION) continue;
     if (!Array.isArray(model.supported_parameters) || !model.supported_parameters.includes('tools')) continue;
     priced.push({
       id: model.id,
       label: typeof model.name === 'string' && model.name ? model.name : model.id,
       source: 'openrouter',
-      pricePerMillion: price,
+      price: { input, output },
       ...contextOf(model, routable.get(model.id)),
     });
   }
@@ -109,11 +135,13 @@ export function buildModelList({
     const known = entries.get(entry.id);
     // The page's own entries keep their label and note, and gain the price.
     if (known) {
-      known.pricePerMillion ??= entry.pricePerMillion;
+      known.price ??= entry.price;
       known.contextLength ??= entry.contextLength;
+      if (known.source === 'default' && entry.label !== entry.id) defaultName ??= entry.label;
     }
     else add(entry);
   }
+  entries.get(defaultModel)!.label = defaultName ?? prettyModelId(defaultModel);
   return [...entries.values()];
 }
 
@@ -169,15 +197,19 @@ async function getJson(doFetch: typeof fetch, url: string): Promise<unknown | nu
   }
 }
 
+function usd(price: number): string {
+  if (price === 0) return '$0';
+  return `$${price < 0.1 ? price.toFixed(3) : price.toFixed(2)}`;
+}
+
 /**
- * "$0.60/M out"; empty when the price is unknown. A $0 model still costs Buzz per step, so it reads
- * "$0/M out", never "Free", which would sound like the free tier.
+ * "$0.15 in · $0.60 out /M"; empty when the price is unknown. A $0 model still costs Buzz per step,
+ * so it reads "$0", never "Free", which would sound like the free tier.
  */
-export function priceLabel(entry: Pick<ChatModelEntry, 'pricePerMillion'>): string {
-  const price = entry.pricePerMillion;
-  if (price === undefined) return '';
-  if (price === 0) return '$0/M out';
-  return `$${price < 0.1 ? price.toFixed(3) : price.toFixed(2)}/M out`;
+export function priceLabel(entry: Pick<ChatModelEntry, 'price'>): string {
+  const price = entry.price;
+  if (!price) return '';
+  return `${usd(price.input)} in · ${usd(price.output)} out /M`;
 }
 
 /**

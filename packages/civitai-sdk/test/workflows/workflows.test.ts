@@ -236,7 +236,7 @@ describe('AppClient.workflows — submit', () => {
 describe('AppClient.workflows — submit, when the host could not confirm the run', () => {
   const TRAINING: WorkflowBody = {
     kind: 'training',
-    datasetId: 'tds_0123456789abcdef0123456789abcdef',
+    items: [{ air: 'k0123456789abcdef.png', caption: 'a lighthouse' }],
     engine: 'ai-toolkit',
     model: 'sdxl',
     params: { engine: 'ai-toolkit', ecosystem: 'sdxl' } as never,

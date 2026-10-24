@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components-chat",
-  "version": "0.8.0",
+  "version": "0.29.1",
   "description": "<civitai-chat>: a Civitai assistant that makes images, video and music, as one element for any page. Companion to @civitai/components.",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,14 @@
     "./civitai-chat-studio/define": {
       "types": "./dist/civitai-chat-studio.define.d.ts",
       "import": "./dist/civitai-chat-studio.define.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./runner-protocol": {
+      "types": "./dist/runner-protocol.d.ts",
+      "import": "./dist/runner-protocol.js"
     }
   },
   "files": [
@@ -42,7 +50,8 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --project node --project dom",
+    "test:browser": "vitest run --project browser"
   },
   "engines": {
     "node": ">=20"
@@ -63,8 +72,10 @@
   "devDependencies": {
     "@civitai/sdk": "workspace:*",
     "@types/node": "^25.9.1",
+    "@vitest/browser-playwright": "^4.1.11",
     "jsdom": "^25.0.0",
     "lit": "^3.3.3",
+    "playwright": "^1.60.0",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
     "vitest": "^4.1.11"

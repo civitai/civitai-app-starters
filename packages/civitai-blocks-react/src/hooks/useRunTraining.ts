@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   BlockRunTrainingHostError,
+  BlockTrainingDatasetItem,
   BlockTrainingQuote,
   BlockWorkflowSnapshot,
   WorkflowBodyTraining,
@@ -12,7 +13,12 @@ import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
 
-export type { BlockRunTrainingHostError, BlockTrainingQuote, WorkflowBodyTraining };
+export type {
+  BlockRunTrainingHostError,
+  BlockTrainingDatasetItem,
+  BlockTrainingQuote,
+  WorkflowBodyTraining,
+};
 
 /**
  * A training body ready to RUN: {@link WorkflowBodyTraining} with the `quoteId`
@@ -35,9 +41,13 @@ export const RUN_TRAINING_ERROR_CODES = [
   'sign in to train',
   'invalid training request',
   'no block token',
+  'training data not uploaded here',
   'declined',
   'submission-unconfirmed',
 ] as const satisfies readonly BlockRunTrainingHostError[];
+
+/** The host code for a quote naming an image this host did not upload — see {@link RunTrainingError.trainingDataNotUploaded}. */
+const NOT_UPLOADED_HERE: BlockRunTrainingHostError = 'training data not uploaded here';
 
 const CODE_SET: ReadonlySet<string> = new Set(RUN_TRAINING_ERROR_CODES);
 
@@ -85,9 +95,15 @@ export function isRunTrainingErrorCode(error: string): error is BlockRunTraining
  *    `.snapshot` the refusal it arrived in. Retrying needs a new estimate and
  *    usually a later time; buying Buzz does not lift these caps.
  *  - `.signInRequired` — no session. Route into `useRequestSignIn()`.
+ *  - `.trainingDataNotUploaded` (`code: 'training data not uploaded here'`) —
+ *    the quote names an image THIS host did not upload for this block. The host
+ *    remembers only the blobs its own `useImageUpload({ purpose: 'trainingData' })`
+ *    uploaded, and forgets them on a page reload. Refused before any dialog:
+ *    NO RUN, nothing charged. Ask the viewer to upload the images again, then
+ *    estimate and run the new quote.
  *  - anything else — a refusal before any submit (an expired or used quote, a
- *    body that no longer matches its quote, an ineligible image). Estimate again
- *    before retrying; `.message` is the host's or server's text.
+ *    body that no longer matches its quote). Estimate again before retrying;
+ *    `.message` is the host's or server's text.
  */
 export class RunTrainingError extends Error {
   /**
@@ -114,6 +130,12 @@ export class RunTrainingError extends Error {
   readonly timedOut: boolean;
   /** There is no session (`sign in to train`, or a bare `UNAUTHORIZED`). */
   readonly signInRequired: boolean;
+  /**
+   * The quote names an image this host did not upload for this block
+   * (`training data not uploaded here`). No run, nothing charged: upload the
+   * images again, estimate again, and run that quote.
+   */
+  readonly trainingDataNotUploaded: boolean;
 
   constructor(
     error: string,
@@ -132,6 +154,7 @@ export class RunTrainingError extends Error {
     this.declined = error === 'declined';
     this.unconfirmed = this.timedOut || error === 'submission-unconfirmed';
     this.signInRequired = error === 'sign in to train' || error === 'UNAUTHORIZED';
+    this.trainingDataNotUploaded = error === NOT_UPLOADED_HERE;
   }
 }
 
@@ -165,15 +188,19 @@ export interface UseRunTraining {
  * viewer. Refused from `dev:live` and from review sessions — build the flow
  * against the mock host. See `WorkflowBodyTraining` in `@civitai/app-sdk`.
  *
- * The flow: `usePrepareTrainingDataset()` → `useBuzzWorkflow().estimate(body)`
- * (its `trainingQuote.quoteId`) → `runTraining({ ...body, quoteId })` →
- * `useBuzzWorkflow().watch(workflowId)`. Change nothing in the body between the
- * estimate and the run: the server checks it against the quoted one.
+ * The flow: `useImageUpload({ purpose: 'trainingData' }).open()` (the viewer
+ * uploads the images; you caption them into `items: [{ air, caption }]`) →
+ * `useBuzzWorkflow().estimate(body)` (its `trainingQuote.quoteId`) →
+ * `runTraining({ ...body, quoteId })` → `useBuzzWorkflow().watch(workflowId)`.
+ * Change nothing in the body between the estimate and the run: the server checks
+ * it against the quoted one. Upload and run in the same page session: the host
+ * refuses a quote naming an image it did not upload for this block.
  *
  * 🔴 THE CONSENT DIALOG IS CIVITAI'S, AND IT IS THE CHARGE. Every number on it is
  * read back from the server's stored quote — never from your body. A run may cost
  * more than the token's per-call budget (the viewer confirms the exact price), up
- * to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Images are the viewer's own.
+ * to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Images are the ones the
+ * viewer uploaded through the host.
  *
  * 🔴 NO AUTOMATIC CONSENT RETRY, unlike the other consent-gated hooks — on
  * purpose. `RUN_TRAINING` carries no idempotency key and has an outcome
@@ -185,8 +212,12 @@ export interface UseRunTraining {
  * the viewer clicks or dismisses its dialog.
  *
  * @example
+ * const { open } = useImageUpload({ purpose: 'trainingData' });
  * const { estimate, watch } = useBuzzWorkflow();
  * const { runTraining } = useRunTraining();
+ * const images = await open();
+ * if (!images) return;                              // cancelled
+ * const body = { ...settings, items: images.map((i) => ({ air: i.air, caption: captionFor(i) })) };
  * const quote = (await estimate(body)).trainingQuote!;
  * try {
  *   const started = await runTraining({ ...body, quoteId: quote.quoteId });
@@ -195,6 +226,7 @@ export interface UseRunTraining {
  *   if (!(e instanceof RunTrainingError)) throw e;
  *   if (e.declined) return;                          // no run — say nothing
  *   if (e.signInRequired) return requestSignIn();
+ *   if (e.trainingDataNotUploaded) return askToUploadAgain(); // no run — re-upload, re-estimate
  *   if (e.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
  *   if (e.refused) return showError(e.message); // a cap / availability refusal; no run, nothing charged
  *   showError('Could not start training. Get a new price and try again.');

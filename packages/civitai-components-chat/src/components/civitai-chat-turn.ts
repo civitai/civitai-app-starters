@@ -1,18 +1,25 @@
-import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { describeTrace } from '../agent/error-trace.js';
+import type { LiveTurn } from '../agent/core.js';
 import type { TurnPart } from '../agent/parts.js';
+import type { SubagentTracker } from '../agent/subagents.js';
+import { groupToolCalls } from '../agent/tool-groups.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import type { PanelManager } from '../panels/panel.js';
+import type { Panel, PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
-import { CUT_OFF } from '../store/thread-store.js';
+import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
+import { onSite, TOP_UP_BUZZ } from '../config.js';
+import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
+import type { ReplyStatusState } from './civitai-chat-reply-status.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
+import { renderCall, renderCallGroup, type CallRowState, type ToolCallsMode } from './tool-calls.js';
 import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
 function failureOf(part: ToolPart): string | undefined {
@@ -29,42 +36,84 @@ export class CivitaiChatTurn extends LightElement {
     turn: { attribute: false, hasChanged: () => true },
     parts: { attribute: false, hasChanged: () => true },
     live: { type: Boolean },
+    liveTurn: { attribute: false },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     latest: { type: Boolean },
+    canRetry: { type: Boolean, attribute: 'can-retry' },
     jobs: { attribute: false },
     posts: { attribute: false },
     panels: { attribute: false },
     files: { attribute: false },
     canShare: { type: Boolean, attribute: 'can-share' },
+    instructions: { attribute: false },
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
     views: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
+    subagents: { attribute: false },
   };
 
   declare turn: Turn;
   declare parts: TurnPart[];
   declare live: boolean;
+  /** The reply running now, while this turn is it: how its status line reads. */
+  declare liveTurn: LiveTurn | null;
+  /** The page says the reply waits for the viewer to approve a call (`<civitai-chat>`'s `awaitingApproval`). */
+  declare awaitingApproval: boolean;
   /** Only the newest turn's choices can still be picked. */
   declare latest: boolean;
+  /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
+  declare canRetry: boolean;
   declare jobs: JobManager;
   declare posts: PostManager;
   declare panels?: PanelManager;
   declare files: () => Attachment[];
   declare canShare: boolean;
+  declare instructions: string | undefined;
   /** Panels show in the page beside the chat; the thread only points at them. */
   declare dockPanels: boolean;
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
   /** The embedding page's views, by tool name. */
   declare views: Record<string, ChatToolView>;
+  /** `details`: calls with no view of their own show as rows to open, and calls in a row as one group. */
+  declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids: a call row shows the server of one of their tools. */
+  declare mcpServerIds: ReadonlySet<string>;
+  /** The subagents running now, for their cards' live progress. */
+  declare subagents?: SubagentTracker;
+
+  /** Call rows and groups the viewer opened, by key; kept while the turn is on the page. */
+  #open = new Set<string>();
+  #opened = new Set<string>();
+  #rows: CallRowState = {
+    isOpen: (key) => this.#open.has(key),
+    wasOpened: (key) => this.#opened.has(key),
+    toggle: (key) => {
+      if (!this.#open.delete(key)) {
+        this.#open.add(key);
+        this.#opened.add(key);
+      }
+      this.requestUpdate();
+    },
+    failure: (part) => failureOf(part),
+    servers: () => this.mcpServerIds,
+  };
 
   constructor() {
     super();
     this.parts = [];
     this.live = false;
+    this.liveTurn = null;
+    this.awaitingApproval = false;
     this.latest = false;
+    this.canRetry = false;
     this.files = () => [];
     this.views = {};
+    this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
   }
 
   #userFiles(): StripItem[] {
@@ -76,16 +125,68 @@ export class CivitaiChatTurn extends LightElement {
     return [...uploads, ...refs];
   }
 
-  #tool(part: ToolPart): unknown {
+  /**
+   * What a call shows of its own, or `undefined` when nothing would show it: the page's or the built-in
+   * `render` (returning `undefined` keeps the default), else model cards. A failed call shows its
+   * "didn't work" note instead; `failedNote` says whether it does so without a `render` (`activity`).
+   */
+  #own(part: ToolPart, failedNote: boolean): unknown {
     const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
-    if (failure) {
+    // The error is the assistant's to act on: say nothing while it may still fix the call, nor once it has.
+    if (failure && (this.live || this.#recovered(part))) return failedNote ? nothing : undefined;
+    if (failure && !view?.ownsFailure?.(part, this.#context())) {
+      if (!failedNote && !view?.render) return undefined;
       const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
     const rendered = view?.render?.(part, this.#context());
-    if (rendered !== undefined) return rendered;
-    return modelCards(part, this.models) ?? (part.state === 'calling' ? html`<div class="cvt-activity">${view?.activity ?? 'Working on it…'}</div>` : nothing);
+    return rendered !== undefined ? rendered : modelCards(part, this.models, this.#modelPanel());
+  }
+
+  /** The newest open panel whose model choice a picked search result can join. */
+  #modelPanel(): Panel | undefined {
+    return this.panels?.all().filter((panel) => !panel.closed && panel.canFindModel).at(-1);
+  }
+
+  /** The assistant fixed the call itself: the same tool worked later in the reply, so the viewer has nothing to act on. */
+  #recovered(part: ToolPart): boolean {
+    const later = this.parts.slice(this.parts.indexOf(part) + 1);
+    return later.some((next) => next.kind === 'tool' && next.toolName === part.toolName && next.state === 'done' && !failureOf(next));
+  }
+
+  #tool(part: ToolPart): unknown {
+    const own = this.#own(part, true);
+    if (own !== undefined) return own;
+    return part.state === 'calling' ? html`<div class="cvt-activity">${viewFor(part.toolName, this.views)?.activity ?? 'Working on it…'}</div>` : nothing;
+  }
+
+  /**
+   * With `details`, a call shows as a row when it shows nothing of its own (`#own` is `undefined`).
+   * Each call is rendered once, and that one result both decides the grouping and is what shows.
+   */
+  #detailed(md: (text: string) => unknown): unknown {
+    const own = new Map<ToolPart, unknown>();
+    for (const part of this.parts) if (part.kind === 'tool') own.set(part, this.#own(part, false));
+    return groupToolCalls(this.parts, (part) => own.get(part) === undefined).map((segment) => {
+      if (segment.kind === 'part') return segment.part.kind === 'text' ? md(segment.part.text) : own.get(segment.part);
+      const first = segment.calls[0]!;
+      if (segment.calls.length === 1) return renderCall(first, this.#rows);
+      // A lone row the viewer opened, now the first of a group as the reply streams: the group opens with it.
+      const group = `group:${first.toolCallId}`;
+      if (!this.#opened.has(group) && this.#open.has(`call:${first.toolCallId}`)) {
+        this.#open.add(group);
+        this.#opened.add(group);
+      }
+      return renderCallGroup(segment.calls, this.#rows);
+    });
+  }
+
+  #assistantParts(): unknown {
+    // A reply can stream a text part that is only whitespace so far: no empty bubble for it.
+    const md = (text: string) => (text.trim() === '' ? nothing : html`<div class="cvt-md">${unsafeHTML(renderMarkdown(this.models ? onSite(text, this.models.siteUrl) : text))}</div>`);
+    if (this.toolCalls === 'details') return this.#detailed(md);
+    return this.parts.map((part) => (part.kind === 'text' ? md(part.text) : this.#tool(part)));
   }
 
   #context(): ToolViewContext {
@@ -97,22 +198,85 @@ export class CivitaiChatTurn extends LightElement {
       files: this.files,
       canShare: this.canShare,
       dockPanels: this.dockPanels,
+      ...(this.instructions ? { instructions: this.instructions } : {}),
       latest: this.latest,
       live: this.live,
       models: this.models,
       resolve: this.resolve,
+      ...(this.subagents ? { subagents: this.subagents } : {}),
+      rows: this.#rows,
     };
   }
 
-  // Between steps the finished tool shows nothing and the next reply has not started streaming.
-  #waiting(): boolean {
-    const last = this.parts.at(-1);
-    return !last || (last.kind === 'tool' && last.state !== 'calling');
+  /** When this turn was first drawn live, for a reply that does not say when it started. */
+  #liveSince?: number;
+
+  /**
+   * The live reply's status line. It shows for as long as the reply is live, whatever its last part is:
+   * words (the model may be writing a long call it has not sent yet), a call still running (whose own
+   * view may show nothing that moves), or a call that finished (the next step not started yet).
+   */
+  #status(): TemplateResult {
+    const live = this.liveTurn;
+    const state: ReplyStatusState = live?.reconnecting ? 'reconnecting' : this.awaitingApproval ? 'approval' : live?.reattached ? 'server' : 'working';
+    return html`<civitai-chat-reply-status class="cvt-reply-status" state=${state} .since=${live?.startedAt ?? this.#liveSince ?? Date.now()}></civitai-chat-reply-status>`;
+  }
+
+  /** Draws the turn again once a reply that may still be running elsewhere stops counting as live. */
+  #liveTimer?: ReturnType<typeof setTimeout>;
+  /** This turn was last drawn as still running elsewhere. */
+  #shownLive = false;
+
+  /**
+   * A reply read back from a save made before it ended. While that save is recent (the latest turn
+   * only) whoever made it may still be running it, so nothing is offered: asking again would pay for
+   * it twice. After, it is gone: a v3 reply with finished steps it can carry on from offers Continue
+   * (Retry's path, from those steps), and any other says it was cut off.
+   */
+  #cutOff(): TemplateResult {
+    const state = this.latest ? replyElsewhere(this.turn) : undefined;
+    if (state === 'live') return html`<div class="cvt-note cvt-elsewhere" role="status">Still replying in another tab or window…</div>`;
+    if (state === 'stale' && this.turn.assistant.resume !== undefined && this.turn.assistant.errorKind === 'interrupted') {
+      return html`<div class="cvt-note cvt-interrupted">
+        This reply stopped before it finished.
+        <civitai-button class="cvt-continue-saved" size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-retry')}>Continue</civitai-button>
+      </div>`;
+    }
+    return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+  }
+
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (!this.live) this.#liveSince = undefined;
+    else this.#liveSince ??= Date.now();
+  }
+
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    clearTimeout(this.#liveTimer);
+    const state = this.latest && !this.live ? replyElsewhere(this.turn) : undefined;
+    // Drawn live before and gone now: the chat reads itself once more, as the reply may have ended or
+    // saved a newer step meanwhile. Whichever comes first draws it again: the timer, or the chat on wake.
+    if (this.#shownLive && state === 'stale') emit(this, 'cvt-recheck');
+    this.#shownLive = state === 'live';
+    const wait = this.#shownLive ? liveRedrawIn(this.turn) : undefined;
+    if (wait !== undefined) {
+      this.#liveTimer = setTimeout(() => {
+        this.requestUpdate();
+        // Live because a tab holds its lock: only reading the chat again tells whether it still does.
+        if (this.turn.assistant.heldElsewhere) emit(this, 'cvt-recheck');
+      }, wait);
+    }
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this.#liveTimer);
   }
 
   #footer(): TemplateResult | typeof nothing {
     const { status, error, errorDetail, errorTrace } = this.turn.assistant;
-    if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
+    if (this.live) return this.#status();
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     // A reply the page ended reads like one that ran out of steps, in the page's words.
     const { ranOut, stopped } = this.turn.assistant;
@@ -122,11 +286,17 @@ export class CivitaiChatTurn extends LightElement {
         ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue')}>Continue</civitai-button>` : nothing}
       </div>`;
     }
-    if (status === 'error' && error === CUT_OFF) return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
-    if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
+    if (status === 'error' && error === CUT_OFF) return this.#cutOff();
+    const kind = this.turn.assistant.errorKind;
+    if (status === 'error' && (kind === 'free_tier_exhausted' || kind === 'fund_empty')) {
       return html`<civitai-alert color="info">
-        ${error} You can keep going on Buzz (about 1 per reply).
-        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Continue with Buzz</civitai-button>` : nothing}
+        ${error} Top up ${TOP_UP_BUZZ} Buzz to keep going (each step the assistant takes uses about 1).
+        ${this.latest
+          ? html`<div class="cvt-top-up-actions">
+              <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-top-up', { auto: false })}>Top up ${TOP_UP_BUZZ} Buzz</civitai-button>
+              <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-top-up', { auto: true })}>Always top up when empty</civitai-button>
+            </div>`
+          : nothing}
       </civitai-alert>`;
     }
     // Free only, and this model has no free replies (or they could not be checked). What a paid reply
@@ -140,14 +310,29 @@ export class CivitaiChatTurn extends LightElement {
     if (status === 'error') {
       const shown = errorDetail && errorDetail !== error ? errorDetail : '';
       const where = errorTrace ? describeTrace(errorTrace) : '';
+      // Only where asking again can carry on without running a tool twice (`resume`, this session only).
+      const retry = this.latest && this.turn.assistant.resume !== undefined && RETRYABLE_ERRORS.has(this.turn.assistant.errorKind ?? '');
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}
+        ${retry ? html`<civitai-button class="cvt-retry" size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-retry')}>Retry</civitai-button>` : nothing}
         ${shown || where
           ? html`<details class="cvt-error-details"><summary>Details</summary>${shown ? html`<code>${shown}</code>` : nothing}${where ? html`<code class="cvt-error-trace">${where}</code>` : nothing}</details>`
           : nothing}
       </civitai-alert>`;
     }
     return nothing;
+  }
+
+  // A row that becomes part of a group as the reply streams is drawn anew inside it: a viewer on its
+  // button stays on the same call's button rather than falling to the page.
+  protected override update(changed: PropertyValues): void {
+    const root = this.getRootNode() as Document | ShadowRoot;
+    const focused = root.activeElement;
+    const call = focused instanceof HTMLElement && this.contains(focused) && focused.classList.contains('cvt-call-head') ? focused.dataset.call : undefined;
+    super.update(changed);
+    if (call === undefined || focused!.isConnected) return;
+    const again = [...this.querySelectorAll<HTMLElement>('.cvt-call-head')].find((head) => head.dataset.call === call);
+    again?.focus();
   }
 
   override render(): TemplateResult {
@@ -157,7 +342,7 @@ export class CivitaiChatTurn extends LightElement {
         ${this.turn.user.content ? html`<div class="cvt-bubble">${this.turn.user.content}</div>` : nothing}
       </div>
       <div class="cvt-assistant">
-        ${this.parts.map((part) => (part.kind === 'text' ? html`<div class="cvt-md">${unsafeHTML(renderMarkdown(part.text))}</div>` : this.#tool(part)))}
+        ${this.#assistantParts()}
         ${this.#footer()}
       </div>`;
   }

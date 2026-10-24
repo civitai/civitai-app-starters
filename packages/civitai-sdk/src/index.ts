@@ -20,6 +20,7 @@ export type {
   AppClient,
   BlockAppClient,
   BlockInitializeOptions,
+  StorageMode,
   TokenInitializeOptions,
 } from './app/index.js';
 
@@ -45,6 +46,18 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
+export { SubListingError } from './sub-listings/index.js';
+export type {
+  MySubListing,
+  SubListingCallOptions,
+  SubListingContentRating,
+  SubListingErrorCode,
+  SubListingStatus,
+  SubListingsClient,
+  SubListingUpsertInput,
+  SubListingUpsertResult,
+  SubListingWithdrawResult,
+} from './sub-listings/index.js';
 export { StorageError } from './doc-store/index.js';
 export type {
   DocumentAuthor,
@@ -63,7 +76,7 @@ export type {
   StorageUsage,
   WriteOptions,
 } from './doc-store/index.js';
-export { SubmissionUnconfirmedError } from './workflows/index.js';
+export { estimatedCost, SubmissionUnconfirmedError } from './workflows/index.js';
 export type {
   WorkflowCallOptions,
   WorkflowGetOptions,
@@ -92,6 +105,7 @@ export type {
   BlockStepToolCall,
   BlockTextToImageParams,
   BlockTrainedEpoch,
+  BlockTrainingDatasetItem,
   BlockTrainingQuote,
   BlockWorkflowSnapshot,
   BlockWorkflowStepSnapshot,

@@ -1,3 +1,6 @@
+import type { ModelMessage } from 'ai';
+
+import type { SubagentCheckpoint } from '../agent/subagent-result.js';
 import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, SavedTurn, TitleSource, Turn } from '../types.js';
@@ -15,6 +18,27 @@ export function supersededError(): Error {
 
 export function isSuperseded(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === SUPERSEDED;
+}
+
+/** Why `open(id, { existing: true })` rejects when nothing is saved under `id`. */
+export const NOT_FOUND = 'not-found';
+
+export function notFoundError(): Error {
+  return Object.assign(new Error('There is no saved chat with that id.'), { code: NOT_FOUND });
+}
+
+/** How `open` opens a chat. */
+export interface OpenOptions {
+  /**
+   * Only a chat that is saved: one with nothing saved under its id rejects (`NOT_FOUND`) instead of
+   * opening as a new, empty chat with that id, and does not become the open chat.
+   */
+  existing?: boolean;
+  /**
+   * Called once the chat was read (and, with `existing`, found), just before it becomes the open chat:
+   * not at all when it cannot be opened, so the chat open now stays as it is.
+   */
+  ready?: () => void;
 }
 
 /** A row of the chat list. */
@@ -37,17 +61,41 @@ export interface ConversationStore extends EventTarget {
   /** What the latest save cost the viewer, when saving costs anything. */
   saveCost?: number;
   /**
-   * `open` rejects as superseded (`isSuperseded`) when another chat was opened or started before it
-   * finished, and `remove` takes a chat off the list as it starts. Only then may the element leave a
-   * chat that is loading or being deleted at once; without it, it waits as it always has.
+   * Governs one thing only: `remove` takes a chat off the list as it starts, so the element may leave a
+   * chat being deleted at once; without it, it leaves once the delete worked (unless the viewer picked
+   * another chat meanwhile). The name is historical. Every store's `open` rejects as superseded
+   * (`isSuperseded`) when another chat was opened or started before it finished, whatever this says.
    */
   readonly supersedesOpens?: boolean;
   refreshList(): Promise<void>;
   loadMore(): Promise<void>;
-  open(id: string): Promise<OpenedConversation>;
+  open(id: string, options?: OpenOptions): Promise<OpenedConversation>;
+  /**
+   * Whether `id` is saved where this store keeps chats: it was read from there, or a save of it worked.
+   * A new chat is not, until its first save. Fires `saved-change` when that becomes true.
+   */
+  isSaved(id: string): boolean;
   startNew(): Conversation;
   appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
   completeTurn(turn: Turn): Promise<void>;
+  /**
+   * A reply to `turn` starts in this tab (`send`, or Retry/Continue): a store that saves progress marks it
+   * as this tab's, so a reload of this tab knows a reply it finds unfinished died here.
+   */
+  replyStarted?(turn: Turn): void;
+  /**
+   * The reply to `turn` has got this far: `messages` is every step that finished so far, and the step now
+   * running as far as its tool calls go (a call with no result started and has not finished). A store
+   * that saves progress (`ThreadStore`, as a v3 head with the reply `running`) saves it; `completeTurn`
+   * saves how it ended.
+   */
+  checkpoint?(turn: Turn, progress: { messages: ModelMessage[] }): Promise<void>;
+  /**
+   * A write subagent started by the reply to `turn` (its `dispatch_agent` call `toolCallId`) has got this
+   * far. A store that saves progress saves it with the reply's progress, so Continue after the page closed
+   * gives that call, if it has no result, the interrupted result with this `changed` list.
+   */
+  checkpointSubagent?(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void>;
   savePost(id: string, post: SavedPost): Promise<void>;
   setModel(model: string | undefined): Promise<void>;
   savePanel(panel: SavedPanel): Promise<void>;

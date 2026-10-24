@@ -16,6 +16,7 @@ export const SCOPES = [
   'goods:read:self',
   'models:read:self',
   'posts:write:self',
+  'social:react:self',
   'social:tip:self',
   'user:read:self',
 ] as const;

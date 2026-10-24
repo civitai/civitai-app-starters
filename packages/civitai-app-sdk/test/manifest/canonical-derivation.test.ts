@@ -148,6 +148,21 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
       'storage: a shared write:"none" collection with one counter',
       valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none', counters: ['plays'] } } } }),
     ],
+    [
+      'storage: ownedModelVersions on a shared write:"own" collection (1 and 4 pointers)',
+      valid({
+        storage: {
+          collections: {
+            one: { visibility: 'shared', write: 'own', ownedModelVersions: ['/modelVersionId'] },
+            four: {
+              visibility: 'shared',
+              write: 'own',
+              ownedModelVersions: ['/a', '/workflow/modelVersionId', '/_x/b_2/c/D9', `/${'v'.repeat(64)}`],
+            },
+          },
+        },
+      }),
+    ],
     // RESERVED features validate offline and are refused only at submit (the
     // canonical says so; KNOWN_GAPS['storage-server-only-rules']). Pinned so a
     // future local rejection of them is a decision, not an accident.
@@ -299,6 +314,69 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       }),
       'storage.collections.tally.dailyWritesPerAuthor',
     ],
+    // ownedModelVersions (civitai/civitai#6132): placement and pointer shape are
+    // the canonical's; nothing in this package writes either down.
+    [
+      'storage: no ownedModelVersions on a private collection',
+      valid({ storage: { collections: { notes: { visibility: 'private', ownedModelVersions: ['/v'] } } } }),
+      'storage.collections.notes.ownedModelVersions',
+    ],
+    [
+      'storage: no ownedModelVersions on a write:"none" collection',
+      valid({
+        storage: {
+          collections: { tally: { visibility: 'shared', write: 'none', counters: ['p'], ownedModelVersions: ['/v'] } },
+        },
+      }),
+      'storage.collections.tally.ownedModelVersions',
+    ],
+    [
+      'storage: no ownedModelVersions on a write:"anyone" collection',
+      valid({ storage: { collections: { board: { visibility: 'shared', write: 'anyone', ownedModelVersions: ['/v'] } } } }),
+      'storage.collections.board.ownedModelVersions',
+    ],
+    [
+      'storage: ownedModelVersions declares at least one pointer',
+      valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', ownedModelVersions: [] } } } }),
+      'storage.collections.posts.ownedModelVersions',
+    ],
+    [
+      'storage: ownedModelVersions declares at most four pointers',
+      valid({
+        storage: {
+          collections: {
+            posts: { visibility: 'shared', write: 'own', ownedModelVersions: ['/a', '/b', '/c', '/d', '/e'] },
+          },
+        },
+      }),
+      'storage.collections.posts.ownedModelVersions',
+    ],
+    [
+      'storage: ownedModelVersions pointers are distinct',
+      valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', ownedModelVersions: ['/a', '/a'] } } } }),
+      'storage.collections.posts.ownedModelVersions',
+    ],
+    [
+      'storage: an ownedModelVersions pointer never indexes into an array',
+      valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', ownedModelVersions: ['/items/0'] } } } }),
+      'storage.collections.posts.ownedModelVersions[0]',
+    ],
+    [
+      'storage: an ownedModelVersions pointer has at most four segments',
+      valid({
+        storage: { collections: { posts: { visibility: 'shared', write: 'own', ownedModelVersions: ['/a/b/c/d/e'] } } },
+      }),
+      'storage.collections.posts.ownedModelVersions[0]',
+    ],
+    [
+      'storage: an ownedModelVersions segment is at most 64 characters',
+      valid({
+        storage: {
+          collections: { posts: { visibility: 'shared', write: 'own', ownedModelVersions: [`/${'v'.repeat(65)}`] } },
+        },
+      }),
+      'storage.collections.posts.ownedModelVersions[0]',
+    ],
     [
       'storage: `key` is a built-in sort key, not an index name',
       valid({ storage: { collections: { notes: { visibility: 'private', indexes: { key: 'string' } } } } }),
@@ -329,6 +407,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
     expect(rejection(manifest).field).toBe(field);
   });
+
+  // Before the canonical declared `ownedModelVersions`, every case above that
+  // names it was ALREADY refused at the same field — as an unknown key. The
+  // field alone therefore cannot tell the rule from its absence; this can.
+  it.each(cases.filter(([label]) => label.includes('ownedModelVersions')))(
+    '%s — refused by the rule, not as an unknown key',
+    (_label, manifest) => {
+      expect(rejection(manifest).message).not.toContain('is not a known property');
+    },
+  );
 
   it('the PascalCase scope hint fires on the scope case, not a neighbour', () => {
     const err = rejection(valid({ scopes: ['ModelsReadSelf'] }));
@@ -473,7 +561,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
     expect(sites).toEqual([
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
-      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/3/then/anyOf`,
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/4/then/anyOf`,
     ]);
   });
 });
