@@ -405,7 +405,8 @@ Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)`
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
-in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
+in an empty message box (not while the viewer is `dictating`: what they say would be joined onto
+it, so the box is left alone); while a reply is still running it sends nothing. It fires `before-send`
 like a typed message. `canSend` says whether it would send now, and `can-send-change` when that
 changes: see [When a message can go](#when-a-message-can-go).
 
@@ -618,6 +619,28 @@ on a host's own `backend` greets the viewer plainly and shows only the page's `e
 shows none, since the built-in ones are about making things on Civitai. It takes no files, so
 `wantsFile` opens no picker there. Slot `welcome` replaces the whole greeting
 instead, examples included, and then clicking does nothing the page does not wire itself.
+
+### The page's own content in the chat
+
+Two slots put the page's own content inside the chat, as light-DOM children of the element:
+
+```html
+<civitai-chat>
+  <div slot="composer-top">Your app is paused. <button>Start app</button></div>
+  <div slot="thread-end"><!-- e.g. a card asking the viewer to choose something --></div>
+</civitai-chat>
+```
+
+- `composer-top` sits just above the message box, at its width (below any "This message was not
+  sent" notice). Use it for something about what the chat is working on right now.
+- `thread-end` sits after the last message, inside the thread's scroll, at the messages' width. It
+  stays after the newest message as the conversation grows. Content put in it is brought into view,
+  even when the viewer had scrolled back; content that grows while the viewer is at the end stays in
+  view. With no messages yet it shows under the greeting, scrolling with it.
+
+Both take no space with nothing slotted. The page styles its content itself: it is in the page's
+DOM, so the page's own stylesheet applies. Neither shows before the chat has started or while it is
+signed out, and `thread-end` does not show while a saved chat is opening.
 
 ### Gating tool calls
 
@@ -1346,6 +1369,14 @@ Every request and response carries `v: 1`. The events are `run-started`, the par
 `error`, `ran_out`); an event of a type the page does not know is skipped. A runner gets the edits from the reply's
 `AgentCore.live.parts` with `createPartsDiffer()` every 100 ms or so, and the page applies them with
 `applyRunEvent()`, so the parts it shows are the parts the server's reply showed.
+
+A `POST /runs` that gets no answer, or a 5xx, 408 or 429, is asked again with the same
+`idempotencyKey` after 1, 2, 5, 10 and 30 s, for at most a minute from the first ask, or from when the
+page last woke (`START_GIVE_UP_MS`). Past that the reply fails with Retry. A run an earlier ask may have
+started is left running, and Retry (or the chat's own ask once the page is back online) asks again, as a
+retry with the current model and settings but the same `idempotencyKey`, so the runner answers with that
+run. Any other refusal fails the reply
+at once.
 
 ### Running the loop in Node
 

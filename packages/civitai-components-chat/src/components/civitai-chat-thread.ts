@@ -91,6 +91,7 @@ export class CivitaiChatThread extends LightElement {
     if (this.atBottom) this.#jumpToEnd();
   });
   #gliding = false;
+  #end?: HTMLSlotElement;
   #wasLive = false;
   #queuedStatus?: string;
 
@@ -166,7 +167,19 @@ export class CivitaiChatThread extends LightElement {
       if (list) this.#resize.observe(list);
       this.#jumpToEnd();
     }
+    // The page's content after the last message grows like a message does: followed while at the end.
+    const end = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]');
+    if (end && end !== this.#end) {
+      this.#end = end;
+      this.#resize.observe(end);
+    }
   }
+
+  // Content the page puts after the last message is the newest thing in the chat: it is brought into view.
+  #onEndChange = (event: Event): void => {
+    const slot = event.target as HTMLSlotElement;
+    if (slot.assignedElements({ flatten: true }).length) void this.updateComplete.then(() => this.scrollToEnd());
+  };
 
   // Screen readers hear a reply start and the finished text once, never token by token.
   #announce(): void {
@@ -239,6 +252,7 @@ export class CivitaiChatThread extends LightElement {
           )}
           ${this.#queuedMessage()}
         </div>
+        <slot name="thread-end" class="cvt-thread-end" @slotchange=${this.#onEndChange}></slot>
       </div>
       ${this.atBottom
         ? nothing

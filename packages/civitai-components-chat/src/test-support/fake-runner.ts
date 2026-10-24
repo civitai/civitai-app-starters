@@ -33,6 +33,10 @@ export function fakeRunner() {
   const knobs = {
     /** The next N starts get no answer (the fetch rejects): the run is NOT created. */
     failStarts: 0,
+    /** The next N starts reach the runner (the run IS created, or found by its key) but their answer is lost. */
+    loseStartAnswers: 0,
+    /** Refuses a start with `409 run-active` while another key's run of the same conversation is live, as a real runner does. */
+    refuseConcurrent: false,
     /** The next N event-stream opens get no answer. */
     failEvents: 0,
     /** Each event stream closes after sending this many events. */
@@ -140,7 +144,16 @@ export function fakeRunner() {
         throw new TypeError('fetch failed');
       }
       if (knobs.refuseStart) return json(knobs.refuseStart.body, knobs.refuseStart.status);
-      const run = create(body as StartRunRequest);
+      const start = body as StartRunRequest;
+      if (knobs.refuseConcurrent) {
+        const other = [...runs.values()].find((r) => r.live && r.conversationId === start.conversationId && r.request.idempotencyKey !== start.idempotencyKey);
+        if (other) return json({ v: 1, error: 'run-active', message: 'A run is live.', runId: other.runId }, 409);
+      }
+      const run = create(start);
+      if (knobs.loseStartAnswers > 0) {
+        knobs.loseStartAnswers--;
+        throw new TypeError('fetch failed');
+      }
       return json({ v: 1, runId: run.runId, conversationId: run.conversationId, seq: run.seq }, 201);
     }
     if (method === 'POST' && path === 'runs/stop') {

@@ -1670,7 +1670,7 @@ export class CivitaiChat extends LitElement {
   /**
    * Sends `text` as the viewer's. While the chat holds (`holdReason`, a chat opening, a new session
    * starting, a server listing its tools, another message on its way or waiting) it is kept in an
-   * empty message box. A page whose `before-send` calls `queue()` keeps it back, shown waiting.
+   * empty message box, unless the viewer is dictating (`#keepInEmptyBox`). A page whose `before-send` calls `queue()` keeps it back, shown waiting.
    */
   async #send(text: string, edit?: { seq: number; sent?: boolean }): Promise<void> {
     // With `edit`, `text` is an edit of the viewer's message `edit.seq` (their latest), not a new
@@ -1686,8 +1686,7 @@ export class CivitaiChat extends LitElement {
     if (this.#held(session)) {
       if (edit) return;
       // Kept for the viewer to send once the hold lifts, as a refused grant keeps it.
-      const composer = await this.#composer();
-      if (composer && !composer.draft) composer.draft = text;
+      await this.#keepInEmptyBox(text);
       return;
     }
     // Taken: until the agent has it (past the grant, which may wait on the viewer), the chat holds, so
@@ -1708,8 +1707,7 @@ export class CivitaiChat extends LitElement {
       }
       if (!granted && edit) return this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
       if (!granted) {
-        const composer = await this.#composer();
-        if (composer && !composer.draft) composer.draft = text;
+        await this.#keepInEmptyBox(text);
         this.#toast('This chat needs permission to use your Buzz. Sign in again and allow it to send messages.');
         return;
       }
@@ -1756,6 +1754,17 @@ export class CivitaiChat extends LitElement {
         this.requestUpdate();
       }
     }
+  }
+
+  /**
+   * Puts a message `#send` could not send now into the message box, when it is empty and the viewer is
+   * not dictating. While they dictate the box is hidden behind the recording or transcribing bar and
+   * what they say is joined to the end of it, so the message would land glued to the front of their
+   * words: it is left out, as it is when the box already holds something.
+   */
+  async #keepInEmptyBox(text: string): Promise<void> {
+    const composer = await this.#composer();
+    if (composer && !composer.draft && !this.dictating) composer.draft = text;
   }
 
   /** Adds files to the next message, uploading them right away. */
@@ -2115,6 +2124,7 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
+                  thread-end
                   .examples=${this.examples}
                   @cvt-example=${(e: CustomEvent<ChatExample>) =>
                     void this.#composer().then((composer) => {
@@ -2135,6 +2145,7 @@ export class CivitaiChat extends LitElement {
               <civitai-button size="sm" variant="subtle" @click=${() => this.#dismissUnsent(unsent)}>Dismiss</civitai-button>
             </civitai-alert>`,
           )}
+          <slot name="composer-top" class="cvt-composer-top"></slot>
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}
