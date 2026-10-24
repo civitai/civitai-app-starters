@@ -3,7 +3,7 @@
  * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
- * (`WORKFLOW_STEP_TYPES` — 55 `$type` names and what each one does) and the
+ * (`WORKFLOW_STEP_TYPES` — 58 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
@@ -78,7 +78,7 @@
  * orchestrator's own authorization still decides.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 55 entries, exactly THREE sit under its "Platform internals" heading —
+ * of its 58 entries, exactly THREE sit under its "Platform internals" heading —
  * `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration`. `training`,
  * `webScrape`, `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
@@ -97,10 +97,11 @@
  * (#315) without anything going red. The measured state, derived rather than
  * typed:
  *
- * `WORKFLOW_STEP_TYPES` documents 55 `$type`s; this map covers 47. The 8 with
- * no generated template in the pinned `@civitai/client` are `imageScanning`,
- * `liveTextToSpeech`, `liveTranscription`, `merge`, `preprocessVideo`,
- * `promptModeration`, `soniloAudioGen`, `yuE2`, and
+ * `WORKFLOW_STEP_TYPES` documents 58 `$type`s; this map covers 47. The 11 with
+ * no generated template in the pinned `@civitai/client` are `archiveExtraction`,
+ * `audioModeration`, `imageScanning`, `liveTextToSpeech`, `liveTranscription`,
+ * `merge`, `multimodalEmbedding`, `preprocessVideo`, `promptModeration`,
+ * `soniloAudioGen`, `yuE2`, and
  * `WorkflowStepTemplateFor<…>` is a compile error for each of them.
  *
  * That gap is EXPECTED and is not a defect in either surface. The catalog
@@ -396,7 +397,7 @@ interface StepTemplateMap {
 }
 
 /**
- * `$type` → its step-template type, for 47 of the catalog's 55 step types.
+ * `$type` → its step-template type, for 47 of the catalog's 58 step types.
  *
  * Keyed by the WIRE name rather than the generated type name, because the wire
  * name is what you actually have in hand and the generator does not always
