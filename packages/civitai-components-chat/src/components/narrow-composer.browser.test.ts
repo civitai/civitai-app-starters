@@ -39,6 +39,8 @@ afterEach(() => {
 
 async function mountSignedIn(width: number, model?: string): Promise<ShadowRoot> {
   if (model) configureChat({ model });
+  // The picker shows only with premium models on.
+  localStorage.setItem('cvt:settings', JSON.stringify({ premiumModels: true }));
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const app = {
@@ -54,7 +56,7 @@ async function mountSignedIn(width: number, model?: string): Promise<ShadowRoot>
   frame.append(chat);
   document.body.append(frame);
   const root = chat.shadowRoot!;
-  // Signed in, the message box carries the model picker beside the add-file button.
+  // Signed in with premium models on, the message box carries the model picker beside the add-file button.
   await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer .cvt-model-chip')).not.toBeNull(), { timeout: 15_000 });
   return root;
 }
