@@ -12,6 +12,7 @@ import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import { workflow } from '../test-support/fakes.js';
 import { scriptedModel, text, toolCall } from '../test-support/scripted-model.js';
 import type { ChatToolResult } from '../tools/gate.js';
+import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { RemoteAgent, RUN_ACTIVE, RUN_IDLE_MS, RUN_QUIET_MS, type RemoteAgentDeps } from './remote-agent.js';
 import { RunnerClient } from './runner-client.js';
 
@@ -44,14 +45,14 @@ function remoteStore(heads: Workflow[] = []) {
   return { store: new ThreadStore(deps), submitWorkflow, updateWorkflow, queryWorkflows, patch, heads };
 }
 
-function setup(heads: Workflow[] = [], extra: Partial<RemoteAgentDeps> = {}) {
+function setup(heads: Workflow[] = [], extra: Partial<RemoteAgentDeps> = {}, reconnectDelaysMs: readonly number[] = [0]) {
   const runner = fakeRunner();
   const made = remoteStore(heads);
   const rereads: string[] = [];
   const errors: unknown[] = [];
   const toolResults: ChatToolResult[] = [];
   const agent = new RemoteAgent({
-    client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, headers: async () => ({ authorization: 'Bearer viewer' }), reconnectDelaysMs: [0] }),
+    client: new RunnerClient({ url: RUNNER_URL, fetch: runner.fetch, headers: async () => ({ authorization: 'Bearer viewer' }), reconnectDelaysMs }),
     store: made.store,
     scope: 'app-assistant',
     model: () => 'model-a',
@@ -1014,3 +1015,149 @@ describe('RemoteAgent, a chat the page left and came back to while its lookup wa
   });
 });
 
+
+/**
+ * A start that keeps failing (no answer, or the runner down for now) is asked again on the reconnect
+ * ladder (1, 2, 5, 10, 30 s) only once: about a minute in, the reply fails with an error the chat
+ * offers Retry for, rather than spinning for as long as the page stays open. A Retry starts the
+ * ladder afresh. A refusal (4xx) still fails at once.
+ */
+describe('RemoteAgent, a start that keeps failing', () => {
+  const LADDER = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
+  const starts = (runner: ReturnType<typeof fakeRunner>) => runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs').length;
+  /** What the turn component asks before it shows Retry on a failed reply (`civitai-chat-turn`). */
+  const offersRetry = (assistant: { status: string; errorKind?: string; resume?: unknown }) => assistant.status === 'error' && assistant.resume !== undefined && RETRYABLE_ERRORS.has(assistant.errorKind ?? '');
+
+  it.each([
+    ['no answer', 1_000_000, undefined, 'network'],
+    ['503', 0, { status: 503, body: { v: 1, error: 'unavailable', message: 'Down for now.' } }, 'unavailable'],
+  ] as const)('%s: stops after the ladder once (6 starts, ~48 s), failing the turn with Retry offered', async (_name, failStarts, refuseStart, kind) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { agent, runner, store, errors } = setup([], {}, LADDER);
+    runner.knobs.failStarts = failStarts;
+    if (refuseStart) runner.knobs.refuseStart = refuseStart;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts(runner)).toBe(1);
+    // 1 + 2 + 5 + 10 s in: five starts, still trying.
+    await vi.advanceTimersByTimeAsync(18_000);
+    expect(starts(runner)).toBe(5);
+    expect(agent.running).toBe(true);
+    // The 30 s wait, then the sixth start, which fails: given up.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(starts(runner)).toBe(6);
+    expect(agent.running).toBe(false);
+    expect(agent.live).toBeNull();
+    const assistant = store.current!.turns[0]!.assistant;
+    expect(assistant).toMatchObject({ status: 'error', errorKind: kind });
+    expect(offersRetry(assistant)).toBe(true);
+    expect(errors).toMatchObject([{ kind }]);
+    // And nothing more is asked, however long the page stays open.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(starts(runner)).toBe(6);
+  });
+
+  it('Retry starts the ladder afresh, and a start that goes through then follows the run', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { agent, runner, store } = setup([], {}, LADDER);
+    runner.knobs.failStarts = 1_000_000;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(48_000);
+    expect(agent.running).toBe(false);
+    expect(starts(runner)).toBe(6);
+
+    // Retry: asked at once, then again after 1 s (the ladder's first wait, not its last).
+    void agent.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agent.running).toBe(true);
+    expect(starts(runner)).toBe(7);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(starts(runner)).toBe(8);
+    // The whole ladder again, then given up again.
+    await vi.advanceTimersByTimeAsync(47_000);
+    expect(starts(runner)).toBe(12);
+    expect(agent.running).toBe(false);
+    expect(offersRetry(store.current!.turns[0]!.assistant)).toBe(true);
+
+    // The runner is back: Retry goes through and the run is followed.
+    runner.knobs.failStarts = 0;
+    void agent.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts(runner)).toBe(13);
+    expect(runner.openStreams('r1')).toBe(1);
+    expect(agent.running).toBe(true);
+    agent.leave();
+  });
+
+  it('a start that did reach the runner: given up without stopping its run, and Retry asks again with the same key, so that run is followed rather than refused as run-active', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    let keys = 0;
+    let model = 'model-a';
+    const { agent, runner, store } = setup([], { newKey: () => `key-${++keys}`, model: () => model }, LADDER);
+    // Every ask reaches the runner (the first starts the run, the rest find it by its key), and no answer comes back.
+    runner.knobs.refuseConcurrent = true;
+    runner.knobs.loseStartAnswers = 6;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(48_000);
+    expect(starts(runner)).toBe(6);
+    expect(agent.running).toBe(false);
+    expect(offersRetry(store.current!.turns[0]!.assistant)).toBe(true);
+    // The run is the runner's, as after leave(): nothing asks to stop it.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(runner.requests.filter((request) => request.path.endsWith('stop'))).toEqual([]);
+    expect(runner.runs.get('r1')!.live).toBe(true);
+
+    // The viewer picks another model meanwhile. Retry (pressed, or the chat's own ask as the page comes
+    // back online) asks with the same key, so the runner answers with the run that key started, but as a
+    // retry built now: the model and settings of now, never the ones frozen at the first ask.
+    model = 'model-b';
+    void agent.retry();
+    await vi.advanceTimersByTimeAsync(0);
+    const bodies = runner.requests.filter((request) => request.method === 'POST' && request.path === 'runs').map((request) => request.body as { idempotencyKey: string; model: string; turn: { retry?: boolean } });
+    expect(bodies).toHaveLength(7);
+    expect(new Set(bodies.map((body) => body.idempotencyKey))).toEqual(new Set(['key-1']));
+    expect(bodies.slice(0, 6).every((body) => body.model === 'model-a' && body.turn.retry === undefined)).toBe(true);
+    expect(bodies[6]).toMatchObject({ model: 'model-b', turn: { retry: true } });
+    expect(runner.runs.size).toBe(1);
+    expect(store.current!.turns[0]!.assistant.status).toBe('streaming');
+    expect(runner.openStreams('r1')).toBe(1);
+    agent.leave();
+  });
+
+  it('a page that slept while its start kept failing: the minute counts again from when it woke, not from the first ask', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { agent, runner } = setup([], {}, LADDER);
+    runner.knobs.failStarts = 1_000_000;
+    void agent.send('go');
+    await vi.advanceTimersByTimeAsync(18_000);
+    expect(starts(runner)).toBe(5);
+    // Ten minutes asleep: the clock moves on, the timers do not. Waking ends the wait.
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    agent.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts(runner)).toBe(6);
+    expect(agent.running).toBe(true);
+    // Then a minute from the wake, as from a first ask: again at 30 s and 60 s, then given up.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(starts(runner)).toBe(7);
+    expect(agent.running).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(starts(runner)).toBe(8);
+    expect(agent.running).toBe(false);
+  });
+
+  it.each([400, 403, 422])('a refusal (%i) still fails at once, with no wait and no second start', async (status) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { agent, runner, store, errors } = setup([], {}, LADDER);
+    runner.knobs.refuseStart = { status, body: { v: 1, error: 'bad-request', message: 'No.' } };
+    const sent = agent.send('go');
+    await vi.advanceTimersByTimeAsync(0);
+    await sent;
+    expect(starts(runner)).toBe(1);
+    expect(agent.running).toBe(false);
+    expect(store.current!.turns[0]!.assistant.status).toBe('error');
+    expect(errors).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts(runner)).toBe(1);
+  });
+});
