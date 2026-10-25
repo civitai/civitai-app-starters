@@ -880,6 +880,26 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it('GET_RESOURCE_FILE is REFUSED as not supported (`parse-failed`), without any HTTP', async () => {
+    // The real host resolves the file through the viewer's signed-in SESSION and
+    // fetches + unzips it in the page tab. This harness holds a block token and
+    // no session, so the honest answer is a refusal on the reply channel — never
+    // a fabricated file, and never a silent fall-through that hangs for 30 s.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('GET_RESOURCE_FILE', { requestId: 'r-file', modelVersionId: 5202, fileId: 6303 });
+    const payload = await waitForMessage(inbound, 'RESOURCE_FILE_RESULT');
+
+    expect(payload).toEqual({ requestId: 'r-file', error: 'parse-failed' });
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    // The developer is told why, and pointed at dev:mock.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('GET_RESOURCE_FILE'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('dev:mock'));
+  });
+
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
