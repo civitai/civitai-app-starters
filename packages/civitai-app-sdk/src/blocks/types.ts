@@ -3429,6 +3429,77 @@ export interface BlockWildcardPack {
 }
 
 // ============================================================
+// Resource-file bridge result types (GET_RESOURCE_FILE)
+// ============================================================
+
+/**
+ * The CLOSED error set a `RESOURCE_FILE_RESULT` carries on failure
+ * (civitai/civitai-app-starters#664). Like {@link BlockWildcardPackErrorCode} it
+ * is a discriminated code, never free text:
+ *
+ * - `not-found` — no such version or file, not a workflow, or not one the
+ *   viewer may download for free from its public page: an unpublished draft
+ *   (the owner's own included) and an early-access or paid version (bought or
+ *   not) both answer `not-found`, as do the host's other download refusals.
+ * - `forbidden` — the version is one the viewer could download, but it is above
+ *   their maturity ceiling on this site.
+ * - `unauthorized` — the viewer is signed out.
+ * - `too-large` — the download or the inflated archive is over the host's cap.
+ * - `parse-failed` — fetch, unzip or parse failed (also the `dev:live` reply,
+ *   which cannot serve this bridge).
+ * - `busy` — the tab already has the maximum number of fetches in flight; retry.
+ * - `rate-limited` — the viewer's per-minute budget is spent; retry later.
+ */
+export type BlockResourceFileErrorCode =
+  | 'not-found'
+  | 'forbidden'
+  | 'unauthorized'
+  | 'too-large'
+  | 'parse-failed'
+  | 'busy'
+  | 'rate-limited';
+
+/**
+ * How the host classified one parsed JSON entry: `api` when every top-level
+ * value has `class_type` and `inputs` (the ComfyUI API format), `ui` when it has
+ * a `nodes` array (the ComfyUI UI/editor format), otherwise `unknown`.
+ */
+export type BlockResourceFileEntryFormat = 'ui' | 'api' | 'unknown';
+
+/** Which file the host served, and what it belongs to. */
+export interface BlockResourceFileMeta {
+  modelId: number;
+  modelVersionId: number;
+  /** The file the host picked (or the `fileId` the request named). */
+  fileId: number;
+  fileName: string;
+  modelName: string;
+  versionName: string;
+  creatorUsername: string | null;
+}
+
+/** One parsed JSON document out of the file. */
+export interface BlockResourceFileEntry {
+  /** The entry's path inside the archive, or the file name for a plain `.json`. */
+  path: string;
+  format: BlockResourceFileEntryFormat;
+  /** The parsed JSON, as-is. Check `format` before reading it as a graph. */
+  graph: unknown;
+}
+
+/**
+ * A resource file the host resolved, fetched, unzipped and parsed AS THE VIEWER
+ * and returned on `RESOURCE_FILE_RESULT`. A plain `.json` file gives one entry;
+ * a `.zip` gives one per JSON entry (non-JSON entries are skipped), capped by
+ * the host. `truncated` is true when any cap dropped an entry.
+ */
+export interface BlockResourceFile {
+  meta: BlockResourceFileMeta;
+  entries: BlockResourceFileEntry[];
+  truncated: boolean;
+}
+
+// ============================================================
 // App generator SUBQUEUE (QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW)
 // ============================================================
 

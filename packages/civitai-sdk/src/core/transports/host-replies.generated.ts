@@ -35,6 +35,7 @@ export const HOST_REPLIES: Readonly<Record<string, HostReply>> = {
   "GET_DAILY_COMPENSATION": {"reply":"DAILY_COMPENSATION_RESULT","framing":"legacy","keys":["result"]},
   "GET_ENTITY_REACTIONS": {"reply":"ENTITY_REACTIONS_RESULT","framing":"legacy","keys":["result"]},
   "GET_IMAGES_BY_IDS": {"reply":"IMAGES_RESULT","framing":"legacy","keys":["result"]},
+  "GET_RESOURCE_FILE": {"reply":"RESOURCE_FILE_RESULT","framing":"legacy","keys":["file"]},
   "GET_VIEWER": {"reply":"VIEWER_RESULT","framing":"legacy","keys":["viewer"]},
   "GET_WILDCARD_PACK": {"reply":"WILDCARD_PACK_RESULT","framing":"legacy","keys":["pack"]},
   "OPEN_BUZZ_PURCHASE": {"reply":"BUZZ_PURCHASE_RESULT","framing":"legacy","keys":["purchased"]},

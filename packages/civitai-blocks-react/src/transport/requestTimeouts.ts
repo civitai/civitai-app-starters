@@ -177,6 +177,9 @@ const REQUEST_TIMEOUT_CLASS = {
   GET_IMAGES_BY_IDS: 'protocol',
   GET_VIEWER: 'protocol',
   GET_WILDCARD_PACK: 'protocol',
+  // Same bucket and bound as GET_WILDCARD_PACK: the host resolves, downloads
+  // (capped) and unzips in the viewer's tab, with no person in the loop.
+  GET_RESOURCE_FILE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',
   // The host fetches the blob and triggers the browser's own download; it replies

@@ -1229,6 +1229,45 @@ if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
 if (!loading && pack) console.log(Object.keys(pack.lists));
 ```
 
+### `useResourceFile(modelVersionId, fileId?)`
+
+Read a resource file's parsed JSON — for a workflow, its graphs — by model
+version. The host resolves, fetches, unzips and parses the file **in the
+viewer's own page session**, enforcing the real download gates, so the iframe
+never sees the session, a signed URL or the raw bytes. No block scope is needed.
+Returns `{ file, loading, error, refetch }`.
+
+- `file.meta` names what was served (`modelId`, `modelVersionId`, `fileId`,
+  `fileName`, `modelName`, `versionName`, `creatorUsername`).
+- `file.entries` holds one `{ path, format, graph }` per JSON document: one for a
+  plain `.json`, several for a `.zip` (non-JSON entries are skipped). `format`
+  is `'ui'` (a `nodes` array), `'api'` (every top-level value has `class_type`
+  and `inputs`) or `'unknown'`; check it before treating `graph` as a graph.
+  `file.truncated` is `true` when a host cap dropped entries.
+- Pass `fileId` to pin one file of a multi-file version. Without it the host
+  picks one.
+
+On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
+`not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`,
+`rate-limited`. `busy` and `rate-limited` are retryable; the rest are terminal.
+
+🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
+model-page slot does not answer it (the request times out), and `dev:live`
+replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
+`resourceFile` (the canned reply) and a `resourceFileError` (force a code).
+
+🔴 **Only free, public versions are served.** An unpublished draft (the owner's
+included) and an early-access or paid version answer `not-found` — even for a
+viewer who bought it.
+
+```tsx
+const { file, loading, error, refetch } = useResourceFile(modelVersionId);
+// `busy` and `rate-limited` are retryable; the other codes are terminal.
+if (error instanceof ResourceFileError && error.code === 'busy') refetch();
+const graphs = file?.entries.filter((e) => e.format !== 'unknown') ?? [];
+if (!loading && file) console.log(file.meta.fileName, graphs.length, file.truncated);
+```
+
 ### `useCollectionFollow()`
 
 Follow / unfollow a collection **for the viewer**, host-mediated over
@@ -3830,6 +3869,7 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.78.x` | `^0.79.0` | `useResourceFile()` (`GET_RESOURCE_FILE`). Its types (`BlockResourceFile` and friends) come from the SDK's `0.79.0`; the hook imports no SDK value, so the declared peer floor is unchanged. |
 | `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
 | `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |

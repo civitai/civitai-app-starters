@@ -36,6 +36,8 @@ import type {
   BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  BlockResourceFile,
+  BlockResourceFileErrorCode,
   AppWorkflow,
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
@@ -709,6 +711,19 @@ export type ParentToBlockMessage =
         requestId: string;
         pack?: BlockWildcardPack;
         error?: BlockWildcardPackErrorCode;
+      };
+    }
+  | {
+      // Reply to GET_RESOURCE_FILE — the resource file the host resolved,
+      // fetched, unzipped and parsed AS THE USER. Success → `file` (`meta`, the
+      // parsed JSON `entries`, `truncated`); failure → `error`, one code from the
+      // CLOSED {@link BlockResourceFileErrorCode} set, never free text. `busy`
+      // and `rate-limited` are retryable; the others are terminal.
+      type: 'RESOURCE_FILE_RESULT';
+      payload: {
+        requestId: string;
+        file?: BlockResourceFile;
+        error?: BlockResourceFileErrorCode;
       };
     }
   | {
@@ -1463,6 +1478,17 @@ export type BlockToParentMessage =
   // `error` code). The untrusted iframe never sees the session, signed URL, or raw
   // bytes.
   | { type: 'GET_WILDCARD_PACK'; payload: { requestId: string; modelVersionId: number } }
+  // Ask the host for a resource file's parsed JSON (a workflow's graphs) by model
+  // version, optionally pinning one `fileId`; without it the host picks the file.
+  // TOKEN-INDEPENDENT (no block scope), like GET_WILDCARD_PACK: the host resolves,
+  // fetches, unzips and parses it in the USER'S page session and replies with
+  // `RESOURCE_FILE_RESULT` (a `file` or a closed `error` code). Only free, public
+  // versions are served. Full-page app hosts only: the model-page slot does not
+  // answer it, and `dev:live` refuses it.
+  | {
+      type: 'GET_RESOURCE_FILE';
+      payload: { requestId: string; modelVersionId: number; fileId?: number };
+    }
   // Ask the host for a page of the calling app's OWN generator subqueue — the
   // tag-scoped list of generations this app produced for the viewer, newest-first
   // (scope `ai:write:budgeted`, same trust boundary as submit). Host-mediated +
@@ -2184,6 +2210,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'GET_BUZZ_ACCOUNTS',
   'GET_DAILY_COMPENSATION',
   'GET_WILDCARD_PACK',
+  'GET_RESOURCE_FILE',
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
   'CREATE_POST_FROM_APP',

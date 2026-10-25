@@ -301,6 +301,22 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "GET_RESOURCE_FILE": {
+      "request": true,
+      "reply": "RESOURCE_FILE_RESULT",
+      "replyKeys": [
+        "file"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "GET_VIEWER": {
       "request": true,
       "reply": "VIEWER_RESULT",
