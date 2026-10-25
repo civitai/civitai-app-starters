@@ -66,6 +66,17 @@ export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
  */
 export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * The bound for `GET_RESOURCE_FILE` (`hooks/useResourceFile.ts`), a `'protocol'`
+ * request whose HOST work is slow: a session-authed resolve, then a fetch of the
+ * signed URL that the host itself allows 30 s, then an unzip and parse of up to
+ * 16 MB in the viewer's tab. At {@link DEFAULT_REQUEST_TIMEOUT_MS} a large file
+ * on a slow connection would time out on the block while the host was still
+ * working, and the host's valid reply would be dropped as unroutable. Same number
+ * as {@link WORKFLOW_REQUEST_TIMEOUT_MS}; the host keeps its own total under it.
+ */
+export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
+
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
   /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
@@ -177,8 +188,9 @@ const REQUEST_TIMEOUT_CLASS = {
   GET_IMAGES_BY_IDS: 'protocol',
   GET_VIEWER: 'protocol',
   GET_WILDCARD_PACK: 'protocol',
-  // Same bucket and bound as GET_WILDCARD_PACK: the host resolves, downloads
-  // (capped) and unzips in the viewer's tab, with no person in the loop.
+  // No person in the loop, so `'protocol'` — but sent under its own longer
+  // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + 30 s fetch + unzip
+  // can outlast the 30 s default (see that constant).
   GET_RESOURCE_FILE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',

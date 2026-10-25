@@ -718,7 +718,10 @@ export type ParentToBlockMessage =
       // fetched, unzipped and parsed AS THE USER. Success → `file` (`meta`, the
       // parsed JSON `entries`, `truncated`); failure → `error`, one code from the
       // CLOSED {@link BlockResourceFileErrorCode} set, never free text. `busy`
-      // and `rate-limited` are retryable; the others are terminal.
+      // and `rate-limited` are retryable; `parse-failed` may be transient (the
+      // host maps network and server errors to it too); `forbidden` is also the
+      // review-preview refusal. `truncated` is set when an entry was dropped by a
+      // cap or was not valid JSON.
       type: 'RESOURCE_FILE_RESULT';
       payload: {
         requestId: string;
@@ -1484,7 +1487,7 @@ export type BlockToParentMessage =
   // fetches, unzips and parses it in the USER'S page session and replies with
   // `RESOURCE_FILE_RESULT` (a `file` or a closed `error` code). Only free, public
   // versions are served. Full-page app hosts only: the model-page slot does not
-  // answer it, and `dev:live` refuses it.
+  // answer it, `dev:live` refuses it, and review preview answers `forbidden`.
   | {
       type: 'GET_RESOURCE_FILE';
       payload: { requestId: string; modelVersionId: number; fileId?: number };

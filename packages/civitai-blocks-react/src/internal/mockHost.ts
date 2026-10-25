@@ -1940,6 +1940,7 @@ export interface MockBuzzHandle {
  *
  * After install, a harness UI can drive scenarios live:
  *  - `setScenario(patch)` — merge new generation/buzz/storage/failMode controls.
+ *    `setScenario({ resourceFileError: undefined })` clears a forced resource-file error.
  *  - `setTheme('light' | 'dark')` — flip the site theme and push `THEME_CHANGE`.
  *  - `buzz.setBalance(n)` / `buzz.getBalance()` — flip the simulated wallet.
  *

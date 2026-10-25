@@ -3435,20 +3435,30 @@ export interface BlockWildcardPack {
 /**
  * The CLOSED error set a `RESOURCE_FILE_RESULT` carries on failure
  * (civitai/civitai-app-starters#664). Like {@link BlockWildcardPackErrorCode} it
- * is a discriminated code, never free text:
+ * is a discriminated code, never free text. What each code covers follows the
+ * host change, civitai/civitai#6818 (its tests and docs; its resolver and parser
+ * were still stubs when this was written):
  *
- * - `not-found` — no such version or file, not a workflow, or not one the
- *   viewer may download for free from its public page: an unpublished draft
- *   (the owner's own included) and an early-access or paid version (bought or
- *   not) both answer `not-found`, as do the host's other download refusals.
- * - `forbidden` — the version is one the viewer could download, but it is above
- *   their maturity ceiling on this site.
+ * - `not-found` — no such version or file, not a `Workflows`/`ComfyWorkflows`
+ *   version, or one the viewer may not download from its public page. An
+ *   unpublished draft (the owner's own included) and an early-access or paid
+ *   version (bought or not; only its owner is served) both answer `not-found`,
+ *   as do the host's other download refusals.
+ * - `forbidden` — the viewer could download the version but it is above their
+ *   maturity ceiling on this site; or the app is running in review preview,
+ *   which refuses before resolving anything.
  * - `unauthorized` — the viewer is signed out.
- * - `too-large` — the download or the inflated archive is over the host's cap.
- * - `parse-failed` — fetch, unzip or parse failed (also the `dev:live` reply,
- *   which cannot serve this bridge).
- * - `busy` — the tab already has the maximum number of fetches in flight; retry.
- * - `rate-limited` — the viewer's per-minute budget is spent; retry later.
+ * - `too-large` — over the 32 MB cap (advertised or downloaded), or every JSON
+ *   entry was dropped by a size cap: 4 MB per entry, 16 MB inflated in total.
+ *   A single `.json` over 4 MB is `too-large`.
+ * - `parse-failed` — not a `.json` or `.zip`, a corrupt zip, or no entry that
+ *   is valid JSON. The host ALSO maps network errors, a timed-out or non-OK
+ *   fetch of the file, and server errors to it, so it can be transient: one
+ *   retry is reasonable. It is also the `dev:live` reply, which cannot serve
+ *   this bridge.
+ * - `busy` — the tab already has the maximum number of fetches in flight (3);
+ *   retry.
+ * - `rate-limited` — the viewer's per-minute budget (30) is spent; retry later.
  */
 export type BlockResourceFileErrorCode =
   | 'not-found'
@@ -3490,8 +3500,9 @@ export interface BlockResourceFileEntry {
 /**
  * A resource file the host resolved, fetched, unzipped and parsed AS THE VIEWER
  * and returned on `RESOURCE_FILE_RESULT`. A plain `.json` file gives one entry;
- * a `.zip` gives one per JSON entry (non-JSON entries are skipped), capped by
- * the host. `truncated` is true when any cap dropped an entry.
+ * a `.zip` gives one per `.json` entry (other entries are skipped and do not
+ * count), at most 20. `truncated` is true when an entry was dropped: past the
+ * 20, over the 4 MB per-entry or 16 MB total inflate cap, or not valid JSON.
  */
 export interface BlockResourceFile {
   meta: BlockResourceFileMeta;
