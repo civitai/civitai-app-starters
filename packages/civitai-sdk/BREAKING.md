@@ -25,7 +25,7 @@ messages have no destination yet.
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
 | `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
-| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK` | — | Not carried |
+| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `GET_RESOURCE_FILE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows all three (the host reply ledger lists them): `request('GET_RESOURCE_FILE', { modelVersionId, fileId? })` resolves with `{ file }` on a full-page app host |
 | `TRACK_EVENT` | `app.host.track(eventName, properties)` | **Carried**, same wire as `useBlockAnalytics().track`. 🔴 Only events and properties DECLARED under the manifest's `analytics.events` are recorded — see below |
 
 ⚠ **`TRACK_EVENT` used to be listed here as *not carried*, because no host handled it — every

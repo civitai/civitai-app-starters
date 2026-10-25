@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "05f1d1fa8f",
-  "capturedAt": "2026-10-20",
+  "capturedFrom": "4c13f8c629",
+  "capturedAt": "2026-10-25",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -290,6 +290,22 @@
       "reply": "IMAGES_RESULT",
       "replyKeys": [
         "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "GET_RESOURCE_FILE": {
+      "request": true,
+      "reply": "RESOURCE_FILE_RESULT",
+      "replyKeys": [
+        "file"
       ],
       "optionalReplyKeys": [],
       "replyKeysFrom": "inventory",

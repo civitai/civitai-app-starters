@@ -1556,6 +1556,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('BUZZ_ACCOUNTS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('RESOURCE_FILE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');

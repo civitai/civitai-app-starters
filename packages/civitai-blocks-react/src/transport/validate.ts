@@ -981,6 +981,65 @@ export function isValidWildcardPackResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * The CLOSED `RESOURCE_FILE_RESULT` error set, mirroring
+ * `BlockResourceFileErrorCode` (civitai/civitai-app-starters#664).
+ */
+const RESOURCE_FILE_ERROR_CODES = new Set<string>([
+  'not-found',
+  'forbidden',
+  'unauthorized',
+  'too-large',
+  'parse-failed',
+  'busy',
+  'rate-limited',
+]);
+
+const RESOURCE_FILE_ENTRY_FORMATS = new Set<string>(['ui', 'api', 'unknown']);
+
+/**
+ * Reply to a block-initiated `GET_RESOURCE_FILE`. Same contract shape as
+ * {@link isValidWildcardPackResult}: EITHER a `file` OR an `error` that is one of
+ * {@link RESOURCE_FILE_ERROR_CODES}; a free-text or unknown `error`, or a reply
+ * with neither, is malformed and dropped. The `file` is checked field by field —
+ * `meta` ids positive integers, names strings, `creatorUsername` a string or
+ * `null`, `truncated` a boolean, and EVERY entry an object with a string `path`,
+ * a known `format` and a `graph` key. `graph` itself is the host's parsed JSON
+ * and may be any JSON value.
+ */
+export function isValidResourceFileResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) {
+    if (typeof p.error !== 'string' || !RESOURCE_FILE_ERROR_CODES.has(p.error)) return false;
+  }
+  if (p.file !== undefined) {
+    const file = p.file;
+    if (!isObject(file)) return false;
+    const meta = file.meta;
+    if (!isObject(meta)) return false;
+    if (!isPositiveInteger(meta.modelId)) return false;
+    if (!isPositiveInteger(meta.modelVersionId)) return false;
+    if (!isPositiveInteger(meta.fileId)) return false;
+    if (typeof meta.fileName !== 'string') return false;
+    if (typeof meta.modelName !== 'string') return false;
+    if (typeof meta.versionName !== 'string') return false;
+    if (meta.creatorUsername !== null && typeof meta.creatorUsername !== 'string') return false;
+    if (typeof file.truncated !== 'boolean') return false;
+    if (!Array.isArray(file.entries)) return false;
+    for (const entry of file.entries) {
+      if (!isObject(entry)) return false;
+      if (typeof entry.path !== 'string') return false;
+      if (typeof entry.format !== 'string' || !RESOURCE_FILE_ENTRY_FORMATS.has(entry.format)) {
+        return false;
+      }
+      if (!('graph' in entry)) return false;
+    }
+  }
+  if (p.file === undefined && p.error === undefined) return false;
+  return true;
+}
+
 // ============================================================
 // App generator SUBQUEUE reply validators
 // ============================================================
@@ -2035,6 +2094,8 @@ export function payloadValidatorFor(
       return isValidDailyCompensationResult;
     case 'WILDCARD_PACK_RESULT':
       return isValidWildcardPackResult;
+    case 'RESOURCE_FILE_RESULT':
+      return isValidResourceFileResult;
     case 'APP_WORKFLOWS_RESULT':
       return isValidAppWorkflowsResult;
     case 'CANCEL_APP_WORKFLOW_RESULT':
