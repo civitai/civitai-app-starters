@@ -1415,8 +1415,9 @@ export type WorkflowBodyCustomComfyInline = {
      * ComfyUI's "Save (API Format)" export produces).
      *
      * Server-enforced bounds — all three REJECT, none truncates:
-     *  - at least **1** node, at most **300**;
-     *  - the serialized graph must be at most **262144 bytes** (256 KB);
+     *  - at least **1** node, at most **300** (`BLOCK_INLINE_COMFY_MAX_NODES`);
+     *  - the serialized graph must be at most **262144 bytes** (256 KB,
+     *    `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES`);
      *  - nesting at most **128** levels deep (the gate walks the graph, and a
      *    graph it cannot finish walking is one it cannot prove safe).
      */
