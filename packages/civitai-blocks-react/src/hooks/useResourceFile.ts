@@ -29,9 +29,9 @@ export type {
  * `too-large` are terminal. `parse-failed` is a corrupt or non-JSON file, but
  * also the host's catch-all for a network error, a failed fetch, its 110 s
  * deadline or a transient storage failure, so one retry is worth it.
- * `unauthorized` (signed out) does not clear by itself: the hook does not
- * refetch when the viewer changes, so after the viewer signs in
- * (`useRequestSignIn()`) without the block reloading, call `refetch()`.
+ * `unauthorized` (signed out) is not retryable: offer sign-in with
+ * `useRequestSignIn()`; the page reloads signed in, the block re-inits, and the
+ * hook fetches again on mount.
  * `.message` equals the code.
  */
 export class ResourceFileError extends Error {
@@ -92,6 +92,8 @@ export interface UseResourceFile {
  * @example
  * const { file, loading, error, refetch } = useResourceFile(modelVersionId);
  * // Retry a retryable code from an effect, after a delay — never during render.
+ * // Never add `parse-failed` here: it is worth at most ONE retry, and this loop
+ * // would refetch a file of up to 32 MB every 2 s.
  * const retryable =
  *   error instanceof ResourceFileError && (error.code === 'busy' || error.code === 'rate-limited');
  * useEffect(() => {

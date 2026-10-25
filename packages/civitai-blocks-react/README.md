@@ -1257,7 +1257,7 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 |---|---|---|
 | `not-found` | No such version or file, not a workflow, or not downloadable for free (see below) | No |
 | `forbidden` | Above the viewer's maturity ceiling on this site, or the app is in review preview | No |
-| `unauthorized` | The viewer is signed out | No — not by itself. After the viewer signs in (`useRequestSignIn()`), call `refetch()`; the hook does not refetch when the viewer changes. |
+| `unauthorized` | The viewer is signed out | No. Offer sign-in with `useRequestSignIn()`: the page reloads signed in, the block re-inits, and the hook fetches again on mount |
 | `too-large` | Over 32 MB, or every entry was over a size cap (4 MB per entry, 16 MB in total) | No |
 | `parse-failed` | Not a `.json`/`.zip`, corrupt, or no valid JSON — **or** the host's catch-all: a network error, a failed fetch, no answer within its 110 s deadline, a transient storage failure, or another server error | Once, maybe: it can be transient |
 | `busy` | Three fetches already in flight in this tab | Yes |
@@ -1278,9 +1278,15 @@ moderators included. The owner can also read their own non-public files and a
 version with downloads disabled; an archived or deleted model is `not-found`
 for everyone, the owner included.
 
+The example below retries `busy` and `rate-limited` with no limit. `parse-failed`
+is worth at most one retry, so keep it out of that loop: the loop would
+re-download a file of up to 32 MB every 2 s.
+
 ```tsx
 const { file, loading, error, refetch } = useResourceFile(modelVersionId);
 // Retry a retryable code from an effect, after a delay — never during render.
+// Never add `parse-failed` here: it is worth at most ONE retry, and this loop
+// would refetch a file of up to 32 MB every 2 s.
 const retryable =
   error instanceof ResourceFileError && (error.code === 'busy' || error.code === 'rate-limited');
 useEffect(() => {
