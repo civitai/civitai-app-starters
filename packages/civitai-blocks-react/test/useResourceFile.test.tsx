@@ -152,9 +152,9 @@ describe('useResourceFile', () => {
   });
 
   it('timeout: waits 120 s, not the 30 s protocol default, then surfaces a RequestTimeoutError', async () => {
-    // The host's signed-URL fetch alone may take 30 s, before the resolve and the
-    // unzip/parse; at the default bound a valid reply for a large file on a slow
-    // connection would land after the block gave up. 120 s is a LITERAL here, not
+    // The host's resolve + fetch + unzip/parse run under a 110 s deadline; at the
+    // 30 s default a valid reply for a large file on a slow connection would
+    // land after the block gave up. 120 s is a LITERAL here, not
     // read from the constant under test.
     vi.useFakeTimers();
     const { result } = renderHook(() => useResourceFile(5202));

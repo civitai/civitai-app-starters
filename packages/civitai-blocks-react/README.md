@@ -1244,7 +1244,7 @@ Returns `{ file, loading, error, refetch }`.
   is `'ui'` (a `nodes` array), `'api'` (every top-level value has `class_type`
   and `inputs`) or `'unknown'`; check it before treating `graph` as a graph.
   `file.truncated` is `true` when an entry was dropped: past 20 entries, over
-  the 4 MB per-entry or 16 MB total cap, or not valid JSON.
+  the 4 MB per-entry or 16 MB total cap, unreadable, or not valid JSON.
 - Pass `fileId` to pin one file of a multi-file version. Without it the host
   picks one.
 - Changing `modelVersionId` or `fileId` resets `file` and `error` to `null`
@@ -1259,7 +1259,7 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 | `forbidden` | Above the viewer's maturity ceiling on this site, or the app is in review preview | No |
 | `unauthorized` | The viewer is signed out | No |
 | `too-large` | Over 32 MB, or every entry was over a size cap (4 MB per entry, 16 MB in total) | No |
-| `parse-failed` | Not a `.json`/`.zip`, corrupt, or no valid JSON — **or** a network error, a failed fetch or a server error, which the host maps here too | Once, maybe: it can be transient |
+| `parse-failed` | Not a `.json`/`.zip`, corrupt, or no valid JSON — **or** the host's catch-all: a network error, a failed fetch, no answer within its 110 s deadline, a transient storage failure, or another server error | Once, maybe: it can be transient |
 | `busy` | Three fetches already in flight in this tab | Yes |
 | `rate-limited` | The viewer's 30-a-minute budget is spent | Yes, later |
 
@@ -1272,7 +1272,8 @@ replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
 🔴 **Only free, public versions are served.** An unpublished draft (the owner's
 included) and an early-access or paid version answer `not-found` — even for a
 viewer who bought it. Only the owner gets their own published early-access
-version.
+version. Private-availability and POI versions are refused to everyone but the
+owner, moderators included.
 
 ```tsx
 const { file, loading, error, refetch } = useResourceFile(modelVersionId);

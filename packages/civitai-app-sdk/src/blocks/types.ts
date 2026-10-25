@@ -3435,30 +3435,34 @@ export interface BlockWildcardPack {
 /**
  * The CLOSED error set a `RESOURCE_FILE_RESULT` carries on failure
  * (civitai/civitai-app-starters#664). Like {@link BlockWildcardPackErrorCode} it
- * is a discriminated code, never free text. What each code covers follows the
- * host change, civitai/civitai#6818 (its tests and docs; its resolver and parser
- * were still stubs when this was written):
+ * is a discriminated code, never free text. What each code covers is the host's
+ * behaviour in civitai/civitai#6818 (`resource-file.service.ts`,
+ * `resourceFileParse.ts`, `resourceFileHost.ts`):
  *
- * - `not-found` — no such version or file, not a `Workflows`/`ComfyWorkflows`
- *   version, or one the viewer may not download from its public page. An
- *   unpublished draft (the owner's own included) and an early-access or paid
- *   version (bought or not; only its owner is served) both answer `not-found`,
- *   as do the host's other download refusals.
- * - `forbidden` — the viewer could download the version but it is above their
- *   maturity ceiling on this site; or the app is running in review preview,
- *   which refuses before resolving anything.
+ * - `not-found` — every refusal of the resolve step except maturity: no such
+ *   version; not a `Workflows`/`ComfyWorkflows` version; no such file, or (for a
+ *   non-owner) the file is not `Public`; the site's download gate refuses it;
+ *   an unpublished draft (the owner's own included); an early-access or paid
+ *   version for anyone but its owner (buyers included); downloads disabled for
+ *   anyone but the owner; a Private-availability or POI version for anyone but
+ *   the owner (moderators included).
+ * - `forbidden` — the version passes every gate above but is above the viewer's
+ *   maturity ceiling on this site (checked AFTER the download gate, so a version
+ *   the viewer cannot download never reveals its rating); or the app is running
+ *   in review preview, which refuses before resolving anything.
  * - `unauthorized` — the viewer is signed out.
- * - `too-large` — over the 32 MB cap (advertised or downloaded), or every JSON
- *   entry was dropped by a size cap: 4 MB per entry, 16 MB inflated in total.
- *   A single `.json` over 4 MB is `too-large`.
- * - `parse-failed` — not a `.json` or `.zip`, a corrupt zip, or no entry that
- *   is valid JSON. The host ALSO maps network errors, a timed-out or non-OK
- *   fetch of the file, and server errors to it, so it can be transient: one
- *   retry is reasonable. It is also the `dev:live` reply, which cannot serve
- *   this bridge.
- * - `busy` — the tab already has the maximum number of fetches in flight (3);
- *   retry.
- * - `rate-limited` — the viewer's per-minute budget (30) is spent; retry later.
+ * - `too-large` — the file's advertised size, its `Content-Length` or the body
+ *   as it streams is over 32 MB; or no entry could be returned and at least one
+ *   was dropped by a size cap (4 MB per entry, 16 MB inflated in total) — so a
+ *   single `.json` over 4 MB is `too-large`.
+ * - `parse-failed` — not a `.json` or `.zip`, a corrupt zip, or no JSON entry
+ *   that could be read and parsed. ALSO the host's catch-all: a network error, a
+ *   non-OK fetch, no answer within the host's 110 s deadline, a transient storage
+ *   failure in the resolve step, or any other server error. So it can be
+ *   transient, and one retry is reasonable. It is also the `dev:live` reply,
+ *   which cannot serve this bridge.
+ * - `busy` — the tab already has 3 resource-file requests in flight; retry.
+ * - `rate-limited` — the viewer's 30-a-minute budget is spent; retry later.
  */
 export type BlockResourceFileErrorCode =
   | 'not-found'
@@ -3500,9 +3504,10 @@ export interface BlockResourceFileEntry {
 /**
  * A resource file the host resolved, fetched, unzipped and parsed AS THE VIEWER
  * and returned on `RESOURCE_FILE_RESULT`. A plain `.json` file gives one entry;
- * a `.zip` gives one per `.json` entry (other entries are skipped and do not
- * count), at most 20. `truncated` is true when an entry was dropped: past the
- * 20, over the 4 MB per-entry or 16 MB total inflate cap, or not valid JSON.
+ * a `.zip` gives one per `.json` entry (other entries, `__MACOSX/` and dot-files
+ * are skipped and do not count), at most 20. `truncated` is true when a JSON
+ * entry was dropped: past the 20, over the 4 MB per-entry or 16 MB total inflate
+ * cap, unreadable, or not valid JSON.
  */
 export interface BlockResourceFile {
   meta: BlockResourceFileMeta;
