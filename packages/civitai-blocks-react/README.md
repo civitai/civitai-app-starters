@@ -1257,7 +1257,7 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 |---|---|---|
 | `not-found` | No such version or file, not a workflow, or not downloadable for free (see below) | No |
 | `forbidden` | Above the viewer's maturity ceiling on this site, or the app is in review preview | No |
-| `unauthorized` | The viewer is signed out | No |
+| `unauthorized` | The viewer is signed out | No — not by itself. After the viewer signs in (`useRequestSignIn()`), call `refetch()`; the hook does not refetch when the viewer changes. |
 | `too-large` | Over 32 MB, or every entry was over a size cap (4 MB per entry, 16 MB in total) | No |
 | `parse-failed` | Not a `.json`/`.zip`, corrupt, or no valid JSON — **or** the host's catch-all: a network error, a failed fetch, no answer within its 110 s deadline, a transient storage failure, or another server error | Once, maybe: it can be transient |
 | `busy` | Three fetches already in flight in this tab | Yes |
@@ -1265,8 +1265,9 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 
 🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
 model-page slot does not answer it (the request times out), and `dev:live`
-replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
-`resourceFile` (the canned reply) and a `resourceFileError` (force a code);
+replies `parse-failed`. Develop against the mock host (`npm run dev:harness`):
+`createMockHost` takes a `resourceFile` (the canned reply) and a
+`resourceFileError` (force a code);
 `setScenario({ resourceFileError: undefined })` clears the forced error.
 
 🔴 **Only free, public versions are served.** An unpublished draft (the owner's
@@ -1274,7 +1275,9 @@ included) and an early-access or paid version answer `not-found` — even for a
 viewer who bought it. Only the owner gets their own published early-access
 version. A POI model, or a model or version whose availability is not `Public`
 or `Unsearchable` (e.g. `Private`), is refused to everyone but the owner,
-moderators included.
+moderators included. The owner can also read their own non-public files and a
+version with downloads disabled; an archived or deleted model is `not-found`
+for everyone, the owner included.
 
 ```tsx
 const { file, loading, error, refetch } = useResourceFile(modelVersionId);

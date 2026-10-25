@@ -1560,7 +1560,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               'resource-file',
               'GET_RESOURCE_FILE is not supported in dev:live (it needs the session-authed ' +
                 'resolve + in-tab fetch and unzip, on a full-page app host). Replying ' +
-                '`parse-failed`. Use dev:mock to exercise the resource-file path.',
+                '`parse-failed`. Use the mock host (`npm run dev:harness`) to exercise the ' +
+                'resource-file path.',
             );
             dispatchToBlock({
               type: 'RESOURCE_FILE_RESULT',

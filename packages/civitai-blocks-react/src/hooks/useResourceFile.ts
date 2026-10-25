@@ -25,9 +25,14 @@ export type {
 /**
  * A resource-file read failure. The host returns one code from a CLOSED set, and
  * this error carries it on `.code` so a block can branch on the exact reason:
- * `busy` and `rate-limited` are retryable; `not-found`, `forbidden`,
- * `unauthorized`, `too-large` and `parse-failed` are terminal. `.message` equals
- * the code.
+ * `busy` and `rate-limited` are retryable; `not-found`, `forbidden` and
+ * `too-large` are terminal. `parse-failed` is a corrupt or non-JSON file, but
+ * also the host's catch-all for a network error, a failed fetch, its 110 s
+ * deadline or a transient storage failure, so one retry is worth it.
+ * `unauthorized` (signed out) does not clear by itself: the hook does not
+ * refetch when the viewer changes, so after the viewer signs in
+ * (`useRequestSignIn()`) without the block reloading, call `refetch()`.
+ * `.message` equals the code.
  */
 export class ResourceFileError extends Error {
   readonly code: BlockResourceFileErrorCode;
@@ -72,8 +77,12 @@ export interface UseResourceFile {
  * Pass `fileId` to pin one file of a multi-file version; without it the host
  * picks one. Only free, public versions are served: an unpublished draft or an
  * early-access / paid version answers `not-found`, even for a viewer who bought
- * it. Full-page app hosts only — the model-page slot does not answer it, and
- * `dev:live` replies `parse-failed`; use `dev:mock` to develop against it.
+ * it. The model's owner can also read their own published versions that others
+ * cannot: non-public files, early access, downloads disabled, POI or non-public
+ * availability. A draft, an archived model or a deleted model is `not-found` for
+ * everyone, the owner included. Full-page app hosts only — the model-page slot
+ * does not answer it, and `dev:live` replies `parse-failed`; use the mock host
+ * (`npm run dev:harness`) to develop against it.
  *
  * Fetches on mount and whenever `modelVersionId` or `fileId` changes; a change
  * clears `file` and `error` first. A non-positive or non-integer
