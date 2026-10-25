@@ -25,9 +25,14 @@ export type {
 /**
  * A resource-file read failure. The host returns one code from a CLOSED set, and
  * this error carries it on `.code` so a block can branch on the exact reason:
- * `busy` and `rate-limited` are retryable; `not-found`, `forbidden`,
- * `unauthorized`, `too-large` and `parse-failed` are terminal. `.message` equals
- * the code.
+ * `busy` and `rate-limited` are retryable; `not-found`, `forbidden` and
+ * `too-large` are terminal. `parse-failed` is a corrupt or non-JSON file, but
+ * also the host's catch-all for a network error, a failed fetch, its 110 s
+ * deadline or a transient storage failure, so one retry is worth it.
+ * `unauthorized` (signed out) is not retryable: offer sign-in with
+ * `useRequestSignIn()`; the page reloads signed in, the block re-inits, and the
+ * hook fetches again on mount.
+ * `.message` equals the code.
  */
 export class ResourceFileError extends Error {
   readonly code: BlockResourceFileErrorCode;
@@ -72,8 +77,9 @@ export interface UseResourceFile {
  * Pass `fileId` to pin one file of a multi-file version; without it the host
  * picks one. Only free, public versions are served: an unpublished draft or an
  * early-access / paid version answers `not-found`, even for a viewer who bought
- * it. Full-page app hosts only — the model-page slot does not answer it, and
- * `dev:live` replies `parse-failed`; use `dev:mock` to develop against it.
+ * it. What the owner can read is in the README's "Only free, public versions
+ * are served". Full-page app hosts only — the model-page slot does not answer
+ * it, and `dev:live` replies `parse-failed`; use `dev:mock` to develop against it.
  *
  * Fetches on mount and whenever `modelVersionId` or `fileId` changes; a change
  * clears `file` and `error` first. A non-positive or non-integer
@@ -86,6 +92,8 @@ export interface UseResourceFile {
  * @example
  * const { file, loading, error, refetch } = useResourceFile(modelVersionId);
  * // Retry a retryable code from an effect, after a delay — never during render.
+ * // Never add `parse-failed` here: it is worth at most ONE retry, and this loop
+ * // would refetch a file of up to 32 MB every 2 s.
  * const retryable =
  *   error instanceof ResourceFileError && (error.code === 'busy' || error.code === 'rate-limited');
  * useEffect(() => {
