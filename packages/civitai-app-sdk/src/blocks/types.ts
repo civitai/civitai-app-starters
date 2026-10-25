@@ -3441,11 +3441,12 @@ export interface BlockWildcardPack {
  *
  * - `not-found` — every refusal of the resolve step except maturity: no such
  *   version; not a `Workflows`/`ComfyWorkflows` version; no such file, or (for a
- *   non-owner) the file is not `Public`; the site's download gate refuses it;
- *   an unpublished draft (the owner's own included); an early-access or paid
- *   version for anyone but its owner (buyers included); downloads disabled for
- *   anyone but the owner; a Private-availability or POI version for anyone but
- *   the owner (moderators included).
+ *   non-owner) the file is not `Public`; the site's download gate, evaluated
+ *   WITHOUT moderator rights, refuses it; an unpublished draft (the owner's own
+ *   included); an early-access or paid version for anyone but its owner (buyers
+ *   included); downloads disabled for anyone but the owner; and, for anyone but
+ *   the owner (moderators included), a POI model or a model or version whose
+ *   availability is not open (`Public` or `Unsearchable`), e.g. `Private`.
  * - `forbidden` — the version passes every gate above but is above the viewer's
  *   maturity ceiling on this site (checked AFTER the download gate, so a version
  *   the viewer cannot download never reveals its rating); or the app is running

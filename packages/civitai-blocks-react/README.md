@@ -1272,8 +1272,9 @@ replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
 🔴 **Only free, public versions are served.** An unpublished draft (the owner's
 included) and an early-access or paid version answer `not-found` — even for a
 viewer who bought it. Only the owner gets their own published early-access
-version. Private-availability and POI versions are refused to everyone but the
-owner, moderators included.
+version. A POI model, or a model or version whose availability is not `Public`
+or `Unsearchable` (e.g. `Private`), is refused to everyone but the owner,
+moderators included.
 
 ```tsx
 const { file, loading, error, refetch } = useResourceFile(modelVersionId);
