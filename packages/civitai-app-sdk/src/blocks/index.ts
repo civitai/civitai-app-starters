@@ -324,6 +324,26 @@ export type {
   BlockRunConfirmedStepHostError,
 } from './types.js';
 
+/**
+ * Host bounds for an inline `customComfy` graph, mirrored from civitai/civitai —
+ * see `WorkflowBodyCustomComfyInline.workflow`.
+ */
+export { BLOCK_INLINE_COMFY_MAX_NODES, BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES } from './types.js';
+
+/**
+ * Pre-spend runnability check for a workflow file entry (`useResourceFile`),
+ * against a ComfyUI core-node list generated from one pinned ComfyUI commit.
+ * A Comfy estimate is a ceiling, never a price.
+ */
+export { checkComfyGraph, COMFY_FRONTEND_ONLY_NODE_CLASSES } from './comfyGraph.js';
+export type {
+  ComfyGraphCheck,
+  ComfyGraphRefusal,
+  ComfyGraphRefusalCode,
+  ComfyModelFilenameInput,
+} from './comfyGraph.js';
+export { COMFY_CORE_NODE_CLASSES, COMFY_CORE_NODES_COMMIT } from './comfyCoreNodes.generated.js';
+
 /** Host bound for the App Blocks `kind: 'workflow'` body — see `WorkflowBodyWorkflow`. */
 export { BLOCK_WORKFLOW_MAX_STEPS, BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS } from './types.js';
 

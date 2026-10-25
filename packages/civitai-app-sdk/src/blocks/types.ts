@@ -1091,6 +1091,22 @@ export type WorkflowBodyCustomComfyRecipe = {
 };
 
 /**
+ * The most nodes an inline `customComfy` graph may carry. Mirrors civitai's
+ * `INLINE_GRAPH_NODES_MAX` (`src/server/schema/blocks/workflow.schema.ts`); the
+ * host refuses a larger graph before any spend.
+ */
+export const BLOCK_INLINE_COMFY_MAX_NODES = 300;
+
+/**
+ * The largest an inline `customComfy` graph may be, as `JSON.stringify(workflow)
+ * .length`. Mirrors civitai's `INLINE_GRAPH_BYTES_MAX` (256 KiB, same file). The
+ * host counts UTF-16 code units (its `jsonLengthWithin` default), which equals
+ * bytes for an ASCII graph. The route also caps the WHOLE request body at
+ * 256 KiB, so the real room for the graph is a little less than this.
+ */
+export const BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES = 262144;
+
+/**
  * One node of a ComfyUI `/prompt` graph, as it travels on the wire.
  *
  * Mirrors the host's `inlineComfyNodeSchema`, which is `.strict()` with exactly
@@ -1198,8 +1214,9 @@ export type WorkflowBodyCustomComfyInline = {
    * ComfyUI's "Save (API Format)" export produces).
    *
    * Server-enforced bounds — all three REJECT, none truncates:
-   *  - at least **1** node, at most **300**;
-   *  - the serialized graph must be at most **262144 bytes** (256 KB);
+   *  - at least **1** node, at most **300** ({@link BLOCK_INLINE_COMFY_MAX_NODES});
+   *  - the serialized graph must be at most **262144 bytes** (256 KB,
+   *    {@link BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES});
    *  - nesting at most **128** levels deep (the gate walks the graph, and a
    *    graph it cannot finish walking is one it cannot prove safe).
    */
