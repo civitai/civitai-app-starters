@@ -17,9 +17,10 @@ import { collectCoreNodes, collectModelExtensions, COMFYUI_COMMIT } from '../../
 
 /**
  * `checkComfyGraph` — one fixture per reason code, each built so that code is
- * the ONLY one that fires. Deleting one check therefore turns exactly its own
- * "alone" test red (plus the realistic UI fixture, for the two checks a UI
- * graph trips). Expected values are literals, never recomputed from the code.
+ * the ONLY one that fires. Deleting one check therefore turns its own "alone"
+ * tests red, plus the two composite tests that name it on purpose: the
+ * realistic UI fixture (not-api-format, custom-nodes) and the all-reasons
+ * ordering test. Expected values are literals, never recomputed from the code.
  */
 
 // Public huggingface AIRs, the shape civitai's starter-comfy-txt2img recipe puts
@@ -172,6 +173,13 @@ describe('checkComfyGraph', () => {
         ],
       };
       expect(checkComfyGraph({ format: 'ui', graph })).toEqual({
+        runnable: false,
+        reasons: [{ code: 'not-api-format', format: 'ui' }],
+      });
+    });
+
+    it('takes a stated ui format at its word, even over an API-shaped graph', () => {
+      expect(checkComfyGraph({ format: 'ui', graph: coreAirGraph() })).toEqual({
         runnable: false,
         reasons: [{ code: 'not-api-format', format: 'ui' }],
       });
