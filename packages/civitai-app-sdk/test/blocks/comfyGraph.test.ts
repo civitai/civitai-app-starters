@@ -217,6 +217,17 @@ describe('checkComfyGraph', () => {
       });
     });
 
+    it('lists a class newer than the pinned list, but not its comfy-core pack id', () => {
+      const graph = { nodes: [{ id: 1, type: 'BrandNewCoreNode', properties: { cnr_id: 'comfy-core' } }] };
+      expect(checkComfyGraph({ format: 'ui', graph })).toEqual({
+        runnable: false,
+        reasons: [
+          { code: 'not-api-format', format: 'ui' },
+          { code: 'custom-nodes', classes: ['BrandNewCoreNode'], packs: [] },
+        ],
+      });
+    });
+
     it('counts a frontend-only class as custom in an API graph (ComfyUI cannot run it)', () => {
       const graph = coreAirGraph();
       graph['11'] = { class_type: 'Note', inputs: {} };
