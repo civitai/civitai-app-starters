@@ -9,6 +9,7 @@ import { DISPATCH_AGENT, isSubagentOutput, SUBAGENT_KIND, type SubagentResult } 
 import type { ErrorTrace } from '../agent/error-trace.js';
 import {
   applyRunEvent,
+  RUN_FEATURE_EDIT,
   RUN_KEEPALIVE_MS,
   RUN_PROTOCOL_VERSION,
   type RunEvent,
@@ -19,7 +20,7 @@ import {
   type StartRunRequest,
 } from '../runner-protocol.js';
 import type { ConversationStore } from '../store/conversation-store.js';
-import { CUT_OFF } from '../store/thread-store.js';
+import { CUT_OFF, editTurn } from '../store/thread-store.js';
 import type { ChatToolResult } from '../tools/gate.js';
 import type { Attachment, Turn } from '../types.js';
 import type { ErrorKind } from '../ux/humanize.js';
@@ -160,6 +161,11 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
   #ended = new Set<string>();
   /** Bumped whenever the page leaves: a lookup that was on its way before starts nothing. */
   #generation = 0;
+  /**
+   * The turn the viewer edited whose start the runner has not taken yet (it was refused, or is on its
+   * way): Retry of it asks for the edit again, since the runner's head still holds the old message.
+   */
+  #edited: Turn | undefined;
   #disposed = false;
   /**
    * The idempotency key of a turn's start given up on with no answer (`#gaveUp`): it may well have
@@ -199,6 +205,30 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     this.#unanswered.delete(turn);
     turn.assistant = { messages: [], status: 'streaming' };
     await this.#start(conversation.id, turn, true, key);
+  }
+
+  /** Only once the runner said it takes edits (`features` on a start's or a lookup's answer): an older runner would reply to the old message. */
+  get canEdit(): boolean {
+    return this.#deps.client.features?.has(RUN_FEATURE_EDIT) ?? false;
+  }
+
+  /**
+   * The viewer edited their latest message: the run starts with `edit`, so the runner replaces the
+   * message in its head, drops the reply that followed it and replies afresh, as a new reply (charged
+   * as one). The page writes nothing: it reads the head again once the run ended.
+   */
+  async edit(content: string): Promise<void> {
+    const conversation = this.#deps.store.current;
+    const turn = conversation?.turns.at(-1);
+    if (this.running || this.#disposed || !this.canEdit || !conversation || !turn) return;
+    const { store } = this.#deps;
+    if (store.editUserTurn) store.editUserTurn(turn, content);
+    else editTurn(conversation, turn, content, new Date().toISOString());
+    this.#edited = turn;
+    // A start of this turn given up on kept its key for Retry; that key names the run of the OLD
+    // message, so a Retry of the edit asking with it would get that run back and drop the edit.
+    this.#unanswered.delete(turn);
+    await this.#start(conversation.id, turn, false);
   }
 
   /**
@@ -250,7 +280,10 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
     }
     this.#attaching = conversationId;
     try {
+      const couldEdit = this.canEdit;
       const summary = await this.#deps.client.lookup(conversationId);
+      // The runner's answer says whether it takes edits: the latest message's Edit shows or goes.
+      if (this.canEdit !== couldEdit) this.#emit();
       const conversation = this.#deps.store.current;
       // The page left (another chat, a new one, the session replaced) while the lookup was on its way.
       if (generation !== this.#generation || this.#disposed) return false;
@@ -320,7 +353,9 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       idempotencyKey: run.key,
       conversationId,
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
-      turn: { seq: turn.seq, user: turn.user, ...(retry ? { retry: true } : {}) },
+      // An edit the runner has not taken yet (a refused one asked again too) goes as the edit, and
+      // without `retry`: a runner that does not know `edit` refuses it as a stale turn.
+      turn: { seq: turn.seq, user: turn.user, ...(this.#edited === turn ? { edit: true } : retry ? { retry: true } : {}) },
       model: this.#deps.model(),
       settings: this.#deps.settings(),
       ...(page ? { page } : {}),
@@ -330,6 +365,8 @@ export class RemoteAgent extends EventTarget implements ChatAgent {
       try {
         const { runId } = await this.#deps.client.start(request);
         run.runId = runId;
+        // The runner took the edit: its head holds the edited message from now on.
+        if (this.#edited === turn) this.#edited = undefined;
         // Stopped before the answer came: the run it started is stopped now, best effort.
         if (run.closed && run.stopRequested) void this.#deps.client.stop(runId).catch(() => undefined);
         break;

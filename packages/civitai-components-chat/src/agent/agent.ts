@@ -4,6 +4,7 @@ import { outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
+import { editTurn } from '../store/thread-store.js';
 import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import type { ChatAgent } from './chat-agent.js';
@@ -127,6 +128,26 @@ export class Agent extends EventTarget implements ChatAgent {
     const { resume: from, buzz } = turn.assistant;
     turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
     await this.#run(turn, from);
+  }
+
+  /** In the page, the viewer can always edit their latest message while no reply runs. */
+  get canEdit(): boolean {
+    return true;
+  }
+
+  /**
+   * The viewer edited their latest message: its text becomes `content`, the reply to it (if any) is
+   * dropped, and it is replied to afresh: a new reply from its start, charged as one (nothing carries on
+   * from the old reply, whose cost stays charged). Only while no reply runs.
+   */
+  async edit(content: string): Promise<void> {
+    const conversation = this.#deps.store.current;
+    const turn = conversation?.turns.at(-1);
+    if (this.running || !conversation || !turn) return;
+    const { store } = this.#deps;
+    if (store.editUserTurn) store.editUserTurn(turn, content);
+    else editTurn(conversation, turn, content, (this.#deps.now?.() ?? new Date()).toISOString());
+    await this.#run(turn);
   }
 
   async #run(turn: Turn, from?: ResumePoint): Promise<void> {

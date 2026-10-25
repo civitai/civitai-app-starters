@@ -86,6 +86,7 @@ import type {
   useReactions,
   useRequestConsent,
   useRequestSignIn,
+  useResourceFile,
   useResourcePicker,
   useRunConfirmedStep,
   useRunTraining,
@@ -134,6 +135,7 @@ import type {
   UseReactions,
   UseRequestConsent,
   UseRequestSignIn,
+  UseResourceFile,
   UseResourcePicker,
   UseRunConfirmedStep,
   UseRunTraining,
@@ -235,6 +237,7 @@ type _useUploadImageBytes = Assert<
 >;
 type _useViewer = Assert<Exact<ReturnType<typeof useViewer>, UseViewer>>;
 type _useWildcardPack = Assert<Exact<ReturnType<typeof useWildcardPack>, UseWildcardPack>>;
+type _useResourceFile = Assert<Exact<ReturnType<typeof useResourceFile>, UseResourceFile>>;
 type _useWorkflowBatch = Assert<Exact<ReturnType<typeof useWorkflowBatch>, UseWorkflowBatch>>;
 
 /**

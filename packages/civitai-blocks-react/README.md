@@ -1229,6 +1229,75 @@ if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
 if (!loading && pack) console.log(Object.keys(pack.lists));
 ```
 
+### `useResourceFile(modelVersionId, fileId?)`
+
+Read a resource file's parsed JSON — for a workflow, its graphs — by model
+version. The host resolves, fetches, unzips and parses the file **in the
+viewer's own page session**, enforcing the real download gates, so the iframe
+never sees the session, a signed URL or the raw bytes. No block scope is needed.
+Returns `{ file, loading, error, refetch }`.
+
+- `file.meta` names what was served (`modelId`, `modelVersionId`, `fileId`,
+  `fileName`, `modelName`, `versionName`, `creatorUsername`).
+- `file.entries` holds one `{ path, format, graph }` per JSON document: one for a
+  plain `.json`, several for a `.zip` (non-JSON entries are skipped). `format`
+  is `'ui'` (a `nodes` array), `'api'` (every top-level value has `class_type`
+  and `inputs`) or `'unknown'`; check it before treating `graph` as a graph.
+  `file.truncated` is `true` when an entry was dropped: past 20 entries, over
+  the 4 MB per-entry or 16 MB total cap, unreadable, or not valid JSON.
+- Pass `fileId` to pin one file of a multi-file version. Without it the host
+  picks one.
+- Changing `modelVersionId` or `fileId` resets `file` and `error` to `null`
+  before the new fetch, so a file never shows for ids it does not belong to.
+- The request waits up to 120 s, because the host downloads and unzips the file.
+
+On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
+
+| `code` | Means | Retry? |
+|---|---|---|
+| `not-found` | No such version or file, not a workflow, or not downloadable for free (see below) | No |
+| `forbidden` | Above the viewer's maturity ceiling on this site, or the app is in review preview | No |
+| `unauthorized` | The viewer is signed out | No. Offer sign-in with `useRequestSignIn()`: the page reloads signed in, the block re-inits, and the hook fetches again on mount |
+| `too-large` | Over 32 MB, or every entry was over a size cap (4 MB per entry, 16 MB in total) | No |
+| `parse-failed` | Not a `.json`/`.zip`, corrupt, or no valid JSON — **or** the host's catch-all: a network error, a failed fetch, no answer within its 110 s deadline, a transient storage failure, or another server error | Once, maybe: it can be transient |
+| `busy` | Three fetches already in flight in this tab | Yes |
+| `rate-limited` | The viewer's 30-a-minute budget is spent | Yes, later |
+
+🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
+model-page slot does not answer it (the request times out), and `dev:live`
+replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
+`resourceFile` (the canned reply) and a `resourceFileError` (force a code);
+`setScenario({ resourceFileError: undefined })` clears the forced error.
+
+🔴 **Only free, public versions are served.** An unpublished draft (the owner's
+included) and an early-access or paid version answer `not-found` — even for a
+viewer who bought it. Only the owner gets their own published early-access
+version. A POI model, or a model or version whose availability is not `Public`
+or `Unsearchable` (e.g. `Private`), is refused to everyone but the owner,
+moderators included. The owner can also read their own non-public files and a
+version with downloads disabled; an archived or deleted model is `not-found`
+for everyone, the owner included.
+
+The example below retries `busy` and `rate-limited` with no limit. `parse-failed`
+is worth at most one retry, so keep it out of that loop: the loop would
+re-download a file of up to 32 MB every 2 s.
+
+```tsx
+const { file, loading, error, refetch } = useResourceFile(modelVersionId);
+// Retry a retryable code from an effect, after a delay — never during render.
+// Never add `parse-failed` here: it is worth at most ONE retry, and this loop
+// would refetch a file of up to 32 MB every 2 s.
+const retryable =
+  error instanceof ResourceFileError && (error.code === 'busy' || error.code === 'rate-limited');
+useEffect(() => {
+  if (!retryable) return;
+  const t = setTimeout(refetch, 2_000);
+  return () => clearTimeout(t);
+}, [retryable, refetch]);
+const graphs = file?.entries.filter((e) => e.format !== 'unknown') ?? [];
+if (!loading && file) console.log(file.meta.fileName, graphs.length, file.truncated);
+```
+
 ### `useCollectionFollow()`
 
 Follow / unfollow a collection **for the viewer**, host-mediated over
@@ -3694,6 +3763,10 @@ drops inbound messages from origins outside its allowlist — so a dev harness
 must include its own origin, e.g. `VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5173`.
 Otherwise `BLOCK_INIT` never lands.
 
+**`dev:mock`**, as this README uses it, is this mock harness. It is not a script
+name: a starter runs it with `npm run dev:harness`. (`dev:live` is the
+real-backend harness, [below](#in-a-devlive-harness).)
+
 ### Stability of `/testing`
 
 [#334](https://github.com/civitai/civitai-app-starters/issues/334) offered a
@@ -3830,6 +3903,7 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.78.x` | `^0.79.0` | `useResourceFile()` (`GET_RESOURCE_FILE`). Its types (`BlockResourceFile` and friends) come from the SDK's `0.79.0`; the hook imports no SDK value, so the declared peer floor is unchanged. |
 | `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
 | `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |

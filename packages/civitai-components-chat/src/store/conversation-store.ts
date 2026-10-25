@@ -77,6 +77,13 @@ export interface ConversationStore extends EventTarget {
   isSaved(id: string): boolean;
   startNew(): Conversation;
   appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
+  /**
+   * The viewer edited their latest message, `turn`, whose reply is asked for afresh: its text becomes
+   * `content`, the reply that followed it is dropped, and the chat is saved so (see `editTurn`). Nothing
+   * when `turn` is not the chat's latest. A store without it gets `editTurn` applied, unsaved until the
+   * reply ends.
+   */
+  editUserTurn?(turn: Turn, content: string): void;
   completeTurn(turn: Turn): Promise<void>;
   /**
    * A reply to `turn` starts in this tab (`send`, or Retry/Continue): a store that saves progress marks it

@@ -62,6 +62,8 @@ import {
   type BlockViewer,
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
+  type BlockResourceFile,
+  type BlockResourceFileErrorCode,
   type AppWorkflow,
   type BlockModel3dOutput,
   type BlockPublishedModel,
@@ -1372,6 +1374,21 @@ export interface MockHostOptions {
    */
   wildcardPackError?: BlockWildcardPackErrorCode;
   /**
+   * The parsed file returned from `GET_RESOURCE_FILE` (what `useResourceFile`
+   * reads). Absent → {@link DEFAULT_RESOURCE_FILE}, one UI-format graph. Ignored
+   * when {@link resourceFileError} is set. The mock returns it whatever
+   * `modelVersionId` / `fileId` the block asks for.
+   */
+  resourceFile?: BlockResourceFile;
+  /**
+   * Force `GET_RESOURCE_FILE` to reply with this code from the CLOSED set
+   * (`not-found` | `forbidden` | `unauthorized` | `too-large` | `parse-failed` |
+   * `busy` | `rate-limited`) instead of a file — exercises `useResourceFile`'s
+   * error UI. Absent → a file is returned. Live-tunable via
+   * {@link MockHost.setScenario}, where passing the key as `undefined` clears it.
+   */
+  resourceFileError?: BlockResourceFileErrorCode;
+  /**
    * Force `SET_COLLECTION_FOLLOW` to reply with an `error` instead of writing —
    * exercises `useCollectionFollow`'s refusal handling. Pass a
    * {@link BlockCollectionFollowErrorCode} for a HOST refusal (`'declined'` is
@@ -1879,6 +1896,8 @@ export type MockHostScenarioPatch = Pick<
   | 'buzzReadError'
   | 'wildcardPack'
   | 'wildcardPackError'
+  | 'resourceFile'
+  | 'resourceFileError'
   | 'collectionFollowError'
   | 'reactionStates'
   | 'reactionError'
@@ -1921,6 +1940,7 @@ export interface MockBuzzHandle {
  *
  * After install, a harness UI can drive scenarios live:
  *  - `setScenario(patch)` — merge new generation/buzz/storage/failMode controls.
+ *    `setScenario({ resourceFileError: undefined })` clears a forced resource-file error.
  *  - `setTheme('light' | 'dark')` — flip the site theme and push `THEME_CHANGE`.
  *  - `buzz.setBalance(n)` / `buzz.getBalance()` — flip the simulated wallet.
  *
@@ -2292,6 +2312,39 @@ const DEFAULT_WILDCARD_PACK: BlockWildcardPack = {
   truncated: false,
   truncatedLists: [],
   maturity: { browsingLevel: SFW_LEVELS, sfwOnly: true },
+};
+
+/**
+ * Default file reported on `GET_RESOURCE_FILE`: one plain `.json` workflow in the
+ * ComfyUI UI format (a `nodes` array), so a block renders a graph out of the box.
+ */
+const DEFAULT_RESOURCE_FILE: BlockResourceFile = {
+  meta: {
+    modelId: 618700,
+    modelVersionId: 691700,
+    fileId: 591700,
+    fileName: 'sample-workflow.json',
+    modelName: 'Sample Workflow',
+    versionName: 'v1.0',
+    creatorUsername: 'creator',
+  },
+  entries: [
+    {
+      path: 'sample-workflow.json',
+      format: 'ui',
+      graph: {
+        last_node_id: 2,
+        last_link_id: 1,
+        nodes: [
+          { id: 1, type: 'CheckpointLoaderSimple', inputs: [], outputs: [{ name: 'MODEL', links: [1] }] },
+          { id: 2, type: 'KSampler', inputs: [{ name: 'model', link: 1 }], outputs: [] },
+        ],
+        links: [[1, 1, 0, 2, 0, 'MODEL']],
+        version: 0.4,
+      },
+    },
+  ],
+  truncated: false,
 };
 
 /**
@@ -2685,6 +2738,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Wildcard-pack bridge data + forced discriminated-error knob.
   let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
   let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
+  // Resource-file bridge data + forced closed-set error knob.
+  let resourceFile: BlockResourceFile = options.resourceFile ?? DEFAULT_RESOURCE_FILE;
+  let resourceFileError: BlockResourceFileErrorCode | undefined = options.resourceFileError;
   // Collection-follow bridge.
   //
   // 🔴 THERE IS DELIBERATELY NO FOLLOW-STATE MAP HERE, and an earlier version's
@@ -4316,6 +4372,25 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'GET_RESOURCE_FILE': {
+            // Token-INDEPENDENT read, like GET_WILDCARD_PACK. A forced error
+            // replies with the closed-set code (never free text), as the real
+            // host does. The canned file is returned for any version / file id.
+            if (!isRoutableRequestId(requestId)) return;
+            if (resourceFileError !== undefined) {
+              dispatchToBlock({
+                type: 'RESOURCE_FILE_RESULT',
+                payload: { requestId, error: resourceFileError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'RESOURCE_FILE_RESULT',
+              payload: { requestId, file: resourceFile },
+            });
+            return;
+          }
+
           case 'QUERY_APP_WORKFLOWS': {
             // App generator SUBQUEUE read. Drop a request with no requestId
             // (unroutable). A forced error replies with the FREE-TEXT error
@@ -5647,6 +5722,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzzReadError !== undefined) buzzReadError = normalizeReadError(patch.buzzReadError);
     if (patch.wildcardPack !== undefined) wildcardPack = patch.wildcardPack;
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
+    if (patch.resourceFile !== undefined) resourceFile = patch.resourceFile;
+    // Key PRESENCE, not value: `{ resourceFileError: undefined }` clears it.
+    if ('resourceFileError' in patch) resourceFileError = patch.resourceFileError;
     if (patch.collectionFollowError !== undefined)
       collectionFollowError = patch.collectionFollowError;
     if (patch.reactionStates !== undefined || patch.reactionError !== undefined) {

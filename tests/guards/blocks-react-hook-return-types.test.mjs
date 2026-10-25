@@ -96,6 +96,7 @@ const HOOK_FILES = [
   'useRequestConsent',
   'useRequestSequencer',
   'useRequestSignIn',
+  'useResourceFile',
   'useResourcePicker',
   'useRunConfirmedStep',
   'useRunTraining',

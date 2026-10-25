@@ -68,6 +68,11 @@ export class RunnerHttpError extends Error {
 /** The run protocol's calls, as the page makes them. */
 export class RunnerClient {
   readonly options: ChatRemoteRunner;
+  /**
+   * What the runner said it can do (`features`) in its latest answer to a start or a lookup; `undefined`
+   * until one came. An older runner sends none, so it reads as an empty set.
+   */
+  features: ReadonlySet<string> | undefined;
 
   constructor(options: ChatRemoteRunner) {
     this.options = options;
@@ -79,12 +84,22 @@ export class RunnerClient {
   }
 
   async start(body: StartRunRequest, signal?: AbortSignal): Promise<StartRunResponse> {
-    return (await this.#call(runPaths.start(), { method: 'POST', body: JSON.stringify(body) }, signal)) as StartRunResponse;
+    const response = (await this.#call(runPaths.start(), { method: 'POST', body: JSON.stringify(body) }, signal)) as StartRunResponse;
+    this.#noteFeatures(response);
+    return response;
   }
 
   /** The conversation's live run, `null` when none runs. */
   async lookup(conversationId: string, signal?: AbortSignal): Promise<RunSummary | null> {
-    return ((await this.#call(runPaths.lookup(conversationId), { method: 'GET' }, signal)) as RunLookupResponse | undefined)?.run ?? null;
+    const response = (await this.#call(runPaths.lookup(conversationId), { method: 'GET' }, signal)) as RunLookupResponse | undefined;
+    this.#noteFeatures(response);
+    return response?.run ?? null;
+  }
+
+  /** Keeps the features an answer lists (none when it lists none, as an older runner's). */
+  #noteFeatures(response: { features?: unknown } | undefined): void {
+    const listed = response?.features;
+    this.features = new Set(Array.isArray(listed) ? listed.filter((feature): feature is string => typeof feature === 'string') : []);
   }
 
   async stop(runId: string, signal?: AbortSignal): Promise<void> {

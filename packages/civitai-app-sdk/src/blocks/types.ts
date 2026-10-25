@@ -3429,6 +3429,94 @@ export interface BlockWildcardPack {
 }
 
 // ============================================================
+// Resource-file bridge result types (GET_RESOURCE_FILE)
+// ============================================================
+
+/**
+ * The CLOSED error set a `RESOURCE_FILE_RESULT` carries on failure
+ * (civitai/civitai-app-starters#664). Like {@link BlockWildcardPackErrorCode} it
+ * is a discriminated code, never free text. What each code covers is the host's
+ * behaviour in civitai/civitai#6818 (`resource-file.service.ts`,
+ * `resourceFileParse.ts`, `resourceFileHost.ts`):
+ *
+ * - `not-found` — every refusal of the resolve step except maturity: no such
+ *   version; not a `Workflows`/`ComfyWorkflows` version; no such file, or (for a
+ *   non-owner) the file is not `Public`; the site's download gate, evaluated
+ *   WITHOUT moderator rights, refuses it; an unpublished draft (the owner's own
+ *   included); an early-access or paid version for anyone but its owner (buyers
+ *   included); downloads disabled for anyone but the owner; and, for anyone but
+ *   the owner (moderators included), a POI model or a model or version whose
+ *   availability is not open (`Public` or `Unsearchable`), e.g. `Private`.
+ * - `forbidden` — the version passes every gate above but is above the viewer's
+ *   maturity ceiling on this site (checked AFTER the download gate, so a version
+ *   the viewer cannot download never reveals its rating); or the app is running
+ *   in review preview, which refuses before resolving anything.
+ * - `unauthorized` — the viewer is signed out.
+ * - `too-large` — the file's advertised size, its `Content-Length` or the body
+ *   as it streams is over 32 MB; or no entry could be returned and at least one
+ *   was dropped by a size cap (4 MB per entry, 16 MB inflated in total) — so a
+ *   single `.json` over 4 MB is `too-large`.
+ * - `parse-failed` — not a `.json` or `.zip`, a corrupt zip, or no JSON entry
+ *   that could be read and parsed. ALSO the host's catch-all: a network error, a
+ *   non-OK fetch, no answer within the host's 110 s deadline, a transient storage
+ *   failure in the resolve step, or any other server error. So it can be
+ *   transient, and one retry is reasonable. It is also the `dev:live` reply,
+ *   which cannot serve this bridge.
+ * - `busy` — the tab already has 3 resource-file requests in flight; retry.
+ * - `rate-limited` — the viewer's 30-a-minute budget is spent; retry later.
+ */
+export type BlockResourceFileErrorCode =
+  | 'not-found'
+  | 'forbidden'
+  | 'unauthorized'
+  | 'too-large'
+  | 'parse-failed'
+  | 'busy'
+  | 'rate-limited';
+
+/**
+ * How the host classified one parsed JSON entry: `api` when every top-level
+ * value has `class_type` and `inputs` (the ComfyUI API format), `ui` when it has
+ * a `nodes` array (the ComfyUI UI/editor format), otherwise `unknown`.
+ */
+export type BlockResourceFileEntryFormat = 'ui' | 'api' | 'unknown';
+
+/** Which file the host served, and what it belongs to. */
+export interface BlockResourceFileMeta {
+  modelId: number;
+  modelVersionId: number;
+  /** The file the host picked (or the `fileId` the request named). */
+  fileId: number;
+  fileName: string;
+  modelName: string;
+  versionName: string;
+  creatorUsername: string | null;
+}
+
+/** One parsed JSON document out of the file. */
+export interface BlockResourceFileEntry {
+  /** The entry's path inside the archive, or the file name for a plain `.json`. */
+  path: string;
+  format: BlockResourceFileEntryFormat;
+  /** The parsed JSON, as-is. Check `format` before reading it as a graph. */
+  graph: unknown;
+}
+
+/**
+ * A resource file the host resolved, fetched, unzipped and parsed AS THE VIEWER
+ * and returned on `RESOURCE_FILE_RESULT`. A plain `.json` file gives one entry;
+ * a `.zip` gives one per `.json` entry (other entries, `__MACOSX/` and dot-files
+ * are skipped and do not count), at most 20. `truncated` is true when a JSON
+ * entry was dropped: past the 20, over the 4 MB per-entry or 16 MB total inflate
+ * cap, unreadable, or not valid JSON.
+ */
+export interface BlockResourceFile {
+  meta: BlockResourceFileMeta;
+  entries: BlockResourceFileEntry[];
+  truncated: boolean;
+}
+
+// ============================================================
 // App generator SUBQUEUE (QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW)
 // ============================================================
 

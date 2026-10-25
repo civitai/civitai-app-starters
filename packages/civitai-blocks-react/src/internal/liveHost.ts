@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 52, of which 14 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 53, of which 15 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -127,6 +127,9 @@
  *     `publishError` options. Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
+ *   • GET_RESOURCE_FILE — the same session-authed resolve plus in-tab
+ *     fetch/unzip/parse, and only full-page app hosts answer it. Replies
+ *     `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
  *     pipeline. Replies DISMISSED (the hook resolves `null`).
  *   • OPEN_IMAGE_PICKER — needs the host's picker over the viewer's own posted
@@ -1538,6 +1541,29 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             );
             dispatchToBlock({
               type: 'WILDCARD_PACK_RESULT',
+              payload: { requestId, error: 'parse-failed' },
+            });
+            return;
+          }
+
+          case 'GET_RESOURCE_FILE': {
+            // UNSUPPORTED in live v1, for the same reason as GET_WILDCARD_PACK
+            // directly above: the real host resolves the file through a
+            // SESSION-authed procedure and fetches + unzips + parses it in the
+            // viewer's page tab. A liveHost holds a BLOCK token, not a session,
+            // so it cannot resolve the file. Reply with an honest `parse-failed`
+            // (never a fabricated file) so the hook surfaces a typed error rather
+            // than hanging. The closed error set has no "unsupported" code, and
+            // `parse-failed` is the one the wildcard refusal already uses.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'resource-file',
+              'GET_RESOURCE_FILE is not supported in dev:live (it needs the session-authed ' +
+                'resolve + in-tab fetch and unzip, on a full-page app host). Replying ' +
+                '`parse-failed`. Use dev:mock to exercise the resource-file path.',
+            );
+            dispatchToBlock({
+              type: 'RESOURCE_FILE_RESULT',
               payload: { requestId, error: 'parse-failed' },
             });
             return;

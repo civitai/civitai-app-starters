@@ -66,6 +66,20 @@ export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
  */
 export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * The bound for `GET_RESOURCE_FILE` (`hooks/useResourceFile.ts`), a `'protocol'`
+ * request whose HOST work is slow: a session-authed resolve, a fetch of the
+ * signed URL (up to 32 MB), then an unzip and parse of up to 16 MB in the
+ * viewer's tab. The host bounds all three with ONE 110 s deadline
+ * (civitai/civitai#6818 `RESOURCE_FILE_DEADLINE_MS`), after which it replies
+ * `parse-failed`. At {@link DEFAULT_REQUEST_TIMEOUT_MS} a large file on a slow
+ * connection would time out on the block while the host was still working, and
+ * the host's valid reply would be dropped as unroutable. 120 s leaves the host's
+ * 110 s deadline room to answer first. Same number as
+ * {@link WORKFLOW_REQUEST_TIMEOUT_MS}.
+ */
+export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
+
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
   /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
@@ -177,6 +191,10 @@ const REQUEST_TIMEOUT_CLASS = {
   GET_IMAGES_BY_IDS: 'protocol',
   GET_VIEWER: 'protocol',
   GET_WILDCARD_PACK: 'protocol',
+  // No person in the loop, so `'protocol'` — but sent under its own longer
+  // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
+  // under a 110 s deadline, which the 30 s default would cut short.
+  GET_RESOURCE_FILE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',
   // The host fetches the blob and triggers the browser's own download; it replies

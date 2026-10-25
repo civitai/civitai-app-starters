@@ -1,5 +1,15 @@
 # @civitai/components-chat
 
+## 0.31.0
+
+### Minor Changes
+
+- 4bb44b1: Edit the latest message. While no reply runs (after a reply finished, after Stop, after an error), the viewer's latest message shows **Edit**: Save replaces its words, drops the reply that followed it and asks for a reply afresh (a new reply, charged like one); Cancel leaves it as it was. Keyboard: Enter saves, Shift+Enter is a new line, Escape cancels and puts focus back on Edit. The chat is saved at once with the edited message and no reply. An edit fires `before-send` with `edit: true`. Remote mode: Edit shows only once the runner lists `features: ['edit']` on a start's or a lookup's answer; the runner protocol adds `turn.edit` on `StartRunRequest` and `features` on `StartRunResponse` and `RunLookupResponse` (both optional, so older runners and pages keep working).
+
+### Patch Changes
+
+- f3ce921: Remote runner mode: a reply whose start keeps failing (no answer from the runner, or a 5xx, 408 or 429) is no longer asked again forever behind a spinner. It is asked again on the 1, 2, 5, 10, 30 s waits for at most a minute from the first ask, or from when the page last woke (`START_GIVE_UP_MS`; six asks over 48 s when each fails fast), then the reply fails with the chat's usual error and Retry, which starts asking afresh with the same idempotency key (the rest of the start built as any Retry's), so a run an earlier ask did start is followed rather than refused. A 4xx refusal still fails at once.
+
 ## 0.30.0
 
 ### Minor Changes
