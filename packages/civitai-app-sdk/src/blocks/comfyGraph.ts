@@ -7,7 +7,9 @@
  * It answers from the file alone. `runnable: true` means none of the known
  * blockers below is present — not that the job will succeed: the worker image
  * still decides which nodes exist, and the host still runs its own gates (AIR
- * containment, entitlement, moderation) on the body you submit.
+ * containment, entitlement, moderation) on the body you submit. The core-node
+ * list is pinned to a ComfyUI commit, not to the worker's ComfyUI version, so it
+ * can name classes newer than the worker has.
  *
  * 🔴 A Comfy estimate is a CEILING, never a price. `estimate` on a
  * `customComfy` body returns the `maxBuzz` you declared as `cost.total`, and
@@ -50,10 +52,15 @@ const MODEL_FILE_EXTENSIONS: readonly string[] = [...COMFY_MODEL_FILE_EXTENSIONS
  * An input that names a model: `*_name` with an optional number (`ckpt_name`,
  * `unet_name`, `lora_name`, `vae_name`, `clip_name`, `clip_name2`,
  * `control_net_name`, `style_model_name`, `model_name`, …), plus the two core
- * loader inputs that do not follow that pattern.
+ * loader inputs that do not follow that pattern, plus two whose names are too
+ * generic to match on any class and so count only on the class that loads by them.
  */
 const MODEL_INPUT_NAME = /_name\d*$/;
 const MODEL_INPUT_NAMES_EXTRA: readonly string[] = ['model_file', 'text_encoder'];
+const MODEL_INPUT_NAMES_BY_CLASS: Readonly<Record<string, readonly string[]>> = {
+  ModelPatchLoader: ['name'],
+  TrainLoraNode: ['existing_lora'],
+};
 
 const CORE = new Set(COMFY_CORE_NODE_CLASSES);
 const FRONTEND_ONLY = new Set(COMFY_FRONTEND_ONLY_NODE_CLASSES);
@@ -129,8 +136,13 @@ function isModelFilename(value: string): boolean {
   return MODEL_FILE_EXTENSIONS.some((ext) => v.endsWith(ext));
 }
 
-function isModelInput(name: string): boolean {
-  return MODEL_INPUT_NAME.test(name) || MODEL_INPUT_NAMES_EXTRA.includes(name);
+function isModelInput(classType: string, name: string): boolean {
+  return (
+    MODEL_INPUT_NAME.test(name) ||
+    MODEL_INPUT_NAMES_EXTRA.includes(name) ||
+    (Object.hasOwn(MODEL_INPUT_NAMES_BY_CLASS, classType) &&
+      MODEL_INPUT_NAMES_BY_CLASS[classType]!.includes(name))
+  );
 }
 
 function customNodes(classes: Set<string>, packs: Set<string>): ComfyGraphRefusal | null {
@@ -213,7 +225,7 @@ export function checkComfyGraph(
     if (!CORE.has(classType)) classes.add(classType);
     if (!isObj(node.inputs)) continue;
     for (const [input, value] of Object.entries(node.inputs)) {
-      if (typeof value === 'string' && isModelInput(input) && isModelFilename(value)) {
+      if (typeof value === 'string' && isModelInput(classType, input) && isModelFilename(value)) {
         filenames.push({ nodeId, classType, input, value });
       }
     }

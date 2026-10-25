@@ -278,6 +278,42 @@ describe('checkComfyGraph', () => {
       });
     });
 
+    it('flags ModelPatchLoader\'s `name` input, and `name` on no other class', () => {
+      const graph = coreAirGraph();
+      graph['11'] = { class_type: 'ModelPatchLoader', inputs: { name: 'uso-flux1-projector-v1.safetensors' } };
+      graph['12'] = { class_type: 'PrimitiveString', inputs: { value: 'x', name: 'not-a-loader.safetensors' } };
+      expect(checkComfyGraph(api(graph))).toEqual({
+        runnable: false,
+        reasons: [
+          {
+            code: 'model-filenames',
+            inputs: [
+              { nodeId: '11', classType: 'ModelPatchLoader', input: 'name', value: 'uso-flux1-projector-v1.safetensors' },
+            ],
+          },
+        ],
+      });
+    });
+
+    it('flags TrainLoraNode\'s `existing_lora` input', () => {
+      const graph = coreAirGraph();
+      graph['11'] = {
+        class_type: 'TrainLoraNode',
+        inputs: { model: ['1', 0], existing_lora: 'my_lora_100_steps.safetensors', steps: 10 },
+      };
+      expect(checkComfyGraph(api(graph))).toEqual({
+        runnable: false,
+        reasons: [
+          {
+            code: 'model-filenames',
+            inputs: [
+              { nodeId: '11', classType: 'TrainLoraNode', input: 'existing_lora', value: 'my_lora_100_steps.safetensors' },
+            ],
+          },
+        ],
+      });
+    });
+
     it('treats a checkpoint filename from the ComfyUI list (.ckpt) as a filename', () => {
       const graph = coreAirGraph();
       graph['6']!.inputs.vae_name = 'sdxl_vae.ckpt';
@@ -393,12 +429,50 @@ describe('gen-comfy-core-nodes.mjs on a synthetic ComfyUI tree', () => {
     return root;
   }
 
-  it('reads nodes.py, the LISTED extras (all three registration forms) and nothing unlisted', () => {
+  it('reads nodes.py and only the classes the LISTED extras register', () => {
+    const v3 = [
+      'class A(io.ComfyNode):',
+      '    @classmethod',
+      '    def define_schema(cls):',
+      '        return io.Schema(node_id="V3Node", old_node_id="Renamed")',
+      '',
+      'class B(A):',
+      '    @classmethod',
+      '    def define_schema(cls):',
+      '        schema = super().define_schema()',
+      '        schema.node_id = "V3Subclass"',
+      '        return schema',
+      '',
+      'class C(A):',
+      '    pass',
+      '',
+      '# A defined class that is registered nowhere, and one commented out of the list.',
+      'class Unregistered(io.ComfyNode):',
+      '    @classmethod',
+      '    def define_schema(cls):',
+      '        return io.Schema(node_id="UnregisteredNode")',
+      '',
+      'class Commented(io.ComfyNode):',
+      '    @classmethod',
+      '    def define_schema(cls):',
+      '        return io.Schema(node_id="CommentedOutNode")',
+      '',
+      'class Ext(ComfyExtension):',
+      '    async def get_node_list(self) -> list[type[io.ComfyNode]]:',
+      '        return [',
+      '            A,',
+      '            B,',
+      '            # Commented,',
+      '        ]',
+      '',
+    ].join('\n');
     const root = tree(
       {
         'nodes_legacy.py': 'NODE_CLASS_MAPPINGS = {\n    "LegacyNode": LegacyNode,\n}\n',
-        'nodes_v3.py': 'class A(io.ComfyNode):\n    def define_schema(cls):\n        return io.Schema(node_id="V3Node", old_node_id="Renamed")\n',
-        'nodes_hooks.py': "class H:\n    NodeId = 'HookNode'\n",
+        'nodes_v3.py': v3,
+        'nodes_hooks.py':
+          "class H:\n    NodeId = 'HookNode'\nclass Spare:\n    NodeId = 'SpareHook'\n" +
+          'node_list = [\n    H,\n]\nNODE_CLASS_MAPPINGS = {}\nfor node in node_list:\n    NODE_CLASS_MAPPINGS[node.NodeId] = node\n',
         'nodes_replacements.py': 'class E(ComfyExtension):\n    async def get_node_list(self) -> list[type[io.ComfyNode]]:\n        return []\n',
         'nodes_unlisted.py': 'NODE_CLASS_MAPPINGS = {\n    "NotLoaded": NotLoaded,\n}\n',
       },
@@ -406,12 +480,35 @@ describe('gen-comfy-core-nodes.mjs on a synthetic ComfyUI tree', () => {
     );
     try {
       expect(collectCoreNodes(root)).toEqual({
-        classes: ['HookNode', 'KSampler', 'LegacyNode', 'V3Node', 'VAEDecode'],
+        classes: ['HookNode', 'KSampler', 'LegacyNode', 'V3Node', 'V3Subclass', 'VAEDecode'],
         extrasCount: 4,
       });
       expect(collectModelExtensions(root)).toEqual(['.ckpt', '.pt', '.safetensors']);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('inherits a node id from a base class, and refuses a registered class with none', () => {
+    const ok = tree(
+      {
+        'nodes_x.py':
+          'class Base(io.ComfyNode):\n    def define_schema(cls):\n        return io.Schema(node_id="BaseNode")\n' +
+          'class Child(Base):\n    pass\n' +
+          'class E(ComfyExtension):\n    async def get_node_list(self):\n        return [Child]\n',
+      },
+      ['nodes_x.py'],
+    );
+    const bad = tree(
+      { 'nodes_y.py': 'class NoId(io.ComfyNode):\n    pass\nclass E(ComfyExtension):\n    async def get_node_list(self):\n        return [NoId]\n' },
+      ['nodes_y.py'],
+    );
+    try {
+      expect(collectCoreNodes(ok).classes).toEqual(['BaseNode', 'KSampler', 'VAEDecode']);
+      expect(() => collectCoreNodes(bad)).toThrow('comfy_extras/nodes_y.py: cannot resolve the node id of registered class NoId');
+    } finally {
+      rmSync(ok, { recursive: true, force: true });
+      rmSync(bad, { recursive: true, force: true });
     }
   });
 
