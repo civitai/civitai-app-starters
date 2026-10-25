@@ -77,12 +77,9 @@ export interface UseResourceFile {
  * Pass `fileId` to pin one file of a multi-file version; without it the host
  * picks one. Only free, public versions are served: an unpublished draft or an
  * early-access / paid version answers `not-found`, even for a viewer who bought
- * it. The model's owner can also read their own published versions that others
- * cannot: non-public files, early access, downloads disabled, POI or non-public
- * availability. A draft, an archived model or a deleted model is `not-found` for
- * everyone, the owner included. Full-page app hosts only — the model-page slot
- * does not answer it, and `dev:live` replies `parse-failed`; use the mock host
- * (`npm run dev:harness`) to develop against it.
+ * it. What the owner can read is in the README's "Only free, public versions
+ * are served". Full-page app hosts only — the model-page slot does not answer
+ * it, and `dev:live` replies `parse-failed`; use `dev:mock` to develop against it.
  *
  * Fetches on mount and whenever `modelVersionId` or `fileId` changes; a change
  * clears `file` and `error` first. A non-positive or non-integer

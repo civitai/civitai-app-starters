@@ -895,10 +895,9 @@ describe('createLiveHost — token + non-forwarded messages', () => {
 
     expect(payload).toEqual({ requestId: 'r-file', error: 'parse-failed' });
     expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
-    // The developer is told why, and pointed at the mock host's real script
-    // (`dev:mock` is not a script in any starter).
+    // The developer is told why, and pointed at dev:mock.
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('GET_RESOURCE_FILE'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('npm run dev:harness'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('dev:mock'));
   });
 
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {

@@ -1265,9 +1265,8 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 
 🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
 model-page slot does not answer it (the request times out), and `dev:live`
-replies `parse-failed`. Develop against the mock host (`npm run dev:harness`):
-`createMockHost` takes a `resourceFile` (the canned reply) and a
-`resourceFileError` (force a code);
+replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
+`resourceFile` (the canned reply) and a `resourceFileError` (force a code);
 `setScenario({ resourceFileError: undefined })` clears the forced error.
 
 🔴 **Only free, public versions are served.** An unpublished draft (the owner's
@@ -3757,6 +3756,10 @@ export function DevRoot() {
 drops inbound messages from origins outside its allowlist — so a dev harness
 must include its own origin, e.g. `VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5173`.
 Otherwise `BLOCK_INIT` never lands.
+
+**`dev:mock`**, as this README uses it, is this mock harness. It is not a script
+name: a starter runs it with `npm run dev:harness`. (`dev:live` is the
+real-backend harness, [below](#in-a-devlive-harness).)
 
 ### Stability of `/testing`
 
