@@ -8,11 +8,10 @@ import {
   BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES,
   BLOCK_INLINE_COMFY_MAX_NODES,
   checkComfyGraph,
-  COMFY_CORE_NODE_CLASSES,
-  COMFY_CORE_NODES_COMMIT,
-  COMFY_FRONTEND_ONLY_NODE_CLASSES,
 } from '../../src/blocks/index.js';
 import type { BlockResourceFileEntry } from '../../src/blocks/index.js';
+import { COMFY_CORE_NODE_CLASSES, COMFY_CORE_NODES_COMMIT } from '../../src/blocks/comfyCoreNodes.generated.js';
+import { COMFY_FRONTEND_ONLY_NODE_CLASSES } from '../../src/blocks/comfyGraph.js';
 import { collectCoreNodes, collectModelExtensions, COMFYUI_COMMIT } from '../../scripts/gen-comfy-core-nodes.mjs';
 
 /**
@@ -257,6 +256,23 @@ describe('checkComfyGraph', () => {
               { nodeId: '1', classType: 'UNETLoader', input: 'unet_name', value: 'z_image_turbo_bf16.safetensors' },
               { nodeId: '11', classType: 'LoraLoader', input: 'lora_name', value: 'styles/Detail.GGUF' },
             ],
+          },
+        ],
+      });
+    });
+
+    it('flags a filename in a numbered loader input (clip_name2)', () => {
+      const graph = coreAirGraph();
+      graph['11'] = {
+        class_type: 'DualCLIPLoader',
+        inputs: { clip_name1: CLIP_AIR, clip_name2: 't5xxl_fp16.safetensors', type: 'flux' },
+      };
+      expect(checkComfyGraph(api(graph))).toEqual({
+        runnable: false,
+        reasons: [
+          {
+            code: 'model-filenames',
+            inputs: [{ nodeId: '11', classType: 'DualCLIPLoader', input: 'clip_name2', value: 't5xxl_fp16.safetensors' }],
           },
         ],
       });

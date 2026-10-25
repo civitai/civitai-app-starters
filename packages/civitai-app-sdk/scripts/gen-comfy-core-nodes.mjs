@@ -27,11 +27,8 @@
  * fails loudly rather than guessing: a listed extras file that yields no class
  * stops the run, unless its `get_node_list` literally returns `[]`.
  *
- * Usage (from packages/civitai-app-sdk):
- *   node scripts/gen-comfy-core-nodes.mjs                # clone the pinned commit
- *   node scripts/gen-comfy-core-nodes.mjs --source DIR   # use a checkout already at it
- *
- * `--source` trusts you that DIR is at COMFYUI_COMMIT; the clone path checks it.
+ * Usage (from packages/civitai-app-sdk), which fetches the pinned commit:
+ *   node scripts/gen-comfy-core-nodes.mjs
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -154,15 +151,13 @@ function cloneAtPin() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const i = process.argv.indexOf('--source');
-  const source = i > 0 ? process.argv[i + 1] : undefined;
-  const root = source ?? cloneAtPin();
+  const root = cloneAtPin();
   try {
     const { classes, extrasCount } = collectCoreNodes(root);
     const extensions = collectModelExtensions(root);
     writeFileSync(OUT, render(classes, extrasCount, extensions));
     console.log(`wrote ${classes.length} core classes (${extrasCount} extras modules) to ${OUT}`);
   } finally {
-    if (!source) rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 }

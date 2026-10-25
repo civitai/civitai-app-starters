@@ -96,9 +96,6 @@ export type ComfyGraphRefusal =
   | { code: 'too-many-nodes'; nodes: number; max: number }
   | { code: 'too-large'; bytes: number; max: number };
 
-/** The `code` of a {@link ComfyGraphRefusal}. */
-export type ComfyGraphRefusalCode = ComfyGraphRefusal['code'];
-
 /**
  * The verdict of {@link checkComfyGraph}. `reasons` is never empty and is in
  * the order the codes are listed on {@link ComfyGraphRefusal}.
