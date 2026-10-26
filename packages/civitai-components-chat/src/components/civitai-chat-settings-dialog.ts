@@ -136,6 +136,12 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ${this.#instructions()}
         ${this.balance ? html`<section class="cvt-balance-panel"><h3>Replies</h3>${balanceDetails(this.balance, this)}</section>` : nothing}
         <civitai-switch
+          label="Premium models"
+          description="Pick another model for a chat, such as Claude or GPT. Their replies cost Buzz at the model's own price, shown as an estimate."
+          .checked=${this.settings.premiumModels === true}
+          @change=${(event: Event) => this.#change({ premiumModels: (event.target as HTMLInputElement).checked })}
+        ></civitai-switch>
+        <civitai-switch
           label="Show mature content"
           .checked=${this.settings.allowMature}
           @change=${(event: Event) => this.#change({ allowMature: (event.target as HTMLInputElement).checked })}

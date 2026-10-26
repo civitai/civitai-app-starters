@@ -87,11 +87,11 @@ describe('buildModelList', () => {
     ]);
   });
 
-  it('shows the price per million input and output tokens, and a $0 model as $0, never "Free" (that is the free tier)', () => {
+  it('shows an estimated Buzz price per million input and output tokens, and a 0 model as ~0, never "Free" (that is the free tier)', () => {
     expect([{ input: 2, output: 8 }, { input: 0.042, output: 0.37 }, { input: 0, output: 0 }, undefined].map((price) => priceLabel({ price }))).toEqual([
-      '$2.00 in · $8.00 out /M',
-      '$0.042 in · $0.37 out /M',
-      '$0 in · $0 out /M',
+      '~2,600 in · ~10,400 out Buzz/M tokens',
+      '~55 in · ~481 out Buzz/M tokens',
+      '~0 in · ~0 out Buzz/M tokens',
       '',
     ]);
   });

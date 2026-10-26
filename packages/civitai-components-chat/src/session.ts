@@ -391,6 +391,7 @@ export class ChatSession extends EventTarget {
       const own = this.store.current?.model?.trim();
       return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
     }
+    if (!this.settings.premiumModels) return chatConfig.model;
     return this.store.current?.model?.trim() || chatConfig.model;
   }
 

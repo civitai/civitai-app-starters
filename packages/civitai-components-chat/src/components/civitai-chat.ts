@@ -1538,8 +1538,8 @@ export class CivitaiChat extends LitElement {
     const { models, typed } = this.#modelOptions();
     return {
       clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
-      // A backend with one model has nothing to switch to.
-      ...(typed || models.length ? { model: this.#modelCommand(models, typed) } : {}),
+      // A backend with one model has nothing to switch to, nor a viewer without premium models.
+      ...((typed || models.length) && (this.#session?.backend || this.#session?.settings.premiumModels) ? { model: this.#modelCommand(models, typed) } : {}),
       help: {
         usage: '/help',
         help: 'List these commands',
@@ -1624,7 +1624,7 @@ export class CivitaiChat extends LitElement {
   /** The open chat's model button; hidden on a backend that offers nothing to pick. */
   #modelPicker(session: ChatSession): TemplateResult | typeof nothing {
     const backend = session.backend;
-    if (backend && backendModels(backend).length === 0) return nothing;
+    if (backend ? backendModels(backend).length === 0 : !session.settings.premiumModels) return nothing;
     return html`<civitai-chat-model-picker
       .value=${session.assistantModel()}
       ?own=${Boolean(session.store.current?.model)}
