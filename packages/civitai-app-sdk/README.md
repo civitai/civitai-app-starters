@@ -575,7 +575,7 @@ The reason codes are a closed set, in this order:
 | `code` | Fires when | Extra fields |
 |---|---|---|
 | `not-api-format` | the entry is not ComfyUI API format (`format` is `ui` or `unknown`, or the graph does not have API shape). The next three are then not checked. | `format` |
-| `custom-nodes` | a node class is outside the core list (API graphs, and the node lists of UI graphs and their subgraphs) | `classes`, `packs` (from `properties.cnr_id`, UI graphs only) |
+| `custom-nodes` | a node class is outside the core list (API graphs, and the node lists of UI graphs and their subgraphs) | `classes` (the complete list of offending classes), `packs` (partial: only the `properties.cnr_id` values present on those nodes in the file, so UI graphs only, and a node saved without one adds no pack) |
 | `model-filenames` | a loader input (`*_name`, e.g. `ckpt_name`, `unet_name`, `lora_name`, `vae_name`, `clip_name`, `control_net_name`; plus `model_file`, `text_encoder`; plus `name` on `ModelPatchLoader` and `existing_lora` on `TrainLoraNode`) holds a model filename (`.safetensors`, `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf`, …) rather than an AIR (`urn:air:…`) | `inputs` (`nodeId`, `classType`, `input`, `value`) |
 | `too-many-nodes` | more than `BLOCK_INLINE_COMFY_MAX_NODES` (300) nodes | `nodes`, `max` |
 | `too-large` | the graph as sent (each node reduced to `class_type` + `inputs`) serializes to more than `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` (262144) | `bytes`, `max` |
@@ -596,14 +596,18 @@ that uses one gets `runnable: true` here and can still fail on the worker. The e
 succeed: the worker image decides which nodes exist, and the host still runs its
 AIR-containment, entitlement and moderation gates on the body you submit.
 
-Before you submit, two host limits this check does not cover:
+Before you submit, two host limits this check does not cover (the second only
+on one path):
 - **Strip per-node extras.** The host's node schema is strict: a node carrying
   anything besides `class_type` and `inputs` (an export's `_meta`, for
   instance) is rejected. `too-large` already measures the graph without them.
-- **The request body is capped at 256 KB of UTF-8, for the whole request.** The
-  estimate and submit routes refuse a larger body with a 413, and the body
-  holds `resources`, `prompt` and the rest as well as the graph. So a graph just
-  under `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` can still be refused.
+- **Calling the REST routes directly caps the whole request at 256 KB of
+  UTF-8.** If you call `POST /api/v1/blocks/workflows/estimate` or `/submit`
+  yourself with a block token, a larger body is refused with a 413. That body
+  holds `resources`, `prompt` and the rest as well as the graph, so a graph
+  just under `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` can still be refused there.
+  A page app using the hooks goes through the host bridge instead, which has
+  no such 256 KB request cap; the graph cap itself still applies.
 
 🔴 **A Comfy estimate is a ceiling, never a price.** Estimating a `customComfy`
 body returns your `maxBuzz` as `cost.total`, and billing settles to the real GPU

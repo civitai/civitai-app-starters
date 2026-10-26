@@ -1101,8 +1101,11 @@ export const BLOCK_INLINE_COMFY_MAX_NODES = 300;
  * The largest an inline `customComfy` graph may be, as `JSON.stringify(workflow)
  * .length`. Mirrors civitai's `INLINE_GRAPH_BYTES_MAX` (256 KiB, same file). The
  * host counts UTF-16 code units (its `jsonLengthWithin` default), which equals
- * bytes for an ASCII graph. The route also caps the WHOLE request body at
- * 256 KiB, so the real room for the graph is a little less than this.
+ * bytes for an ASCII graph. Calling the REST routes
+ * `POST /api/v1/blocks/workflows/estimate` / `submit` directly with a block
+ * token also caps the WHOLE request body at 256 KiB, so on that path the real
+ * room for the graph is a little less than this. A page app using the hooks
+ * goes through the host bridge, which has no such 256 KiB request cap.
  */
 export const BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES = 262144;
 
