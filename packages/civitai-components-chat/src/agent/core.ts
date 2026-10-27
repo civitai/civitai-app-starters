@@ -482,7 +482,7 @@ const UPSTREAM_REJECTED = 'upstream_rejected';
 function refusedRequest(error: unknown): boolean {
   const cause = RetryError.isInstance(error) ? error.lastError : error;
   if (APICallError.isInstance(cause)) return [400, 404, 413, 415, 422].includes(cause.statusCode ?? 0);
-  return typeof cause === 'object' && cause !== null && UPSTREAM_REJECTED.length > 0; // MUTANT: any in-stream error
+  return typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === UPSTREAM_REJECTED;
 }
 
 /** An error as the SDK words it for the model (`error-text`). */
