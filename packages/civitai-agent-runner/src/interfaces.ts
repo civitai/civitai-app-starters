@@ -60,7 +60,7 @@ export interface RunGrant {
  */
 export function grantKind(grant: RunGrant): 'run' | 'preview' | undefined {
   const preview: unknown = grant.preview;
-  if (preview === false) return 'run';
+  if (preview === false || preview === undefined) return 'run';
   if (preview === true) return 'preview';
   return undefined;
 }
