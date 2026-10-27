@@ -57,6 +57,7 @@ import type {
   RunGrant,
   ToolProvider,
 } from './interfaces.js';
+import { grantKind } from './interfaces.js';
 import { createPool } from './pg-pool.js';
 import { ProgressWriter, runAfterSaved } from './progress.js';
 import type { StartRequest } from './protocol.js';
@@ -379,6 +380,13 @@ export class Runner implements RunService {
     // Refused before anything is kept: not `unavailable`, which the page would ask again forever.
     if (this.#deps.startRefusal)
       return { ok: false, error: 'refused', message: this.#deps.startRefusal };
+    // Only a run grant starts a run: not a preview grant, nor one that does not say (fails closed).
+    if (grantKind(grant) !== 'run')
+      return {
+        ok: false,
+        error: 'refused',
+        message: 'A start needs a run grant (`preview: false`); this grant is not one.',
+      };
     const runId = runIdFor(userId, request.idempotencyKey);
     const { grants } = this.#deps;
     // Kept in the runner's own table, never in the workflow's input: DBOS persists that.

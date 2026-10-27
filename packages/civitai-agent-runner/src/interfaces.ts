@@ -45,10 +45,24 @@ export interface RunGrant {
   /** The viewer may start read-only subagents. */
   subagents?: boolean;
   /**
-   * A grant for one request other than a run (civitai's preview grant): good only where a route
-   * asks for one, and never for a start or a patch.
+   * What the grant is, and required: `false` for a run grant (a start or a patch), `true` for a grant
+   * for one request other than a run (civitai's preview grant), good only where a route asks for one.
+   * A grant without a boolean here is neither and is refused everywhere (`grantKind`): a verifier
+   * that forgot the flag must not have its preview grants start runs.
    */
-  preview?: boolean;
+  preview: boolean;
+}
+
+/**
+ * What a grant is good for: `'run'` only for an explicit `preview: false`, `'preview'` only for an
+ * explicit `preview: true`, and `undefined` (good for nothing) for anything else. Fails closed: a
+ * grant from a verifier that left the flag off is never taken for a run grant.
+ */
+export function grantKind(grant: RunGrant): 'run' | 'preview' | undefined {
+  const preview: unknown = grant.preview;
+  if (preview === false) return 'run';
+  if (preview === true) return 'preview';
+  return undefined;
 }
 
 /** Checks a run grant a request carries. */

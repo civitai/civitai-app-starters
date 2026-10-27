@@ -13,7 +13,7 @@ import {
 } from '@civitai/components-chat/runner-protocol';
 import { z } from 'zod';
 
-import type { Authenticator, GrantVerifier, RunGrant } from './interfaces.js';
+import { grantKind, type Authenticator, type GrantVerifier, type RunGrant } from './interfaces.js';
 import { GRANT_HEADER, grantHeader, RUNNER_FEATURES } from './protocol.js';
 import type { RunService } from './service.js';
 import { refuseAll, refuseGrants } from './unconfigured.js';
@@ -207,7 +207,8 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
   /**
    * The run grant the request carries, verified and bound to this viewer and conversation (and, for
    * a start, its idempotency key); `null` when there is none or it is not one of those. A preview
-   * grant is good only where `preview` is asked for, and only a preview grant is good there.
+   * grant is good only where `preview` is asked for, and only a preview grant is good there. A grant
+   * that says neither (no boolean `preview`, see `grantKind`) is good nowhere, and is logged.
    */
   const grantFor = async (
     request: FastifyRequest,
@@ -217,9 +218,15 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
   ): Promise<RunGrant | null> => {
     const token = grantHeader(request.headers);
     const grant = token ? await grants.grant(token) : null;
+    const kind = grant ? grantKind(grant) : undefined;
+    if (grant && kind === undefined)
+      request.log.error(
+        'run grant refused: the grant verifier returned a grant without a boolean `preview` ' +
+          '(false for a run grant, true for a preview grant)'
+      );
     if (
       !grant ||
-      (grant.preview === true) !== preview ||
+      kind !== (preview ? 'preview' : 'run') ||
       grant.userId !== request.userId ||
       grant.conversationId !== conversationId ||
       (idempotencyKey !== undefined && grant.idempotencyKey !== idempotencyKey)
