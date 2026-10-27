@@ -128,7 +128,7 @@ describe('src/ boundary', () => {
   });
 
   it('allows exactly the packages package.json declares (dependencies and peers)', () => {
-    // The relationship, not one side of it: a package src/ may import but the published
+    // The relationship, not one side of it: a package src/ imports but the published
     // package.json does not declare installs nowhere for a consumer, and a declared one src/
     // no longer imports is weight every consumer carries.
     const manifest = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
@@ -140,5 +140,14 @@ describe('src/ boundary', () => {
       ...Object.keys(manifest.peerDependencies ?? {}),
     ].filter((name) => !name.startsWith('@types/'));
     expect([...declared].sort()).toEqual([...CORE_PACKAGES].sort());
+    // And what src/ really imports, not only the list above: a package nothing imports any more
+    // fails here too.
+    const imported = new Set(
+      sources(CORE)
+        .flatMap((file) => specifiers(readFileSync(file, 'utf8')))
+        .filter((specifier) => !specifier.startsWith('.') && !specifier.startsWith('node:'))
+        .map(packageOf)
+    );
+    expect([...imported].sort()).toEqual([...declared].sort());
   });
 });
