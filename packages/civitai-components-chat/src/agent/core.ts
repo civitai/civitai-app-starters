@@ -357,8 +357,9 @@ export class AgentCore {
         // step that finished: one that ran a tool keeps its call and result.
         const askAgain = atCut.calls + callsAfterCut === 0 && atCut.finished < maxSteps;
         // A model that takes no images refuses the request that carried a tool's image (a text-only
-        // model picked in the settings): that step is asked for once more without them, and no image
-        // is sent for the rest of the reply. Before images were sent the same reply carried on.
+        // model picked in the settings), by status or inside the stream (`refusedRequest`): that step is
+        // asked for once more without them, and no image is sent for the rest of the reply. Before
+        // images were sent the same reply carried on.
         const imagesRefused = askAgain && stepHadImages && toolImages.open && refusedRequest(streamError);
         if (!imagesRefused && (retriesThisDrop >= retryDelays.length || retriesInReply >= retryCap || !askAgain || !isNetworkDrop(streamError))) break;
         let wait = 0;
@@ -463,13 +464,25 @@ export class AgentCore {
 }
 
 /**
- * The provider refused the request with a client-error status: what a model that takes no images, or
- * a request too large for it, answers. Not only that: a used-up free allowance is a 400 too, so a step
- * that carried images and hit it is asked once more without them and fails again, as it would have.
+ * The code Civitai's orchestration gives the error event it streams, status 200, when the upstream
+ * model refused a streamed request (the upstream's HTTP 400): `{ error: { message, type:
+ * 'invalid_request_error', code: 'upstream_rejected' } }`, the upstream's own message in it. The
+ * provider hands that `error` object on as the stream's error. Its other in-stream errors, a job that
+ * failed otherwise (`job_failed`) or a stream that timed out (`timeout_error`), are not refusals.
+ */
+const UPSTREAM_REJECTED = 'upstream_rejected';
+
+/**
+ * The provider refused the request: with a client-error status, or, for a streamed request, with
+ * orchestration's in-stream refusal (`UPSTREAM_REJECTED`). Either is what a model that takes no
+ * images, or a request too large for it, answers. Not only that: a used-up free allowance is a 400
+ * too, so a step that carried images and hit it is asked once more without them and fails again, as
+ * it would have.
  */
 function refusedRequest(error: unknown): boolean {
   const cause = RetryError.isInstance(error) ? error.lastError : error;
-  return APICallError.isInstance(cause) && [400, 404, 413, 415, 422].includes(cause.statusCode ?? 0);
+  if (APICallError.isInstance(cause)) return [400, 404, 413, 415, 422].includes(cause.statusCode ?? 0);
+  return typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === UPSTREAM_REJECTED;
 }
 
 /** An error as the SDK words it for the model (`error-text`). */
