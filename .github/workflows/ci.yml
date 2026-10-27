@@ -87,6 +87,7 @@ jobs:
       examples: ${{ steps.decide.outputs.examples }}
       packaging: ${{ steps.decide.outputs.packaging }}
       public-types: ${{ steps.decide.outputs.public-types }}
+      agent-runner: ${{ steps.decide.outputs.agent-runner }}
     steps:
       - uses: actions/checkout@v7
 
@@ -863,6 +864,55 @@ jobs:
 
       - run: pnpm check:public-types
 
+  # @civitai/agent-runner: the durable runner behind <civitai-chat>'s remote
+  # mode. Its own job because it is the one package here that needs a REAL
+  # Postgres: replies run as DBOS workflows, and the golden test reads back,
+  # from DBOS's own tables, the calls a reply makes (what a recovered run
+  # replays against). That suite FAILS in CI without the URL below (it skips
+  # only outside CI), so a lost service cannot turn into a silent skip.
+  # Postgres 18, as the civitai service this package was moved out of tests on.
+  agent-runner:
+    name: agent-runner (typecheck + test + build, with Postgres)
+    needs: lanes
+    if: ${{ !cancelled() && needs.lanes.outputs.agent-runner != 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The runner's types come from @civitai/components-chat's built
+      # declarations, and that package's from these.
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
+      - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/components-chat build
+
+      - run: pnpm --filter @civitai/agent-runner typecheck
+      - run: pnpm --filter @civitai/agent-runner test
+      - run: pnpm --filter @civitai/agent-runner build
+
   # THE TESTED-TREE RECORD, read by the push gate in `scripts/ci-lanes.mjs`.
   #
   # On a pull_request run that took the FULL lane and in which every CORE job
@@ -912,6 +962,7 @@ jobs:
       - examples
       - packaging
       - public-types
+      - agent-runner
     if: >-
       ${{ !cancelled()
       && github.event_name == 'pull_request'
@@ -926,6 +977,7 @@ jobs:
       && needs.examples.result == 'success' && needs.lanes.outputs.examples == 'true'
       && needs.packaging.result == 'success' && needs.lanes.outputs.packaging == 'true'
       && needs.public-types.result == 'success' && needs.lanes.outputs.public-types == 'true'
+      && needs.agent-runner.result == 'success' && needs.lanes.outputs.agent-runner == 'true'
       && needs.schema-drift.result != 'failure' && needs.schema-drift.result != 'cancelled'
       && needs.starter-pins.result != 'failure' && needs.starter-pins.result != 'cancelled'
       && needs.orchestrator-catalog-drift.result != 'failure' && needs.orchestrator-catalog-drift.result != 'cancelled'

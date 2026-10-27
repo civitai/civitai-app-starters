@@ -1,0 +1,68 @@
+{
+  "name": "@civitai/agent-runner",
+  "version": "0.0.0",
+  "description": "A durable runner for <civitai-chat>'s remote mode: replies run as DBOS workflows on Postgres, served over the chat's runner protocol (start, events, stop, patch).",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "comment-packaging": "@civitai/components-chat is a PEER with an explicit range, not workspace:^: the page and the runner must speak one runner protocol, so the deployment brings its own copy, and an explicit range is never left by a components-chat minor, so changesets does not force this package to a major (see the same choice for @civitai/sdk in components-chat). The floor, 0.25.0, is the version the runner core was moved out of civitai against. @dbos-inc/dbos-sdk is pinned exactly: the golden test pins the DBOS calls a reply makes, which is what a recovered run replays against. @types/pg is a dependency because the public declarations name pg's types. `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376).",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./test-support": {
+      "types": "./dist/test-support/index.d.ts",
+      "import": "./dist/test-support/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@dbos-inc/dbos-sdk": "5.3.0",
+    "@types/pg": "^8.11.10",
+    "ai": "6.0.289",
+    "fastify": "^5.12.6",
+    "pg": "^8.13.1",
+    "zod": "^4.1.8"
+  },
+  "peerDependencies": {
+    "@civitai/components-chat": ">=0.25.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@civitai/components-chat": "workspace:*",
+    "@types/node": "^25.9.1",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "agent",
+    "runner",
+    "dbos",
+    "durable",
+    "chat",
+    "ai"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-agent-runner#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-agent-runner"
+  }
+}

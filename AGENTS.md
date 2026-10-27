@@ -92,7 +92,8 @@ civitai-app-starters/
 │   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
 │   ├── civitai-components/      # attribute-driven component CSS + the <civitai-*> elements
 │   ├── civitai-components-react/# React bindings for those elements (generated)
-│   └── civitai-components-chat/ # <civitai-chat>: the assistant as one element (AI SDK + MCP, lazy)
+│   ├── civitai-components-chat/ # <civitai-chat>: the assistant as one element (AI SDK + MCP, lazy)
+│   └── civitai-agent-runner/    # @civitai/agent-runner: the durable (DBOS + Postgres) runner behind its remote mode
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
