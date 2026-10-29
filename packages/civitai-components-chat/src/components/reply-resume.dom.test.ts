@@ -469,3 +469,37 @@ describe('asking again by itself when the page wakes', () => {
     expect(asked).toHaveLength(1);
   });
 });
+
+describe('Continue on a reply that stopped for want of Buzz', () => {
+  /** What orchestration answers a paid step the viewer's Civitai account cannot pay for. */
+  const noBuzz = () => new Response(JSON.stringify({ error: { message: 'Insufficient buzz' } }), { status: 402, headers: { 'content-type': 'application/json' } });
+  const outOfBuzz = (chat: CivitaiChat) => root(chat).querySelector('civitai-chat-turn civitai-alert.cvt-out-of-buzz');
+  const continueButton = (chat: CivitaiChat) => [...root(chat).querySelectorAll<HTMLElement>('civitai-chat-turn civitai-button')].find((b) => b.textContent?.trim() === 'Continue');
+
+  it('says so with a Get Buzz link, and Continue asks for the same reply again, as Retry does', async () => {
+    const { chat, asked, ran, resumes } = await failedReply([callsNote(), noBuzz()]);
+    expect(outOfBuzz(chat)?.textContent).toContain("You don't have enough Buzz for this. Get more Buzz, then continue.");
+    expect(outOfBuzz(chat)?.querySelector('a.cvt-buy-buzz')?.getAttribute('href')).toBe('https://civitai.com/purchase/buzz');
+    // Not a failure asking again at once would fix, so no Retry: Continue is the way on once there is Buzz.
+    expect(retryButton(chat)).toBeNull();
+
+    continueButton(chat)!.click();
+    await vi.waitFor(() => expect(root(chat).querySelector('civitai-chat-turn .cvt-md')?.textContent).toContain('Done.'));
+    expect(resumes).toEqual([{ trigger: 'retry' }]);
+    expect(asked).toHaveLength(3);
+    // Carried on from the finished step: its tool is not run again, and the message is not sent twice.
+    expect(ran).toEqual(['hi']);
+    expect(asked[2]).toContain('call_1');
+    expect(userCopies(asked[2]!, 'build me a timer')).toBe(1);
+    expect(turns(chat)).toHaveLength(1);
+    expect(outOfBuzz(chat)).toBeNull();
+  });
+
+  it('asks nothing when the page holds the resume (reply-resume cancelled)', async () => {
+    const { chat, asked } = await failedReply([noBuzz()], (el) => el.addEventListener('reply-resume', (event) => event.preventDefault()));
+    continueButton(chat)!.click();
+    await settle();
+    expect(asked).toHaveLength(1);
+    expect(outOfBuzz(chat)).not.toBeNull();
+  });
+});
