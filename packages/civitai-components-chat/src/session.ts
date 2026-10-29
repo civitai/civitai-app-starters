@@ -160,7 +160,7 @@ export class ChatSession extends EventTarget {
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
-  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend`. */
+  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend` or a remote runner. */
   readonly fund: ChatFund | undefined;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
@@ -212,6 +212,8 @@ export class ChatSession extends EventTarget {
         this.#viewer = undefined;
         throw error;
       }));
+    // Only a reply run in the page draws on the chat balance (`freeTierFetch` below). A server runner's
+    // paid steps are billed to the viewer's Civitai account, so on it there is no balance to show or top up.
     this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });

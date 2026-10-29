@@ -21,6 +21,14 @@ export const EXAMPLES: Example[] = [
   { title: 'Say it out loud', prompt: 'Read "Welcome aboard!" in a warm, friendly voice' },
 ];
 
+/**
+ * Who pays when replies run in the page (`freeTierFetch`): a model with a free allowance uses it, then
+ * the chat balance; any other model, and whatever is made, the Civitai account. No price: it is the model's.
+ */
+export const BALANCE_BILLED = 'Replies and anything you make spend Buzz from your Civitai account, or from your free allowance and chat balance on models that have one.';
+/** Who pays on a server runner: the Civitai account, once any free allowance is used up; never the chat balance. */
+export const ACCOUNT_BILLED = 'Replies spend Buzz from your Civitai account once any free allowance is used up, about 1 per step, up to a daily limit. Making things costs extra.';
+
 /** As the thread's: this close to the end counts as at the end. */
 const NEAR_END_PX = 48;
 
@@ -28,6 +36,7 @@ export class CivitaiChatWelcome extends LightElement {
   static override properties: PropertyDeclarations = {
     userName: {},
     plain: { type: Boolean },
+    accountBilled: { type: Boolean, attribute: 'account-billed' },
     examples: { attribute: false },
     threadEnd: { type: Boolean, attribute: 'thread-end' },
   };
@@ -38,6 +47,11 @@ export class CivitaiChatWelcome extends LightElement {
    * host's own backend. The page's own `examples` still show.
    */
   declare plain: boolean;
+  /**
+   * The replies run on a server runner, which bills each step to the viewer's Civitai account rather
+   * than the chat balance: the fine print says so.
+   */
+  declare accountBilled: boolean;
   /** The page's own examples in place of {@link EXAMPLES}; an empty list shows none. */
   declare examples?: readonly Example[];
   /**
@@ -50,6 +64,7 @@ export class CivitaiChatWelcome extends LightElement {
     super();
     this.userName = '';
     this.plain = false;
+    this.accountBilled = false;
     this.threadEnd = false;
   }
 
@@ -123,7 +138,7 @@ export class CivitaiChatWelcome extends LightElement {
       <h1>${this.userName ? `Hi ${this.userName}, what shall we make?` : 'What shall we make?'}</h1>
       <p>Describe what you want in your own words. Add your own photos, videos or audio with the + button, or drop them here.</p>
       ${this.#examples(this.examples ?? EXAMPLES)}
-      <p class="cvt-fineprint">Making things spends Buzz from your Civitai account; you'll see the price first. Chats are kept for ${RETENTION_DAYS} days.</p>
+      <p class="cvt-fineprint">${this.accountBilled ? ACCOUNT_BILLED : BALANCE_BILLED} Chats are kept for ${RETENTION_DAYS} days.</p>
     </div></slot>${this.#end()}`;
   }
 }

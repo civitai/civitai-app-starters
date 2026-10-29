@@ -1883,8 +1883,23 @@ civitai-chat-balance {
 .cvt-top-up-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+/* As the generation card's Get Buzz. */
+.cvt-buy-buzz {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-primary);
+  color: var(--civitai-color-primary-fg, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.cvt-buy-buzz:hover {
+  background: var(--civitai-color-primary-hover, var(--civitai-color-primary));
 }
 
 /* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */
