@@ -13,7 +13,7 @@ import { CUT_OFF, liveRedrawIn, replyElsewhere } from '../store/thread-store.js'
 import type { ModelDirectory } from '../store/models.js';
 import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
-import { onSite, TOP_UP_BUZZ } from '../config.js';
+import { BUY_BUZZ_URL, onSite, TOP_UP_BUZZ } from '../config.js';
 import { RETRYABLE_ERRORS } from '../ux/humanize.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { ReplyStatusState } from './civitai-chat-reply-status.js';
@@ -40,6 +40,7 @@ export class CivitaiChatTurn extends LightElement {
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     latest: { type: Boolean },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    hosted: { type: Boolean },
     canEdit: { type: Boolean, attribute: 'can-edit' },
     returnedEdit: { attribute: false },
     editing: { state: true },
@@ -70,6 +71,8 @@ export class CivitaiChatTurn extends LightElement {
   declare latest: boolean;
   /** The chat can send now: Retry is on. While it holds, Retry shows but is off, and the hold's words say why. */
   declare canRetry: boolean;
+  /** On a host's own backend: a 402 there is the host's refusal, not Civitai Buzz, so no Get Buzz. */
+  declare hosted: boolean;
   /**
    * The viewer's message can be edited: it is the latest, and no reply runs. Its Edit shows; Save sends
    * only while the chat can send (`canRetry`).
@@ -125,6 +128,7 @@ export class CivitaiChatTurn extends LightElement {
     this.awaitingApproval = false;
     this.latest = false;
     this.canRetry = false;
+    this.hosted = false;
     this.canEdit = false;
     this.editing = false;
     this.saving = false;
@@ -401,7 +405,7 @@ export class CivitaiChatTurn extends LightElement {
   }
 
   #footer(): TemplateResult | typeof nothing {
-    const { status, error, errorDetail, errorTrace } = this.turn.assistant;
+    const { status, error } = this.turn.assistant;
     if (this.live) return this.#status();
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     // A reply the page ended reads like one that ran out of steps, in the page's words.
@@ -433,20 +437,38 @@ export class CivitaiChatTurn extends LightElement {
         ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Allow paid replies and try again</civitai-button>` : nothing}
       </civitai-alert>`;
     }
+    // Out of Civitai Buzz: a reply on a server runner, billed to the account, or a chat balance that could
+    // not be topped up from it. Getting more is the way on; Continue then asks for the reply again.
+    if (status === 'error' && kind === 'insufficient_buzz' && !this.hosted) {
+      return html`<civitai-alert color="error" class="cvt-out-of-buzz">
+        ${error} Get more Buzz, then continue.
+        <div class="cvt-top-up-actions">
+          <a class="cvt-buy-buzz" href=${BUY_BUZZ_URL} target="_blank" rel="noopener">Get Buzz</a>
+          ${this.latest ? html`<civitai-button size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-continue-after-buzz')}>Continue</civitai-button>` : nothing}
+        </div>
+        ${this.#details()}
+      </civitai-alert>`;
+    }
     if (status === 'error') {
-      const shown = errorDetail && errorDetail !== error ? errorDetail : '';
-      const where = errorTrace ? describeTrace(errorTrace) : '';
       // Only where asking again can carry on without running a tool twice (`resume`, this session only).
       const retry = this.latest && this.turn.assistant.resume !== undefined && RETRYABLE_ERRORS.has(this.turn.assistant.errorKind ?? '');
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}
         ${retry ? html`<civitai-button class="cvt-retry" size="sm" variant="light" ?disabled=${!this.canRetry} @click=${() => emit(this, 'cvt-retry')}>Retry</civitai-button>` : nothing}
-        ${shown || where
-          ? html`<details class="cvt-error-details"><summary>Details</summary>${shown ? html`<code>${shown}</code>` : nothing}${where ? html`<code class="cvt-error-trace">${where}</code>` : nothing}</details>`
-          : nothing}
+        ${this.#details()}
       </civitai-alert>`;
     }
     return nothing;
+  }
+
+  /** What the service said, and where the reply stopped, under a closed Details. */
+  #details(): TemplateResult | typeof nothing {
+    const { error, errorDetail, errorTrace } = this.turn.assistant;
+    const shown = errorDetail && errorDetail !== error ? errorDetail : '';
+    const where = errorTrace ? describeTrace(errorTrace) : '';
+    return shown || where
+      ? html`<details class="cvt-error-details"><summary>Details</summary>${shown ? html`<code>${shown}</code>` : nothing}${where ? html`<code class="cvt-error-trace">${where}</code>` : nothing}</details>`
+      : nothing;
   }
 
   // A row that becomes part of a group as the reply streams is drawn anew inside it: a viewer on its

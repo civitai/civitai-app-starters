@@ -1168,6 +1168,12 @@ asks again, unless the page's `retryReply()` came first. `retryReply()` asks for
 the way Retry does, without `reply-resume`, and only where Retry would be offered and the chat can send;
 it resolves `true` when it asked and `false` when it asked nothing.
 
+A reply that stopped because the viewer's Civitai account is out of Buzz (`insufficient_buzz`: a paid
+step the account could not pay for, or a chat balance that could not be topped up from it) says so with
+**Get Buzz** (the buy-Buzz page, in a new tab) and, on the latest reply, **Continue**, which asks again
+as Retry does (`reply-resume` with `trigger: 'retry'` first). Not with a host's own `backend`, whose 402
+is its own refusal.
+
 ### Editing the latest message
 
 While no reply runs (after one finished, after Stop, after an error), the viewer's latest message
@@ -1263,6 +1269,9 @@ chat.app = app;
 
 What changes in remote mode:
 
+- **No chat balance.** A runner bills each paid step to the viewer's Civitai account (once any free
+  allowance is used up), never the chat balance, so the balance badge and its top-ups are not shown, and
+  the welcome says replies spend account Buzz, about 1 per step, up to a daily limit.
 - **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
   `beforeToolCall`, `subagents`, `systemPrompt`, `timeZone`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
   anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide

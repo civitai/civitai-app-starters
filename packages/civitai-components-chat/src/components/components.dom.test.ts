@@ -675,6 +675,67 @@ describe('civitai-chat-thread', () => {
     expect(asked).toEqual([{ auto: false }, { auto: true }]);
   });
 
+  describe('a reply that stopped for want of Buzz', () => {
+    const outOfBuzz = (assistant: Record<string, unknown> = {}) => ({
+      seq: 1,
+      createdAt: '',
+      user: { content: 'build me a timer', attachments: [] },
+      assistant: { messages: [], status: 'error' as const, error: "You don't have enough Buzz for this.", errorDetail: 'Insufficient buzz', errorKind: 'insufficient_buzz', ...assistant },
+    });
+    const continueButton = (thread: HTMLElement) => [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.trim() === 'Continue');
+
+    it('links to getting Buzz, in a new tab, and offers Continue: no top-up of a chat balance', async () => {
+      const thread = await mount('civitai-chat-thread', { turns: [outOfBuzz()], canRetry: true, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+      await thread.querySelector('civitai-chat-turn')!.updateComplete;
+      const asked: unknown[] = [];
+      thread.addEventListener('cvt-continue-after-buzz', (e) => asked.push(e));
+      const alert = thread.querySelector('civitai-alert.cvt-out-of-buzz')!;
+
+      expect(alert.getAttribute('color')).toBe('error');
+      expect(alert.textContent!.replace(/\s+/g, ' ').trim()).toBe("You don't have enough Buzz for this. Get more Buzz, then continue. Get Buzz Continue DetailsInsufficient buzz");
+      const link = alert.querySelector<HTMLAnchorElement>('a.cvt-buy-buzz')!;
+      expect(link.textContent).toBe('Get Buzz');
+      expect(link.getAttribute('href')).toBe('https://civitai.com/purchase/buzz');
+      expect(link.getAttribute('target')).toBe('_blank');
+      expect(link.getAttribute('rel')).toBe('noopener');
+      expect(alert.querySelector('details')!.textContent).toContain('Insufficient buzz');
+      expect(thread.textContent).not.toContain('Top up');
+
+      continueButton(thread)!.click();
+      expect(asked).toHaveLength(1);
+    });
+
+    it('keeps Continue off while the chat cannot send, and on an older reply shows only the link', async () => {
+      const held = await mount('civitai-chat-thread', { turns: [outOfBuzz()], canRetry: false, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+      await held.querySelector('civitai-chat-turn')!.updateComplete;
+      expect(continueButton(held)!.hasAttribute('disabled')).toBe(true);
+      document.body.replaceChildren();
+
+      const later = { seq: 2, createdAt: '', user: { content: 'and now?', attachments: [] }, assistant: { messages: [{ role: 'assistant', content: 'Sure.' }], status: 'done' as const } };
+      const older = await mount('civitai-chat-thread', { turns: [outOfBuzz(), later] as never, canRetry: true, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+      await older.querySelector('civitai-chat-turn')!.updateComplete;
+      expect(older.querySelector('a.cvt-buy-buzz')).not.toBeNull();
+      expect(continueButton(older)).toBeUndefined();
+    });
+
+    it("NEGATIVE CONTROL: on a host's own backend a 402 is the host's refusal, so no Get Buzz", async () => {
+      const turn = outOfBuzz({ error: 'Monthly spend cap reached. It resets on the 1st.' });
+      const thread = await mount('civitai-chat-thread', { turns: [turn], canRetry: true, hosted: true, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+      await thread.querySelector('civitai-chat-turn')!.updateComplete;
+      expect(thread.querySelector('civitai-alert')!.textContent).toContain('Monthly spend cap reached. It resets on the 1st.');
+      expect(thread.querySelector('a.cvt-buy-buzz')).toBeNull();
+      expect(continueButton(thread)).toBeUndefined();
+    });
+
+    it('leaves the empty chat balance card as it was: Top up, not Get Buzz', async () => {
+      const turn = outOfBuzz({ error: 'Your chat balance is empty.', errorKind: 'fund_empty' });
+      const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+      await thread.querySelector('civitai-chat-turn')!.updateComplete;
+      expect(thread.textContent).toContain('Your chat balance is empty. Top up 100 Buzz to keep going');
+      expect(thread.querySelector('a.cvt-buy-buzz')).toBeNull();
+    });
+  });
+
   it("offers to allow paid replies, without naming a price, when the model has no free replies", async () => {
     const turn = {
       seq: 1,

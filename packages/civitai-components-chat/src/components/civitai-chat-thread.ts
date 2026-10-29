@@ -45,6 +45,7 @@ export class CivitaiChatThread extends LightElement {
     mcpServerIds: { attribute: false },
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    hosted: { type: Boolean },
     canEdit: { type: Boolean, attribute: 'can-edit' },
     returnedEdit: { attribute: false },
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
@@ -74,6 +75,8 @@ export class CivitaiChatThread extends LightElement {
   declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  /** On a host's own backend, whose refusals are not about Civitai Buzz: no reply offers to get more. */
+  declare hosted: boolean;
   /** Whether the viewer's latest message can be edited now (no reply runs): its Edit shows. */
   declare canEdit: boolean;
   /** An edit of the latest message that waited and came back: that message's edit box reopens with it. */
@@ -101,6 +104,7 @@ export class CivitaiChatThread extends LightElement {
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
     this.canRetry = false;
+    this.hosted = false;
     this.canEdit = false;
     this.awaitingApproval = false;
     this.queued = null;
@@ -233,6 +237,7 @@ export class CivitaiChatThread extends LightElement {
                 ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
+                ?hosted=${this.hosted}
                 ?can-edit=${turn.seq === last && this.canEdit}
                 .returnedEdit=${this.returnedEdit?.seq === turn.seq ? this.returnedEdit : undefined}
                 .jobs=${this.jobs}

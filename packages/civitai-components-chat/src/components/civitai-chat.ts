@@ -1517,6 +1517,13 @@ export class CivitaiChat extends LitElement {
     };
   }
 
+  /** Asks again for a reply that stopped for want of Buzz, once the viewer got more: as Retry does, so the page may hold it (`reply-resume`). */
+  #continueAfterBuzz(): void {
+    const session = this.#session;
+    if (!session || !this.canSend) return;
+    this.#resumeReply(session, 'retry');
+  }
+
   #continuePaid(): void {
     const session = this.#session;
     if (!session) return;
@@ -1945,6 +1952,7 @@ export class CivitaiChat extends LitElement {
             </header>
             <civitai-chat-welcome
               .examples=${this.examples}
+              ?account-billed=${this.runner === 'remote'}
               @cvt-example=${(e: CustomEvent<ChatExample>) =>
                 void this.#composer().then((composer) => {
                   if (!composer) return;
@@ -2124,6 +2132,7 @@ export class CivitaiChat extends LitElement {
               ? html`<civitai-chat-welcome
                   .userName=${this.userName}
                   ?plain=${hosted}
+                  ?account-billed=${this.runner === 'remote'}
                   thread-end
                   .examples=${this.examples}
                   @cvt-example=${(e: CustomEvent<ChatExample>) =>
@@ -2134,7 +2143,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit?.chatId === conversation?.id && this.#returnedEdit?.start === this.#sessionStart ? this.#returnedEdit : undefined} @cvt-edit-returned=${() => (this.#returnedEdit = undefined)} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit?.chatId === conversation?.id && this.#returnedEdit?.start === this.#sessionStart ? this.#returnedEdit : undefined} @cvt-edit-returned=${() => (this.#returnedEdit = undefined)} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} ?hosted=${hosted} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue-after-buzz=${() => this.#continueAfterBuzz()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>
