@@ -214,7 +214,7 @@ export class ChatSession extends EventTarget {
       }));
     // Only a reply run in the page draws on the chat balance (`freeTierFetch` below). A server runner's
     // paid steps are billed to the viewer's Civitai account, so on it there is no balance to show or top up.
-    this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
+    this.fund = backend || remote ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });
     // As the viewer, so what it finds can follow their own preferences; a host's backend has no Civitai token.

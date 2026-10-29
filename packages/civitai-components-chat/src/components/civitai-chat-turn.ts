@@ -439,7 +439,7 @@ export class CivitaiChatTurn extends LightElement {
     }
     // Out of Civitai Buzz: a reply on a server runner, billed to the account, or a chat balance that could
     // not be topped up from it. Getting more is the way on; Continue then asks for the reply again.
-    if (status === 'error' && kind === 'insufficient_buzz') {
+    if (status === 'error' && kind === 'insufficient_buzz' && !this.hosted) {
       return html`<civitai-alert color="error" class="cvt-out-of-buzz">
         ${error} Get more Buzz, then continue.
         <div class="cvt-top-up-actions">
