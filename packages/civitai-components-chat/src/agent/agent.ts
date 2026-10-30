@@ -13,6 +13,7 @@ import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js
 import { buildModelMessages } from './history.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
+import { nextReply } from '../tools/gate.js';
 
 export type { LiveTurn } from './core.js';
 
@@ -26,7 +27,11 @@ export interface AgentDeps {
   store: ConversationStore;
   jobs: JobManager;
   posts?: PostManager;
-  toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet>;
+  /**
+   * The reply's tools. `reply` is the reply's number (`nextReply()`), the same every time one reply
+   * builds them, its rebuilds after `reopenTools` included, so a page's per-reply count holds across them.
+   */
+  toolSet(turn: { conversationId: string; seq: number; reply: number }): Promise<ToolSet>;
   attachments(): Attachment[];
   customInstructions?(): string | undefined;
   /** Read at the start of every reply, so the embedding page can change them at any time. */
@@ -159,10 +164,12 @@ export class Agent extends EventTarget implements ChatAgent {
       if (from) this.#checkpoint(turn, from.messages);
     }
     this.#turn = turn;
+    // One number for the whole reply: a rebuild of its tools (`reopenTools`) is the same reply.
+    const reply = nextReply();
     const outcome = await this.#core.run({
       seq: turn.seq,
       ...(from ? { from } : {}),
-      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq }),
+      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq, reply }),
       request: (tools) => {
         const hostInstructions = this.#deps.hostInstructions?.();
         const system = buildSystemPrompt({

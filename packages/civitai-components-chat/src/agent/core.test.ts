@@ -299,6 +299,46 @@ describe('a tool that reopens the reply’s tools (`reopenTools`)', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('a Stop while the tools are built again ends the reply as stopped, asking nothing more', async () => {
+    const { core, run, prompts } = setup([toolCall('make_app', {}), text('never asked')]);
+    const first: ToolSet = {
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ reopenTools: true }) }),
+    };
+    let building!: () => void;
+    const rebuilding = new Promise<void>((resolve) => (building = resolve));
+    let finish!: (tools: ToolSet) => void;
+    const signals: (AbortSignal | undefined)[] = [];
+    const reply = run({
+      tools: (progress) => {
+        signals.push(progress?.signal);
+        if (!progress) return Promise.resolve(first);
+        building();
+        return new Promise<ToolSet>((resolve) => (finish = resolve));
+      },
+    });
+    await rebuilding;
+    core.abort();
+    expect(signals[1]?.aborted).toBe(true);
+    finish(first);
+    expect(await reply).toMatchObject({ status: 'aborted' });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('a rebuild that fails is traced at the tools stage, and asking again carries on from the finished steps', async () => {
+    const { run } = setup([toolCall('make_app', {}), text('never asked')]);
+    const first: ToolSet = {
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ reopenTools: true }) }),
+    };
+    const outcome = await run({
+      tools: async (progress) => {
+        if (progress) throw new Error('the app’s tools could not be listed');
+        return first;
+      },
+    });
+    expect(outcome).toMatchObject({ status: 'error', where: { stage: 'tools' } });
+    expect(outcome!.resume?.messages.map((m) => m.role)).toEqual(['assistant', 'tool']);
+  });
+
   it(`builds the tools again at most ${MAX_TOOL_REOPENS} times in one reply`, async () => {
     const calls = Array.from({ length: MAX_TOOL_REOPENS + 2 }, (_, i) => toolCall('make_app', {}, `call_${i}`));
     const { run } = setup([...calls, text('Done.')]);

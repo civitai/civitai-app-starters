@@ -82,11 +82,12 @@ export interface AgentCoreRun {
   /** Where to carry on from: its finished steps are sent as they are and shown at once. */
   from?: ResumePoint;
   /**
-   * Builds the reply's tools. A failure here is one at the `tools` stage: nothing was asked for. Called
-   * again mid-reply when a tool's result says `reopenTools: true`, with the reply's finished messages so
-   * far (`progress`); the tools built before are no longer used.
+   * Builds the reply's tools. A failure here is one at the `tools` stage. Called again mid-reply when a
+   * tool's result says `reopenTools: true`, with the reply's finished messages so far and the reply's
+   * abort signal (`progress`); the tools built before are no longer used, and a reply stopped meanwhile
+   * ends as stopped.
    */
-  tools(progress?: { messages: ModelMessage[] }): Promise<ToolSet>;
+  tools(progress?: { messages: ModelMessage[]; signal: AbortSignal }): Promise<ToolSet>;
   /** Everything else the reply asks with. A failure here is one before any request. */
   request(tools: ToolSet): AgentCoreRequest;
   /** A cut the reply recovers from by itself: which retry of the reply this is (from 1), and where it was cut. */
@@ -200,7 +201,12 @@ export class AgentCore {
     // failed step had called a tool (it may have run, and is in no finished step to send as it is).
     let resumable: ResumePoint | undefined;
     let outcome: Omit<AgentCoreOutcome, 'messages' | 'steps'>;
-    const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
+    // Building the tools again mid-reply (`reopenTools`): a failure then is one at the `tools` stage.
+    let rebuilding = false;
+    const where = (): TraceContext => {
+      const at = this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
+      return rebuilding ? { ...at, stage: 'tools' } : at;
+    };
     try {
       let tools = await run.tools();
       toolsBuilt = true;
@@ -376,7 +382,12 @@ export class AgentCore {
         // them built again, unless it was stopped, ended by the page, waits on the viewer or used every step.
         if (!controller.signal.aborted && streamError === undefined && reopen && stopped === undefined && !waits && finished < maxSteps) {
           reopens++;
-          tools = await run.tools({ messages: completed });
+          rebuilding = true;
+          since = Date.now();
+          tools = await run.tools({ messages: completed, signal: controller.signal });
+          rebuilding = false;
+          // Stopped while they were built: the reply ends as stopped, asking nothing more.
+          if (controller.signal.aborted) break;
           ({ model, system, history, maxOutputTokens, lastStep = LAST_STEP, wordsOnly } = run.request(tools));
           since = Date.now();
           continue;
@@ -428,9 +439,10 @@ export class AgentCore {
       else outcome = { status: 'done' };
     } catch (error) {
       if (controller.signal.aborted) outcome = { status: 'aborted' };
-      // Failed outside a step: only the tools or the prompt failed to build, before any request (every
-      // stream is read inside the loop's own try), so nothing ran and the reply carries on from where it
-      // began, or from the steps a resumed reply had kept.
+      // Failed outside a step (every stream is read inside the loop's own try): the tools or the prompt
+      // failed to build, before the reply's first request or as a tool's `reopenTools` had them built
+      // again. Every step that finished is kept with each of its calls answered, so asking again carries
+      // on from there (or from where the reply began) without running a tool twice.
       else outcome = failure(error, where(), { messages: completed, steps: finished, at: Date.now() });
     }
 

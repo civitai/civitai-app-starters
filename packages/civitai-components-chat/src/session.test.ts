@@ -476,6 +476,22 @@ describe('ChatSession host controls', () => {
     ]);
   });
 
+  it("numbers the page gate's calls by the reply it is handed: a rebuild of one reply keeps the number", async () => {
+    const replies: number[] = [];
+    const { session } = setup({ beforeToolCall: () => (_name, _input, { reply }) => (replies.push(reply), { allow: true }) }, [
+      { name: 'run_command', run: () => ({ content: [{ type: 'text', text: 'ran' }] }) },
+    ]);
+    // Agent hands every build of one reply's tools that reply's number (`reopenTools` rebuilds it).
+    await run(await session.toolSet({ ...turn, reply: 9_001 }), 'sandbox__run_command', { command: 'ls' });
+    await run(await session.toolSet({ ...turn, reply: 9_001 }), 'sandbox__run_command', { command: 'ls' });
+    expect(replies).toEqual([9_001, 9_001]);
+    // NEGATIVE CONTROL: without one, each build is a new reply.
+    await run(await session.toolSet(turn), 'sandbox__run_command', { command: 'ls' });
+    await run(await session.toolSet(turn), 'sandbox__run_command', { command: 'ls' });
+    expect(new Set(replies.slice(2)).size).toBe(2);
+    expect(replies.slice(2)).not.toContain(9_001);
+  });
+
   it('refuses every call when beforeToolCall throws, so a broken gate lets nothing by', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const calls: unknown[] = [];
