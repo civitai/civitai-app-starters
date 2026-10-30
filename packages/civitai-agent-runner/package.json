@@ -1,6 +1,6 @@
 {
   "name": "@civitai/agent-runner",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A durable runner for <civitai-chat>'s remote mode: replies run as DBOS workflows on Postgres, served over the chat's runner protocol (start, events, stop, patch).",
   "license": "MIT",
   "type": "module",
