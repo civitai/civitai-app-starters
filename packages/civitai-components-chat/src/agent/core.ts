@@ -19,6 +19,18 @@ import { stripToolMarkup } from './tool-markup.js';
 const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
   steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
 
+/**
+ * A tool whose result says `reopenTools: true` changed what the reply's tools are (say it made an app
+ * whose own tools the reply needs): the step ends there and the same reply carries on with its tools
+ * built again (`run.tools`), with no message from the viewer. At most {@link MAX_TOOL_REOPENS} times a reply.
+ */
+function reopensTools(steps: readonly { toolResults: readonly { output: unknown }[] }[]): boolean {
+  return steps.at(-1)?.toolResults.some((result) => (result.output as { reopenTools?: unknown } | undefined)?.reopenTools === true) ?? false;
+}
+
+/** How many times one reply builds its tools again (`reopenTools`); a further ask carries on with the tools it has. */
+export const MAX_TOOL_REOPENS = 3;
+
 /** The words the page ended the reply on, when a call in its last step did (`beforeToolCall` with `stop: true`). */
 function endedByPage(steps: { toolResults: { output: unknown }[] }[]): string | undefined {
   for (const result of steps.at(-1)?.toolResults ?? []) {
@@ -69,8 +81,12 @@ export interface AgentCoreRun {
   seq: number;
   /** Where to carry on from: its finished steps are sent as they are and shown at once. */
   from?: ResumePoint;
-  /** Builds the reply's tools. A failure here is one at the `tools` stage: nothing was asked for. */
-  tools(): Promise<ToolSet>;
+  /**
+   * Builds the reply's tools. A failure here is one at the `tools` stage: nothing was asked for. Called
+   * again mid-reply when a tool's result says `reopenTools: true`, with the reply's finished messages so
+   * far (`progress`); the tools built before are no longer used.
+   */
+  tools(progress?: { messages: ModelMessage[] }): Promise<ToolSet>;
   /** Everything else the reply asks with. A failure here is one before any request. */
   request(tools: ToolSet): AgentCoreRequest;
   /** A cut the reply recovers from by itself: which retry of the reply this is (from 1), and where it was cut. */
@@ -186,10 +202,13 @@ export class AgentCore {
     let outcome: Omit<AgentCoreOutcome, 'messages' | 'steps'>;
     const where = (): TraceContext => this.#where(toolsBuilt, streaming ? steps : finished + 1, since, streaming);
     try {
-      const tools = await run.tools();
+      let tools = await run.tools();
       toolsBuilt = true;
-      const { model, system, history, maxOutputTokens, maxSteps: ownSteps, lastStep = LAST_STEP, wordsOnly, ...retry } = run.request(tools);
+      const built = run.request(tools);
+      let { model, system, history, maxOutputTokens, lastStep = LAST_STEP, wordsOnly } = built;
+      const { maxSteps: ownSteps, ...retry } = built;
       if (ownSteps !== undefined) maxSteps = ownSteps;
+      let reopens = 0;
       // The images this reply's tools return (an added server's screenshot): shown to the model after
       // the results that returned them, in the next step only, and in nothing it keeps.
       const toolImages = new ToolImages();
@@ -255,6 +274,8 @@ export class AgentCore {
         streamError = undefined;
         failedAt = undefined;
         stepText = '';
+        let reopen = false;
+        let waits = false;
         try {
           const result = streamText({
             model,
@@ -262,7 +283,12 @@ export class AgentCore {
             messages: [...history, ...resumeFrom],
             tools,
             // A page that ended the reply ends it here: no further step is asked for (and paid).
-            stopWhen: [stepCountIs(maxSteps - before), awaitsUser, ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined],
+            stopWhen: [
+              stepCountIs(maxSteps - before),
+              (options) => (waits ||= awaitsUser(options) as boolean),
+              ({ steps }) => (stopped ??= endedByPage(steps)) !== undefined,
+              ({ steps }) => reopens < MAX_TOOL_REOPENS && (reopen ||= reopensTools(steps)),
+            ],
             abortSignal: controller.signal,
             maxOutputTokens,
             temperature: 0.7,
@@ -345,6 +371,15 @@ export class AgentCore {
             streamError = error;
             cutHere();
           }
+        }
+        // A tool changed what the reply's tools are: the reply carries on from its finished steps with
+        // them built again, unless it was stopped, ended by the page, waits on the viewer or used every step.
+        if (!controller.signal.aborted && streamError === undefined && reopen && stopped === undefined && !waits && finished < maxSteps) {
+          reopens++;
+          tools = await run.tools({ messages: completed });
+          ({ model, system, history, maxOutputTokens, lastStep = LAST_STEP, wordsOnly } = run.request(tools));
+          since = Date.now();
+          continue;
         }
         if (controller.signal.aborted || streamError === undefined || !atCut) break;
         resumable = atCut.calls + callsAfterCut === 0 && atCut.finished < maxSteps ? { messages: atCut.completed, steps: atCut.finished, at: Date.now() } : undefined;
