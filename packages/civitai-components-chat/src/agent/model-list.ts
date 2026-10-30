@@ -99,8 +99,9 @@ export function buildModelList({
   };
   // The default is named like any other model: a page label for it, else OpenRouter's name, else its
   // id made readable. Its name is settled once both lists are read, below; `source` marks it the default.
-  let defaultName = listed.find((model) => model.id === defaultModel)?.label;
-  add({ id: defaultModel, label: '', source: 'default' });
+  const listedDefault = listed.find((model) => model.id === defaultModel);
+  let defaultName = listedDefault?.label;
+  add({ id: defaultModel, label: '', source: 'default', ...(listedDefault?.note ? { note: listedDefault.note } : {}) });
   for (const model of listed) add({ id: model.id, label: model.label, source: 'listed', ...(model.note ? { note: model.note } : {}) });
 
   const routable = new Map<string, OrchestrationModel>();

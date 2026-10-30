@@ -24,6 +24,12 @@ export interface ChatConfig {
   model: string;
   /** Other models the viewer may pick in Settings, besides the default and a custom id. */
   models: ChatModelOption[];
+  /**
+   * Offer only `model` and `models`: the model button shows them to every viewer (no Premium models
+   * setting needed) with each one's `note`, loads no other list and takes no typed id, and a chat saved
+   * with any other model replies with `model`. For a page whose server accepts only those ids.
+   */
+  modelsOnly?: boolean;
   orchestrationMcpUrl: string;
   siteMcpUrl: string;
   /** New viewers' "ask before spending more than" limit, in Buzz; 0 asks every time. */

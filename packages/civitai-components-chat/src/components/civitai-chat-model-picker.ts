@@ -142,7 +142,8 @@ export class CivitaiChatModelPicker extends LightElement {
 
   #option(entry: ChatModelEntry): TemplateResult {
     const selected = this.own && entry.id === this.value;
-    const price = entry.source === 'hosted' ? 'Hosted' : priceLabel(entry);
+    // Without a known price, the page's own words on what choosing it costs (`note`).
+    const price = entry.source === 'hosted' ? 'Hosted' : priceLabel(entry) || entry.note || '';
     return html`<li>
       <button type="button" role="option" aria-selected=${String(selected)} @click=${() => this.#pick(entry.id)}>
         <span class="cvt-model-name">${entry.label}</span>
@@ -158,6 +159,7 @@ export class CivitaiChatModelPicker extends LightElement {
     // Typing "default" (or the default row's whole name) shows that row, never "default" as a model id nothing serves.
     const wantsDefault = this.#wantsDefault(typed);
     const custom = !this.noCustom && typed !== '' && !wantsDefault && !this.models.some((model) => model.id === typed);
+    const defaultNote = this.models.find((model) => model.source === 'default')?.note;
     return html`<div class="cvt-model-menu" role="dialog" aria-label="Model for this chat" @keydown=${this.#onKeyDown}>
       <input
         class="cvt-model-search"
@@ -172,6 +174,7 @@ export class CivitaiChatModelPicker extends LightElement {
           ? html`<li>
               <button type="button" role="option" aria-selected=${String(!this.own)} @click=${() => this.#pick(undefined)}>
                 <span class="cvt-model-name">${this.#defaultName()}</span>
+                ${defaultNote ? html`<span class="cvt-model-price">${defaultNote}</span>` : nothing}
                 <span class="cvt-model-id">The app's default model</span>
               </button>
             </li>`

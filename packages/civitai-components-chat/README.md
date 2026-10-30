@@ -401,7 +401,16 @@ reopened from storage groups the same as it did live.
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
-[A message that waits](#a-message-that-waits)), `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+[A message that waits](#a-message-that-waits)), `askAgain()`, `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+
+`askAgain()` asks the viewer's latest message again, as it is: the reply that followed it is dropped
+and a fresh one starts, as Save on an unchanged Edit would, and the message is never added a second
+time. It is for a page whose own step stood in the reply's way (say the viewer had to free something
+up first) and that can now let the same request carry on, where `send(text)` would show the message
+twice. It fires `before-send` with `edit: true` (which may cancel or queue it) and keeps the message's
+own files. It resolves `true` once the reply started or waits to start, and `false`, asking nothing,
+while the chat has not started or holds, and when there is no message, a reply runs, a message is on
+its way or waiting, the runner takes no edits, or the latest reply may still be running elsewhere.
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
@@ -993,7 +1002,10 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
 "Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in each chat's model list,
 each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
-label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
+label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `modelsOnly` (offer only `model`
+and `models`: the model button shows for every viewer, with no Premium models setting, lists only
+those with each one's `note`, loads no other list and takes no typed id, and a chat saved with any
+other model replies with `model`; for a page whose server accepts only those ids), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
 reply may write, its reasoning and tool-call arguments included, such as a file it writes; default
 16,384, kept within 1,024 to 32,768) and `maxSteps` (the most steps, each one paid model request,

@@ -1,7 +1,7 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 
-import { AUTO_RUN_STEPS, CUSTOM_INSTRUCTIONS_MAX, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
+import { AUTO_RUN_STEPS, CUSTOM_INSTRUCTIONS_MAX, chatConfig, OUTPUT_TOKENS_MAX, OUTPUT_TOKENS_MIN, RETENTION_DAYS, outputTokenCap } from '../config.js';
 import type { Settings } from '../types.js';
 import { balanceDetails, type BalanceView } from './civitai-chat-balance.js';
 import { LightElement, emit } from './light.js';
@@ -135,12 +135,14 @@ export class CivitaiChatSettingsDialog extends LightElement {
         ${this.#outputTokens()}
         ${this.#instructions()}
         ${this.balance ? html`<section class="cvt-balance-panel"><h3>Replies</h3>${balanceDetails(this.balance, this)}</section>` : nothing}
-        <civitai-switch
-          label="Premium models"
-          description="Pick another model for a chat, such as Claude or GPT. Their replies cost Buzz at the model's own price, shown as an estimate."
-          .checked=${this.settings.premiumModels === true}
-          @change=${(event: Event) => this.#change({ premiumModels: (event.target as HTMLInputElement).checked })}
-        ></civitai-switch>
+        ${chatConfig.modelsOnly
+          ? nothing
+          : html`<civitai-switch
+              label="Premium models"
+              description="Pick another model for a chat, such as Claude or GPT. Their replies cost Buzz at the model's own price, shown as an estimate."
+              .checked=${this.settings.premiumModels === true}
+              @change=${(event: Event) => this.#change({ premiumModels: (event.target as HTMLInputElement).checked })}
+            ></civitai-switch>`}
         <civitai-switch
           label="Show mature content"
           .checked=${this.settings.allowMature}

@@ -118,6 +118,51 @@ describe("ChatSession's model and output cap, as the reply request carries them"
     expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'saved/chat-model']);
   });
 
+  describe('with a page that offers only its own models (modelsOnly)', () => {
+    const before = { model: chatConfig.model, models: chatConfig.models };
+    afterEach(() => {
+      Object.assign(chatConfig, before);
+      delete chatConfig.modelsOnly;
+    });
+    const only = () => {
+      chatConfig.model = 'page/default';
+      chatConfig.models = [{ id: 'page/listed', label: 'Listed', note: 'About twice the cost' }];
+      chatConfig.modelsOnly = true;
+    };
+
+    it('asks with a listed model picked for the chat, with no Premium models setting', async () => {
+      only();
+      const { session, replies } = setup();
+      session.newConversation();
+      await session.send('one');
+      await session.setChatModel('page/listed');
+      await session.send('two');
+      expect(replies.map((reply) => reply.model)).toEqual(['page/default', 'page/listed']);
+    });
+
+    it('answers a chat saved with an unlisted model with the default, Premium models or not', async () => {
+      only();
+      const { session, replies } = setup({ PICKED: 'someone/unlisted-model' });
+      session.updateSettings({ premiumModels: true });
+      await session.openConversation('PICKED');
+      await session.send('again');
+      expect(replies.map((reply) => reply.model)).toEqual(['page/default']);
+    });
+
+    it('offers only the default and the listed models, and asks no other list', async () => {
+      only();
+      const { session } = setup();
+      const fetch = vi.mocked(globalThis.fetch);
+      fetch.mockClear();
+      const list = await session.modelCatalog.load();
+      expect(list.map(({ id, source, note }) => ({ id, source, note }))).toEqual([
+        { id: 'page/default', source: 'default', note: undefined },
+        { id: 'page/listed', source: 'listed', note: 'About twice the cost' },
+      ]);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
     const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
     session.updateSettings({ premiumModels: true });
