@@ -135,7 +135,10 @@ describe('askAgain()', () => {
     await chat.updateComplete;
     await expect(chat.askAgain()).resolves.toBe(true);
     await vi.waitFor(() => expect(running(chat)).toBe(true));
+    // The fresh reply's request is out (it never ends): one more ask now would be a fourth.
+    await vi.waitFor(() => expect(asked).toHaveLength(3));
     await expect(chat.askAgain()).resolves.toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(asked).toHaveLength(3);
   });
 
