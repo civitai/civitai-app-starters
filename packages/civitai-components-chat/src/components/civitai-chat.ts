@@ -81,8 +81,8 @@ export interface ModelChangeDetail {
 export interface BeforeSendDetail {
   text: string;
   /**
-   * `true` when the viewer edited their latest message (Edit, then Save): `text` replaces that message,
-   * and its reply is asked for afresh. Cancelled, the edit does not go and the message stays as it was;
+   * `true` when the viewer edited their latest message (Edit, then Save), or the page asked it again
+   * (`askAgain()`): `text` replaces that message, and its reply is asked for afresh. Cancelled, the edit does not go and the message stays as it was;
    * queued, it goes as the same edit once released. Absent for a new message.
    */
   edit?: boolean;
@@ -650,6 +650,25 @@ export class CivitaiChat extends LitElement {
     if (this.#autoCancelled.has(turn)) this.#autoResumed.add(turn);
     void session.agent.retry();
     return true;
+  }
+
+  /**
+   * Asks the viewer's latest message again, as it is: the reply that followed it is dropped and a fresh
+   * one starts, as Save on an unchanged Edit would; no second copy of the message is added. For a page
+   * whose own step stood in the reply's way (say the viewer had to free something up first) and that
+   * can now let the same request carry on. It goes as an edit does (`before-send` with `edit: true`,
+   * which may cancel or queue it), with the message's own words and files. Resolves whether it went or
+   * waits to go; `false`, asking nothing, while the chat has not started or holds (`canSend`), and
+   * when there is no message, a reply runs, the runner takes no edits, or the latest reply may still be
+   * running in another tab or window.
+   */
+  async askAgain(): Promise<boolean> {
+    const session = this.#session;
+    const turn = session && this.#editable(session);
+    if (!turn) return false;
+    const edit: { seq: number; sent?: boolean } = { seq: turn.seq };
+    await this.#send(turn.user.content, edit);
+    return edit.sent === true;
   }
 
   /** Asks for the latest reply again (`agent.retry()`), unless the page cancels `reply-resume`; whether it did. */
@@ -1538,15 +1557,15 @@ export class CivitaiChat extends LitElement {
   /** The models a chat may switch to besides the default, and whether any other id may be typed. */
   #modelOptions(session = this.#session): { models: ChatModelOption[]; typed: boolean } {
     const backend = session?.backend ?? this.backend;
-    return backend ? { models: backendModels(backend), typed: false } : { models: chatConfig.models, typed: true };
+    return backend ? { models: backendModels(backend), typed: false } : { models: chatConfig.models, typed: !chatConfig.modelsOnly };
   }
 
   #builtInCommands(): ChatCommands {
     const { models, typed } = this.#modelOptions();
     return {
       clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
-      // A backend with one model has nothing to switch to, nor a viewer without premium models.
-      ...((typed || models.length) && (this.#session?.backend || this.#session?.settings.premiumModels) ? { model: this.#modelCommand(models, typed) } : {}),
+      // A backend with one model has nothing to switch to, nor a viewer without premium models (unless the page lists its own only).
+      ...((typed || models.length) && (this.#session?.backend || chatConfig.modelsOnly || this.#session?.settings.premiumModels) ? { model: this.#modelCommand(models, typed) } : {}),
       help: {
         usage: '/help',
         help: 'List these commands',
@@ -1628,14 +1647,15 @@ export class CivitaiChat extends LitElement {
     }
   }
 
-  /** The open chat's model button; hidden on a backend that offers nothing to pick. */
+  /** The open chat's model button; hidden on a backend, or a page offering only its own, that offers nothing to pick. */
   #modelPicker(session: ChatSession): TemplateResult | typeof nothing {
     const backend = session.backend;
-    if (backend ? backendModels(backend).length === 0 : !session.settings.premiumModels) return nothing;
+    const { models, typed } = this.#modelOptions(session);
+    if (backend || chatConfig.modelsOnly ? models.length === 0 : !session.settings.premiumModels) return nothing;
     return html`<civitai-chat-model-picker
       .value=${session.assistantModel()}
       ?own=${Boolean(session.store.current?.model)}
-      ?no-custom=${Boolean(backend)}
+      ?no-custom=${!typed}
       .models=${usableModels(this.modelList ?? session.modelChoices(), outputTokenCap(session.settings.maxOutputTokens), session.assistantModel())}
       ?loading=${this.modelsLoading}
       @cvt-model-open=${() => this.#loadModels()}

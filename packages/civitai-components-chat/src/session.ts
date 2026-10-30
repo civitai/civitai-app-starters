@@ -266,7 +266,9 @@ export class ChatSession extends EventTarget {
           ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
         });
     // A backend's models are the ones it names: nothing is asked of Civitai or OpenRouter.
-    this.modelCatalog = backend ? { load: async () => this.modelChoices() } : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    // So are a page's that offers only its own (`modelsOnly`, read as the list opens).
+    const catalog = backend ? null : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    this.modelCatalog = { load: async () => (catalog && !chatConfig.modelsOnly ? catalog.load() : this.modelChoices()) };
     if (remote) {
       this.agent = this.#remote = new RemoteAgent({
         client: remote,
@@ -392,6 +394,11 @@ export class ChatSession extends EventTarget {
       // Only a model the backend names: a chat saved with another one, or a typed id, gets the default.
       const own = this.store.current?.model?.trim();
       return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
+    }
+    if (chatConfig.modelsOnly) {
+      // Only a model the page lists: a chat saved with another one gets the default.
+      const own = this.store.current?.model?.trim();
+      return own && chatConfig.models.some((model) => model.id === own) ? own : chatConfig.model;
     }
     if (!this.settings.premiumModels) return chatConfig.model;
     return this.store.current?.model?.trim() || chatConfig.model;
