@@ -721,7 +721,8 @@ export class ChatSession extends EventTarget {
    * The assistant's tools for one reply: built-in, then the added servers', then the page's, each behind
    * the page's `beforeToolCall` and reported once as a `tool-result` event when it finishes.
    */
-  async toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
+  /** The reply's tools; `turn.reply` numbers the reply for the page's gate (a new number when unset). */
+  async toolSet(turn: { conversationId: string; seq: number; reply?: number }): Promise<ToolSet> {
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
     const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai }) };
@@ -741,7 +742,7 @@ export class ChatSession extends EventTarget {
       conversationId: turn.conversationId,
       gate: this.#options.beforeToolCall?.(),
       onResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
-      reply: nextReply(),
+      reply: turn.reply ?? nextReply(),
       onEnded: () => replyEnded.abort(),
     };
     // Offered only when the page opted in and a tool it allowed is here; otherwise the reply's tools are as before.

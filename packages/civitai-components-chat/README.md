@@ -339,6 +339,13 @@ chat.tools = {
 chat.instructions = () => `The board has ${board.size} pins.`; // read at every reply
 ```
 
+A tool whose result says `reopenTools: true` changed what the reply's tools are: say it made or
+opened something whose own tools (an added server's) the reply needs. The step ends there and the
+same reply carries on, with no message from the viewer, once its tools are built again: the page's
+`tools`, `mcpServers` and the rest are read anew, as at a reply's start. At most three times a reply; a
+result that also says `awaitsUser` ends the reply instead. The tool should return only once what it
+made is ready, e.g. once the page has handed the chat the new server.
+
 A tool's call shows as its `activity` while it runs and as nothing once done, unless it has a
 `render`. It is called again on every change, so it can show progress and the result:
 
