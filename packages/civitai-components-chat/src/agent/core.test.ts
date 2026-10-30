@@ -3,7 +3,7 @@ import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
 import { chatConfig, configureChat } from '../config.js';
-import { AgentCore, withoutToolMarkup, type AgentCoreOutcome, type AgentCoreRun } from './core.js';
+import { AgentCore, MAX_TOOL_REOPENS, withoutToolMarkup, type AgentCoreOutcome, type AgentCoreRun } from './core.js';
 import type { TurnPart } from './parts.js';
 
 /**
@@ -244,5 +244,69 @@ describe('withoutToolMarkup', () => {
     expect(withoutToolMarkup([user, { role: 'assistant', content: 'Ok. <tool_call>{"name":"x"}</tool_call>' }])).toEqual([user, { role: 'assistant', content: 'Ok.' }]);
     expect(withoutToolMarkup([user, { role: 'assistant', content: [{ type: 'text', text: '<tool_call>{"name":"x"}</tool_call>' }] }])).toEqual([user]);
     expect(withoutToolMarkup([user])).toEqual([user]);
+  });
+});
+
+describe('a tool that reopens the reply’s tools (`reopenTools`)', () => {
+  it('carries the same reply on with its tools built again, and the next step uses the new tool', async () => {
+    const { core, run, prompts } = setup([toolCall('make_app', {}), toolCall('build', {}, 'call_2'), text('Built it.')]);
+    const build = vi.fn(async () => ({ built: true }));
+    const first: ToolSet = {
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ app: 'tip-calc', reopenTools: true }) }),
+    };
+    const second: ToolSet = { ...first, build: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: build }) };
+    const asked: ({ messages: ModelMessage[] } | undefined)[] = [];
+    const outcome = await run({
+      tools: async (progress) => {
+        asked.push(progress);
+        return asked.length === 1 ? first : second;
+      },
+    });
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(outcome).not.toHaveProperty('stopped');
+    // Built twice: first with nothing, then with the reply's finished steps (make_app and its result).
+    expect(asked).toHaveLength(2);
+    expect(asked[0]).toBeUndefined();
+    expect(JSON.stringify(asked[1]!.messages)).toContain('tip-calc');
+    expect(build).toHaveBeenCalledTimes(1);
+    // One reply: three steps asked for, the last two carrying the first step on.
+    expect(prompts).toHaveLength(3);
+    expect(JSON.stringify(prompts[1])).toContain('tip-calc');
+    expect(outcome!.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool', 'assistant']);
+    expect(core.running).toBe(false);
+  });
+
+  it('NEGATIVE CONTROL: without reopenTools the tools are built once, and a call to a tool that is not there fails', async () => {
+    const { run } = setup([toolCall('make_app', {}), toolCall('build', {}, 'call_2'), text('Could not build.')]);
+    const build = vi.fn(async () => ({ built: true }));
+    const first: ToolSet = {
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ app: 'tip-calc' }) }),
+    };
+    const tools = vi.fn(async () => first);
+    await run({ tools });
+    expect(tools).toHaveBeenCalledTimes(1);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it('a result that also waits on the viewer ends the reply there, building nothing again', async () => {
+    const { run, prompts } = setup([toolCall('make_app', {}), text('never asked')]);
+    const tools = vi.fn(async () => ({
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ reopenTools: true, awaitsUser: true }) }),
+    }));
+    const outcome = await run({ tools });
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(tools).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it(`builds the tools again at most ${MAX_TOOL_REOPENS} times in one reply`, async () => {
+    const calls = Array.from({ length: MAX_TOOL_REOPENS + 2 }, (_, i) => toolCall('make_app', {}, `call_${i}`));
+    const { run } = setup([...calls, text('Done.')]);
+    const tools = vi.fn(async () => ({
+      make_app: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => ({ reopenTools: true }) }),
+    }));
+    const outcome = await run({ tools });
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(tools).toHaveBeenCalledTimes(MAX_TOOL_REOPENS + 1);
   });
 });
