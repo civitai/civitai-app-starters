@@ -32,9 +32,22 @@ export class CivitaiGroup extends CivitaiElement {
         gap: 24px;
       }
       /* A flex item refuses to shrink below its content width, so one long
-         label pushes the row past its slot even with wrap. */
+         label pushes the row past its slot even with wrap.
+
+         Zeroing the floor is right for anything that HAS content to shrink.
+         It is wrong for a child with NO intrinsic width -- an aspect-ratio box
+         such as civitai-media-card -- which then resolves to 0x0 and vanishes
+         outright, so a gallery of tiles in a group rendered as nothing at all.
+         Such a child cannot fix this from its own :host rule: for a SLOTTED
+         element the outer tree's declaration wins over the inner tree's
+         regardless of specificity, so this rule always beat it.
+
+         Hence the knob rather than a flat 0. A child raises its own floor by
+         setting --civitai-group-item-min-width on itself; the var() resolves
+         against that child's computed value. The 0 fallback is byte-for-byte
+         the previous behaviour for every child that does not set it. */
       ::slotted(*) {
-        min-width: 0;
+        min-width: var(--civitai-group-item-min-width, 0);
       }
     `,
   ];
