@@ -39,6 +39,14 @@ describe("ChatSession's runner", () => {
     expect(runner.requests).toEqual([]);
   });
 
+  it("keeps no chat balance on a server runner, which bills each step to the viewer's account; the page's own replies keep theirs", () => {
+    const runner = fakeRunner();
+    expect(new ChatSession(app(), { runner: 'remote', remote: { url: RUNNER_URL, fetch: runner.fetch } }).fund).toBeUndefined();
+    expect(new ChatSession(app()).fund).toBeDefined();
+    expect(new ChatSession(app(), { runner: 'browser', remote: { url: RUNNER_URL, fetch: runner.fetch } }).fund).toBeDefined();
+    expect(runner.requests).toEqual([]);
+  });
+
   it('asks no tool server anything in remote mode: the runner holds the tools', async () => {
     const fetch = vi.fn(async () => new Response('{}'));
     vi.stubGlobal('fetch', fetch);

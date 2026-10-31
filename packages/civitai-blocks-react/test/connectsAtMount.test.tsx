@@ -76,6 +76,8 @@ const CASES: Record<string, HookCall> = {
   useReactions: () => entry.useReactions('image', [], { tickets: {} }),
   useRequestConsent: () => entry.useRequestConsent(),
   useRequestSignIn: () => entry.useRequestSignIn(),
+  // `0` for the same reason as `useWildcardPack` below: the no-fetch path.
+  useResourceFile: () => entry.useResourceFile(0),
   useResourcePicker: () => entry.useResourcePicker(),
   useRunConfirmedStep: () => entry.useRunConfirmedStep(),
   useRunTraining: () => entry.useRunTraining(),

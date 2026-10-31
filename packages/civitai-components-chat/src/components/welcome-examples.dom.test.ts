@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { memoryStore } from '../test-support/fake-backend.js';
+import { fakeRunner, RUNNER_URL } from '../test-support/fake-runner.js';
 import { flush } from '../test-support/fakes.js';
 import type { CivitaiChat } from './civitai-chat.js';
 import { CivitaiChatComposer } from './civitai-chat-composer.js';
@@ -87,6 +88,35 @@ describe('<civitai-chat> welcome examples', () => {
     expect(titles(chat)).toEqual(['Tip calculator', 'Memory game']);
     chat.shadowRoot!.querySelector<HTMLButtonElement>('civitai-chat-welcome .cvt-example')!.click();
     await vi.waitFor(() => expect(composer(chat).draft).toBe('Build a tip calculator that splits the bill between friends'));
+  });
+});
+
+describe('<civitai-chat> what the welcome says replies cost, and the chat balance badge', () => {
+  const fineprint = (chat: CivitaiChat) => chat.shadowRoot!.querySelector('civitai-chat-welcome .cvt-fineprint')?.textContent?.replace(/\s+/g, ' ').trim();
+  const badge = (chat: CivitaiChat) => chat.shadowRoot!.querySelector('civitai-chat-balance');
+  const onRunner = (chat: CivitaiChat) => {
+    chat.runner = 'remote';
+    chat.remoteRunner = { url: RUNNER_URL, fetch: fakeRunner().fetch };
+  };
+  const IN_PAGE = 'Replies and anything you make spend Buzz from your Civitai account, or from your free allowance and chat balance on models that have one. Chats are kept for 30 days.';
+  const ON_RUNNER = 'Replies spend Buzz from your Civitai account once any free allowance is used up, about 1 per step, up to a daily limit. Making things costs extra. Chats are kept for 30 days.';
+
+  it('replies in the page: the chat balance where a model has a free allowance, else the account, and the badge to top it up', async () => {
+    const chat = await mount(() => undefined);
+    expect(fineprint(chat)).toBe(IN_PAGE);
+    expect(badge(chat)).not.toBeNull();
+  });
+
+  it("replies on a server runner: the account, about 1 Buzz per step, and no chat balance badge offering a pot the runner never draws on", async () => {
+    const chat = await mount(onRunner);
+    expect(fineprint(chat)).toBe(ON_RUNNER);
+    expect(badge(chat)).toBeNull();
+  });
+
+  it('says the same to a signed-out viewer, by the runner the page chose', async () => {
+    expect(fineprint(await mount(() => undefined, false))).toBe(IN_PAGE);
+    document.body.replaceChildren();
+    expect(fineprint(await mount(onRunner, false))).toBe(ON_RUNNER);
   });
 });
 

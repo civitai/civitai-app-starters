@@ -267,6 +267,23 @@ export class ThreadStore extends EventTarget implements ConversationStore {
   }
 
   /**
+   * The viewer edited their latest message (`turn`), whose reply is asked for afresh: its text becomes
+   * `content` and its reply is dropped (see {@link editTurn}). Saved at once, as a new message is, so a
+   * reload mid-reply shows the edited message and no reply to the old one. Remote: the runner saves it.
+   */
+  editUserTurn(turn: Turn, content: string): void {
+    const conversation = this.#ownerOf(turn);
+    if (!conversation || conversation.turns.at(-1) !== turn) return;
+    editTurn(conversation, turn, content, this.#now().toISOString());
+    // Nothing of the old reply rides on a later save.
+    this.#progress.delete(turn);
+    this.#subagents.delete(turn);
+    this.#saveTurn(conversation, turn).catch((error: unknown) => console.warn('[chat-cvt] could not save the edited message yet', error));
+    this.#touchSummary(conversation);
+    this.#emit('conversation-change');
+  }
+
+  /**
    * Saves how the reply to `turn` ended into the chat it belongs to, which need not be the open one: the
    * viewer may have opened or started another while it ran (its reply is then stopped, and ends after).
    */
@@ -274,23 +291,28 @@ export class ThreadStore extends EventTarget implements ConversationStore {
     try {
       const conversation = this.#ownerOf(turn);
       if (!conversation) return;
-      await this.#submits.get(submitKey(conversation.id, turn.seq));
-      const head = this.#heads.get(conversation.id);
-      if (head?.seq === turn.seq) {
-        await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
-      } else {
-        const submit = this.#submitHead(conversation, turn.seq);
-        this.#submits.set(submitKey(conversation.id, turn.seq), submit);
-        // A submit that timed out may have landed: the externalId hands back that workflow as it was.
-        const workflowId = await submit;
-        if (workflowId) await this.#writeHead(workflowId, () => this.#metadata(conversation));
-      }
+      await this.#saveTurn(conversation, turn);
       this.#touchSummary(conversation);
       this.#emit('conversation-change');
     } finally {
       // How it ended is saved, or could not be: either way no reply of this tab's runs any more.
       if (turn.assistant.status !== 'streaming') this.#ended(turn);
     }
+  }
+
+  /** Writes the chat as it is now into the head of `turn`, submitting that head first when it has none yet. */
+  async #saveTurn(conversation: Conversation, turn: Turn): Promise<void> {
+    await this.#submits.get(submitKey(conversation.id, turn.seq));
+    const head = this.#heads.get(conversation.id);
+    if (head?.seq === turn.seq) {
+      await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
+      return;
+    }
+    const submit = this.#submitHead(conversation, turn.seq);
+    this.#submits.set(submitKey(conversation.id, turn.seq), submit);
+    // A submit that timed out may have landed: the externalId hands back that workflow as it was.
+    const workflowId = await submit;
+    if (workflowId) await this.#writeHead(workflowId, () => this.#metadata(conversation));
   }
 
   /** The chat `turn` belongs to: the one it was added to or read with, else the open chat when it holds it. */
@@ -628,6 +650,21 @@ export function saved(turn: Turn): SavedTurn {
   // `savedAt` is when the save this reply was read from was made: a reply saved again is no longer that one.
   const { errorTrace: _trace, networkRetries: _retries, resume: _resume, savedAt: _savedAt, orphaned: _orphaned, heldElsewhere: _held, ...kept } = assistant;
   return { ...rest, assistant: kept };
+}
+
+/**
+ * The viewer's edit of their latest message, in place: `turn`'s text becomes `content` (its files and
+ * references stay), the reply that followed it is dropped but for what it cost (the turn is replied to afresh, so it reads
+ * as streaming and is saved with no reply), and a chat still named after this first message is named
+ * after the edited one. The server runner's head does the same (`startTurn` with `edit`).
+ */
+export function editTurn(conversation: Conversation, turn: Turn, content: string, now: string): void {
+  turn.user = { ...turn.user, content };
+  // What the dropped reply cost stays charged, so the chat's spend keeps counting it (as Retry does).
+  const { buzz } = turn.assistant;
+  turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
+  conversation.updatedAt = now;
+  if (turn.seq === 1 && conversation.titleSource === 'first-message') conversation.title = firstMessageTitle(content);
 }
 
 export function persistable(attachment: Attachment): Attachment {

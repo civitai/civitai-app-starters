@@ -1,5 +1,46 @@
 # @civitai/app-sdk
 
+## 0.80.1
+
+### Patch Changes
+
+- ea59dac: Docs only: the 256 KB whole-request cap (a 413) applies when calling the `/api/v1/blocks/workflows/estimate` and `/submit` REST routes directly with a block token, not to page apps using the hooks through the host bridge. The README's `checkComfyGraph` section now also says `classes` is the complete list and `packs` is partial (only the `cnr_id`s present in the file).
+
+## 0.80.0
+
+### Minor Changes
+
+- f0542fb: Add `checkComfyGraph(entry)` to `@civitai/app-sdk/blocks`: a pure, offline check that a workflow file entry (what `useResourceFile` returns) can run as an inline `customComfy` graph, before any Buzz is spent. It returns `{ runnable: true }` or `{ runnable: false, reasons }`, with a closed set of reason codes: `not-api-format`, `custom-nodes` (classes outside a core-node list generated from a pinned ComfyUI commit, plus `cnr_id` pack ids), `model-filenames` (loader inputs holding a filename instead of an AIR), `too-many-nodes` (over 300) and `too-large` (over 262144). Also exports the inline caps as `BLOCK_INLINE_COMFY_MAX_NODES` and `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES`. A Comfy estimate is a ceiling, never a price. No new dependencies.
+
+## 0.79.0
+
+### Minor Changes
+
+- f4a7935: **`GET_RESOURCE_FILE`: read a resource file's parsed JSON (a workflow's graphs) over the bridge** — the SDK half of civitai/civitai-app-starters#664, phase 2.
+
+  - `@civitai/app-sdk/blocks`: the `GET_RESOURCE_FILE { requestId, modelVersionId, fileId? }` → `RESOURCE_FILE_RESULT { requestId, file } | { requestId, error }` message pair, and the types `BlockResourceFile` (`{ meta, entries, truncated }`), `BlockResourceFileMeta`, `BlockResourceFileEntry` (`{ path, format, graph }`), `BlockResourceFileEntryFormat` (`'ui' | 'api' | 'unknown'`) and `BlockResourceFileErrorCode`, a closed set: `not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`, `rate-limited`.
+  - `@civitai/blocks-react`: `useResourceFile(modelVersionId, fileId?)` → `{ file, loading, error, refetch }`, with `ResourceFileError` (`.code` from the closed set). It waits up to 120 s for the host (which downloads and unzips the file), and changing either id resets `file` and `error` before the new fetch. The reply validator drops an unknown code or a malformed file. Mock host: `resourceFile` (the canned reply; by default one UI-format graph) and `resourceFileError` (force a code; `setScenario({ resourceFileError: undefined })` clears it). `dev:live` refuses it with `parse-failed`.
+  - `@civitai/sdk`: the host reply ledger lists `GET_RESOURCE_FILE`, so `BlockTransport.request()` settles it with `{ file }` instead of refusing it. No typed `app.host` wrapper yet.
+
+  No block scope and no manifest change. Full-page app hosts only: the model-page slot does not answer it, and `dev:live` does not serve it. Only free, public versions are served — an unpublished draft or an early-access or paid version answers `not-found`, even for a viewer who bought it.
+
+## 0.78.0
+
+### Minor Changes
+
+- 57b5406: Catalog sync: the orchestrator spec accepts 4 entries the SDK catalogs did not list.
+
+  - `IMAGE_GEN_ENGINES`: add `krea3` — Krea 3 text-to-image, or an edit of up to six reference images, at 1K or 2K.
+  - `WORKFLOW_STEP_TYPES`: add `archiveExtraction` — unpack a zip / tar / tar.gz archive into its entries, with a media-type filter and an entry cap.
+  - `WORKFLOW_STEP_TYPES`: add `audioModeration` — transcribe the lyrics in a media file's audio and flag sexualized minors.
+  - `WORKFLOW_STEP_TYPES`: add `multimodalEmbedding` — normalized embeddings of text, images or short videos (`wemm-2b`, 64–2048 dimensions).
+
+  The three new step types have no generated template in the pinned `@civitai/client` yet, so `WorkflowStepTemplateFor<…>` is a compile error for each of them, as for the other entries of that gap.
+
+  `WORKFLOW_STEP_TYPES` / `IMAGE_GEN_ENGINES` are hand-maintained mirrors of the `discriminator.mapping`s in `https://orchestration.civitai.com/openapi/v2-consumers.json`, which moves per orchestrator build — so they drift without anyone touching this repo. `krea3` was read on 2026-10-16, the three step types on 2026-10-24.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. Purely additive: nothing that compiled before stops compiling, and there is no runtime behaviour change.
+
 ## 0.77.0
 
 ### Minor Changes
@@ -789,15 +830,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                    single measurements on one machine.
+                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1705,10 +1746,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                          after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                   @civitai/components  0.4.2                   — 1 copy
+                                                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

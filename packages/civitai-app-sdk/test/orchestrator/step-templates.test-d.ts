@@ -153,20 +153,23 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * hard equality, because coupling a REQUIRED check to an external package's
  * republish cadence is how a gate becomes permanently red.
  *
- * 🔴 THE ADDING HALF IS AUTOMATED; THE REMOVING HALF IS NOT.
+ * 🔴 THE SYNC SCRIPT WRITES THIS LINE — AND THE PINS BELOW, AND THE PROSE.
  * `scripts/sync-orchestrator-catalogs.mjs` (and therefore the daily
- * `Sync orchestrator catalogs` workflow) rewrites the line below whenever it
- * adds a step type to the catalog — it has to, because widening
- * `WorkflowStepType` staled this assertion in the same edit, and the workflow
- * runs `pnpm --filter @civitai/app-sdk test` as the gate in front of opening
- * its PR. It only ever GROWS the list: clearing an entry means reading a
- * republished `@civitai/client`, which the script never looks at. So delete an
- * entry by hand, in the same commit that adds the key to
- * `WorkflowStepTemplates`. Keep the declaration on one line as
+ * `Sync orchestrator catalogs` workflow) sets the line below to the derived
+ * gap — the catalog keys `StepTemplateMap` in `src/orchestrator/steps.ts` has
+ * no row for — on every run, along with one `_NoGeneratedTemplateFor_*` pin
+ * per entry and the step-count prose. It has to: widening `WorkflowStepType`
+ * stales all three in the same edit, and the workflow runs
+ * `pnpm --filter @civitai/app-sdk test` as the gate in front of opening its PR.
+ * It never decides a `$type` is typed — it never reads `@civitai/client`. A
+ * `$type` leaves the gap when a HUMAN adds its `StepTemplateMap` row (which
+ * only compiles against a client that has the template); `pnpm sync:catalogs`
+ * then drops it here, from the pins and from the prose together, or delete it
+ * by hand in that same commit. Keep the declaration on one line as
  * `type … = never;` or a union of quoted literals — the script refuses to
  * guess at any other shape and writes nothing.
  */
-type CatalogStepTypesWithoutAGeneratedType = 'imageScanning' | 'liveTextToSpeech' | 'liveTranscription' | 'merge' | 'preprocessVideo' | 'promptModeration' | 'soniloAudioGen' | 'yuE2';
+type CatalogStepTypesWithoutAGeneratedType = 'archiveExtraction' | 'audioModeration' | 'imageScanning' | 'liveTextToSpeech' | 'liveTranscription' | 'merge' | 'multimodalEmbedding' | 'preprocessVideo' | 'promptModeration' | 'soniloAudioGen' | 'yuE2';
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
   CatalogStepTypesWithoutAGeneratedType
 >();
@@ -187,7 +190,16 @@ expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTy
  * `test/orchestrator/step-count-prose.test.ts` reads these names off the AST
  * and asserts the set equals the derived gap, so the ledger cannot grow or
  * shrink without this block moving with it.
+ *
+ * The sync script regenerates this block in place: the "One alias per ledger
+ * entry" line is its anchor, the block is every directive + alias pair
+ * directly after this docblock, and a pin anywhere else makes it refuse. Keep
+ * them here, in this two-line form.
  */
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_archiveExtraction = WorkflowStepTemplateFor<'archiveExtraction'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_audioModeration = WorkflowStepTemplateFor<'audioModeration'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_imageScanning = WorkflowStepTemplateFor<'imageScanning'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
@@ -196,6 +208,8 @@ export type _NoGeneratedTemplateFor_liveTextToSpeech = WorkflowStepTemplateFor<'
 export type _NoGeneratedTemplateFor_liveTranscription = WorkflowStepTemplateFor<'liveTranscription'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_merge = WorkflowStepTemplateFor<'merge'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_multimodalEmbedding = WorkflowStepTemplateFor<'multimodalEmbedding'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_preprocessVideo = WorkflowStepTemplateFor<'preprocessVideo'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer

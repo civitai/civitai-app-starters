@@ -160,7 +160,7 @@ export class ChatSession extends EventTarget {
   readonly api: OrchestrationApi;
   /** The viewer's free allowance for chat replies. */
   readonly freeTier: FreeTier;
-  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend`. */
+  /** The viewer's prepaid Buzz for replies once the free ones run out; none with a `backend` or a remote runner. */
   readonly fund: ChatFund | undefined;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
@@ -212,7 +212,9 @@ export class ChatSession extends EventTarget {
         this.#viewer = undefined;
         throw error;
       }));
-    this.fund = backend ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
+    // Only a reply run in the page draws on the chat balance (`freeTierFetch` below). A server runner's
+    // paid steps are billed to the viewer's Civitai account, so on it there is no balance to show or top up.
+    this.fund = backend || remote ? undefined : new ChatFund({ api: this.api, viewer, autoTopUp: () => this.settings.autoTopUp === true, ...(options.scope ? { scope: options.scope } : {}) });
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     const anonymousSite = createMcpConnection({ url: chatConfig.siteMcpUrl });
     // As the viewer, so what it finds can follow their own preferences; a host's backend has no Civitai token.
@@ -264,7 +266,9 @@ export class ChatSession extends EventTarget {
           ...(remote ? { remote: { patch: (id, patch) => remote.patch(id, patch) } } : {}),
         });
     // A backend's models are the ones it names: nothing is asked of Civitai or OpenRouter.
-    this.modelCatalog = backend ? { load: async () => this.modelChoices() } : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    // So are a page's that offers only its own (`modelsOnly`, read as the list opens).
+    const catalog = backend ? null : new ModelCatalog({ orchestrationFetch: authedFetch(app) });
+    this.modelCatalog = { load: async () => (catalog && !chatConfig.modelsOnly ? catalog.load() : this.modelChoices()) };
     if (remote) {
       this.agent = this.#remote = new RemoteAgent({
         client: remote,
@@ -391,6 +395,12 @@ export class ChatSession extends EventTarget {
       const own = this.store.current?.model?.trim();
       return own && backendModels(backend).some((model) => model.id === own) ? own : backend.model;
     }
+    if (chatConfig.modelsOnly) {
+      // Only a model the page lists: a chat saved with another one gets the default.
+      const own = this.store.current?.model?.trim();
+      return own && chatConfig.models.some((model) => model.id === own) ? own : chatConfig.model;
+    }
+    if (!this.settings.premiumModels) return chatConfig.model;
     return this.store.current?.model?.trim() || chatConfig.model;
   }
 
@@ -711,7 +721,8 @@ export class ChatSession extends EventTarget {
    * The assistant's tools for one reply: built-in, then the added servers', then the page's, each behind
    * the page's `beforeToolCall` and reported once as a `tool-result` event when it finishes.
    */
-  async toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
+  /** The reply's tools; `turn.reply` numbers the reply for the page's gate (a new number when unset). */
+  async toolSet(turn: { conversationId: string; seq: number; reply?: number }): Promise<ToolSet> {
     this.mcpServers.sync(this.#options.mcp?.().mcpServers);
     const [civitai, servers] = await Promise.all([this.#builtInTools(turn), this.mcpServers.tools()]);
     const builtIn = { ...civitai, ...extraToolSet(servers, { taken: civitai }) };
@@ -731,7 +742,7 @@ export class ChatSession extends EventTarget {
       conversationId: turn.conversationId,
       gate: this.#options.beforeToolCall?.(),
       onResult: (result) => this.dispatchEvent(new CustomEvent<ChatToolResult>('tool-result', { detail: result })),
-      reply: nextReply(),
+      reply: turn.reply ?? nextReply(),
       onEnded: () => replyEnded.abort(),
     };
     // Offered only when the page opted in and a tool it allowed is here; otherwise the reply's tools are as before.

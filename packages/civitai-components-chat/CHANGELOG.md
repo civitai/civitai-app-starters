@@ -1,5 +1,59 @@
 # @civitai/components-chat
 
+## 0.35.0
+
+### Minor Changes
+
+- 6cbc7b8: A tool whose result says `reopenTools: true` makes the reply carry on with its tools built again, with no message from the viewer: for a tool that made something whose own tools the reply needs (say a new app whose server the page has just handed over). The step ends there and the same reply continues from its finished steps, at most three times a reply; a result that also says `awaitsUser` ends the reply as before. `AgentCoreRun.tools(progress?)` now gets the reply's finished messages when it is called again, so a server runner can build them for where the reply is. A reply keeps one reply number for the page's gate across those rebuilds, so a per-reply budget counts across them, and a reply stopped while its tools are rebuilt ends as stopped (the signal is passed to `tools`).
+
+## 0.34.0
+
+### Minor Changes
+
+- a66ada6: `<civitai-chat>` gains `askAgain()`: it asks the viewer's latest message again, as it is, replacing the reply that followed it with a fresh one and never adding the message a second time. For a page whose own step stood in the reply's way (say the viewer had to free something up first) and that can now let the same request carry on, where `send(text)` would show the message twice. It goes as an edit does (`before-send` with `edit: true`) and resolves whether it went.
+
+  `configureChat({ modelsOnly: true })` offers only the page's `model` and `models`: the model button shows for every viewer (no Premium models setting), lists only those with each one's `note` as its cost hint, loads no other list and takes no typed id, and a chat saved with any other model replies with the default. A listed model's `note` now shows in the model list wherever its price is not known.
+
+## 0.33.0
+
+### Minor Changes
+
+- c326bd7: A reply that stopped because the viewer's Civitai account is out of Buzz (`insufficient_buzz`: a paid step the account could not pay for, or a chat balance that could not be topped up from it) now shows **Get Buzz**, a link to the buy-Buzz page in a new tab, and on the latest reply **Continue**, which asks for the reply again as Retry does (`reply-resume` with `trigger: 'retry'` first) and carries on from its finished steps. A host's own `backend` is unchanged: its 402 is its own refusal. `<civitai-chat-thread>` and `<civitai-chat-turn>` take `hosted`.
+
+  With `runner="remote"` the chat no longer keeps a chat balance (`session.fund` is undefined): a server runner bills each paid step to the viewer's Civitai account, never the balance, so the balance badge and its Top up / Top up when empty controls are gone there. The welcome's fine print no longer says you'll see the price first. It now says who pays: in the page, the Civitai account, or the free allowance and chat balance on models that have one; on a runner, the account, about 1 Buzz per step, up to a daily limit (`<civitai-chat-welcome account-billed>`).
+
+## 0.32.1
+
+### Patch Changes
+
+- 2e207a2: A reply step that carried a tool's image and was refused inside the stream (a status 200 answer whose stream holds one error event with `code: "upstream_rejected"`, as Civitai's orchestration sends when the upstream model refuses a streamed request) is now asked once more without the image, as a refusal by status (400, 404, 413, 415, 422) already was. At most once per reply; no image is sent for the rest of that reply. Other errors inside the stream, such as a failed job or a timeout, still end the reply as before.
+
+## 0.32.0
+
+### Minor Changes
+
+- 51327b2: Models Civitai routes to other providers are premium models, off by default: the message box shows no model button and `/model` is not offered, and every chat answers with the default model, also one saved with another. Settings → **Premium models** turns them on. Their prices show in Buzz and as an estimate ("~195 in · ~793 out Buzz/M tokens", at 1,300 Buzz per USD of the provider's cost), since a reply is charged what it actually cost.
+
+## 0.31.0
+
+### Minor Changes
+
+- 4bb44b1: Edit the latest message. While no reply runs (after a reply finished, after Stop, after an error), the viewer's latest message shows **Edit**: Save replaces its words, drops the reply that followed it and asks for a reply afresh (a new reply, charged like one); Cancel leaves it as it was. Keyboard: Enter saves, Shift+Enter is a new line, Escape cancels and puts focus back on Edit. The chat is saved at once with the edited message and no reply. An edit fires `before-send` with `edit: true`. Remote mode: Edit shows only once the runner lists `features: ['edit']` on a start's or a lookup's answer; the runner protocol adds `turn.edit` on `StartRunRequest` and `features` on `StartRunResponse` and `RunLookupResponse` (both optional, so older runners and pages keep working).
+
+### Patch Changes
+
+- f3ce921: Remote runner mode: a reply whose start keeps failing (no answer from the runner, or a 5xx, 408 or 429) is no longer asked again forever behind a spinner. It is asked again on the 1, 2, 5, 10, 30 s waits for at most a minute from the first ask, or from when the page last woke (`START_GIVE_UP_MS`; six asks over 48 s when each fails fast), then the reply fails with the chat's usual error and Retry, which starts asking afresh with the same idempotency key (the rest of the start built as any Retry's), so a run an earlier ask did start is followed rather than refused. A 4xx refusal still fails at once.
+
+## 0.30.0
+
+### Minor Changes
+
+- 5490038: `<civitai-chat>` takes the page's own content in two named slots: `composer-top`, just above the message box, and `thread-end`, after the last message inside the thread's scroll, brought into view like a new message. Nothing slotted takes no space.
+
+### Patch Changes
+
+- cd1844c: `send()` no longer puts a message it cannot send now (the chat holds, or the Buzz grant is refused) into the empty message box while the viewer is `dictating`: the box is hidden behind the recording bar and their words are joined onto it, so the message landed glued to the front of what they said. Not dictating, it is kept in the empty box as before.
+
 ## 0.29.1
 
 ### Patch Changes

@@ -99,8 +99,9 @@ export function buildModelList({
   };
   // The default is named like any other model: a page label for it, else OpenRouter's name, else its
   // id made readable. Its name is settled once both lists are read, below; `source` marks it the default.
-  let defaultName = listed.find((model) => model.id === defaultModel)?.label;
-  add({ id: defaultModel, label: '', source: 'default' });
+  const listedDefault = listed.find((model) => model.id === defaultModel);
+  let defaultName = listedDefault?.label;
+  add({ id: defaultModel, label: '', source: 'default', ...(listedDefault?.note ? { note: listedDefault.note } : {}) });
   for (const model of listed) add({ id: model.id, label: model.label, source: 'listed', ...(model.note ? { note: model.note } : {}) });
 
   const routable = new Map<string, OrchestrationModel>();
@@ -197,19 +198,23 @@ async function getJson(doFetch: typeof fetch, url: string): Promise<unknown | nu
   }
 }
 
-function usd(price: number): string {
-  if (price === 0) return '$0';
-  return `$${price < 0.1 ? price.toFixed(3) : price.toFixed(2)}`;
+/** What the orchestrator bills per USD of a premium model's cost (its cost × 1,000 × 1.3). */
+export const BUZZ_PER_USD = 1300;
+
+function buzz(usdPerMillion: number): string {
+  const amount = usdPerMillion * BUZZ_PER_USD;
+  if (amount === 0) return '~0';
+  return amount < 1 ? '<1' : `~${Math.round(amount).toLocaleString('en-US')}`;
 }
 
 /**
- * "$0.15 in · $0.60 out /M"; empty when the price is unknown. A $0 model still costs Buzz per step,
- * so it reads "$0", never "Free", which would sound like the free tier.
+ * "~195 in · ~780 out Buzz/M tokens": an estimate, since the charge follows the provider's actual cost; empty
+ * when the price is unknown. A 0 model still costs Buzz per step, so it never reads "Free" (the free tier).
  */
 export function priceLabel(entry: Pick<ChatModelEntry, 'price'>): string {
   const price = entry.price;
   if (!price) return '';
-  return `${usd(price.input)} in · ${usd(price.output)} out /M`;
+  return `${buzz(price.input)} in · ${buzz(price.output)} out Buzz/M tokens`;
 }
 
 /**

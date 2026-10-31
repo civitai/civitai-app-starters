@@ -17,8 +17,8 @@
  * upstream some time after the 2026-08-28 fixture read. Same argument as the
  * sibling `revendor-canonical-schema.yml`, whose cron comment spells it out.
  *
- * WHAT IT WRITES (up to 5 files — see `da3a9dd`, the `miniMaxMusic3` precedent,
- * for the first three):
+ * WHAT IT WRITES (up to 7 files — see `da3a9dd`, the `miniMaxMusic3` precedent,
+ * for the first three, and `57b54064` (#668) for 4 and 6):
  *   1. packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json
  *      — the transcribed lists, re-read from the live mapping, plus `readOn`.
  *   2. packages/civitai-app-sdk/src/orchestrator/index.ts — the new keys,
@@ -27,14 +27,36 @@
  *      `toHaveLength` counts, which are a positive control on the fixture and
  *      exist to be bumped deliberately.
  *   4. packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts —
- *      the `CatalogStepTypesWithoutAGeneratedType` ledger, ONLY when this run
- *      adds step types (an `imageGen` engine does not touch it). See the
- *      block below.
- *   5. .changeset/orchestrator-catalog-sync-<date>.md — `minor`, per
+ *      the `CatalogStepTypesWithoutAGeneratedType` ledger AND one
+ *      `_NoGeneratedTemplateFor_<$type>` `@ts-expect-error` pin per entry.
+ *   5. packages/civitai-app-sdk/src/orchestrator/steps.ts and
+ *   6. packages/civitai-app-sdk/README.md — the VALUES inside the step-count
+ *      sentences `test/orchestrator/step-count-claims.mjs` lists (catalog
+ *      size, mapped count, gap count, gap names). Never any other word.
+ *   7. .changeset/orchestrator-catalog-sync-<date>.md — `minor`, per
  *      RELEASING.md: `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`,
  *      so a new key widens an exported union. Purely additive.
+ * 4–6 are written only when their content changes (an `imageGen` engine never
+ * moves them); 1–3 and 7 only when a catalog drifted. See the two blocks below.
  *
- * 🔴 WHY THE LEDGER IS FILE 4, AND WHY SKIPPING IT KILLS THIS JOB RATHER THAN
+ * 🔴 WHY 4–6 EXIST, AND WHY SKIPPING THEM KILLS THIS JOB. All three state one
+ * fact — the step-type GAP, catalog keys minus `interface StepTemplateMap`'s
+ * rows — and `test/orchestrator/step-count-prose.test.ts` pins all of them to
+ * it, inside `pnpm --filter @civitai/app-sdk test`, the workflow's
+ * `Validate SDK` step. Run 37834855058 (2026-10-08) added a step type and wrote
+ * only 1–4's ledger: the step failed on `claim-count` misses and "pins one live
+ * compile error per gap $type", and no PR opened. So the gap is DERIVED on every
+ * run — from the post-sync fixture and the map's source — and written to all
+ * three surfaces at once, in both directions: a `$type` leaves it when a human
+ * adds its `StepTemplateMap` row. Each sentence is matched whole (exactly once,
+ * or exit 1 naming the claim) and only its values are replaced, so the wrapping
+ * a human chose survives and a second run is a byte-for-byte no-op. Measured
+ * 2026-10-24 on a copy of `main` with `multimodalEmbedding` (one of the three
+ * step types #668 added by hand) removed from every surface, run against the
+ * live spec: steps.ts, the README and the type test came out byte-identical to
+ * `main`, and a second run reported no drift.
+ *
+ * 🔴 WHY THE LEDGER IS IN FILE 4, AND WHY SKIPPING IT KILLS THIS JOB RATHER THAN
  * MERELY ANNOYING A REVIEWER. `test/orchestrator/step-templates.test-d.ts`
  * asserts, at compile time, that `Exclude<WorkflowStepType, keyof
  * WorkflowStepTemplates>` equals a hand-written ledger type — the catalog keys
@@ -52,8 +74,10 @@
  * guess: the same file's Direction A assertion pins `keyof
  * WorkflowStepTemplates` as a SUBSET of `WorkflowStepType`, so a key that was
  * absent from the catalog until this run cannot have been in the map either.
- * Clearing an entry, by contrast, is a human's job — it means reading a
- * republished `@civitai/client`, which this script never looks at.
+ * Clearing an entry still starts with a human: they add the `StepTemplateMap`
+ * row once a republished `@civitai/client` has the template (this script never
+ * reads the client), and the next run drops the entry, its pin and its names in
+ * the prose together.
  *
  * 🔴 IT NEVER INVENTS A DESCRIPTION. The catalog's whole job is the one-line
  * description a developer reads when picking a step, so a fabricated one is
@@ -87,10 +111,12 @@
  * refuses, writing nothing, rather than emitting something merely mangled.
  *
  * EXIT CODES (the workflow distinguishes them; do not collapse them)
- *   0  either nothing drifted (no writes) or the additive drift was written
+ *   0  either nothing drifted (no writes) or the additive drift was written —
+ *      including a gap-only rewrite (4–6) when no catalog moved
  *   1  the spec was unreachable / unreadable, carried a key outside `SAFE_KEY`,
- *      or a file this must edit did not have the shape it knows how to edit —
- *      nothing written
+ *      a file this must edit did not have the shape it knows how to edit (a
+ *      step-count claim not found exactly once included), or a new step type is
+ *      not an identifier and so cannot be pinned — nothing written
  *   2  the drift includes a REMOVAL — nothing written, a human must decide
  *
  * 🔴 "NOTHING WRITTEN" IS LITERAL, AND IT IS LOAD-BEARING NOW THAT THIS IS ALSO
@@ -113,6 +139,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { PLACEHOLDER_DESCRIPTION } from './orchestrator-catalog-placeholder.mjs';
+import { CLAIMS } from '../packages/civitai-app-sdk/test/orchestrator/step-count-claims.mjs';
 
 const REPO_ROOT =
   process.env.REPO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -130,7 +157,12 @@ const TYPE_TEST_SRC = join(
   REPO_ROOT,
   'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts',
 );
+const STEPS_SRC = join(REPO_ROOT, 'packages/civitai-app-sdk/src/orchestrator/steps.ts');
+const README = join(REPO_ROOT, 'packages/civitai-app-sdk/README.md');
 const CHANGESET_DIR = join(REPO_ROOT, '.changeset');
+
+/** `step-count-claims.mjs` names files by tag; these are the tags' paths. */
+const CLAIM_FILES = { steps: STEPS_SRC, readme: README };
 
 /** The ledger type alias this script extends. Single-sourced: the regex below is built from it. */
 const LEDGER_TYPE = 'CatalogStepTypesWithoutAGeneratedType';
@@ -283,7 +315,7 @@ const FORBIDDEN_IN_TEXT = /[\u0000-\u001f\u007f]/;
 const SAFE_KEY = /^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$/;
 
 /**
- * The quoted form of a `SAFE_KEY`, as `extendLedger` reads it back out of the
+ * The quoted form of a `SAFE_KEY`, as `syncLedger` reads it back out of the
  * type test.
  *
  * 🔴 DERIVED, NOT RESTATED, AND THAT IS THE WHOLE POINT. This pattern used to be
@@ -426,24 +458,30 @@ function appendToCatalog(src, constName, entries, date) {
 }
 
 /**
- * Add `keys` to the `type <LEDGER_TYPE> = …;` alias in the type test.
+ * Set the `type <LEDGER_TYPE> = …;` alias in the type test to `gap` — the
+ * catalog keys `StepTemplateMap` has no row for, derived by `deriveGap`.
  *
  * The alias is either `never` (no gap) or a union of single-quoted step-type
- * literals. Both are parsed, merged with `keys`, de-duplicated and re-emitted
- * sorted, so a run that adds a key the ledger already names is a no-op rather
- * than a duplicate — and so the emitted order does not depend on run order.
+ * literals. Both are parsed first; when the parsed SET already equals `gap` the
+ * source is returned untouched (a hand-ordered union is not churned), otherwise
+ * the alias is re-emitted sorted.
  *
- * 🔴 IT ONLY EVER GROWS. Removing an entry means `@civitai/client` has
- * republished with that step template, which this script does not read and
- * cannot check. The type test itself catches a ledger that has grown stale in
- * that direction: the `Exclude` shrinks, the assertion fails, and a human
- * deletes the line.
+ * 🔴 IT IS DERIVED, AND THAT IS NOT THE SCRIPT DECIDING A TYPE EXISTS. An
+ * entry leaves the gap only when a human adds that `$type`'s row to
+ * `interface StepTemplateMap` in `src/orchestrator/steps.ts` (which needs a
+ * republished `@civitai/client` to compile) or when it leaves the catalog. The
+ * script never reads the client; it reads the map a human edited. Until
+ * 2026-10-24 this only ever GREW the list, which left the README/steps.ts prose
+ * and the `@ts-expect-error` pins for a human to move by hand in step — the
+ * half that wedged run 37834855058. The ledger, the pins and the prose now move
+ * together from one derivation, and the type test's own `Exclude<…>` assertion
+ * still checks that derivation independently.
  *
  * Throws (exit 1, nothing written) unless the alias is present exactly once and
  * has one of those two recognised shapes — same contract as `bumpCount`. A
  * ledger this cannot parse is a ledger it must not guess at.
  */
-function extendLedger(src, keys) {
+function syncLedger(src, gap) {
   const re = new RegExp(`^type ${LEDGER_TYPE} = ([^;]*);$`, 'gm');
   const hits = [...src.matchAll(re)];
   if (hits.length !== 1) {
@@ -465,9 +503,252 @@ function extendLedger(src, keys) {
     }
     existing = existing.map((part) => part.slice(1, -1));
   }
-  const merged = [...new Set([...existing, ...keys])].sort();
-  const value = merged.length ? merged.map((k) => `'${k}'`).join(' | ') : 'never';
+  if (sameSet(existing, gap)) return src;
+  const value = gap.length ? gap.map((k) => `'${k}'`).join(' | ') : 'never';
   return src.replace(re, `type ${LEDGER_TYPE} = ${value};`);
+}
+
+const sameSet = (a, b) => {
+  const sa = new Set(a);
+  return sa.size === new Set(b).size && b.every((x) => sa.has(x));
+};
+
+/**
+ * The member names of `interface StepTemplateMap` in `steps.ts` — the `$type`s
+ * the SDK has a generated template for.
+ *
+ * The SDK's own guard reads these off the TypeScript AST. This script cannot
+ * (it runs before `pnpm install`), so it reads the one shape the interface has
+ * and REFUSES any other: each member is `  <identifier>: <TypeName>;` on its own
+ * line, with blank and `//` comment lines allowed between. A member line in any
+ * other shape is a map this must not guess at — exit 1, nothing written —
+ * because a missed member would be written into the prose and the ledger as a
+ * gap that does not exist.
+ */
+function readStepTemplateMapKeys(src) {
+  const re = /^interface StepTemplateMap \{\n([\s\S]*?)^\}$/gm;
+  const hits = [...src.matchAll(re)];
+  if (hits.length !== 1) {
+    throw new Fatal(
+      `expected exactly 1 \`interface StepTemplateMap { … }\` in ${STEPS_SRC}, found ${hits.length}`,
+    );
+  }
+  const keys = [];
+  for (const line of hits[0][1].split('\n')) {
+    if (/^\s*(?:\/\/.*)?$/.test(line)) continue;
+    const m = /^ {2}([A-Za-z_$][A-Za-z0-9_$]*): [A-Za-z_$][A-Za-z0-9_$]*;$/.exec(line);
+    if (!m) {
+      throw new Fatal(
+        `\`interface StepTemplateMap\` in ${STEPS_SRC} has a line this script does not\n` +
+          `  recognise as a member (\`  key: TypeName;\`): ${JSON.stringify(line)}\n` +
+          `  Nothing was written.`,
+      );
+    }
+    keys.push(m[1]);
+  }
+  return keys;
+}
+
+/**
+ * The derived step-count values, in the string form `step-count-claims.mjs`'s
+ * placeholders are written with. Mirrors the SDK guard's own derivation (catalog
+ * keys, `StepTemplateMap` members, catalog minus map, sorted) — written
+ * separately on purpose, so the guard does not check this with this.
+ */
+function deriveCounts(catalogKeys, mappedKeys) {
+  const phantom = mappedKeys.filter((k) => !catalogKeys.includes(k));
+  if (phantom.length) {
+    throw new Fatal(
+      `\`interface StepTemplateMap\` has rows for $types the catalog does not list: ` +
+        `${phantom.join(', ')}. The SDK type test rejects that too. Nothing was written.`,
+    );
+  }
+  const gap = catalogKeys.filter((k) => !mappedKeys.includes(k)).sort();
+  return {
+    gap,
+    values: {
+      catalog: String(catalogKeys.length),
+      mapped: String(mappedKeys.length),
+      gapCount: String(gap.length),
+      gapList: gap.map((k) => `\`${k}\``).join(', '),
+    },
+  };
+}
+
+/** The SDK guard's normalisation: JSDoc `*` / markdown `>` line prefixes off, whitespace collapsed. */
+const normaliseProse = (text) =>
+  text
+    .replace(/^[ \t]*(?:\*|>)[ \t]?/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Whitespace as the guard's `normaliseProse` sees it: a run of spaces/tabs, or a
+ * line break followed by an optional JSDoc `*` / blockquote `>` prefix. One
+ * space in a claim matches any run of these, so a claim matches however the
+ * file happens to wrap it.
+ */
+const PROSE_SEP = '(?:[ \\t]*\\r?\\n[ \\t]*(?:[*>][ \\t]?)?|[ \\t]+)+';
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const VALUE_PATTERN = {
+  catalog: '(\\d+)',
+  mapped: '(\\d+)',
+  gapCount: '(\\d+)',
+  gapList: `((?:\`[A-Za-z0-9-]+\`(?:,${PROSE_SEP}\`[A-Za-z0-9-]+\`)*)?)`,
+};
+
+/** The width `steps.ts`'s JSDoc is wrapped to. */
+const WRAP = 80;
+
+/**
+ * The new `{gapList}` text for a group that starts at `col` on a line whose
+ * prefix is `prefix`. In a JSDoc block (`*` prefix) it is re-wrapped at `WRAP`
+ * columns the way `steps.ts` is written; anywhere else (the README's blockquote
+ * is one long line per paragraph) it stays on one line.
+ */
+function renderGapList(list, col, prefix) {
+  if (!list || !/^[ \t]*\*/.test(prefix)) return list;
+  const tokens = list.split(', ');
+  let out = '';
+  let c = col;
+  tokens.forEach((tok, i) => {
+    const piece = i < tokens.length - 1 ? `${tok},` : tok;
+    if (i === 0) {
+      out += piece;
+      c += piece.length;
+    } else if (c + 1 + piece.length > WRAP) {
+      out += `\n${prefix}${piece}`;
+      c = prefix.length + piece.length;
+    } else {
+      out += ` ${piece}`;
+      c += 1 + piece.length;
+    }
+  });
+  return out;
+}
+
+/**
+ * Rewrite the VALUES inside every step-count claim `step-count-claims.mjs` pins
+ * for `tag`, leaving every other byte of the sentence — including where it
+ * wraps — as it was.
+ *
+ * Each claim is turned into an anchored pattern: its literal words verbatim,
+ * any whitespace allowed to be a line break plus a JSDoc/blockquote prefix, and
+ * each `{placeholder}` a capture group. The claim must match EXACTLY ONCE —
+ * zero means a sentence was reworded (or the claim list moved without the
+ * prose), two means a duplicate; both are exit 1, nothing written, naming the
+ * claim id. A group is rewritten only when its value differs, so a second run
+ * is a byte-for-byte no-op.
+ */
+function rewriteClaims(src, tag, path, values) {
+  let out = src;
+  for (const claim of CLAIMS.filter((c) => c.files.includes(tag))) {
+    const names = [];
+    const source = claim.text
+      .split(/(\{\w+\})/)
+      .map((part) => {
+        const ph = /^\{(\w+)\}$/.exec(part);
+        if (ph) {
+          if (!(ph[1] in VALUE_PATTERN)) {
+            throw new Fatal(`claim ${claim.id} has an unknown placeholder {${ph[1]}}`);
+          }
+          names.push(ph[1]);
+          return VALUE_PATTERN[ph[1]];
+        }
+        return reEscape(part.replace(/\s+/g, ' ')).replace(/ /g, PROSE_SEP);
+      })
+      .join('');
+    const hits = [...out.matchAll(new RegExp(source, 'gd'))];
+    if (hits.length !== 1) {
+      throw new Fatal(
+        `step-count claim ${claim.id} occurs ${hits.length} times in ${path} (expected exactly 1).\n` +
+          `  The sentence is pinned by packages/civitai-app-sdk/test/orchestrator/step-count-claims.mjs;\n` +
+          `  this script rewrites the numbers inside it and will not guess where a reworded one went.\n` +
+          `  Nothing was written.`,
+      );
+    }
+    const [hit] = hits;
+    // Right to left, so an earlier group's offsets survive a later replacement.
+    for (let g = names.length; g >= 1; g--) {
+      const name = names[g - 1];
+      const [start, end] = hit.indices[g];
+      const current = out.slice(start, end);
+      const want = values[name];
+      if (normaliseProse(current) === want) continue;
+      let next = want;
+      if (name === 'gapList') {
+        const lineStart = out.lastIndexOf('\n', start - 1) + 1;
+        const prefix = /^[ \t]*(?:[*>][ \t]?)?/.exec(out.slice(lineStart, start))[0];
+        next = renderGapList(want, start - lineStart, prefix);
+      }
+      out = out.slice(0, start) + next + out.slice(end);
+    }
+  }
+  return out;
+}
+
+/** The anchor line the `@ts-expect-error` pin block follows (inside its docblock). */
+const PINS_ANCHOR = ' * One alias per ledger entry, named `_NoGeneratedTemplateFor_<$type>`.';
+const PIN_DIRECTIVE =
+  '// @ts-expect-error — documented `$type`, no generated template in the pinned peer';
+const pinLine = (k) => `export type _NoGeneratedTemplateFor_${k} = WorkflowStepTemplateFor<'${k}'>;`;
+
+/**
+ * Make the `_NoGeneratedTemplateFor_<$type>` block in the type test pin exactly
+ * `gap`: one `@ts-expect-error` + alias pair per gap `$type`, the form every
+ * hand-written pin has (`57b54064`, #575).
+ *
+ * The block is the run of pairs immediately after the docblock that carries
+ * `PINS_ANCHOR`. Refused (exit 1, nothing written) when the anchor is not there
+ * exactly once, when a pin exists OUTSIDE that run (it would survive a removal
+ * and keep a stale compile error), or when a gap `$type` is not an identifier —
+ * `_NoGeneratedTemplateFor_flux1-kontext` is not a TypeScript name, and how to
+ * spell such a pin is a decision for the SDK's guard, not for this script.
+ * Untouched when the block already pins exactly that set.
+ */
+function syncPins(src, gap) {
+  const unpinnable = gap.filter((k) => !BARE_IDENTIFIER.test(k));
+  if (unpinnable.length) {
+    throw new Fatal(
+      `step type${unpinnable.length === 1 ? '' : 's'} ${unpinnable.map((k) => JSON.stringify(k)).join(', ')} ` +
+        `cannot be pinned as \`_NoGeneratedTemplateFor_<$type>\` — not an identifier.\n` +
+        `  Decide the pin's spelling in step-count-prose.test.ts (readCompileErrorPins) and here,\n` +
+        `  in one commit. Nothing was written.`,
+    );
+  }
+  const anchorAt = src.indexOf(PINS_ANCHOR);
+  if (anchorAt === -1 || src.indexOf(PINS_ANCHOR, anchorAt + 1) !== -1) {
+    throw new Fatal(`expected exactly 1 pin-block anchor line in ${TYPE_TEST_SRC}: ${PINS_ANCHOR}`);
+  }
+  const docEnd = src.indexOf('\n */\n', anchorAt);
+  if (docEnd === -1) throw new Fatal(`the pin-block docblock in ${TYPE_TEST_SRC} never closes`);
+  const blockStart = docEnd + '\n */\n'.length;
+
+  const pairRe = new RegExp(
+    `^${reEscape(PIN_DIRECTIVE)}\\nexport type _NoGeneratedTemplateFor_([A-Za-z_$][A-Za-z0-9_$]*) = WorkflowStepTemplateFor<'([A-Za-z_$][A-Za-z0-9_$]*)'>;\\n`,
+  );
+  const existing = [];
+  let blockEnd = blockStart;
+  for (;;) {
+    const m = pairRe.exec(src.slice(blockEnd));
+    if (!m) break;
+    if (m[1] !== m[2]) {
+      throw new Fatal(`pin \`_NoGeneratedTemplateFor_${m[1]}\` pins '${m[2]}' in ${TYPE_TEST_SRC}`);
+    }
+    existing.push(m[1]);
+    blockEnd += m[0].length;
+  }
+  const total = [...src.matchAll(/^export type _NoGeneratedTemplateFor_/gm)].length;
+  if (total !== existing.length) {
+    throw new Fatal(
+      `${TYPE_TEST_SRC} declares ${total} \`_NoGeneratedTemplateFor_*\` pins but only ${existing.length} ` +
+        `sit in the block after its docblock. A pin outside that block is one this script cannot move.\n` +
+        `  Nothing was written.`,
+    );
+  }
+  if (sameSet(existing, gap)) return src;
+  const block = gap.map((k) => `${PIN_DIRECTIVE}\n${pinLine(k)}\n`).join('');
+  return src.slice(0, blockStart) + block + src.slice(blockEnd);
 }
 
 /**
@@ -556,11 +837,7 @@ async function main() {
     );
   }
 
-  if (plans.every((p) => p.missing.length === 0)) {
-    console.log('\nNo drift: the transcribed catalogs already match the live orchestrator spec.');
-    return;
-  }
-
+  const catalogDrift = plans.some((p) => p.missing.length > 0);
   const date = today();
 
   // 🔴 EVERY EDIT IS STAGED IN MEMORY AND FLUSHED AT THE END. The EXIT CODES
@@ -571,71 +848,92 @@ async function main() {
   // was told nothing had been written and found the fixture and the SDK source
   // already rewritten in their tree. Nothing below calls writeFileSync.
   const pending = [];
-
-  // ---- 1. the transcribed fixture -----------------------------------------
-  for (const p of plans) fixture[p.fixtureKey] = [...p.live].sort();
-  fixture.readOn = date;
-  pending.push({ path: FIXTURE, content: `${JSON.stringify(fixture, null, 2)}\n` });
-
-  // ---- 2. the SDK catalogs -------------------------------------------------
-  let sdk = readFileSync(SDK_SRC, 'utf8');
   const added = [];
-  for (const p of plans) {
-    if (!p.missing.length) continue;
-    const map = mapping(spec, p.schema);
-    const entries = p.missing.map((key) => ({
-      key,
-      ...deriveDescription(spec, key, map[key]),
-    }));
-    added.push({ ...p, entries });
-    sdk = appendToCatalog(sdk, p.sdkName, entries, date);
-  }
-  pending.push({ path: SDK_SRC, content: sdk });
+  let anyPlaceholder = false;
 
-  // ---- 3. the pinned counts ------------------------------------------------
-  let test = readFileSync(TEST_SRC, 'utf8');
-  for (const p of plans) test = bumpCount(test, p.countVar, p.live.length);
-  pending.push({ path: TEST_SRC, content: test });
+  if (catalogDrift) {
+    // ---- 1. the transcribed fixture -----------------------------------------
+    for (const p of plans) fixture[p.fixtureKey] = [...p.live].sort();
+    fixture.readOn = date;
+    pending.push({ path: FIXTURE, content: `${JSON.stringify(fixture, null, 2)}\n` });
 
-  // ---- 4. the not-yet-typed ledger ----------------------------------------
-  // Only when this run adds STEP TYPES. An `imageGen` engine does not widen
-  // `WorkflowStepType`, so it cannot stale the ledger, and rewriting the file to
-  // its own contents would put a no-op diff in the PR.
-  const newStepTypes = plans.find((p) => p.fixtureKey === 'workflowStepTypes')?.missing ?? [];
-  if (newStepTypes.length) {
+    // ---- 2. the SDK catalogs -------------------------------------------------
+    let sdk = readFileSync(SDK_SRC, 'utf8');
+    for (const p of plans) {
+      if (!p.missing.length) continue;
+      const map = mapping(spec, p.schema);
+      const entries = p.missing.map((key) => ({
+        key,
+        ...deriveDescription(spec, key, map[key]),
+      }));
+      added.push({ ...p, entries });
+      sdk = appendToCatalog(sdk, p.sdkName, entries, date);
+    }
+    pending.push({ path: SDK_SRC, content: sdk });
+
+    // ---- 3. the pinned counts ------------------------------------------------
+    let test = readFileSync(TEST_SRC, 'utf8');
+    for (const p of plans) test = bumpCount(test, p.countVar, p.live.length);
+    pending.push({ path: TEST_SRC, content: test });
+
+    // ---- 4. the changeset ----------------------------------------------------
+    const bullets = added.flatMap(({ sdkName, label, entries }) =>
+      entries.map(
+        ({ key, derived }) =>
+          `- \`${sdkName}\`: add the \`${key}\` ${label}${derived ? '' : ' *(description still a placeholder — see below)*'}`,
+      ),
+    );
+    anyPlaceholder = added.some(({ entries }) => entries.some((e) => !e.derived));
+    const changeset =
+      `---\n'@civitai/app-sdk': minor\n---\n\n` +
+      `Catalog sync: the orchestrator spec accepts ${bullets.length} entr${bullets.length === 1 ? 'y' : 'ies'} the SDK catalogs did not list.\n\n` +
+      `${bullets.join('\n')}\n\n` +
+      `\`WORKFLOW_STEP_TYPES\` / \`IMAGE_GEN_ENGINES\` are hand-maintained mirrors of the ` +
+      `\`discriminator.mapping\`s in \`${SPEC_URL}\`, which moves per orchestrator build — so ` +
+      `they drift without anyone touching this repo. Read on ${date}.\n\n` +
+      `**Why \`minor\`.** \`WorkflowStepType\` is \`keyof typeof WORKFLOW_STEP_TYPES\`, so this ` +
+      `widens an exported union. Purely additive: nothing that compiled before stops compiling, ` +
+      `and there is no runtime behaviour change.\n` +
+      (anyPlaceholder
+        ? `\n🔴 **This changeset was written by \`scripts/sync-orchestrator-catalogs.mjs\` and at least ` +
+          `one description is still a placeholder.** Replace it, then rewrite this paragraph to say ` +
+          `what the new entries actually do.\n`
+        : '');
     pending.push({
-      path: TYPE_TEST_SRC,
-      content: extendLedger(readFileSync(TYPE_TEST_SRC, 'utf8'), newStepTypes),
+      path: join(CHANGESET_DIR, `orchestrator-catalog-sync-${date}.md`),
+      content: changeset,
     });
   }
 
-  // ---- 5. the changeset ----------------------------------------------------
-  const bullets = added.flatMap(({ sdkName, label, entries }) =>
-    entries.map(
-      ({ key, derived }) =>
-        `- \`${sdkName}\`: add the \`${key}\` ${label}${derived ? '' : ' *(description still a placeholder — see below)*'}`,
-    ),
-  );
-  const anyPlaceholder = added.some(({ entries }) => entries.some((e) => !e.derived));
-  const changeset =
-    `---\n'@civitai/app-sdk': minor\n---\n\n` +
-    `Catalog sync: the orchestrator spec accepts ${bullets.length} entr${bullets.length === 1 ? 'y' : 'ies'} the SDK catalogs did not list.\n\n` +
-    `${bullets.join('\n')}\n\n` +
-    `\`WORKFLOW_STEP_TYPES\` / \`IMAGE_GEN_ENGINES\` are hand-maintained mirrors of the ` +
-    `\`discriminator.mapping\`s in \`${SPEC_URL}\`, which moves per orchestrator build — so ` +
-    `they drift without anyone touching this repo. Read on ${date}.\n\n` +
-    `**Why \`minor\`.** \`WorkflowStepType\` is \`keyof typeof WORKFLOW_STEP_TYPES\`, so this ` +
-    `widens an exported union. Purely additive: nothing that compiled before stops compiling, ` +
-    `and there is no runtime behaviour change.\n` +
-    (anyPlaceholder
-      ? `\n🔴 **This changeset was written by \`scripts/sync-orchestrator-catalogs.mjs\` and at least ` +
-        `one description is still a placeholder.** Replace it, then rewrite this paragraph to say ` +
-        `what the new entries actually do.\n`
-      : '');
-  pending.push({
-    path: join(CHANGESET_DIR, `orchestrator-catalog-sync-${date}.md`),
-    content: changeset,
-  });
+  // ---- 5. everything that states the step-type GAP -------------------------
+  // The not-yet-typed ledger, the `@ts-expect-error` pins and the step-count
+  // prose in steps.ts + the README all state one fact — catalog minus
+  // `StepTemplateMap` — and `test/orchestrator/step-count-prose.test.ts` pins
+  // all of them to it. Run 37834855058 (2026-10-08) updated only the ledger and
+  // failed `Validate SDK` on the rest, so no PR opened. Derived from the
+  // post-sync catalog on EVERY run, drift or not: the same pass handles a
+  // `$type` leaving the gap because a human added its `StepTemplateMap` row. Each
+  // file is staged only when its content actually changed, so an engine-only run
+  // or a second run touches none of them.
+  const catalogKeys = fixture.workflowStepTypes;
+  const stepsSrc = readFileSync(STEPS_SRC, 'utf8');
+  const { gap, values } = deriveCounts(catalogKeys, readStepTemplateMapKeys(stepsSrc));
+  const gapEdits = [];
+  const stage = (path, before, after) => {
+    if (after === before) return;
+    pending.push({ path, content: after });
+    gapEdits.push(path);
+  };
+  const typeTest = readFileSync(TYPE_TEST_SRC, 'utf8');
+  stage(TYPE_TEST_SRC, typeTest, syncPins(syncLedger(typeTest, gap), gap));
+  stage(STEPS_SRC, stepsSrc, rewriteClaims(stepsSrc, 'steps', STEPS_SRC, values));
+  const readme = readFileSync(README, 'utf8');
+  stage(README, readme, rewriteClaims(readme, 'readme', README, values));
+
+  if (!pending.length) {
+    console.log('\nNo drift: the transcribed catalogs already match the live orchestrator spec.');
+    return;
+  }
 
   // ---- flush ---------------------------------------------------------------
   // The first write in the run. Everything above either produced a complete
@@ -652,17 +950,19 @@ async function main() {
       console.log(`  + ${sdkName}.${key} — ${how}`);
     }
   }
-  if (newStepTypes.length) {
+  if (gapEdits.length) {
     console.log(
-      `\n  ${LEDGER_TYPE} (test/orchestrator/step-templates.test-d.ts) now names ` +
-        `${newStepTypes.map((k) => `\`${k}\``).join(', ')} — the catalog lists them and ` +
-        `@civitai/client has no generated step template for them yet. Delete each one when ` +
-        `the client republishes with it.`,
+      `\n  Step-type gap restated (${gapEdits.map((p) => p.slice(REPO_ROOT.length + 1)).join(', ')}): ` +
+        `${values.catalog} in the catalog, ${values.mapped} mapped, ${values.gapCount} with no generated ` +
+        `template — ${values.gapList || '(none)'}. ${LEDGER_TYPE}, the @ts-expect-error pins and the ` +
+        `prose now name that set. A $type leaves it when its StepTemplateMap row is added.`,
     );
   }
   console.log(
     `\nWrote ${pending.length} files. ${
-      anyPlaceholder
+      !catalogDrift
+        ? 'The catalogs already matched the spec; only the step-type gap statements moved.'
+        : anyPlaceholder
         ? '🔴 At least one description is a PLACEHOLDER — `pnpm check:catalogs` reports it (advisory) until a maintainer replaces it.'
         : 'Every description came from the spec; still read them before merging.'
     }`,

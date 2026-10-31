@@ -30,7 +30,9 @@ export interface ChatRemoteRunner {
   fetch?: typeof fetch;
   /**
    * The wait before each reconnect in a row to a run's events (and each retry of a start or Stop whose
-   * answer never came); the last one repeats, for as long as the run is live. {@link RECONNECT_DELAYS_MS} unless set.
+   * answer never came); the last one repeats, for as long as the run is live. A start is asked again
+   * only within `START_GIVE_UP_MS` (remote-agent.ts), so a first wait that long leaves it no retry at all.
+   * {@link RECONNECT_DELAYS_MS} unless set.
    */
   reconnectDelaysMs?: readonly number[];
   /**
@@ -45,7 +47,8 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Waits between reconnects in a row. The run carries on on the server whatever the page's network
- * does, so the page never gives up on it: it keeps trying at the last wait.
+ * does, so the page never gives up following it: it keeps trying at the last wait. A start that never
+ * became a run is the exception: it is given up after `START_GIVE_UP_MS`, with Retry.
  */
 export const RECONNECT_DELAYS_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 
@@ -65,6 +68,11 @@ export class RunnerHttpError extends Error {
 /** The run protocol's calls, as the page makes them. */
 export class RunnerClient {
   readonly options: ChatRemoteRunner;
+  /**
+   * What the runner said it can do (`features`) in its latest answer to a start or a lookup; `undefined`
+   * until one came. An older runner sends none, so it reads as an empty set.
+   */
+  features: ReadonlySet<string> | undefined;
 
   constructor(options: ChatRemoteRunner) {
     this.options = options;
@@ -76,12 +84,22 @@ export class RunnerClient {
   }
 
   async start(body: StartRunRequest, signal?: AbortSignal): Promise<StartRunResponse> {
-    return (await this.#call(runPaths.start(), { method: 'POST', body: JSON.stringify(body) }, signal)) as StartRunResponse;
+    const response = (await this.#call(runPaths.start(), { method: 'POST', body: JSON.stringify(body) }, signal)) as StartRunResponse;
+    this.#noteFeatures(response);
+    return response;
   }
 
   /** The conversation's live run, `null` when none runs. */
   async lookup(conversationId: string, signal?: AbortSignal): Promise<RunSummary | null> {
-    return ((await this.#call(runPaths.lookup(conversationId), { method: 'GET' }, signal)) as RunLookupResponse | undefined)?.run ?? null;
+    const response = (await this.#call(runPaths.lookup(conversationId), { method: 'GET' }, signal)) as RunLookupResponse | undefined;
+    this.#noteFeatures(response);
+    return response?.run ?? null;
+  }
+
+  /** Keeps the features an answer lists (none when it lists none, as an older runner's). */
+  #noteFeatures(response: { features?: unknown } | undefined): void {
+    const listed = response?.features;
+    this.features = new Set(Array.isArray(listed) ? listed.filter((feature): feature is string => typeof feature === 'string') : []);
   }
 
   async stop(runId: string, signal?: AbortSignal): Promise<void> {

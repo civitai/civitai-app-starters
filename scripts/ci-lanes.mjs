@@ -105,6 +105,7 @@ export const JOBS = Object.freeze({
   examples: 'core',
   packaging: 'core',
   'public-types': 'core',
+  'agent-runner': 'core',
 });
 
 /**
@@ -317,6 +318,7 @@ export const RULES = Object.freeze([
   { glob: 'packages/civitai-blocks-react/**', jobs: NONE },
   { glob: 'packages/civitai-components-react/**', jobs: NONE },
   { glob: 'packages/civitai-components-chat/**', jobs: NONE },
+  { glob: 'packages/civitai-agent-runner/**', jobs: NONE },
   { glob: 'LICENSE', jobs: NONE },
   { glob: '.editorconfig', jobs: NONE },
   { glob: '.gitignore', jobs: NONE },

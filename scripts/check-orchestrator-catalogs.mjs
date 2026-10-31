@@ -290,9 +290,11 @@ async function main() {
         `\`CatalogStepTypesWithoutAGeneratedType\` ledger: a new step type widens\n` +
         `\`WorkflowStepType\`, and until \`@civitai/client\` republishes with a generated\n` +
         `template for it, it belongs in that ledger or the SDK type test fails.\n` +
-        `\`pnpm sync:catalogs\` writes all of them plus a changeset — five files on a\n` +
-        `step-type run, four when only an imageGen engine moved (an engine cannot\n` +
-        `stale the ledger, so that file is left alone).`,
+        `\`pnpm sync:catalogs\` writes all of them plus a changeset — and, on a\n` +
+        `step-type run, the ledger's \`@ts-expect-error\` pins and the step-count\n` +
+        `prose in src/orchestrator/steps.ts and the package README, which\n` +
+        `test/orchestrator/step-count-prose.test.ts pins to the same gap. Four files\n` +
+        `when only an imageGen engine moved (an engine cannot stale the gap).`,
     );
     process.exitCode = 1;
     return;

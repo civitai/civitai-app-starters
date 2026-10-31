@@ -508,6 +508,16 @@ civitai-chat-thread {
   padding: 24px 16px 32px;
 }
 
+/* The page's own content after the last message (slot="thread-end"), at the messages' width; nothing
+   slotted takes no space. */
+.cvt-thread-end {
+  display: block;
+  max-width: 800px;
+  margin: 0 auto;
+  padding-inline: 16px;
+  box-sizing: border-box;
+}
+
 .cvt-jump {
   position: absolute;
   bottom: 12px;
@@ -549,6 +559,75 @@ civitai-chat-turn {
   gap: 4px 8px;
   font-size: 13px;
   color: var(--civitai-color-text-dimmed);
+}
+
+/* The latest message's Edit, under its bubble; editing, a box in the bubble's place. */
+.cvt-user-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cvt-edit-button {
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-edit-button:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-edit-button:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-user-editor {
+  display: grid;
+  gap: 8px;
+  /* As wide as a bubble may be, and the whole row in a narrow chat. */
+  width: min(100%, 600px);
+  padding: 10px 12px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 16px;
+  background: var(--civitai-color-surface);
+  box-sizing: border-box;
+}
+
+.cvt-user-editor:focus-within {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-user-editor textarea {
+  width: 100%;
+  min-height: 3em;
+  max-height: 240px;
+  field-sizing: content;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.cvt-user-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cvt-user-editor-actions .cvt-hint {
+  flex: 1 1 120px;
 }
 
 .cvt-unsent {
@@ -1333,6 +1412,13 @@ civitai-chat-generation-card[audio] {
 
 /* ── composer ── */
 
+/* The page's own content just above the message box (slot="composer-top"), lined up with it like
+   .cvt-unsent; nothing slotted takes no space. */
+.cvt-composer-top {
+  display: block;
+  margin: 0 max(16px, calc((100% - 800px) / 2));
+}
+
 civitai-chat-composer {
   display: block;
   padding: 8px 16px 16px;
@@ -1797,8 +1883,23 @@ civitai-chat-balance {
 .cvt-top-up-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+/* As the generation card's Get Buzz. */
+.cvt-buy-buzz {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-primary);
+  color: var(--civitai-color-primary-fg, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.cvt-buy-buzz:hover {
+  background: var(--civitai-color-primary-hover, var(--civitai-color-primary));
 }
 
 /* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */

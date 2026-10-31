@@ -45,6 +45,9 @@ export class CivitaiChatThread extends LightElement {
     mcpServerIds: { attribute: false },
     subagents: { attribute: false },
     canRetry: { type: Boolean, attribute: 'can-retry' },
+    hosted: { type: Boolean },
+    canEdit: { type: Boolean, attribute: 'can-edit' },
+    returnedEdit: { attribute: false },
     awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
     queued: { attribute: false },
     atBottom: { state: true },
@@ -72,6 +75,12 @@ export class CivitaiChatThread extends LightElement {
   declare subagents?: SubagentTracker;
   /** Whether the chat can send now, so the latest reply's Retry is on. */
   declare canRetry: boolean;
+  /** On a host's own backend, whose refusals are not about Civitai Buzz: no reply offers to get more. */
+  declare hosted: boolean;
+  /** Whether the viewer's latest message can be edited now (no reply runs): its Edit shows. */
+  declare canEdit: boolean;
+  /** An edit of the latest message that waited and came back: that message's edit box reopens with it. */
+  declare returnedEdit: { seq: number; text: string } | undefined;
   /** The live reply waits for the viewer to approve a call: its status line says so. */
   declare awaitingApproval: boolean;
   declare queued: QueuedView | null;
@@ -85,6 +94,7 @@ export class CivitaiChatThread extends LightElement {
     if (this.atBottom) this.#jumpToEnd();
   });
   #gliding = false;
+  #end?: HTMLSlotElement;
   #wasLive = false;
   #queuedStatus?: string;
 
@@ -94,6 +104,8 @@ export class CivitaiChatThread extends LightElement {
     this.toolCalls = 'activity';
     this.mcpServerIds = new Set();
     this.canRetry = false;
+    this.hosted = false;
+    this.canEdit = false;
     this.awaitingApproval = false;
     this.queued = null;
     this.turns = [];
@@ -159,7 +171,19 @@ export class CivitaiChatThread extends LightElement {
       if (list) this.#resize.observe(list);
       this.#jumpToEnd();
     }
+    // The page's content after the last message grows like a message does: followed while at the end.
+    const end = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]');
+    if (end && end !== this.#end) {
+      this.#end = end;
+      this.#resize.observe(end);
+    }
   }
+
+  // Content the page puts after the last message is the newest thing in the chat: it is brought into view.
+  #onEndChange = (event: Event): void => {
+    const slot = event.target as HTMLSlotElement;
+    if (slot.assignedElements({ flatten: true }).length) void this.updateComplete.then(() => this.scrollToEnd());
+  };
 
   // Screen readers hear a reply start and the finished text once, never token by token.
   #announce(): void {
@@ -213,6 +237,9 @@ export class CivitaiChatThread extends LightElement {
                 ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
                 ?can-retry=${turn.seq === last && this.canRetry}
+                ?hosted=${this.hosted}
+                ?can-edit=${turn.seq === last && this.canEdit}
+                .returnedEdit=${this.returnedEdit?.seq === turn.seq ? this.returnedEdit : undefined}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
                 .panels=${this.panels}
@@ -230,6 +257,7 @@ export class CivitaiChatThread extends LightElement {
           )}
           ${this.#queuedMessage()}
         </div>
+        <slot name="thread-end" class="cvt-thread-end" @slotchange=${this.#onEndChange}></slot>
       </div>
       ${this.atBottom
         ? nothing

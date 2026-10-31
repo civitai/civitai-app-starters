@@ -99,6 +99,7 @@ describe("ChatSession's model and output cap, as the reply request carries them"
 
   it("asks with the chat's own model, else the page's, from the next reply", async () => {
     const { session, replies } = setup();
+    session.updateSettings({ premiumModels: true });
     session.newConversation();
     await session.send('one');
     await session.setChatModel('chat/own-model');
@@ -108,8 +109,63 @@ describe("ChatSession's model and output cap, as the reply request carries them"
     expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'chat/own-model', chatConfig.model]);
   });
 
+  it('answers with the default model while premium models are off, even in a chat saved with another', async () => {
+    const { session, replies } = setup({ PICKED: 'saved/chat-model' });
+    await session.openConversation('PICKED');
+    await session.send('again');
+    session.updateSettings({ premiumModels: true });
+    await session.send('and again');
+    expect(replies.map((reply) => reply.model)).toEqual([chatConfig.model, 'saved/chat-model']);
+  });
+
+  describe('with a page that offers only its own models (modelsOnly)', () => {
+    const before = { model: chatConfig.model, models: chatConfig.models };
+    afterEach(() => {
+      Object.assign(chatConfig, before);
+      delete chatConfig.modelsOnly;
+    });
+    const only = () => {
+      chatConfig.model = 'page/default';
+      chatConfig.models = [{ id: 'page/listed', label: 'Listed', note: 'About twice the cost' }];
+      chatConfig.modelsOnly = true;
+    };
+
+    it('asks with a listed model picked for the chat, with no Premium models setting', async () => {
+      only();
+      const { session, replies } = setup();
+      session.newConversation();
+      await session.send('one');
+      await session.setChatModel('page/listed');
+      await session.send('two');
+      expect(replies.map((reply) => reply.model)).toEqual(['page/default', 'page/listed']);
+    });
+
+    it('answers a chat saved with an unlisted model with the default, Premium models or not', async () => {
+      only();
+      const { session, replies } = setup({ PICKED: 'someone/unlisted-model' });
+      session.updateSettings({ premiumModels: true });
+      await session.openConversation('PICKED');
+      await session.send('again');
+      expect(replies.map((reply) => reply.model)).toEqual(['page/default']);
+    });
+
+    it('offers only the default and the listed models, and asks no other list', async () => {
+      only();
+      const { session } = setup();
+      const fetch = vi.mocked(globalThis.fetch);
+      fetch.mockClear();
+      const list = await session.modelCatalog.load();
+      expect(list.map(({ id, source, note }) => ({ id, source, note }))).toEqual([
+        { id: 'page/default', source: 'default', note: undefined },
+        { id: 'page/listed', source: 'listed', note: 'About twice the cost' },
+      ]);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("uses a saved chat's model after a reload, and the default for a chat saved without one", async () => {
     const { session, replies } = setup({ OLD: undefined, PICKED: 'saved/chat-model' });
+    session.updateSettings({ premiumModels: true });
     await session.openConversation('PICKED');
     await session.send('again');
     await session.openConversation('OLD');
@@ -463,6 +519,22 @@ describe('ChatSession host controls', () => {
       ['sandbox__run_command', { command: 'app create' }, { conversationId: 'c1', reply: expect.any(Number), signal: expect.any(AbortSignal) }],
       ['sandbox__run_command', { command: 'ls' }, { conversationId: 'c1', reply: expect.any(Number), signal: expect.any(AbortSignal) }],
     ]);
+  });
+
+  it("numbers the page gate's calls by the reply it is handed: a rebuild of one reply keeps the number", async () => {
+    const replies: number[] = [];
+    const { session } = setup({ beforeToolCall: () => (_name, _input, { reply }) => (replies.push(reply), { allow: true }) }, [
+      { name: 'run_command', run: () => ({ content: [{ type: 'text', text: 'ran' }] }) },
+    ]);
+    // Agent hands every build of one reply's tools that reply's number (`reopenTools` rebuilds it).
+    await run(await session.toolSet({ ...turn, reply: 9_001 }), 'sandbox__run_command', { command: 'ls' });
+    await run(await session.toolSet({ ...turn, reply: 9_001 }), 'sandbox__run_command', { command: 'ls' });
+    expect(replies).toEqual([9_001, 9_001]);
+    // NEGATIVE CONTROL: without one, each build is a new reply.
+    await run(await session.toolSet(turn), 'sandbox__run_command', { command: 'ls' });
+    await run(await session.toolSet(turn), 'sandbox__run_command', { command: 'ls' });
+    expect(new Set(replies.slice(2)).size).toBe(2);
+    expect(replies.slice(2)).not.toContain(9_001);
   });
 
   it('refuses every call when beforeToolCall throws, so a broken gate lets nothing by', async () => {

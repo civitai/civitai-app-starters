@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { AgentCore, type AgentCoreOutcome } from '../agent/core.js';
+import { createAssistantModel } from '../agent/provider.js';
 import type { McpConnection } from '../mcp/clients.js';
 import type { ChatMcpResultLimit } from '../mcp/servers.js';
 import { extraToolSet } from './extra.js';
@@ -311,5 +312,108 @@ describe('an added server’s tool that answers with an image', () => {
 
     expect(resultText(prompts[1]!, 'call_1')).toBe([SHOWN('image/gif'), '[image/png image left out: its data is not valid base64]'].join('\n'));
     expect(shape(prompts[1]!).at(-1)).toBe(`user[text:Returned by sandbox__preview_check (call_1): | image/gif=${GIF}]`);
+  });
+});
+
+/**
+ * The same refusal as Civitai's orchestration sends it for a streamed request: status 200, and the
+ * refusal as one error event in the stream. These go through the real OpenAI-compatible provider, so
+ * the error reaches `AgentCore` exactly as the provider parses those bytes.
+ *
+ * Orchestration's in-stream error is its OpenAI error envelope, `data: {"error":{…}}` then
+ * `data: [DONE]`, null fields left out. An upstream model that refused the request (its HTTP 400) is
+ * `type: invalid_request_error, code: upstream_rejected` with the upstream's own message; a job that
+ * failed otherwise is `server_error` / `job_failed`; a stream that timed out is `timeout_error`.
+ * The messages below are stand-ins: the upstream's wording is passed on verbatim and varies by model.
+ */
+describe('a refusal that comes inside the stream (status 200)', () => {
+  const REFUSED = { message: 'image input is not supported by this model', type: 'invalid_request_error', code: 'upstream_rejected', workflow_id: 'wf-1' };
+  // Not a refusal of the request, though the words name an image: only the kind of error counts.
+  const JOB_FAILED = { message: 'Chat completion failed: could not read the input image', type: 'server_error', code: 'job_failed', workflow_id: 'wf-1' };
+  const TIMED_OUT = { message: 'Request timed out', type: 'timeout_error', workflow_id: 'wf-1' };
+
+  const event = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+  const chunk = (delta: unknown, finish: string | null = null) =>
+    event({ id: 'chatcmpl-1', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] });
+  const DONE = 'data: [DONE]\n\n';
+  const toolCall = (id: string, name: string) =>
+    chunk({ role: 'assistant', tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: '{}' } }] }) + chunk({}, 'tool_calls') + DONE;
+  const text = (words: string) => chunk({ role: 'assistant', content: words }) + chunk({}, 'stop') + DONE;
+  const streamError = (error: unknown) => event({ error }) + DONE;
+
+  /**
+   * One reply through `AgentCore` against a fake chat completions endpoint. `answer` gets each request's
+   * body and its index and returns the SSE body (status 200), or a `Response` to send as it is.
+   */
+  async function wireReply(tools: ToolSet, answer: (body: string, index: number) => string | Response) {
+    const bodies: string[] = [];
+    const doFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = String(init?.body);
+      bodies.push(body);
+      const answered = answer(body, bodies.length - 1);
+      return typeof answered === 'string' ? new Response(answered, { status: 200, headers: { 'content-type': 'text/event-stream' } }) : answered;
+    }) as typeof fetch;
+    const model = createAssistantModel(null, { baseUrl: 'https://models.example', model: 'm', fetch: doFetch });
+    const outcome = (await new AgentCore().run({
+      seq: 1,
+      tools: async () => tools,
+      request: () => ({ model, system: 'You build apps.', history: [{ role: 'user', content: 'does my app look right?' }], maxOutputTokens: 512, networkRetryDelaysMs: [] }),
+    })) as AgentCoreOutcome;
+    return { bodies, outcome, withImage: bodies.map((body) => body.includes('"image_url"')) };
+  }
+
+  const screenshot = () => sandboxTools([{ content: [{ type: 'image', data: PNG, mimeType: 'image/png' }] } as CallToolResult]);
+  const lastWords = (outcome: AgentCoreOutcome) => JSON.stringify(outcome.messages.at(-1));
+
+  it('asks the refused step once more without the image, and the reply completes', async () => {
+    const { bodies, outcome, withImage } = await wireReply(screenshot(), (body, index) =>
+      index === 0 ? toolCall('call_1', 'sandbox__preview_check') : body.includes('"image_url"') ? streamError(REFUSED) : text('Done.'),
+    );
+
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(withImage).toEqual([false, true, false]);
+    expect(bodies[1]).toContain(PNG);
+    expect(lastWords(outcome)).toContain('Done.');
+  });
+
+  it('asks again only once in the reply: a refusal of the step without the image ends the reply', async () => {
+    const { outcome, withImage } = await wireReply(screenshot(), (_body, index) => (index === 0 ? toolCall('call_1', 'sandbox__preview_check') : streamError(REFUSED)));
+
+    expect(withImage).toEqual([false, true, false]);
+    expect(outcome).toMatchObject({ status: 'error', error: { code: 'upstream_rejected' } });
+  });
+
+  it.each([
+    ['a failed job', JOB_FAILED],
+    ['a timeout', TIMED_OUT],
+  ])('does not ask again after %s in the stream, though the step carried an image', async (_name, error) => {
+    const { outcome, withImage } = await wireReply(screenshot(), (body, index) =>
+      index === 0 ? toolCall('call_1', 'sandbox__preview_check') : body.includes('"image_url"') ? streamError(error) : text('Done.'),
+    );
+
+    expect(withImage).toEqual([false, true]);
+    expect(outcome).toMatchObject({ status: 'error', error: { type: error.type } });
+  });
+
+  it('does not ask again after a refusal of a step that carried no image', async () => {
+    const textOnly = sandboxTools([{ content: [{ type: 'text', text: 'Page loaded.' }] } as CallToolResult]);
+    const { outcome, withImage } = await wireReply(textOnly, (_body, index) => (index === 0 ? toolCall('call_1', 'sandbox__preview_check') : streamError(REFUSED)));
+
+    expect(withImage).toEqual([false, false]);
+    expect(outcome).toMatchObject({ status: 'error', error: { code: 'upstream_rejected' } });
+  });
+
+  it('a refusal by status (400) is still asked once more without the image, as before', async () => {
+    const { outcome, withImage } = await wireReply(screenshot(), (body, index) =>
+      index === 0
+        ? toolCall('call_1', 'sandbox__preview_check')
+        : body.includes('"image_url"')
+          ? Response.json({ error: { message: 'image input is not supported by this model', type: 'invalid_request_error' } }, { status: 400 })
+          : text('Done.'),
+    );
+
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(withImage).toEqual([false, true, false]);
+    expect(lastWords(outcome)).toContain('Done.');
   });
 });

@@ -4,6 +4,7 @@ import { outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
 import type { ConversationStore } from '../store/conversation-store.js';
+import { editTurn } from '../store/thread-store.js';
 import type { Attachment, ResumePoint, Turn } from '../types.js';
 import { humanize, type HumanError } from '../ux/humanize.js';
 import type { ChatAgent } from './chat-agent.js';
@@ -12,6 +13,7 @@ import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js
 import { buildModelMessages } from './history.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
+import { nextReply } from '../tools/gate.js';
 
 export type { LiveTurn } from './core.js';
 
@@ -25,7 +27,11 @@ export interface AgentDeps {
   store: ConversationStore;
   jobs: JobManager;
   posts?: PostManager;
-  toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet>;
+  /**
+   * The reply's tools. `reply` is the reply's number (`nextReply()`), the same every time one reply
+   * builds them, its rebuilds after `reopenTools` included, so a page's per-reply count holds across them.
+   */
+  toolSet(turn: { conversationId: string; seq: number; reply: number }): Promise<ToolSet>;
   attachments(): Attachment[];
   customInstructions?(): string | undefined;
   /** Read at the start of every reply, so the embedding page can change them at any time. */
@@ -129,6 +135,26 @@ export class Agent extends EventTarget implements ChatAgent {
     await this.#run(turn, from);
   }
 
+  /** In the page, the viewer can always edit their latest message while no reply runs. */
+  get canEdit(): boolean {
+    return true;
+  }
+
+  /**
+   * The viewer edited their latest message: its text becomes `content`, the reply to it (if any) is
+   * dropped, and it is replied to afresh: a new reply from its start, charged as one (nothing carries on
+   * from the old reply, whose cost stays charged). Only while no reply runs.
+   */
+  async edit(content: string): Promise<void> {
+    const conversation = this.#deps.store.current;
+    const turn = conversation?.turns.at(-1);
+    if (this.running || !conversation || !turn) return;
+    const { store } = this.#deps;
+    if (store.editUserTurn) store.editUserTurn(turn, content);
+    else editTurn(conversation, turn, content, (this.#deps.now?.() ?? new Date()).toISOString());
+    await this.#run(turn);
+  }
+
   async #run(turn: Turn, from?: ResumePoint): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
@@ -138,10 +164,12 @@ export class Agent extends EventTarget implements ChatAgent {
       if (from) this.#checkpoint(turn, from.messages);
     }
     this.#turn = turn;
+    // One number for the whole reply: a rebuild of its tools (`reopenTools`) is the same reply.
+    const reply = nextReply();
     const outcome = await this.#core.run({
       seq: turn.seq,
       ...(from ? { from } : {}),
-      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq }),
+      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq, reply }),
       request: (tools) => {
         const hostInstructions = this.#deps.hostInstructions?.();
         const system = buildSystemPrompt({

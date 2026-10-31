@@ -339,6 +339,13 @@ chat.tools = {
 chat.instructions = () => `The board has ${board.size} pins.`; // read at every reply
 ```
 
+A tool whose result says `reopenTools: true` changed what the reply's tools are: say it made or
+opened something whose own tools (an added server's) the reply needs. The step ends there and the
+same reply carries on, with no message from the viewer, once its tools are built again: the page's
+`tools`, `mcpServers` and the rest are read anew, as at a reply's start. At most three times a reply; a
+result that also says `awaitsUser` ends the reply instead. The tool should return only once what it
+made is ready, e.g. once the page has handed the chat the new server.
+
 A tool's call shows as its `activity` while it runs and as nothing once done, unless it has a
 `render`. It is called again on every change, so it can show progress and the result:
 
@@ -401,11 +408,21 @@ reopened from storage groups the same as it did live.
 | `placeholder` | The message box's hint while it is empty, in place of the built-in "Ask for a picture, a video, a song… or anything about Civitai" (or "Ask anything" on a host `backend`). Set back to `undefined` (or the attribute removed), the built-in returns; an empty string shows no hint. |
 
 Methods: `send(text)`, `compose(text)` (fills the message box), `giveBack(text)` (see
-[A message that waits](#a-message-that-waits)), `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+[A message that waits](#a-message-that-waits)), `askAgain()`, `newChat()`, `addFiles(files)`, `focusComposer()`. Slot `welcome` replaces what an empty chat shows.
+
+`askAgain()` asks the viewer's latest message again, as it is: the reply that followed it is dropped
+and a fresh one starts, as Save on an unchanged Edit would, and the message is never added a second
+time. It is for a page whose own step stood in the reply's way (say the viewer had to free something
+up first) and that can now let the same request carry on, where `send(text)` would show the message
+twice. It fires `before-send` with `edit: true` (which may cancel or queue it) and keeps the message's
+own files. It resolves `true` once the reply started or waits to start, and `false`, asking nothing,
+while the chat has not started or holds, and when there is no message, a reply runs, a message is on
+its way or waiting, the runner takes no edits, or the latest reply may still be running elsewhere.
 
 `send(text)` sends as if the viewer typed it and pressed Enter, once the chat has started (signed
 out, it asks them to sign in first). While `holdReason` is set it sends nothing and leaves the text
-in an empty message box; while a reply is still running it sends nothing. It fires `before-send`
+in an empty message box (not while the viewer is `dictating`: what they say would be joined onto
+it, so the box is left alone); while a reply is still running it sends nothing. It fires `before-send`
 like a typed message. `canSend` says whether it would send now, and `can-send-change` when that
 changes: see [When a message can go](#when-a-message-can-go).
 
@@ -419,7 +436,8 @@ at once as the viewer's, marked with `waiting`, and goes when you call `release(
 returns, with no second `before-send` (see [A message that waits](#a-message-that-waits)).
 
 - **It fires for** a typed message (Enter or Send), the voice recorder's "Send what you said",
-  `send(text)`, a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
+  `send(text)`, an edit of the viewer's latest message (with `edit: true`, see
+  [Editing the latest message](#editing-the-latest-message)), a choice the viewer clicks in a reply, Continue, a menu action on a result that asks
   for something (such as making a video of it), a message the assistant's own tools send for the
   viewer, and a page command's `send`.
 - **It does not fire for** a slash command the chat handles itself (`/clear`, `/model`, `/help`),
@@ -617,6 +635,28 @@ on a host's own `backend` greets the viewer plainly and shows only the page's `e
 shows none, since the built-in ones are about making things on Civitai. It takes no files, so
 `wantsFile` opens no picker there. Slot `welcome` replaces the whole greeting
 instead, examples included, and then clicking does nothing the page does not wire itself.
+
+### The page's own content in the chat
+
+Two slots put the page's own content inside the chat, as light-DOM children of the element:
+
+```html
+<civitai-chat>
+  <div slot="composer-top">Your app is paused. <button>Start app</button></div>
+  <div slot="thread-end"><!-- e.g. a card asking the viewer to choose something --></div>
+</civitai-chat>
+```
+
+- `composer-top` sits just above the message box, at its width (below any "This message was not
+  sent" notice). Use it for something about what the chat is working on right now.
+- `thread-end` sits after the last message, inside the thread's scroll, at the messages' width. It
+  stays after the newest message as the conversation grows. Content put in it is brought into view,
+  even when the viewer had scrolled back; content that grows while the viewer is at the end stays in
+  view. With no messages yet it shows under the greeting, scrolling with it.
+
+Both take no space with nothing slotted. The page styles its content itself: it is in the page's
+DOM, so the page's own stylesheet applies. Neither shows before the chat has started or while it is
+signed out, and `thread-end` does not show while a saved chat is opening.
 
 ### Gating tool calls
 
@@ -969,7 +1009,10 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
 "Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in each chat's model list,
 each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
-label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
+label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `modelsOnly` (offer only `model`
+and `models`: the model button shows for every viewer, with no Premium models setting, lists only
+those with each one's `note`, loads no other list and takes no typed id, and a chat saved with any
+other model replies with `model`; for a page whose server accepts only those ids), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) and `maxOutputTokens` (the most tokens one step of a
 reply may write, its reasoning and tool-call arguments included, such as a file it writes; default
 16,384, kept within 1,024 to 32,768) and `maxSteps` (the most steps, each one paid model request,
@@ -1144,6 +1187,33 @@ asks again, unless the page's `retryReply()` came first. `retryReply()` asks for
 the way Retry does, without `reply-resume`, and only where Retry would be offered and the chat can send;
 it resolves `true` when it asked and `false` when it asked nothing.
 
+A reply that stopped because the viewer's Civitai account is out of Buzz (`insufficient_buzz`: a paid
+step the account could not pay for, or a chat balance that could not be topped up from it) says so with
+**Get Buzz** (the buy-Buzz page, in a new tab) and, on the latest reply, **Continue**, which asks again
+as Retry does (`reply-resume` with `trigger: 'retry'` first). Not with a host's own `backend`, whose 402
+is its own refusal.
+
+### Editing the latest message
+
+While no reply runs (after one finished, after Stop, after an error), the viewer's latest message
+shows **Edit**. It opens the message's words in a box in place of its bubble, with focus at the end;
+**Save** (or Enter; Shift+Enter is a new line) replaces the message's words, drops the reply that
+followed it, and asks for a reply afresh: a new reply, from its start, charged like any other (what the
+dropped reply cost stays charged). **Cancel** (or Escape) leaves the message as it was and puts focus
+back on Edit. Only the words change: the message's files and earlier results stay with it. The chat is
+saved at once with the edited message and no reply, as a new message is, so a reload mid-reply never
+shows the old reply; a chat still named after its first message is named after the edited one.
+
+An edit goes as a message does: `before-send` fires first with `edit: true`, and the page may cancel
+it (the edit box stays open with the words) or `queue()` it (it goes as the same edit on `release()`;
+one that cannot go reopens its message's edit box with the words, never the message box, where it
+would go as a new message). Save is off while the chat holds (`canSend`).
+Edit does not show while a reply runs, nor on a reply that may still be running in another tab.
+
+With `runner="remote"`, Edit shows only once the runner has said it takes edits (`features: ['edit']`
+on a start's or a lookup's answer, see [Server runner](#server-runner)): a runner that does not say so
+would keep the old message.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)
@@ -1218,6 +1288,9 @@ chat.app = app;
 
 What changes in remote mode:
 
+- **No chat balance.** A runner bills each paid step to the viewer's Civitai account (once any free
+  allowance is used up), never the chat balance, so the balance badge and its top-ups are not shown, and
+  the welcome says replies spend account Buzz, about 1 per step, up to a daily limit.
 - **The runner holds the tools, the gate and any subagents.** The page's own `tools` executors,
   `beforeToolCall`, `subagents`, `systemPrompt`, `timeZone`, `mcp` and `mcpServers` do not apply, and the page asks no tool server
   anything; the `tools` views (`render`, `activity`) still draw the calls. What the server needs to decide
@@ -1303,12 +1376,20 @@ The protocol, briefly (`runner-protocol.ts` has every field):
 
 | Call | Body | Answer |
 |---|---|---|
-| `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
-| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run with the latest event id in its journal (`lastEventId`), or `null` |
+| `POST /runs` | `StartRunRequest`: `idempotencyKey`, `conversationId`, `scope`, `turn` (`seq`, `user`, `retry?`, `edit?`), `model`, `settings`, `page` | `StartRunResponse` (`runId`, `features?`), or `RunErrorResponse` (`run-active`, `stale-turn`, `refused`, …) |
+| `GET /runs?conversationId=` | | `RunLookupResponse`: the live run with the latest event id in its journal (`lastEventId`), or `null`; `features?` |
 | `GET /runs/<id>/events` | `Last-Event-ID` to resume | `RunEvent`s as SSE, `id:` the journal position |
 | `POST /runs/<id>/stop` | `{ v: 1 }` | `202` |
 | `POST /runs/stop` | `idempotencyKey`, `conversationId` | `202`: stops the run that start started, or keeps a later start with that key from replying |
 | `POST /conversations/<id>/patch` | `title`, `titleSource`, `model` | `204` |
+
+A runner lists what it can do beyond that in `features` on a start's and a lookup's answer; the page
+uses a feature only once a runner listed it, so older runners and older pages keep working. The one
+feature so far is `edit` (`RUN_FEATURE_EDIT`): a start with `turn.edit` replaces the saved message of
+turn `seq` (the head's latest, or the next when the head ends just before it) with `turn.user`, drops
+its reply and replies afresh, carrying nothing on from the old reply. The page sends it without
+`retry`, so a runner that does not know `edit` answers `stale-turn` instead of replying to the old
+message.
 
 Every request and response carries `v: 1`. The events are `run-started`, the parts' edits
 (`text-delta`, `tool-call`, `tool-result`, `tool-error`, `parts-truncate`), `subagent-progress`,
@@ -1316,6 +1397,14 @@ Every request and response carries `v: 1`. The events are `run-started`, the par
 `error`, `ran_out`); an event of a type the page does not know is skipped. A runner gets the edits from the reply's
 `AgentCore.live.parts` with `createPartsDiffer()` every 100 ms or so, and the page applies them with
 `applyRunEvent()`, so the parts it shows are the parts the server's reply showed.
+
+A `POST /runs` that gets no answer, or a 5xx, 408 or 429, is asked again with the same
+`idempotencyKey` after 1, 2, 5, 10 and 30 s, for at most a minute from the first ask, or from when the
+page last woke (`START_GIVE_UP_MS`). Past that the reply fails with Retry. A run an earlier ask may have
+started is left running, and Retry (or the chat's own ask once the page is back online) asks again, as a
+retry with the current model and settings but the same `idempotencyKey`, so the runner answers with that
+run. Any other refusal fails the reply
+at once.
 
 ### Running the loop in Node
 

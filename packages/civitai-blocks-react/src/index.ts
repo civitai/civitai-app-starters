@@ -119,6 +119,8 @@ export { useDailyCompensation } from './hooks/useDailyCompensation.js';
 export type { UseDailyCompensation } from './hooks/useDailyCompensation.js';
 export { useWildcardPack, WildcardPackError } from './hooks/useWildcardPack.js';
 export type { UseWildcardPack } from './hooks/useWildcardPack.js';
+export { useResourceFile, ResourceFileError } from './hooks/useResourceFile.js';
+export type { UseResourceFile } from './hooks/useResourceFile.js';
 export { useAppWorkflows } from './hooks/useAppWorkflows.js';
 export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
 export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
@@ -200,6 +202,11 @@ export type {
   BlockDailyCompensationResource,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  BlockResourceFile,
+  BlockResourceFileEntry,
+  BlockResourceFileEntryFormat,
+  BlockResourceFileErrorCode,
+  BlockResourceFileMeta,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
