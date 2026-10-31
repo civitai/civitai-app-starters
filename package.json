@@ -19,6 +19,9 @@
     "check:schema": "bash scripts/check-canonical-schema.sh",
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
     "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
+    "check:examples-validate": "node scripts/check-examples-validate.mjs",
+    "check:examples-validate:selftest": "node scripts/check-examples-validate.mjs --self-test",
+    "check:examples-render": "node scripts/check-examples-render.mjs",
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
     "check:shipped-sourcemaps": "node scripts/check-shipped-sourcemaps.mjs",
     "check:shipped-sourcemaps:selftest": "node scripts/check-shipped-sourcemaps.mjs --self-test",
@@ -32,7 +35,7 @@
     "test:guards": "node --test --test-timeout=60000 \"tests/guards/*.test.mjs\"",
     "test:guards:public-types": "node --test --test-timeout=60000 \"tests/guards/check-public-type-closure-patterns.test.mjs\"",
     "changeset": "changeset",
-    "release:version": "changeset version && pnpm --filter @civitai/components generate",
+    "release:version": "changeset version && pnpm --filter @civitai/components generate && pnpm --filter @civitai/blocks-react generate && pnpm --filter @civitai/sdk generate",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
   },

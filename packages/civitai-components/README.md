@@ -193,6 +193,30 @@ hangs under it — while `top-start` and `bottom` stay in a row, which is where
 the rating and the `POI` badges sit side by side. `<civitai-reaction>`
 abbreviates its count the way the site does.
 
+A click flips `reacted` and `count` at once and dispatches `react`, whose
+`detail` is `{ emoji, reacted, count }`; set the property back if the write
+fails. Give it a `reaction` such as `reaction="Like"` and the detail also
+carries it, as-is, so a handler knows which reaction it is without reading the
+emoji, which is display only. Without `reaction` (or with an empty one) the
+event is unchanged.
+
+`detail.reaction` is whatever string the element was given, so narrow it before
+handing it to `useReactions().toggle` in `@civitai/blocks-react`, which takes
+only the reactions an app may set:
+
+```ts
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+
+el.addEventListener('react', (event) => {
+  const { reaction, reacted } = (event as CustomEvent<ReactionDetail>).detail;
+  if (!isAppReaction(reaction)) return;
+  toggle(imageId, reaction, reacted);
+});
+```
+
+The full binding, including putting the element back after a refused write, is
+under `useReactions` in `@civitai/blocks-react`'s README.
+
 ### Image, video and audio
 
 `<civitai-image>`, `<civitai-video>` and `<civitai-audio>` follow HTML's three
@@ -231,7 +255,11 @@ attribute is rendered, so the default stays HTML's own.
 every tag, attribute, property, `::part` and slot. It is generated from the
 element sources (tags from `defineElement(TAG, …)`, parts and slots from the
 templates), so nothing is restated in JSDoc and nothing can drift. A test fails
-if it stops matching what the package registers.
+if it stops matching what the package registers. What an element inherits —
+every form control's `label`, `required`, `size` and the rest — is listed on the
+element itself with `inheritedFrom`, and the base classes it names
+(`CivitaiElement`, `CivitaiField`, `CivitaiMediaElement`) are declared in the
+manifest too, without a tag.
 
 The attribute CSS above keeps shipping unchanged at the same path, so nothing
 has to migrate. The `.` entry still carries no renderer — importing
@@ -288,9 +316,38 @@ enforced rather than asserted: `pnpm --filter @civitai/components test` runs a
 
 Scope, precisely: the menu is the only element in this package that touches the
 popover API (grep `showPopover`, `hidePopover`, `:popover-open` — the hits are one
-file), so it was the only one that could not mount. The `dom` project covers
-**it**; the other elements are covered in a real browser, where they have always
-been fine.
+file), so it was the only one that could not mount **without a setup file**. The
+form controls are the other exception — see the next paragraph. Element
+*behaviour* is covered in a real browser.
+
+**Form controls need one setup file: `@civitai/components/testing/happy-dom`.**
+happy-dom implements no `ElementInternals` (measured on 20.9.0, 20.14.6 and
+21.0.1), and every form-associated element calls `attachInternals()` on
+construction: `<civitai-button>`, `<civitai-checkbox>`, `<civitai-number-input>`,
+`<civitai-radio-group>`, `<civitai-segmented-control>`, `<civitai-select>`,
+`<civitai-slider>`, `<civitai-switch>`, `<civitai-text-input>` and
+`<civitai-textarea>`. Without the shim each throws
+`TypeError: this.attachInternals is not a function`.
+
+```ts
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    environment: 'happy-dom',
+    setupFiles: ['@civitai/components/testing/happy-dom'],
+  },
+});
+```
+
+It installs a minimal stand-in **only when `attachInternals` is absent** (a real
+browser is untouched): `form` (the nearest ancestor `<form>`), `validity` /
+`checkValidity()` / `reportValidity()` driven by the element's own
+`setValidity()` calls, `setFormValue`, `states`. It does **not** make
+`new FormData(form)` see a control's value or run `form.reset()` callbacks —
+test those in a real browser. The elements themselves deliberately do not guard
+against a missing `attachInternals`: that would let a real page lose form
+association silently. `test/element-internals-shim.dom.test.ts` enumerates the
+form-associated elements from `custom-elements.json` and constructs each one.
 
 `jsdom` is **measured, not gated** — it is not in this repo's CI at all. With the
 same test, `<civitai-menu>` mounts and opens without throwing on **jsdom 25.0.1**
@@ -496,6 +553,81 @@ Waiting for the host applies only to the host path: with no validated host
 origin a press sends nothing and the button renders disabled. Given a `signIn`
 it is usable at once, since no handshake is involved.
 
+### `<civitai-resource-picker>`
+
+Lets the viewer pick one **version** of a published resource from the Civitai
+catalog — their own, or anyone's. It opens as a modal with a search box, a
+"My … / All …" switch and, per result, a version select (newest first) with a
+badge on gated versions. It does not need `@civitai/sdk`: results come from a
+`source` you hand it.
+
+```ts
+import {
+  blockTokenSource,
+  type CivitaiResourcePicker,
+} from '@civitai/components/civitai-resource-picker';
+import '@civitai/components/civitai-resource-picker/define';
+
+const picker = document.querySelector<CivitaiResourcePicker>('civitai-resource-picker')!;
+// `origin` is the validated host origin; the token is the block's raw token.
+picker.source = blockTokenSource({ origin: hostOrigin, getToken: () => blockToken });
+const picked = await picker.show(); // null when the viewer closes it
+```
+
+```html
+<civitai-resource-picker types="Workflows ComfyWorkflows" noun="workflow" owner="mine"
+  heading="Choose a workflow"></civitai-resource-picker>
+```
+
+| Attribute / property | |
+|---|---|
+| `types` | Model types to list, space- or comma-separated. Required. |
+| `owner` | `any` (default) or `mine` — the list it opens on; the viewer can switch. |
+| `noun` | What one result is called in the picker's copy (`workflow` → "My workflows"). Default `resource`. |
+| `heading` | The modal's title. |
+| `debounce` | Milliseconds of quiet typing before a search runs. Default 300. |
+| `limit` | Page size, 1–100. Default 20. |
+| `open` | Shows it. Setting it `false` closes it without a pick or a `dismiss`. |
+| `source` (property) | A `ResourceSource`: `{ search(params, signal): Promise<ResourcePage> }`. |
+| `show()` / `close()` | `show()` opens it and resolves with the pick, or `null`. `close()` closes it as a dismissal. |
+
+It fires `pick` (`detail`: a `PickedResource`) and `dismiss`. A pick is
+`{ modelId, modelVersionId, name, versionName, creatorUsername, baseModel,
+earlyAccessDeadline?, access, owner }`, where `access` is `open`,
+`early-access` or `paid`.
+
+- 🔴 **`owner` is a UX hint, never proof of ownership.** It records which list
+  the viewer picked from; the app can rewrite it. A server that needs "this is
+  the viewer's own" must check it itself.
+- 🔴 **It refuses to show a `mine` list the server did not confirm.** A `mine`
+  search answered with anything but `owner: 'mine'` is shown as an error, not
+  as a list. `blockTokenSource` reads that from `metadata.owner`, which a
+  server older than the `owner` parameter does not send.
+- `blockTokenSource({ origin, getToken, signedIn?, fetch? })` calls
+  `GET /api/v1/blocks/models` with `Authorization: Bearer <token>` and plain
+  `fetch`, sending `types` as repeated parameters plus `owner`, `query`,
+  `limit` and `cursor`. It never calls any other route — in particular it never
+  falls back to the public `/api/v1/models`, which knows no `owner`.
+- Gated versions are listed, not hidden: the server's `paidAccess` gate
+  (`{ permanent, endsAt }`) becomes an "Early access until …" badge for a timed
+  gate and a "Paid" badge for a permanent one.
+- On a `401`, `blockTokenSource` calls `getToken({ fresh: true })` once and
+  retries if that returns a different token — a block token that expired while
+  the tab slept. Otherwise the search ends as `unauthorized`. The exception is
+  a `mine` search when `signedIn()` returns `false`: the server answers an
+  anonymous viewer's `mine` with a `401` as well, so that search ends as
+  `unauthorized` at once, without calling `getToken({ fresh: true })`.
+- Changing `owner` while it is open drops the rows on screen and searches the
+  other list. A pick's `owner` is the list its row was shown in.
+- A failed "Load more" keeps the rows already shown and offers that page again.
+  A busy one keeps them too while it retries the same page.
+- A newer search aborts the one in flight, and a late answer to an older search
+  is dropped. `429` and `503` show a retry state and are retried after
+  `Retry-After`, twice; then "Try again" is offered. `ResourceSourceError`'s
+  `kind` (`busy`, `unauthorized`, `owner-unsupported`, `failed`) is how a
+  source of your own says which of these happened.
+- A change to `source` or `types` while it is open searches again.
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —
@@ -515,8 +647,15 @@ elements do.
 
 Spacing is a scale of its own — `--civitai-space-0` through `-6` — because
 Mantine expresses spacing per component rather than as a ramp, so
-`@civitai/theme` has nothing to derive it from. Override the custom properties
-to retune every utility at once. Colour utilities name tokens rather than
+`@civitai/theme` has nothing to derive it from. Redeclare the custom properties
+to retune every utility at once — **on a scope, not `:root`**. These live in a
+bare `:root` block in `utilities.css`, which carries no `@layer`, so a `:root`
+redeclaration only ties with it and the later sheet wins. ⚠️ Unlike the token
+sheet, nothing injects `utilities.css` for you — you link it yourself, so that
+order is *yours* to control and a `:root` override can be made to work. Scoping
+is still the advice, because it needs no ordering discipline at all. (Measured
+for the token sheet; this sheet is the same shape by construction, not
+separately measured.) Colour utilities name tokens rather than
 shades, so `ci-muted` follows the theme into dark mode instead of pinning a
 grey. The grid is CSS Grid: `ci-row` is twelve columns, `ci-col-4` spans four,
 and `ci-md-col-6` does it from the `md` breakpoint up.
@@ -571,8 +710,11 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Design
 
-- All rules live in `@layer civitai.components`, so consumer CSS wins the
-  cascade without specificity fights.
+- All rules live in `@layer civitai.components`, so consumer CSS beats **this
+  sheet** without specificity fights. 🔴 Not the **tokens**: `@civitai/theme`'s
+  sheet is unlayered, so a `:root { --civitai-…: }` override only ties with it
+  and loses on stylesheet order. Scope token overrides — see
+  [`MARKUP.md`](./MARKUP.md) → *Cascade / overriding*.
 - State colors (hover/active/tint) are derived with `color-mix()` from base
   tokens — no shade enumeration.
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
@@ -599,8 +741,11 @@ here so they're readable on the npm package page.
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor
 (typically `<html>` or the block root); tokens re-resolve from that scope
 (default = **dark**, and never the OS preference — see MARKUP.md). **Cascade** — every rule lives in `@layer civitai.components`,
-so your own unlayered CSS always wins with no `!important`; override a token
-locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+so your own unlayered CSS always wins with no `!important` — **over this
+package's rules, NOT over the tokens**. 🔴 A token override must be **scoped**
+(`style="--civitai-color-primary: #a259ff"` on any ancestor, or a class on your
+block root); at `:root` it silently loses. Why, and the measured matrix:
+[`MARKUP.md`](./MARKUP.md) → *Cascade / overriding*.
 
 ### Text — `data-civitai-ui="text"`
 Headings, paragraphs and inline copy. The one component that prescribes no

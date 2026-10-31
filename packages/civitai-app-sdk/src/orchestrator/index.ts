@@ -84,7 +84,12 @@ export const WORKFLOW_STEP_TYPES = {
   imageBackgroundRemoval: 'Image background removal (BiRefNet)',
   /** Vectorize a raster image with a local StarVector / OmniSVG model. */
   imageToSvg: 'Raster image → SVG vectorization',
-  /** LoRA / DoRA / embedding training. Long-running. */
+  /**
+   * LoRA / DoRA / embedding training. Long-running. Allowed on an App Block's
+   * pass-through arm, where `maxBuzz` (1–250) is its timeout in seconds only
+   * when the orchestrator returns no quote — see `WorkflowBodyPassThroughStep`
+   * in `@civitai/app-sdk/blocks`.
+   */
   imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
   /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
   preprocessImage: 'Image preprocessing (resize, ControlNet preprocessors, …)',
@@ -121,6 +126,15 @@ export const WORKFLOW_STEP_TYPES = {
   // ----- Audio -------------------------------------------------------------
   /** Text-to-speech (multi-voice, multi-language). */
   textToSpeech: 'Text-to-speech synthesis',
+  /**
+   * Streaming text-to-speech. Inputs mirror `textToSpeech`, restricted to voices
+   * that stream with low first-audio latency. The output hands back an
+   * `inputUrl` you POST UTF-8 text chunks to (`?seq=0,1,…`, `final=true` on the
+   * last) and one continuous `audioUrl` stream (`pcm` s16le 24 kHz mono, or
+   * `ogg` Opus). The session ends at `maxCharacters` or after
+   * `idleTimeoutSeconds` without input, and is billed on characters spoken.
+   */
+  liveTextToSpeech: 'Streaming text-to-speech — post text in chunks, read back one continuous audio stream',
   /** Music generation via ACE Step 1.5 (lyrics + style → song). */
   aceStepAudio: 'Music generation (ACE Step 1.5)',
   /**
@@ -147,6 +161,8 @@ export const WORKFLOW_STEP_TYPES = {
   soniloAudioGen: 'Music or a sound effect from a text prompt (Sonilo)',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
+  /** Speech-to-text over audio streamed in while the user is still talking. */
+  liveTranscription: 'Live speech-to-text from audio streamed while the user talks',
   /** Generate captions from audio. */
   audioCaptioning: 'Caption generation from audio',
 
@@ -171,7 +187,8 @@ export const WORKFLOW_STEP_TYPES = {
   /**
    * Generic training step. Engines: `ai-toolkit`, `comfy`. Distinct from
    * {@link WORKFLOW_STEP_TYPES.imageResourceTraining}, which is the older
-   * kohya/musubi/flux-dev-fast LoRA path.
+   * kohya/musubi/flux-dev-fast LoRA path. Allowed on an App Block's
+   * pass-through arm on the same terms as `imageResourceTraining`.
    */
   training: 'Model training (ai-toolkit / comfy engines)',
 
@@ -200,6 +217,14 @@ export const WORKFLOW_STEP_TYPES = {
   imageScanning: 'Unified image moderation scan (NSFW level, AI/anime recognition, tagging, age detection)',
   /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
   shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
+  /**
+   * Transcribe the audio at `mediaUrl` and classify the lyrics for sexualized
+   * minors. `transcriber` is `auto`, `aceStep` or `asr`; `auto` sends speech in
+   * a supported language to ASR and everything else to ACE-Step. The output
+   * carries the `lyrics`, a `score`, `sexualizedMinors` and `blocked`, plus
+   * `hasAudio` and a `skippedReason`.
+   */
+  audioModeration: 'Audio moderation — transcribe lyrics and flag sexualized minors',
   /** ClamAV scan a model file for malware. */
   modelClamScan: 'Antivirus scan a model file',
   /** Pickle-scan a model file for unsafe pickles. */
@@ -212,6 +237,13 @@ export const WORKFLOW_STEP_TYPES = {
   chatCompletion: 'LLM chat completion',
   /** Generate a richer prompt from a short seed prompt. */
   promptEnhancement: 'Prompt expansion via LLM',
+  /**
+   * Embed 1–128 `inputs` (each a unique `id` carrying `text`, an `imageUrl` or
+   * a `videoUrl` of at most 60 s / 100 MiB, audio ignored) into normalized
+   * vectors with `wemm-2b`. `dimensions` is 64–2048 in powers of two, default
+   * 256.
+   */
+  multimodalEmbedding: 'Text / image / video embeddings (wemm-2b)',
 
   // ----- Web ---------------------------------------------------------------
   /**
@@ -236,6 +268,15 @@ export const WORKFLOW_STEP_TYPES = {
   echo: 'Echo step — round-trip the input for testing',
   /** Package multiple blobs into a zip archive. */
   blobArchive: 'Zip multiple blobs into an archive',
+  /**
+   * Unpack a `.zip`, `.tar` or `.tar.gz` at `sourceUrl`. `mediaTypes` limits
+   * which kinds of entry are extracted (default all) and `maxEntries` caps the
+   * count (1–2000, default 2000); anything filtered or over the cap comes back
+   * in `rejected` rather than failing the step. `entries` are in archive order.
+   */
+  archiveExtraction: 'Extract the entries of a zip / tar / tar.gz archive',
+  /** Combine fields from earlier steps' outputs into a single result. */
+  merge: "Merge — combine fields from earlier steps' outputs into one result",
 
   // ----- Platform internals ------------------------------------------------
   // Present in the consumer spec, so listed here for completeness — but these
@@ -245,6 +286,8 @@ export const WORKFLOW_STEP_TYPES = {
   comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
   /** Qwen image benchmarking harness. */
   qwenImageBench: 'Qwen image benchmarking (internal)',
+  /** Per-label scores and flags for a positive / negative prompt pair, under a versioned policy. */
+  promptModeration: 'Prompt moderation — per-label scores and flags for a prompt pair (internal)',
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
@@ -285,6 +328,14 @@ export const IMAGE_GEN_ENGINES = {
    * workers) — picking this engine pins the first-party vendor path.
    */
   krea: 'Krea (Krea 2, first-party API)',
+  /**
+   * Krea 3: text-to-image, or an edit of up to six `images`. `resolution` is
+   * `1k` or `2k` (default `2k`), `thinkingMode` is `instant` / `medium` /
+   * `ultra`, and `quantity` is capped at 4. Omit `aspectRatio` to let Krea
+   * choose. Note the spec marks `images` required (no minimum length) while
+   * its own description says to omit it for text-to-image.
+   */
+  krea3: 'Krea 3 (generation and editing, 1K / 2K)',
   /** Self-hosted SDCpp (stable-diffusion.cpp) gen. */
   sdcpp: 'SDCpp (self-hosted diffusion)',
   /** fal.ai routed gen. */
@@ -532,11 +583,14 @@ export interface BuildImageGenBodyOptions {
  *
  * @example  Nano Banana 2 with a reference image
  * ```ts
+ * // Pass a hosted image URL, not a data URI or raw base64. In an App Block, the
+ * // `url` from `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`;
+ * // the block host refuses inline media in a step input.
  * const body = buildImageGenBody({
  *   engine: 'google',
  *   model: 'nano-banana-2',
  *   prompt: 'turn this into a cartoon sticker',
- *   images: ['data:image/png;base64,...'],
+ *   images: [source.url],
  *   aspectRatio: '1:1',
  *   numImages: 1,
  *   resolution: '1K',

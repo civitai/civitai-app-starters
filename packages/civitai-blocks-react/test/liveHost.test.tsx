@@ -1,15 +1,28 @@
+import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isPageSlotContext } from '@civitai/app-sdk/blocks';
 
+import { UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR, useUploadImageBytes } from '../src/hooks/useUploadImageBytes.js';
+import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useSharedStorage.js';
 import { createLiveHost } from '../src/live.js';
-import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
+import { resetTransport } from '../src/testing.js';
+import { getTransport } from '../src/transport/singleton.js';
+import {
+  IMAGE_PICKER_UNSUPPORTED_ERROR,
+  MEDIA_UPLOAD_UNSUPPORTED_ERROR,
+  decodeBlockTokenPayload,
+} from '../src/internal/liveHost.js';
+import { useImagePicker } from '../src/hooks/useImagePicker.js';
+import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {
   BlockCheckpointInfo,
+  BlockContext,
   BlockInitPayload,
   BlockResourceInfo,
   BlockWorkflowSnapshot,
+  ModelSlotContext,
 } from '@civitai/app-sdk/blocks';
 
 /**
@@ -23,8 +36,8 @@ import type {
  *   - maps a backend error into a failed-shape reply (never hangs);
  *   - builds BLOCK_INIT from the decoded token + a mocked `/blocks/me`;
  *   - SERVES App-Storage KV via the block-token `apps.storage.*` procs (GET for
- *     queries, POST for mutations) and FORWARDS SET_USER_CHECKPOINT to
- *     `blocks.updateUserSettings`;
+ *     queries, POST for mutations), FORWARDS SET_USER_CHECKPOINT to
+ *     `blocks.updateUserSettings` on a model slot and REFUSES it on a page;
  *   - opens a buzz-purchase tab and replies purchased:false (the one remaining
  *     honest-by-design non-served capability).
  *
@@ -72,6 +85,16 @@ const BODY = {
   params: { prompt: 'a cat' },
 };
 
+/** A complete model-slot context — the surface that CAN persist a checkpoint. */
+const MODEL_SLOT_CONTEXT: ModelSlotContext = {
+  slotId: 'model.sidebar_top',
+  modelId: 11,
+  modelVersionId: 22,
+  modelName: 'Fixture model',
+  modelType: 'Checkpoint',
+  modelNsfwLevel: 1,
+};
+
 /** A tRPC superjson success envelope carrying `{ snapshot }`. */
 function trpcOk(snapshot: BlockWorkflowSnapshot) {
   return {
@@ -90,6 +113,12 @@ function trpcData(data: unknown) {
     text: async () => JSON.stringify({ result: { data: { json: data } } }),
     json: async () => ({ result: { data: { json: data } } }),
   } as unknown as Response;
+}
+
+/** Parse a recorded fetch call's JSON request body (a POSTed tRPC `{ json }` input). */
+function bodyInput(call: unknown[]): unknown {
+  const body = (call[1] as RequestInit | undefined)?.body;
+  return typeof body === 'string' ? JSON.parse(body) : undefined;
 }
 
 /** Decode a tRPC GET request's `?input=` querystring back to its `{ json }` payload. */
@@ -398,6 +427,53 @@ describe('createLiveHost — workflow forwarding', () => {
     expect(JSON.parse(String(init.body))).toEqual({ json: { blockToken: TOKEN, body: BODY } });
   });
 
+  it('ESTIMATE_WORKFLOW_BATCH → blocks.estimateWorkflowBatch → ESTIMATE_BATCH_RESULT', async () => {
+    const snapshots = [
+      { workflowId: 'wf_estimate', status: 'pending', cost: { total: 12 } },
+      { workflowId: 'failed', status: 'failed', error: 'modelId mismatch with token' },
+    ];
+    const aggregate = { total: 12, pricedCells: 1, cellCount: 2 };
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.estimateWorkflowBatch')) {
+        return trpcData({ snapshots, aggregate });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('ESTIMATE_WORKFLOW_BATCH', { requestId: 'r-batch', bodies: [BODY, BODY] });
+    const payload = await waitForMessage(inbound, 'ESTIMATE_BATCH_RESULT');
+    expect(payload).toEqual({ requestId: 'r-batch', snapshots, aggregate });
+
+    const call = fetchMock.mock.calls.find((c) =>
+      String(c[0]).endsWith('blocks.estimateWorkflowBatch'),
+    )!;
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      json: { blockToken: TOKEN, bodies: [BODY, BODY] },
+    });
+    // Estimate only: no other procedure was called.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ESTIMATE_WORKFLOW_BATCH: a whole-call server refusal comes back as `error`', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.estimateWorkflowBatch')) {
+        return trpcErr('Rate limit exceeded, please retry shortly.', 429);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('ESTIMATE_WORKFLOW_BATCH', { requestId: 'r-batch-429', bodies: [BODY] });
+    const payload = await waitForMessage(inbound, 'ESTIMATE_BATCH_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-batch-429',
+      error: 'Rate limit exceeded, please retry shortly.',
+    });
+  });
+
   it('SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED', async () => {
     installWithFetch(async (url) => {
       if (url.endsWith('blocks.submitWorkflow')) {
@@ -411,6 +487,138 @@ describe('createLiveHost — workflow forwarding', () => {
     const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
     expect(payload.requestId).toBe('r-sub');
     expect((payload.snapshot as BlockWorkflowSnapshot).workflowId).toBe('wf_1');
+  });
+
+  /** The `{ json }` input of every call the host made to `procedure`, in order. */
+  function inputsTo(procedure: string): unknown[] {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).endsWith(procedure))
+      .map((c) => (JSON.parse(String((c[1] as RequestInit).body)) as { json: unknown }).json);
+  }
+
+  it('SUBMIT_WORKFLOW forwards the idempotencyKey to blocks.submitWorkflow', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'pending' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-key', body: BODY, idempotencyKey: 'sheet-7_panel-3' });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(payload.requestId).toBe('r-key');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([
+      { blockToken: TOKEN, body: BODY, idempotencyKey: 'sheet-7_panel-3' },
+    ]);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['an empty string', { idempotencyKey: '' }],
+    ['not a string', { idempotencyKey: 42 }],
+  ])('SUBMIT_WORKFLOW sends NO idempotencyKey field when it is %s', async (_label, extra) => {
+    // The production hosts forward it only when it is a non-empty string, and
+    // otherwise leave the field off rather than sending `undefined` or junk.
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'pending' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-nokey', body: BODY, ...extra });
+    await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([{ blockToken: TOKEN, body: BODY }]);
+  });
+
+  it('SUBMIT_WORKFLOW: a key the server refuses comes back as a failed snapshot', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.submitWorkflow')) {
+        return trpcErr('Invalid string: must match pattern /^[A-Za-z0-9_-]{1,64}$/', 400);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SUBMIT_WORKFLOW', { requestId: 'r-badkey', body: BODY, idempotencyKey: 'a:b:c' });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_SUBMITTED');
+    expect(inputsTo('blocks.submitWorkflow')).toEqual([
+      { blockToken: TOKEN, body: BODY, idempotencyKey: 'a:b:c' },
+    ]);
+    expect(payload).toEqual({
+      requestId: 'r-badkey',
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Invalid string: must match pattern /^[A-Za-z0-9_-]{1,64}$/',
+      },
+    });
+  });
+
+  it.each([
+    ['a whole number of seconds', 7, 7],
+    ['a value the server will cap, sent as-is', 90, 90],
+    // The server floors and treats `<= 0` as no hold; the host does neither.
+    ['a fraction, NOT floored', 12.9, 12.9],
+    ['zero, NOT dropped', 0, 0],
+    ['a negative, NOT dropped', -3, -3],
+  ])('POLL_WORKFLOW forwards waitSeconds unchanged: %s', async (_label, sent, forwarded) => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'processing' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-wait', workflowId: 'wf_1', waitSeconds: sent });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_STATUS');
+    expect(payload.requestId).toBe('r-wait');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: forwarded },
+    ]);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['NaN', { waitSeconds: Number.NaN }],
+  ])('POLL_WORKFLOW sends NO waitSeconds field when it is %s', async (_label, extra) => {
+    // The production hosts forward only a finite number; anything else is no
+    // field at all, so the request is the plain read it always was.
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        return trpcOk({ workflowId: 'wf_1', status: 'processing' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-nowait', workflowId: 'wf_1', ...extra });
+    await waitForMessage(inbound, 'WORKFLOW_STATUS');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([{ blockToken: TOKEN, workflowId: 'wf_1' }]);
+  });
+
+  it('POLL_WORKFLOW keeps waitSeconds on the retry after a transient error', async () => {
+    let calls = 0;
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        calls += 1;
+        if (calls === 1) return trpcErr('upstream hiccup', 503);
+        return trpcOk({ workflowId: 'wf_1', status: 'succeeded' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-retry', workflowId: 'wf_1', waitSeconds: 7 });
+    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
+    expect((payload.snapshot as BlockWorkflowSnapshot).status).toBe('succeeded');
+    expect(inputsTo('blocks.pollWorkflow')).toEqual([
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: 7 },
+      { blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: 7 },
+    ]);
   });
 
   it('POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS', async () => {
@@ -645,6 +853,53 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it('SET_ENTITY_REACTION and GET_ENTITY_REACTIONS are REFUSED without any HTTP', async () => {
+    // The reaction procedures need the viewer's civitai.com SESSION and refuse a
+    // token as authentication, so there is nothing this harness could call.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('SET_ENTITY_REACTION', {
+      requestId: 'r-react',
+      entityType: 'image',
+      entityId: 7,
+      reaction: 'Like',
+      reacted: true,
+      ticket: 't',
+    });
+    const set = await waitForMessage(inbound, 'ENTITY_REACTION_RESULT');
+    expect(set).toEqual({ requestId: 'r-react', error: 'entity-unavailable' });
+
+    post('GET_ENTITY_REACTIONS', { requestId: 'r-read', entityType: 'image', ids: [7] });
+    const get = await waitForMessage(inbound, 'ENTITY_REACTIONS_RESULT');
+    expect(get).toEqual({ requestId: 'r-read', error: 'entity-unavailable' });
+
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('GET_RESOURCE_FILE is REFUSED as not supported (`parse-failed`), without any HTTP', async () => {
+    // The real host resolves the file through the viewer's signed-in SESSION and
+    // fetches + unzips it in the page tab. This harness holds a block token and
+    // no session, so the honest answer is a refusal on the reply channel — never
+    // a fabricated file, and never a silent fall-through that hangs for 30 s.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('GET_RESOURCE_FILE', { requestId: 'r-file', modelVersionId: 5202, fileId: 6303 });
+    const payload = await waitForMessage(inbound, 'RESOURCE_FILE_RESULT');
+
+    expect(payload).toEqual({ requestId: 'r-file', error: 'parse-failed' });
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    // The developer is told why, and pointed at dev:mock.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('GET_RESOURCE_FILE'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('dev:mock'));
+  });
+
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
@@ -737,6 +992,193 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     post('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
     const payload = await waitForMessage(inbound, 'CONSENT_UNAVAILABLE');
     expect(payload).toEqual({ reason: 'ungrantable', scopes: ['ai:write:budgeted'] });
+  });
+});
+
+describe('createLiveHost — TRACK_EVENT is checked against the manifest analytics.events', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  /** Pairwise-distinct names and values, none equal to anything the messages hard-code. */
+  const MANIFEST = {
+    blockId: 'b',
+    analytics: {
+      events: {
+        generate_clicked: {
+          description: 'pressed Generate',
+          properties: {
+            mode: { type: 'enum', values: ['txt2img', 'img2img'] },
+            batch: { type: 'number' },
+            advanced: { type: 'boolean' },
+          },
+        },
+        share_opened: {},
+      },
+    },
+  };
+
+  async function install(manifest?: unknown) {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'm' },
+      fetchImpl: vi.fn(async () => meOk({ id: 42, username: 'm' })) as unknown as typeof fetch,
+      ...(manifest !== undefined ? { manifest } : {}),
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    warnSpy.mockClear(); // only what TRACK_EVENT logs from here on
+  }
+
+  /** Post, then give the (synchronous) handler and any wrong reply a tick. */
+  async function track(payload: unknown) {
+    window.parent.postMessage({ type: 'TRACK_EVENT', payload }, ORIGIN);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  const warnings = () => warnSpy.mock.calls.map((c) => String(c[0]));
+
+  beforeEach(() => {
+    inbound = collectInbound();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('a declared, valid event logs nothing and posts no reply', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    await track({ eventName: 'generate_clicked', properties: { mode: 'img2img', batch: 3, advanced: false } });
+    await track({ eventName: 'share_opened' });
+    await track({ eventName: 'generate_clicked', properties: { mode: 'txt2img', batch: undefined } });
+    expect(warnings()).toEqual([]);
+    expect(inbound.messages.length).toBe(before);
+  });
+
+  it('an undeclared event warns ONCE, naming the event and pointing at analytics.events', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    await track({ eventName: 'checkout_started', properties: { mode: 'txt2img' } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"checkout_started"');
+    expect(warnings()[0]).toContain('`analytics.events` in block.manifest.json');
+    expect(warnings()[0]).toMatch(/dropped event/);
+    // The same event again: no second warning.
+    await track({ eventName: 'checkout_started' });
+    expect(warnings()).toHaveLength(1);
+    // A DIFFERENT undeclared event is a distinct problem.
+    await track({ eventName: 'cart_viewed' });
+    expect(warnings()).toHaveLength(2);
+    expect(warnings()[1]).toContain('"cart_viewed"');
+    expect(inbound.messages.length).toBe(before);
+  });
+
+  it('an undeclared event name that breaks the naming rule says so', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'GenerateClicked' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/lowercase snake_case/);
+  });
+
+  it('an undeclared property warns once, naming the event and the property', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties: { mode: 'txt2img', seed_bucket: 7 } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"generate_clicked"');
+    expect(warnings()[0]).toContain('"seed_bucket"');
+    expect(warnings()[0]).toMatch(/not declared/);
+    await track({ eventName: 'generate_clicked', properties: { seed_bucket: 9 } });
+    expect(warnings()).toHaveLength(1);
+  });
+
+  it('an enum value that is not declared warns, listing the declared values', async () => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties: { mode: 'inpaint' } });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain('"mode"');
+    expect(warnings()[0]).toContain('"inpaint"');
+    expect(warnings()[0]).toContain('"txt2img", "img2img"');
+    expect(warnings()[0]).toMatch(/Free-text strings are never stored/);
+  });
+
+  it.each([
+    ['number sent as a string', { batch: '4' }, 'batch', /declares it as number/],
+    ['number that is not finite', { batch: Number.POSITIVE_INFINITY }, 'batch', /declares it as number/],
+    ['boolean sent as a number', { advanced: 1 }, 'advanced', /declares it as boolean/],
+    ['enum sent as a number', { mode: 2 }, 'mode', /declares it as enum/],
+    ['enum sent as null', { mode: null }, 'mode', /declares it as enum/],
+  ])('a wrong type warns: %s', async (_label, properties, prop, pattern) => {
+    await install(MANIFEST);
+    await track({ eventName: 'generate_clicked', properties });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toContain(`"${prop}"`);
+    expect(warnings()[0]).toMatch(pattern);
+  });
+
+  it('a manifest with no analytics: every event is undeclared, and says none are declared', async () => {
+    await install({ blockId: 'b', scopes: [] });
+    await track({ eventName: 'generate_clicked' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/declares no events yet/);
+  });
+
+  it('an unreadable declaration is reported once, and nothing counts as declared', async () => {
+    await install({ analytics: { events: { generate_clicked: { properties: { mode: { type: 'string' } } } } } });
+    await track({ eventName: 'generate_clicked' });
+    const first = warnings();
+    expect(first).toHaveLength(2);
+    expect(first[0]).toMatch(/could not be read/);
+    expect(first[0]).toContain('"string"');
+    expect(first[1]).toContain('"generate_clicked"');
+    await track({ eventName: 'generate_clicked' });
+    expect(warnings()).toHaveLength(2);
+  });
+
+  it('without a manifest, the first TRACK_EVENT says the check is off — once', async () => {
+    await install();
+    await track({ eventName: 'generate_clicked' });
+    await track({ eventName: 'anything_else' });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]).toMatch(/pass `manifest` to createLiveHost/);
+  });
+
+  it('never throws and never replies on malformed payloads', async () => {
+    await install(MANIFEST);
+    const before = inbound.messages.length;
+    const hostile = {
+      eventName: 'generate_clicked',
+      get properties(): unknown {
+        throw new Error('getter');
+      },
+    };
+    for (const payload of [
+      undefined,
+      null,
+      'generate_clicked',
+      42,
+      [],
+      { eventName: 42 },
+      { eventName: 'generate_clicked', properties: 'mode=txt2img' },
+      { eventName: 'generate_clicked', properties: [1, 2] },
+      { eventName: 'constructor' },
+      { eventName: 'generate_clicked', properties: { constructor: 1, toString: 'x' } },
+    ]) {
+      await expect(track(payload)).resolves.toBeUndefined();
+    }
+    // A throwing getter does not survive postMessage's clone in a browser; call
+    // the checker path the way the switch does to prove it is total anyway.
+    const { createTrackEventChecker } = await import('../src/internal/trackEventCheck.js');
+    expect(() => createTrackEventChecker(MANIFEST).check(hostile)).not.toThrow();
+    expect(() => createTrackEventChecker(new Proxy({}, { get: () => { throw new Error('x'); } })).check({ eventName: 'a' })).not.toThrow();
+    expect(inbound.messages.length).toBe(before);
+    // `constructor` is not declared even though every object inherits one.
+    expect(warnings().some((w) => w.includes('"constructor"') && /not declared in/.test(w))).toBe(true);
+    // Undeclared properties named like Object.prototype members are reported, not matched.
+    expect(warnings().some((w) => w.includes('"toString"'))).toBe(true);
   });
 });
 
@@ -987,6 +1429,102 @@ describe('createLiveHost — picker (serves the catalog locally, no longer a stu
     expect(payload.selected).toBeUndefined();
   });
 
+  // ── Multi-select (`multiple: { max }`) ────────────────────────────────────
+  // Three LoRAs whose ids are NOT in catalog order, so a reply that follows the
+  // catalog (or sorts) instead of the staging order is visible.
+  const LORAS = [
+    { id: 310, name: 'Alpha', type: 'LORA', nsfw: false, modelVersions: [{ id: 5001, name: 'v1', baseModel: 'SDXL 1.0', images: [] }] },
+    { id: 320, name: 'Bravo', type: 'LORA', nsfw: false, modelVersions: [{ id: 5002, name: 'v2', baseModel: 'SDXL 1.0', images: [] }] },
+    { id: 330, name: 'Charlie', type: 'LORA', nsfw: false, modelVersions: [{ id: 5003, name: 'v3', baseModel: 'SDXL 1.0', images: [] }] },
+  ];
+
+  it('OPEN_RESOURCE_PICKER with `multiple` replies with the staged list in STAGING order', async () => {
+    install(LORAS, (h) => {
+      h.toggleStagedByVersionId(5003);
+      h.toggleStagedByVersionId(5001);
+      h.commitStaged();
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi', resourceType: 'LORA', multiple: { max: 3 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-multi',
+      selectedResources: [
+        { versionId: 5003, modelId: 330, modelName: 'Charlie', versionName: 'v3', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+        { versionId: 5001, modelId: 310, modelName: 'Alpha', versionName: 'v1', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+      ],
+    });
+  });
+
+  it('`multiple` never stages past max, and un-staging frees a slot', async () => {
+    let staged: readonly number[] = [];
+    install(LORAS, (h) => {
+      h.toggleStagedByVersionId(5002);
+      h.toggleStagedByVersionId(5003);
+      h.toggleStagedByVersionId(5001); // over max:2 — ignored
+      staged = [...h.stagedVersionIds];
+      h.toggleStagedByVersionId(5002); // un-stage
+      h.toggleStagedByVersionId(5001); // now fits, and lands LAST
+      h.commitStaged();
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-max', resourceType: 'LORA', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(staged).toEqual([5002, 5003]);
+    expect((payload.selectedResources as BlockResourceInfo[]).map((r) => r.versionId)).toEqual([5003, 5001]);
+  });
+
+  it('`multiple` dismissal replies with an EMPTY list, not a bare payload', async () => {
+    install(LORAS, (h) => h.dismiss());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-x', resourceType: 'LORA', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({ requestId: 'r-multi-x', selectedResources: [] });
+  });
+
+  it('`multiple` with a Checkpoint is refused with an error and no overlay opens', async () => {
+    const onReady = vi.fn();
+    install([CKPT_MODEL], onReady);
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-ckpt', resourceType: 'Checkpoint', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-multi-ckpt',
+      error:
+        'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+    });
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('`multiple` overlay: clicking cards stages them and the commit button sends the list', async () => {
+    let captured: PickerOverlayHandle | undefined;
+    install(LORAS, (h) => {
+      captured = h;
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-dom', resourceType: 'LORA', multiple: { max: 2 } });
+    for (let i = 0; i < 50 && !captured; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(captured).toBeTruthy();
+
+    const commit = document.querySelector('[data-picker-commit]') as HTMLButtonElement;
+    expect(commit.disabled).toBe(true);
+    (document.querySelector('[data-picker-card="5002"]') as HTMLElement).click();
+    // A card click STAGES in multi-select mode — the overlay must still be open.
+    expect(document.querySelector('[data-live-picker-overlay]')).not.toBeNull();
+    expect(document.querySelector('[data-picker-card="5002"]')!.getAttribute('aria-pressed')).toBe('true');
+    (document.querySelector('[data-picker-card="5001"]') as HTMLElement).click();
+    expect(commit.disabled).toBe(false);
+    expect(commit.textContent).toBe('Add 2 of 2');
+
+    commit.click();
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect((payload.selectedResources as BlockResourceInfo[]).map((r) => r.versionId)).toEqual([5002, 5001]);
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+  });
+
   it('mounts an overlay into the document and tears it down on selection', async () => {
     let captured: PickerOverlayHandle | undefined;
     install([CKPT_MODEL], (h) => {
@@ -1052,7 +1590,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     vi.restoreAllMocks();
   });
 
-  it('APP_STORAGE_GET → apps.storage.get (GET, ?input) → value', async () => {
+  it('APP_STORAGE_GET → apps.storage.get {blockToken, key} → value', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.get')) return trpcData({ value: { theme: 'dark' } });
       throw new Error(`unexpected ${url}`);
@@ -1065,12 +1603,9 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.value).toEqual({ theme: 'dark' });
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.get'))!;
-    // GET — no body, input in the querystring.
-    expect((call[1] as RequestInit).method).toBe('GET');
-    expect((call[1] as RequestInit).body).toBeUndefined();
-    expect(String(call[0])).toContain('/api/trpc/apps.storage.get?input=');
-    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
-    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN, key: 'prefs' } });
+    // Wire form (POST, bare URL, token out of the URL) is pinned once, in the
+    // "token-bearing queries go out as POST" block; here only the input shape.
+    expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN, key: 'prefs' } });
   });
 
   it('APP_STORAGE_GET missing value → null', async () => {
@@ -1150,7 +1685,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.deleted).toBe(false);
   });
 
-  it('APP_STORAGE_LIST → apps.storage.list (GET) → keys (ISO updatedAt) + nextCursor', async () => {
+  it('APP_STORAGE_LIST → apps.storage.list → keys (ISO updatedAt) + nextCursor', async () => {
     const updated = new Date('2026-06-27T12:00:00.000Z');
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.list')) {
@@ -1170,9 +1705,8 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect(payload.nextCursor).toBe('Y3Vyc29y');
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.list'))!;
-    expect((call[1] as RequestInit).method).toBe('GET');
     // limit clamped + prefix/cursor included as strings.
-    expect(decodeInputParam(String(call[0]))).toEqual({
+    expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, limit: 10, prefix: 'pre', cursor: 'cur' },
     });
   });
@@ -1189,10 +1723,10 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
     expect('nextCursor' in payload).toBe(false);
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.list'))!;
     // 9999 clamped to 200; no prefix/cursor keys present.
-    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN, limit: 200 } });
+    expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN, limit: 200 } });
   });
 
-  it('APP_STORAGE_QUOTA → apps.storage.getQuota (GET) → the 4 numbers', async () => {
+  it('APP_STORAGE_QUOTA → apps.storage.getQuota → the 4 numbers', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.storage.getQuota')) {
         return trpcData({ usedBytes: 12, rowCount: 3, limitBytes: 50_000_000, limitRows: 1000 });
@@ -1211,8 +1745,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
       limitRows: 1000,
     });
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.getQuota'))!;
-    expect((call[1] as RequestInit).method).toBe('GET');
-    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN } });
+    expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN } });
   });
 
   it('a storage error (FORBIDDEN) maps to the error-shape reply (no hang)', async () => {
@@ -1231,7 +1764,7 @@ describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => 
   });
 });
 
-describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUserSettings)', () => {
+describe('createLiveHost — SET_USER_CHECKPOINT on a MODEL SLOT (forwarded to blocks.updateUserSettings)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -1242,6 +1775,7 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
     const host = createLiveHost({
       blockToken: TOKEN,
       viewer: { id: 42, username: 'dev-mod' },
+      context: MODEL_SLOT_CONTEXT,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
     uninstall = host.install();
@@ -1296,7 +1830,7 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
     });
   });
 
-  it('surfaces the REAL backend error (page token lacks modelId) as ok:false', async () => {
+  it('surfaces the REAL backend error (a token that lacks modelId) as ok:false', async () => {
     installWithFetch(async (url) => {
       if (url.includes('blocks.updateUserSettings')) {
         return trpcErr('block token lacks modelId context', 400);
@@ -1324,6 +1858,89 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
       String(c[0]).includes('blocks.updateUserSettings'),
     );
     expect(called).toBe(false);
+  });
+});
+
+describe('createLiveHost — SET_USER_CHECKPOINT on a PAGE (refused, as the page host refuses it)', () => {
+  // The strings below are civitai's own (`PageBlockHost.tsx`), typed out on
+  // purpose — a test that imported the constant could not see it change.
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  /** Every fetch throws: the page host makes NO backend call for this message. */
+  function install(context?: BlockContext) {
+    fetchMock = vi.fn(async (url: string) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' },
+      ...(context ? { context } : {}),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['a numeric versionId', 9001],
+    ['null (clear the override)', null],
+    ['a malformed versionId', 'not-a-number'],
+  ])('the DEFAULT context is a page: %s is refused with no backend call', async (_label, versionId) => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { requestId: 'r-page', versionId });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload).toEqual({
+      requestId: 'r-page',
+      ok: false,
+      error: 'page blocks cannot persist a checkpoint override (no model binding)',
+    });
+    expect(fetchMock.mock.calls).toEqual([]);
+  });
+
+  it('an explicit page context is refused the same way', async () => {
+    install({ slotId: 'app.page', slug: 'my-app', subPath: 'a/b', viewerUserId: 42 });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { requestId: 'r-page-2', versionId: 9001 });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload).toEqual({
+      requestId: 'r-page-2',
+      ok: false,
+      error: 'page blocks cannot persist a checkpoint override (no model binding)',
+    });
+    expect(fetchMock.mock.calls).toEqual([]);
+  });
+
+  it('a request with no requestId is dropped, like the page host drops it', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { versionId: 9001 });
+    post('SET_USER_CHECKPOINT', { requestId: '', versionId: 9001 });
+    // POSITIVE CONTROL, posted last: a routable request IS answered, so the
+    // single reply below is the guard's decision and not a dead harness.
+    post('SET_USER_CHECKPOINT', { requestId: 'r-routable', versionId: 9001 });
+    await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+
+    expect(
+      inbound.messages
+        .filter((m) => m.type === 'USER_CHECKPOINT_SET')
+        .map((m) => m.payload?.requestId),
+    ).toEqual(['r-routable']);
   });
 });
 
@@ -1730,6 +2347,151 @@ describe('createLiveHost — startup guards', () => {
   });
 });
 
+describe('createLiveHost — token-bearing queries go out as POST (block token never in the URL)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  /** The one recorded call whose URL path is exactly `/api/trpc/<procedure>`. */
+  function callFor(procedure: string): unknown[] {
+    const calls = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).split('?')[0].endsWith(`/api/trpc/${procedure}`),
+    );
+    expect(calls).toHaveLength(1);
+    return calls[0];
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // Every tRPC QUERY the live host sends (each carries the block token in its
+  // input). Literal list on purpose — not derived from the implementation.
+  const CASES: Array<{
+    procedure: string;
+    message: string;
+    payload: Record<string, unknown>;
+    result: string;
+    response: unknown;
+    input: Record<string, unknown>;
+  }> = [
+    {
+      procedure: 'apps.storage.get',
+      message: 'APP_STORAGE_GET',
+      payload: { key: 'kv-key-1' },
+      result: 'APP_STORAGE_GET_RESULT',
+      response: { value: 1 },
+      input: { key: 'kv-key-1' },
+    },
+    {
+      procedure: 'apps.storage.list',
+      message: 'APP_STORAGE_LIST',
+      payload: { prefix: 'kv-pre', limit: 7 },
+      result: 'APP_STORAGE_LIST_RESULT',
+      response: { keys: [] },
+      input: { prefix: 'kv-pre', limit: 7 },
+    },
+    {
+      procedure: 'apps.storage.getQuota',
+      message: 'APP_STORAGE_QUOTA',
+      payload: {},
+      result: 'APP_STORAGE_QUOTA_RESULT',
+      response: { usedBytes: 1, rowCount: 1, limitBytes: 2, limitRows: 2 },
+      input: {},
+    },
+    {
+      procedure: 'apps.shared.list',
+      message: 'SHARED_LIST',
+      payload: { prefix: 'sh-pre', limit: 3 },
+      result: 'SHARED_LIST_RESULT',
+      response: { items: [] },
+      input: { prefix: 'sh-pre', limit: 3 },
+    },
+    {
+      procedure: 'apps.shared.get',
+      message: 'SHARED_GET',
+      payload: { key: 'sh-key-2' },
+      result: 'SHARED_GET_RESULT',
+      response: { item: null },
+      input: { key: 'sh-key-2' },
+    },
+    {
+      procedure: 'apps.shared.getCount',
+      message: 'SHARED_GET_COUNT',
+      payload: { key: 'sh-key-3' },
+      result: 'SHARED_GET_COUNT_RESULT',
+      response: { count: 9 },
+      input: { key: 'sh-key-3' },
+    },
+    {
+      procedure: 'apps.shared.getCounts',
+      message: 'SHARED_GET_COUNTS',
+      payload: { keys: ['sh-a', 'sh-b'] },
+      result: 'SHARED_GET_COUNTS_RESULT',
+      response: { counts: { 'sh-a': 1, 'sh-b': 2 } },
+      input: { keys: ['sh-a', 'sh-b'] },
+    },
+  ];
+
+  it.each(CASES)(
+    '$procedure → POST to the bare procedure URL, token in the body only',
+    async ({ procedure, message, payload, result, response, input }) => {
+      installWithFetch(async () => trpcData(response));
+      await waitForMessage(inbound, 'BLOCK_INIT');
+
+      post(message, { requestId: `r-${procedure}`, ...payload });
+      const reply = await waitForMessage(inbound, result);
+      expect(reply.requestId).toBe(`r-${procedure}`);
+
+      const call = callFor(procedure);
+      const url = String(call[0]);
+      const init = call[1] as RequestInit;
+      // tRPC query method override: POST, no querystring, `{ json }` body.
+      expect(init.method).toBe('POST');
+      expect(url).toBe(`https://civitai.com/api/trpc/${procedure}`);
+      expect(decodeInputParam(url)).toBeUndefined();
+      expect(url).not.toContain(TOKEN);
+      expect(url).not.toContain(encodeURIComponent(TOKEN));
+      expect(init.headers).toMatchObject({
+        'content-type': 'application/json',
+        authorization: `Bearer ${TOKEN}`,
+      });
+      const body = bodyInput(call) as { json: Record<string, unknown> };
+      expect(body.json.blockToken).toBe(TOKEN);
+      expect(body).toEqual({ json: { blockToken: TOKEN, ...input } });
+    },
+  );
+
+  it('a mutation (apps.storage.set) is unchanged: POST, bare URL, `{ json }` body', async () => {
+    installWithFetch(async () => trpcData({ ok: true }));
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_SET', { requestId: 'r-set', key: 'kv-set', value: { n: 5 } });
+    await waitForMessage(inbound, 'APP_STORAGE_SET_RESULT');
+
+    const call = callFor('apps.storage.set');
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(String(call[0])).toBe('https://civitai.com/api/trpc/apps.storage.set');
+    expect(bodyInput(call)).toEqual({ json: { blockToken: TOKEN, key: 'kv-set', value: { n: 5 } } });
+  });
+});
+
 describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;
@@ -1756,7 +2518,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     vi.restoreAllMocks();
   });
 
-  it('SHARED_LIST → apps.shared.list (GET) → items with ISO dates', async () => {
+  it('SHARED_LIST → apps.shared.list → items with ISO dates', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.list')) {
         return trpcData({
@@ -1787,13 +2549,12 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(payload.nextCursor).toBe('bmV4dA==');
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.list'))!;
-    expect((call[1] as RequestInit).method).toBe('GET');
-    expect(decodeInputParam(String(call[0]))).toEqual({
+    expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, limit: 5, prefix: 'req:' },
     });
   });
 
-  it('SHARED_GET_COUNT → apps.shared.getCount (GET) → count', async () => {
+  it('SHARED_GET_COUNT → apps.shared.getCount → count', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.getCount')) return trpcData({ count: 42 });
       throw new Error(`unexpected ${url}`);
@@ -1804,7 +2565,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(payload.count).toBe(42);
   });
 
-  it('SHARED_GET_COUNTS → apps.shared.getCounts (GET) → counts map', async () => {
+  it('SHARED_GET_COUNTS → apps.shared.getCounts → counts map', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.getCounts')) return trpcData({ counts: { a: 1, b: 0 } });
       throw new Error(`unexpected ${url}`);
@@ -1894,9 +2655,9 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
   // assertions below timed out instead of failing: the block sat for the full
   // 30s protocol timeout and then threw a generic RequestTimeoutError, while
   // the identical call resolved under dev:mock.
-  it('SHARED_GET → apps.shared.get (GET) → the row, ISO-normalized (#386)', async () => {
+  it('SHARED_GET → apps.shared.get → the row, ISO-normalized (#386)', async () => {
     installWithFetch(async (url) => {
-      if (url.includes('apps.shared.get?') || url.includes('apps.shared.get&')) {
+      if (url.endsWith('apps.shared.get')) {
         return trpcData({
           item: {
             key: 'req:1',
@@ -1926,8 +2687,7 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect(item.viewerVoted).toBe(true);
 
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.get'))!;
-    expect((call[1] as RequestInit).method).toBe('GET');
-    expect(decodeInputParam(String(call[0]))).toEqual({
+    expect(bodyInput(call)).toEqual({
       json: { blockToken: TOKEN, key: 'req:1' },
     });
   });
@@ -2119,6 +2879,144 @@ describe('createLiveHost — SAVE_IMAGE (refused, honest-by-design) (#386)', () 
   });
 });
 
+describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed-in session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // Before this change the harness forwarded to `blocks.publishGenerationOutputs`
+  // with only the block token. Publishing requires the viewer's signed-in
+  // civitai.com session (same as CREATE_POST_FROM_APP), which this
+  // harness does not have — so it must refuse immediately, on the reply
+  // channel, without touching the network.
+  it('replies PUBLISH_RESULT with an actionable error and makes no network call', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock = vi.fn(async () => {
+      throw new Error('PUBLISH_GENERATION_OUTPUTS must not touch the network');
+    });
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const callsAfterInit = fetchMock.mock.calls.length;
+
+    post('PUBLISH_GENERATION_OUTPUTS', {
+      requestId: 'r-pub',
+      workflowId: 'wf_1',
+      imageIndexes: [0],
+    });
+    const payload = await waitForMessage(inbound, 'PUBLISH_RESULT');
+
+    expect(payload.requestId).toBe('r-pub');
+    expect('result' in payload).toBe(false);
+    expect(payload.error).toBe(
+      "publishing generation outputs is not supported in dev:live — publishing requires the " +
+        "viewer's signed-in civitai.com session, which the local harness does not have; test " +
+        'publishing against the mock host — createMockHost or Harness from ' +
+        '@civitai/blocks-react/testing, with the publishImageIds / publishError options',
+    );
+    expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+    const urls = fetchMock.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(urls).not.toMatch(/publishGenerationOutputs/);
+
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+      /PUBLISH_GENERATION_OUTPUTS/,
+    );
+  });
+});
+
+describe('createLiveHost — training bridges (refused: the server refuses dev tokens)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // Every `kind: 'training'` procedure refuses a dev token server-side, and a run
+  // is confirmed in host chrome this harness does not have. Each bridge must
+  // refuse on ITS OWN reply channel, immediately, without a network call — a
+  // missing case would hang the hook to its 10-minute bound.
+  for (const [type, replyType, payload] of [
+    ['RUN_TRAINING', 'TRAINING_RESULT', { body: { kind: 'training', quoteId: 'tq_x' } }],
+  ] as const) {
+    it(`${type} replies ${replyType} with a refusal and makes no network call`, async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const fetchMock = vi.fn(async () => {
+        throw new Error(`${type} must not touch the network`);
+      });
+      uninstall = createLiveHost({
+        blockToken: fakeJwt(DEFAULT_CLAIMS),
+        viewer: { id: 42, username: 'dev' },
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }).install();
+      await waitForMessage(inbound, 'BLOCK_INIT');
+      const callsAfterInit = fetchMock.mock.calls.length;
+
+      post(type, { requestId: `r-${type}`, ...payload });
+      const reply = await waitForMessage(inbound, replyType);
+
+      expect(reply.requestId).toBe(`r-${type}`);
+      expect(reply.error).toBe('training is not supported in dev:live — use dev:mock');
+      expect('result' in reply || 'snapshot' in reply).toBe(false);
+      expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+    });
+  }
+
+  // Same shape, same reason: the server refuses a confirmed step from a dev
+  // token and the price is confirmed in host chrome. A missing case would hang
+  // the hook for the 10-minute consent bound.
+  it('RUN_CONFIRMED_STEP replies CONFIRMED_STEP_RESULT with a refusal and makes no network call', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error('RUN_CONFIRMED_STEP must not touch the network');
+    });
+    uninstall = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    }).install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const callsAfterInit = fetchMock.mock.calls.length;
+
+    post('RUN_CONFIRMED_STEP', {
+      requestId: 'r-RUN_CONFIRMED_STEP',
+      body: {
+        kind: 'step',
+        $type: 'polyGen',
+        input: {},
+        maxBuzz: 250,
+        quoteId: `sq_${'0'.repeat(32)}`,
+      },
+    });
+    const reply = await waitForMessage(inbound, 'CONFIRMED_STEP_RESULT');
+
+    expect(reply.requestId).toBe('r-RUN_CONFIRMED_STEP');
+    expect(reply.error).toBe('confirmed steps are not supported in dev:live — use dev:mock');
+    expect('snapshot' in reply).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+  });
+});
+
 describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;
@@ -2134,7 +3032,7 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
   });
 
   it('replies IMAGE_UPLOAD_RESULT dismissed (no `selected`) instead of hanging', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createLiveHost({
       blockToken: fakeJwt(DEFAULT_CLAIMS),
       viewer: { id: 42, username: 'dev-mod' },
@@ -2150,6 +3048,266 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     expect(payload.requestId).toBe('r-img');
     // Dismissed: no `selected` → the hook resolves to null (no fabricated image).
     expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('resolving the upload as dismissed (null)'))).toHaveLength(1);
+    expect(logged.filter((m) => m.includes('uploadImageBytesResult'))).toHaveLength(0);
+  });
+
+  it("a `purpose: 'trainingData'` upload is answered as a cancel, and the log names the TRAINING mock option", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-train', purpose: 'trainingData' });
+    const payload = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+    expect(payload.requestId).toBe('r-train');
+    expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    // The WHOLE message, so a reword that drops the option name fails here.
+    expect(logged).toContain(
+      "[createLiveHost] OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+        'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+        'Test the training flow against the real site, or use ' +
+        'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+    );
+    expect(logged.filter((m) => m.includes('cannedImageUpload'))).toHaveLength(0);
+  });
+
+  it('a `useUploadImageBytes()` upload rejects with the no-image error, never hangs', async () => {
+    // dev:live has no bytes branch: the `bytes` variant gets the same DISMISSED
+    // reply as the picker path, and the hook (which has no "dismissed" outcome)
+    // rejects with its own no-image error. Driven through the REAL transport and
+    // validator, so a dropped reply would surface as a hook that never settles
+    // (its own bound is the 10-minute human-interaction timeout, far past
+    // `waitFor`'s).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      const host = createLiveHost({
+        blockToken: fakeJwt(DEFAULT_CLAIMS),
+        viewer: { id: 42, username: 'dev-mod' },
+        fetchImpl: (async () => {
+          throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+        }) as unknown as typeof fetch,
+      });
+      uninstall = host.install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const { result } = renderHook(() => useUploadImageBytes());
+      const state: { value?: unknown; caught?: Error } = {};
+      void result.current
+        .upload(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer as ArrayBuffer)
+        .then((v) => (state.value = v))
+        .catch((e: Error) => (state.caught = e));
+
+      await waitFor(() => expect(state.caught?.message).toBe(UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR));
+      expect(UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR).toBe('the host returned no uploaded image');
+      expect(state.value).toBeUndefined();
+      // The wire reply is the picker path's dismissed shape: no image, no error.
+      const reply = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+      expect('selected' in reply).toBe(false);
+      expect('error' in reply).toBe(false);
+      // The log says it REJECTS (not "dismissed (null)") and names the mock option.
+      const logged = warn.mock.calls.map((c) => String(c[0]));
+      expect(logged).toContain(
+        '[createLiveHost] OPEN_IMAGE_UPLOAD { bytes } received but live dev mode has no bytes upload path — ' +
+          'useUploadImageBytes().upload() REJECTS with "the host returned no uploaded image". ' +
+          'Test the bytes upload against the real site, or use ' +
+          'createMockHost({ uploadImageBytesResult }) in dev:mock.',
+      );
+      expect(logged.filter((m) => m.includes('dismissed (null)'))).toHaveLength(0);
+    } finally {
+      resetTransport();
+    }
+  });
+});
+
+describe('createLiveHost — OPEN_IMAGE_PICKER (refused: nothing lists the viewer\'s images)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_PICKER');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('replies IMAGE_PICKER_RESULT with an error and no image, instead of hanging', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick', sources: ['posted'], multiple: { max: 3 } });
+    const payload = await waitForMessage(inbound, 'IMAGE_PICKER_RESULT');
+    // The whole reply: a refusal, never an invented image or an empty list.
+    expect(payload).toEqual({
+      requestId: 'r-pick',
+      error: 'the image picker is not supported in dev:live — use dev:mock',
+    });
+    expect(IMAGE_PICKER_UNSUPPORTED_ERROR).toBe(
+      'the image picker is not supported in dev:live — use dev:mock',
+    );
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged).toContain(
+      "[createLiveHost] OPEN_IMAGE_PICKER received but live dev mode cannot list the viewer's own images " +
+        '— useImagePicker().open() REJECTS. Test the image picker against the real site, ' +
+        'or use createMockHost({ cannedImagePicks }) in dev:mock.',
+    );
+  });
+
+  it('logs once across repeated requests but answers every one', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick-1' });
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-pick-2' });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'IMAGE_PICKER_RESULT')).toHaveLength(2),
+    );
+    expect(
+      inbound.messages
+        .filter((m) => m.type === 'IMAGE_PICKER_RESULT')
+        .map((m) => m.payload?.requestId),
+    ).toEqual(['r-pick-1', 'r-pick-2']);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_IMAGE_PICKER received'))).toHaveLength(1);
+  });
+
+  it('a request with no requestId gets no reply (nothing could route it)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_PICKER', {});
+    // Positive control: a routable request sent AFTER it is answered, so the
+    // absence below is not just "nothing has arrived yet".
+    post('OPEN_IMAGE_PICKER', { requestId: 'r-after' });
+    await waitForMessage(inbound, 'IMAGE_PICKER_RESULT');
+    const replies = inbound.messages.filter((m) => m.type === 'IMAGE_PICKER_RESULT');
+    expect(replies).toHaveLength(1);
+    expect(replies[0].payload?.requestId).toBe('r-after');
+  });
+
+  it('useImagePicker().open() REJECTS with the refusal, for a single and a multi pick', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const { result } = renderHook(() => useImagePicker());
+      const single = await result.current.open().then(
+        (value) => ({ resolved: value }),
+        (err: Error) => ({ rejected: err.message }),
+      );
+      expect(single).toEqual({
+        rejected: 'the image picker is not supported in dev:live — use dev:mock',
+      });
+      const multi = await result.current.open({ multiple: { max: 2 } }).then(
+        (value) => ({ resolved: value }),
+        (err: Error) => ({ rejected: err.message }),
+      );
+      expect(multi).toEqual({
+        rejected: 'the image picker is not supported in dev:live — use dev:mock',
+      });
+    } finally {
+      resetTransport();
+    }
+  });
+});
+
+describe('createLiveHost — OPEN_MEDIA_UPLOAD (refused: the upload needs the viewer\'s session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_MEDIA_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('replies MEDIA_UPLOAD_RESULT with an error and no upload, and logs once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-1', kind: 'video', purpose: 'generationSource' });
+    post('OPEN_MEDIA_UPLOAD', { requestId: 'r-media-2', kind: 'audio', purpose: 'generationSource' });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT')).toHaveLength(2),
+    );
+    expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_RESULT').map((m) => m.payload)).toEqual([
+      { requestId: 'r-media-1', error: 'media upload is not supported in dev:live — use dev:mock' },
+      { requestId: 'r-media-2', error: 'media upload is not supported in dev:live — use dev:mock' },
+    ]);
+    expect(MEDIA_UPLOAD_UNSUPPORTED_ERROR).toBe('media upload is not supported in dev:live — use dev:mock');
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_MEDIA_UPLOAD received'))).toEqual([
+      '[createLiveHost] OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+        '— useMediaUpload() REJECTS. Test it against the real site, ' +
+        'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+    ]);
+  });
+
+  it('useMediaUpload() rejects with the refusal in both modes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      install();
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      const { result } = renderHook(() => useMediaUpload());
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          (value) => ({ resolved: value }),
+          (err: Error) => ({ rejected: err.message }),
+        );
+      expect(await settle(result.current.open({ kind: 'image' }))).toEqual({
+        rejected: 'media upload is not supported in dev:live — use dev:mock',
+      });
+      expect(
+        await settle(result.current.upload({ kind: 'audio', bytes: new Uint8Array([0x49, 0x44, 0x33]).buffer })),
+      ).toEqual({ rejected: 'media upload is not supported in dev:live — use dev:mock' });
+    } finally {
+      resetTransport();
+    }
   });
 });
 
@@ -2275,5 +3433,166 @@ describe('createLiveHost — app subqueue (served via blocks.queryAppWorkflows /
     await new Promise((r) => setTimeout(r, 50));
     expect(inbound.messages.some((m) => m.type === 'CANCEL_APP_WORKFLOW_RESULT')).toBe(false);
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('blocks.cancelAppWorkflow'))).toBe(false);
+  });
+});
+
+describe('createLiveHost — shared-storage rate-limit refusals (#597)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  // Pairwise-distinct from every default in the code under test (the mock
+  // host's 60s default), so a hardcoded value cannot pass.
+  const RATE_LIMIT = { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' };
+  const MESSAGE = 'Too many submissions — retry in 312s';
+
+  /**
+   * The platform's tRPC refusal on the wire: superjson error envelope whose
+   * `data` carries what civitai's `errorFormatter` adds (`rateLimit`) beside the
+   * default `code`/`httpStatus`.
+   */
+  function trpcRateLimited(message: string, rateLimit: unknown, status = 429) {
+    const body = {
+      error: {
+        json: {
+          message,
+          code: -32029,
+          data: { code: 'TOO_MANY_REQUESTS', httpStatus: status, rateLimit },
+        },
+      },
+    };
+    return {
+      ok: false,
+      status,
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    } as unknown as Response;
+  }
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  const WRITES: Array<{
+    send: string;
+    payload: Record<string, unknown>;
+    procedure: string;
+    reply: string;
+    failureFields: Record<string, unknown>;
+  }> = [
+    {
+      send: 'SHARED_APPEND',
+      payload: { value: { title: 't' } },
+      procedure: 'apps.shared.append',
+      reply: 'SHARED_APPEND_RESULT',
+      failureFields: { key: '' },
+    },
+    {
+      send: 'SHARED_UPDATE',
+      payload: { key: 'req:1', value: { title: 't' } },
+      procedure: 'apps.shared.update',
+      reply: 'SHARED_UPDATE_RESULT',
+      failureFields: { ok: false },
+    },
+    {
+      send: 'SHARED_VOTE',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.vote',
+      reply: 'SHARED_VOTE_RESULT',
+      failureFields: { count: 0 },
+    },
+    {
+      send: 'SHARED_UNVOTE',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.unvote',
+      reply: 'SHARED_UNVOTE_RESULT',
+      failureFields: { count: 0 },
+    },
+    {
+      send: 'SHARED_WITHDRAW',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.withdraw',
+      reply: 'SHARED_WITHDRAW_RESULT',
+      failureFields: { ok: false, deleted: false },
+    },
+    {
+      send: 'SHARED_REPORT',
+      payload: { key: 'req:1' },
+      procedure: 'apps.shared.report',
+      reply: 'SHARED_REPORT_RESULT',
+      failureFields: { ok: false },
+    },
+  ];
+
+  for (const w of WRITES) {
+    it(`${w.send}: a tRPC 429 refusal forwards error.data.rateLimit onto ${w.reply}`, async () => {
+      installWithFetch(async (url) => {
+        if (url.includes(`/api/trpc/${w.procedure}`)) return trpcRateLimited(MESSAGE, RATE_LIMIT);
+        throw new Error(`unexpected ${url}`);
+      });
+      await waitForMessage(inbound, 'BLOCK_INIT');
+      post(w.send, { requestId: `r-${w.send}`, ...w.payload });
+      const payload = await waitForMessage(inbound, w.reply);
+      expect(payload).toEqual({
+        requestId: `r-${w.send}`,
+        ...w.failureFields,
+        error: MESSAGE,
+        rateLimit: { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' },
+      });
+    });
+  }
+
+  it('a MALFORMED data.rateLimit is not forwarded; the refusal itself still is', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('/api/trpc/apps.shared.vote')) {
+        return trpcRateLimited('Too many votes — retry in 9s', { retryAfterSeconds: -9, retryAt: 'x' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_VOTE', { requestId: 'r-bad', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
+    expect(payload).toEqual({ requestId: 'r-bad', count: 0, error: 'Too many votes — retry in 9s' });
+  });
+
+  it('SEAM: useSharedStorage().append() over the live host rejects with SharedStorageRateLimitError', async () => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    try {
+      installWithFetch(async (url) => {
+        if (url.includes('/api/trpc/apps.shared.append')) return trpcRateLimited(MESSAGE, RATE_LIMIT);
+        throw new Error(`unexpected ${url}`);
+      });
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      const { result } = renderHook(() => useSharedStorage());
+      const err = await result.current.append({ title: 't' }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(SharedStorageRateLimitError);
+      expect(err).toBeInstanceOf(Error);
+      const rl = err as SharedStorageRateLimitError;
+      expect(rl.message).toBe('Too many submissions — retry in 312s');
+      expect(rl.retryAfterSeconds).toBe(312);
+      expect(rl.retryAt).toBe('2031-04-05T06:07:08.000Z');
+    } finally {
+      resetTransport();
+    }
   });
 });

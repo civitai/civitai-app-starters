@@ -50,9 +50,39 @@ you set `data-theme` only to stop the browser deciding, you can drop it.
 ## Cascade / overriding
 
 Every shipped rule lives in `@layer civitai.components`. Your own **unlayered**
-CSS always beats it — no `!important`, no specificity war. Override a token
-locally by redeclaring the custom property (e.g.
-`style="--civitai-color-primary: #a259ff"`).
+CSS always beats it — no `!important`, no specificity war.
+
+🔴 **That applies to this package's rules, NOT to the tokens — and the
+difference will cost you a rebrand if you miss it.** `@civitai/theme`'s token
+sheet carries no cascade layer: its `:root` and `[data-theme='…']` blocks are
+unlayered at specificity `0-1-0`. So an app's own `:root { --civitai-color-…: }`
+does not outrank them, it **ties** — and the winner is whichever stylesheet
+comes last.
+
+**Scope a token override; never declare one at `:root`.** Each of these was
+measured to win in **either** stylesheet order:
+
+```html
+<!-- on the element, or any ancestor of what you want recoloured -->
+<div style="--civitai-color-primary: #a259ff"> … </div>
+```
+```css
+/* or a class on your block root — not :root */
+.my-block { --civitai-color-primary: #a259ff; }
+```
+
+A scoped override reaches **inside** component shadow roots — custom properties
+cross the boundary — so `<civitai-button variant="filled">` repaints from it.
+
+⚠️ **Why `:root` is the trap rather than merely the weaker option: it fails
+SILENTLY, and it fails in the order the framework itself produces.**
+`@civitai/blocks-react`'s `useBlocksStyles()` injects the token sheet from a
+`useEffect`, so the tokens land **after** your bundler-injected CSS is already
+in `<head>`. Measured in Chromium: in that order a `:root` brand override
+resolves to civitai's own `#1971C2`, with no error and no warning — and it does
+so with or without `data-theme` present, so the host theme stamp is not the
+cause. Pinned in `test/token-override-order.browser.test.ts`, which asserts
+every route above in both orders.
 
 ---
 
@@ -133,29 +163,30 @@ layer down, and the same predicate decides all three:
   pages that set none.** Text does not paint `--civitai-color-text` on its own,
   so it renders in whatever colour it inherits: wherever an ancestor `color` and
   the token disagree, Text follows the ancestor. An ancestor `color` is the
-  common case, not the exception. Measured on both tracks at this commit, in the
-  shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
-  `color: #e6e6e6`, which is what `civitai-block-starter` and all six apps under
-  `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
-  colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
-  declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
-  while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
-  trade, in the exact colours a block here ships. Dark is where it reads, the
-  token being a soft grey next to a near-white block colour. Light theme behaves
+  common case, not the exception. Measured on both tracks, on a
+  `[data-theme="dark"]` root carrying `color: #e6e6e6` — the shape this repo's
+  blocks had when the measurement was taken (none sets that colour today; see
+  below). Text computes `rgb(230, 230, 230)` — the root's colour — against a
+  dark token of `rgb(193, 194, 197)`. Restoring the removed declaration on that
+  same fixture puts both tracks back at `rgb(193, 194, 197)` while the plain
+  `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the trade. Dark is
+  where it reads, the token being a soft grey next to a near-white page
+  colour. Light theme behaves
   the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
   `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
 
-  Every in-repo consumer would be in that population once it renders Text — none
-  does today — by two different routes: four starters set the colour on `<body>`
-  with Tailwind
-  (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
-  `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
-  `starters/sveltekit-app/src/app.html`), and seven set it on a `[data-theme]`
-  root as `#1a1a1a` / `#e6e6e6` (`starters/civitai-block-starter/src/index.css`
-  plus the six `starters/examples/*/src/index.css`). The package's own `demo/`
-  and `playground/` are the exception that proves the rule: both set
-  `body { color: var(--civitai-color-text) }`, so they still show the token —
-  by inheriting it, not because Text names it. With no colour anywhere on the
+  In this repo the trade lands on four starters, which set their own colour on
+  `<body>` with Tailwind (`text-zinc-900 dark:text-zinc-100` —
+  `starters/next-app/src/app/globals.css`, `starters/react-pwa/index.html`,
+  `starters/svelte-pwa/index.html`, `starters/sveltekit-app/src/app.html`); none
+  of them renders Text today, so it would bite the first one that does. No page
+  here sets `#1a1a1a` / `#e6e6e6` any more. Every Civitai App page sets the
+  token itself instead — every `starters/examples/*/src/index.css` on `:root`,
+  and `starters/civitai-block-starter/src/index.css` on `body`, all as
+  `color: var(--civitai-color-text)` — as do the package's own `demo/` and
+  `playground/`. Those pages show the token in Text by inheriting it, not
+  because Text names it; of them, the block starter and the demo/playground
+  actually render Text. With no colour anywhere on the
   page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
   tokens only and sets no `color`.
 

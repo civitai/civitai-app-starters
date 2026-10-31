@@ -41,6 +41,11 @@ import { tokensCss } from '@civitai/theme';
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
  * selector.
  *
+ * 🔴 Brand-override behaviour is documented on `useBlocksStyles()`'s own JSDoc
+ * below — the only copy, and the only one that reaches the published `.d.ts`.
+ * Do not restate it here, headline included: two copies in one file is the
+ * desync this package already argues against.
+ *
  * **"No `data-theme`" means DARK, and nothing here consults the OS.** Since
  * `@civitai/theme@0.5.0` the `:root` palette IS the dark one and the stylesheet
  * declares no `prefers-color-scheme` block in either direction, so an
@@ -505,6 +510,13 @@ export function injectBlocksStyles(doc?: Document): void {
  * Hook that injects the pack's styles once on mount. Every `/ui` component
  * calls this so rendering any of them is enough to get the styling — the
  * author never imports CSS or runs a setup step.
+ *
+ * 🔴 **Branding: SCOPE a `--civitai-*` override, never declare one at `:root`.**
+ * Because this is an effect, the token sheet lands AFTER your bundler-injected
+ * CSS, and the token sheet is unlayered — so a `:root` override only ties with
+ * it and loses on order, silently. Put the custom property on your block root
+ * or an inline `style` instead. Measured matrix: `@civitai/components`'
+ * MARKUP.md, "Cascade / overriding".
  */
 export function useBlocksStyles(): void {
   useEffect(() => {

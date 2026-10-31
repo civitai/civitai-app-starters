@@ -51,12 +51,29 @@ export function createHttp(options: HttpOptions): Http {
     const { session } = options;
     let response = await send(method, path, opts, await session.getToken({ signal: opts.signal }));
     // One retry: a token that expired in flight is routine, a second refusal is not.
-    if (response.status === 401) {
+    // Not when the server says the VIEWER must sign in — a fresh token for the same
+    // anonymous viewer is refused identically, so the retry would only cost a
+    // re-mint and a second request.
+    if (response.status === 401 && !(await refusesTheViewer(response))) {
       const fresh = await session.getToken({ fresh: true, signal: opts.signal });
       response = await send(method, path, opts, fresh);
     }
     return read<T>(response);
   };
+}
+
+/**
+ * A 401 about the viewer rather than the token: the storage routes' envelope code
+ * `sign_in_required`. Read from a clone, so the body is still there for `read`. A
+ * body that cannot be read is treated as a token refusal, i.e. retried as before.
+ */
+async function refusesTheViewer(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.clone().json()) as { code?: unknown } | null;
+    return body?.code === 'sign_in_required';
+  } catch {
+    return false;
+  }
 }
 
 function urlFor(baseUrl: string, path: string, query?: Query): string {

@@ -112,7 +112,7 @@ describe('createMockHost — generation scenario', () => {
   });
 
   it('costPerGen as a number reports on estimate + succeeded', async () => {
-    uninstall = createMockHost({ generation: { costPerGen: 42 }, pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 42 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -124,6 +124,114 @@ describe('createMockHost — generation scenario', () => {
     const snap = await runGen(result, 1);
     expect(snap.status).toBe('succeeded');
     expect(snap.cost?.total).toBe(42);
+  });
+
+  // ── generation.authorFee — the app fee, itemised on a quote ────────────────
+  //
+  // Mirrors the host: the fee is INSIDE the quote's `cost.total` and reported
+  // beside it as `cost.authorFee`; a submitted workflow's total is the
+  // generation's own cost.
+  const estimateWith = async (
+    generation: NonNullable<Parameters<typeof createMockHost>[0]>['generation'],
+    body: Parameters<ReturnType<typeof useBuzzWorkflow>['estimate']>[0] = BODY,
+  ) => {
+    uninstall = createMockHost({ consentGranted: true, generation, pollsUntilDone: 1 }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let snap!: Awaited<ReturnType<typeof result.current.estimate>>;
+    await act(async () => {
+      snap = await result.current.estimate(body);
+    });
+    return { snap, result };
+  };
+
+  it('authorFee itemises the fee on the estimate and adds it into the total', async () => {
+    const { snap, result } = await estimateWith({ costPerGen: 42, authorFee: 13 });
+    expect(snap.cost).toEqual({ total: 55, authorFee: 13 });
+    expect(snap.cost!.total - snap.cost!.authorFee!).toBe(42);
+
+    // The submitted workflow reports the generation's own cost, un-itemised.
+    const done = await runGen(result, 1);
+    expect(done.status).toBe('succeeded');
+    expect(done.cost).toEqual({ total: 42 });
+  });
+
+  it('authorFee as a function sees the submitted body', async () => {
+    const { snap } = await estimateWith({
+      costPerGen: 20,
+      authorFee: (req) => (req.kind === 'textToImage' ? 7 : 99),
+    });
+    expect(snap.cost).toEqual({ total: 27, authorFee: 7 });
+  });
+
+  it('authorFee defaults to 0 — reported as 0, not omitted', async () => {
+    const { snap } = await estimateWith({ costPerGen: 42 });
+    expect(snap.cost).toEqual({ total: 42, authorFee: 0 });
+    expect(Object.keys(snap.cost!).sort()).toEqual(['authorFee', 'total']);
+  });
+
+  it('authorFee: false simulates a host that predates the field (absent)', async () => {
+    const { snap } = await estimateWith({ costPerGen: 42, authorFee: false });
+    expect(Object.keys(snap.cost!)).toEqual(['total']);
+    expect(snap.cost!.total).toBe(42);
+  });
+
+  it('a registered step quote is itemised; a kind that prices no fee is not', async () => {
+    const step = await estimateWith(
+      { costPerGen: 4, authorFee: 13 },
+      { kind: 'step', step: 'convert-image', params: {} } as never,
+    );
+    expect(step.snap.cost).toEqual({ total: 17, authorFee: 13 });
+    uninstall?.();
+    resetTransport();
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+
+    const comfy = await estimateWith(
+      { costPerGen: 4, authorFee: 13 },
+      { kind: 'customComfy', recipe: 'any-recipe', params: {} } as never,
+    );
+    expect(Object.keys(comfy.snap.cost!)).toEqual(['total']);
+    expect(comfy.snap.cost!.total).toBe(4);
+  });
+
+  // The host routes a `kind: 'step'` body on the VALUE of `step`, not on the key
+  // being present: `{ kind: 'step', step: undefined, $type, ... }` is a legal
+  // PASS-THROUGH body (an app spreading an optional variable produces one), and
+  // a pass-through quote prices no fee. The mock must route it the same way.
+  it('a pass-through step body carrying `step: undefined` is not itemised and debits no fee', async () => {
+    const passThrough = {
+      kind: 'step',
+      step: undefined,
+      $type: 'imageBackgroundRemoval',
+      input: { image: 'https://example.test/a.png' },
+      maxBuzz: 20,
+    } as never;
+
+    const { snap } = await estimateWith({ costPerGen: 4, authorFee: 13 }, passThrough);
+    expect(
+      Object.keys(snap.cost!),
+      'a pass-through quote with `step: undefined` must not carry authorFee',
+    ).toEqual(['total']);
+    expect(snap.cost!.total).toBe(4);
+    uninstall?.();
+    resetTransport();
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+
+    const host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 100 },
+      generation: { costPerGen: 4, authorFee: 13 },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let submitted!: Awaited<ReturnType<typeof result.current.submit>>;
+    await act(async () => {
+      submitted = await result.current.submit(passThrough);
+    });
+    expect(submitted.status).not.toBe('failed');
+    expect(host.buzz.getBalance(), 'only the generation is debited, no fee').toBe(96);
   });
 
   it('costPerGen as a function varies cost by the submitted body', async () => {
@@ -189,7 +297,7 @@ describe('createMockHost — generation scenario', () => {
   });
 
   it('the estimate path still prices normally when failEstimate is unset (control)', async () => {
-    uninstall = createMockHost({ generation: { costPerGen: 42 } }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 42 } }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -239,12 +347,12 @@ describe('createMockHost — generation scenario', () => {
     expect(err.code).toBe('exception');
   });
 
-  // 🔴 THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE (#251). Until this
-  // knob existed, an errored submit was unreachable in every local harness —
-  // the balance / `insufficient` knobs model a priced budget REJECTION, which
-  // resolves — so a block author testing "what if submit goes wrong" only ever
-  // exercised the arm that never throws. Driven end-to-end through the real hook
-  // + transport, not stubbed.
+  // 🔴 #251: until this knob existed, an errored submit was unreachable in every
+  // local harness, so a block author testing "what if submit goes wrong" only
+  // ever exercised the arm that never throws. (The balance / `insufficient`
+  // knobs now reject with this same shape too, since that is what production
+  // sends for an out-of-Buzz viewer — see the buzz balance scenario below.)
+  // Driven end-to-end through the real hook + transport, not stubbed.
   it('failSubmitException rejects with the host failureSnapshot shape (#251)', async () => {
     uninstall = createMockHost({
       generation: { failSubmitException: true, failSubmitExceptionMessage: 'prompt audit down' },
@@ -359,19 +467,49 @@ describe('createMockHost — buzz balance scenario', () => {
     resetTransport();
   });
 
-  it('a gen that exceeds the balance returns insufficient-Buzz', async () => {
-    host = createMockHost({ buzz: { balance: 3 }, generation: { costPerGen: 5 }, pollsUntilDone: 1 });
+  // 🔴 OUT OF BUZZ REJECTS, AS IN PRODUCTION. The orchestrator 403s the debit,
+  // civitai throws `throwInsufficientFundsError` (a BAD_REQUEST), the submit
+  // procedure rethrows it, and the iframe host replies with its cost-less
+  // `failureSnapshot(err)` — so `useBuzzWorkflow` rejects with `'exception'`.
+  // These knobs used to RESOLVE a priced `failed` snapshot, which taught a
+  // "resolved refusal → top-up" flow production never produces.
+  // `consentGranted` keeps the SDK's consent prompt-and-retry out of the way,
+  // so the knob is the only thing measured.
+
+  /** The full out-of-Buzz reply shape: the host's `failureSnapshot(err)`. */
+  function expectOutOfBuzz(err: WorkflowSubmitError) {
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.workflowId).toBe('failed');
+    expect(err.snapshot.status).toBe('failed');
+    // The discriminator: no price. A priced reply would RESOLVE.
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(err.snapshot.error).toMatch(/insufficient buzz/i);
+  }
+
+  it('a gen that exceeds the balance REJECTS as out of Buzz (exception, no cost)', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 3 },
+      generation: { costPerGen: 5 },
+      pollsUntilDone: 1,
+    });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toMatch(/insufficient buzz/i);
+    expectOutOfBuzz(await submitExpectingRejection(result));
+    expect(result.current.status).toBe('error');
+    // Nothing was debited for the refused gen.
+    expect(host.buzz.getBalance()).toBe(3);
   });
 
-  it('debits the balance on a successful gen', async () => {
-    host = createMockHost({ buzz: { balance: 20 }, generation: { costPerGen: 8 }, pollsUntilDone: 1 });
+  it('debits the balance on a successful gen, then rejects once it runs out', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 20 },
+      generation: { costPerGen: 8 },
+      pollsUntilDone: 1,
+    });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
@@ -380,34 +518,138 @@ describe('createMockHost — buzz balance scenario', () => {
     expect(host.buzz.getBalance()).toBe(12);
     await runGen(result, 1);
     expect(host.buzz.getBalance()).toBe(4);
-    // 3rd gen (cost 8) exceeds remaining 4 → insufficient.
-    const snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toMatch(/insufficient buzz/i);
+    // 3rd gen (cost 8) exceeds remaining 4 → out of Buzz → rejects.
+    expectOutOfBuzz(await submitExpectingRejection(result));
+    expect(host.buzz.getBalance()).toBe(4);
   });
 
-  it('buzz.insufficient forces the insufficient path regardless of balance', async () => {
-    host = createMockHost({ buzz: { balance: 1000, insufficient: true }, pollsUntilDone: 1 });
+  it('buzz.insufficient makes submit() REJECT with WorkflowSubmitError code "exception"', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 1000, insufficient: true },
+      pollsUntilDone: 1,
+    });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toMatch(/insufficient buzz/i);
+    expectOutOfBuzz(await submitExpectingRejection(result));
   });
 
-  it('runtime buzz.setBalance flips insufficient → sufficient mid-session', async () => {
-    host = createMockHost({ buzz: { balance: 0 }, generation: { costPerGen: 8 }, pollsUntilDone: 1 });
+  it('buzz.insufficient rejects on an UN-granted token too (consent retry then the same rejection)', async () => {
+    // The realistic first-run path: no spend scope yet, so the SDK's consent
+    // prompt-and-retry runs first. Being out of Buzz must still end in the
+    // rejection, not in a resolve on the retried attempt.
+    host = createMockHost({ buzz: { insufficient: true }, pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    expectOutOfBuzz(await submitExpectingRejection(result));
+  });
+
+  it.each(['insufficient', 'all'] as const)(
+    'legacy failMode "%s" REJECTS as out of Buzz (exception, no cost)',
+    async (failMode) => {
+      host = createMockHost({ consentGranted: true, failMode, pollsUntilDone: 1 });
+      uninstall = host.install();
+      const { result } = renderHook(() => useBuzzWorkflow());
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+      expectOutOfBuzz(await submitExpectingRejection(result));
+    },
+  );
+
+  it('runtime buzz.setBalance flips out-of-Buzz → sufficient mid-session', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 0 },
+      generation: { costPerGen: 8 },
+      pollsUntilDone: 1,
+    });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    let snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
+    expectOutOfBuzz(await submitExpectingRejection(result));
 
     act(() => host!.buzz.setBalance(100));
-    snap = await runGen(result, 1);
+    const snap = await runGen(result, 1);
     expect(snap.status).toBe('succeeded');
+  });
+
+  // 🔴 A spend CAP is the arm that RESOLVES, priced. The server checks its caps
+  // (per-call budget, daily, consent, per-app, dev session) before asking the
+  // orchestrator to debit, and quotes the cost it refused to charge.
+  it('generation.submitCapRefusal RESOLVES a priced failed snapshot (cap refusal)', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      generation: {
+        costPerGen: 37,
+        submitCapRefusal: 'insufficient buzz budget: estimate 37 exceeds budget 20',
+      },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let snap: Awaited<ReturnType<typeof result.current.submit>> | undefined;
+    await act(async () => {
+      snap = await result.current.submit(BODY);
+    });
+    expect(snap).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 37, authorFee: 0 },
+      error: 'insufficient buzz budget: estimate 37 exceeds budget 20',
+    });
+  });
+
+  it('a cap refusal itemises the fee, and the simulated balance is debited gen + fee', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 100 },
+      generation: { costPerGen: 37, authorFee: 13, submitCapRefusal: true },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let snap: Awaited<ReturnType<typeof result.current.submit>> | undefined;
+    await act(async () => {
+      snap = await result.current.submit(BODY);
+    });
+    expect(snap?.cost).toEqual({ total: 50, authorFee: 13 });
+    expect(host.buzz.getBalance()).toBe(100);
+
+    act(() => host!.setScenario({ generation: { submitCapRefusal: undefined } }));
+    const done = await runGen(result, 1);
+    expect(done.status).toBe('succeeded');
+    expect(host.buzz.getBalance()).toBe(50);
+  });
+
+  it('submitCapRefusal: true uses the default message; it pre-empts out-of-Buzz; it clears', async () => {
+    host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 0 },
+      generation: { costPerGen: 11, submitCapRefusal: true },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    // Cap first, as on the server: resolves priced even with an empty wallet.
+    let snap: Awaited<ReturnType<typeof result.current.submit>> | undefined;
+    await act(async () => {
+      snap = await result.current.submit(BODY);
+    });
+    expect(snap?.status).toBe('failed');
+    expect(snap?.cost).toEqual({ total: 11, authorFee: 0 });
+    expect(snap?.error).toBe('Buzz spend cap reached (simulated).');
+
+    // Cleared live → the empty wallet is what stops it now, as a rejection.
+    act(() => host!.setScenario({ generation: { submitCapRefusal: undefined } }));
+    expectOutOfBuzz(await submitExpectingRejection(result));
   });
 
   it('OPEN_BUZZ_PURCHASE refills the simulated balance', async () => {
@@ -424,6 +666,59 @@ describe('createMockHost — buzz balance scenario', () => {
       window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'r1' } }, ORIGIN);
     });
     await waitFor(() => expect(host!.buzz.getBalance()).toBeGreaterThan(0));
+  });
+
+  // A purchase ends every forced out-of-Buzz state — `buzz.insufficient` AND
+  // the legacy `failMode` spellings of it — so reject → top-up → retry lands.
+  // Before the fix only `buzz.insufficient` was cleared, and `?fail=insufficient`
+  // looped reject → top-up → reject. `'some'` is not a wallet state, so the
+  // purchase must leave it set (the control arm).
+  it.each([
+    ['failMode "insufficient"', { failMode: 'insufficient' as const }],
+    ['failMode "all"', { failMode: 'all' as const }],
+    ['buzz.insufficient', { buzz: { insufficient: true } }],
+  ])('OPEN_BUZZ_PURCHASE ends the out-of-Buzz state forced by %s', async (_label, opts) => {
+    host = createMockHost({ consentGranted: true, pollsUntilDone: 1, ...opts });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    expectOutOfBuzz(await submitExpectingRejection(result));
+
+    const replies: unknown[] = [];
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; payload?: unknown };
+      if (d?.type === 'BUZZ_PURCHASE_RESULT') replies.push(d.payload);
+    };
+    window.addEventListener('message', onMsg);
+    try {
+      await act(async () => {
+        window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'p1' } }, ORIGIN);
+      });
+      await waitFor(() => expect(replies).toHaveLength(1));
+    } finally {
+      window.removeEventListener('message', onMsg);
+    }
+
+    const snap = await runGen(result, 1);
+    expect(snap.status).toBe('succeeded');
+  });
+
+  it('OPEN_BUZZ_PURCHASE leaves failMode "some" set (not a wallet state)', async () => {
+    host = createMockHost({ consentGranted: true, failMode: 'some', pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    await act(async () => {
+      window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'p1' } }, ORIGIN);
+    });
+    // 'some' fails every 3rd submit; submits 1 and 2 succeed, 3 rejects.
+    expect((await runGen(result, 1)).status).toBe('succeeded');
+    expect((await runGen(result, 1)).status).toBe('succeeded');
+    const err = await submitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toMatch(/simulated/i);
   });
 
   it('stamps a synthetic spentAccountType (primary funder) when no accountType is picked', async () => {
@@ -1052,6 +1347,28 @@ describe('createMockHost — setScenario + URL toggles', () => {
     expect(opts.generation?.costPerGen).toBe(12);
     expect(opts.generation?.failNext).toBe(2);
     expect(opts.failMode).toBe('insufficient');
+    expect(opts.generation?.submitCapRefusal).toBeUndefined();
+  });
+
+  it('readMockHostUrlOptions maps ?authorFee onto generation.authorFee', () => {
+    const read = (search: string) =>
+      readMockHostUrlOptions({ location: { search } } as unknown as Window & typeof globalThis);
+    expect(read('?authorFee=13').generation?.authorFee).toBe(13);
+    expect(read('?authorFee=0').generation?.authorFee).toBe(0);
+    expect(read('?authorFee=off').generation?.authorFee).toBe(false);
+    expect(read('?authorFee=').generation).toBeUndefined();
+    expect(read('?authorFee=lots').generation).toBeUndefined();
+  });
+
+  it('readMockHostUrlOptions maps ?capRefusal onto generation.submitCapRefusal', () => {
+    const read = (search: string) =>
+      readMockHostUrlOptions({ location: { search } } as unknown as Window & typeof globalThis);
+    expect(read('?capRefusal=1').generation?.submitCapRefusal).toBe(true);
+    expect(read('?capRefusal=true').generation?.submitCapRefusal).toBe(true);
+    expect(read('?capRefusal=daily%20cap%20reached').generation?.submitCapRefusal).toBe(
+      'daily cap reached',
+    );
+    expect(read('?capRefusal=').generation).toBeUndefined();
   });
 
   it('readMockHostUrlOptions maps ?consent=granted|ungrantable onto the two consent knobs', () => {

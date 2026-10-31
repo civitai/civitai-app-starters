@@ -1,5 +1,1053 @@
 # @civitai/app-sdk
 
+## 0.80.1
+
+### Patch Changes
+
+- ea59dac: Docs only: the 256 KB whole-request cap (a 413) applies when calling the `/api/v1/blocks/workflows/estimate` and `/submit` REST routes directly with a block token, not to page apps using the hooks through the host bridge. The README's `checkComfyGraph` section now also says `classes` is the complete list and `packs` is partial (only the `cnr_id`s present in the file).
+
+## 0.80.0
+
+### Minor Changes
+
+- f0542fb: Add `checkComfyGraph(entry)` to `@civitai/app-sdk/blocks`: a pure, offline check that a workflow file entry (what `useResourceFile` returns) can run as an inline `customComfy` graph, before any Buzz is spent. It returns `{ runnable: true }` or `{ runnable: false, reasons }`, with a closed set of reason codes: `not-api-format`, `custom-nodes` (classes outside a core-node list generated from a pinned ComfyUI commit, plus `cnr_id` pack ids), `model-filenames` (loader inputs holding a filename instead of an AIR), `too-many-nodes` (over 300) and `too-large` (over 262144). Also exports the inline caps as `BLOCK_INLINE_COMFY_MAX_NODES` and `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES`. A Comfy estimate is a ceiling, never a price. No new dependencies.
+
+## 0.79.0
+
+### Minor Changes
+
+- f4a7935: **`GET_RESOURCE_FILE`: read a resource file's parsed JSON (a workflow's graphs) over the bridge** — the SDK half of civitai/civitai-app-starters#664, phase 2.
+
+  - `@civitai/app-sdk/blocks`: the `GET_RESOURCE_FILE { requestId, modelVersionId, fileId? }` → `RESOURCE_FILE_RESULT { requestId, file } | { requestId, error }` message pair, and the types `BlockResourceFile` (`{ meta, entries, truncated }`), `BlockResourceFileMeta`, `BlockResourceFileEntry` (`{ path, format, graph }`), `BlockResourceFileEntryFormat` (`'ui' | 'api' | 'unknown'`) and `BlockResourceFileErrorCode`, a closed set: `not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`, `rate-limited`.
+  - `@civitai/blocks-react`: `useResourceFile(modelVersionId, fileId?)` → `{ file, loading, error, refetch }`, with `ResourceFileError` (`.code` from the closed set). It waits up to 120 s for the host (which downloads and unzips the file), and changing either id resets `file` and `error` before the new fetch. The reply validator drops an unknown code or a malformed file. Mock host: `resourceFile` (the canned reply; by default one UI-format graph) and `resourceFileError` (force a code; `setScenario({ resourceFileError: undefined })` clears it). `dev:live` refuses it with `parse-failed`.
+  - `@civitai/sdk`: the host reply ledger lists `GET_RESOURCE_FILE`, so `BlockTransport.request()` settles it with `{ file }` instead of refusing it. No typed `app.host` wrapper yet.
+
+  No block scope and no manifest change. Full-page app hosts only: the model-page slot does not answer it, and `dev:live` does not serve it. Only free, public versions are served — an unpublished draft or an early-access or paid version answers `not-found`, even for a viewer who bought it.
+
+## 0.78.0
+
+### Minor Changes
+
+- 57b5406: Catalog sync: the orchestrator spec accepts 4 entries the SDK catalogs did not list.
+
+  - `IMAGE_GEN_ENGINES`: add `krea3` — Krea 3 text-to-image, or an edit of up to six reference images, at 1K or 2K.
+  - `WORKFLOW_STEP_TYPES`: add `archiveExtraction` — unpack a zip / tar / tar.gz archive into its entries, with a media-type filter and an entry cap.
+  - `WORKFLOW_STEP_TYPES`: add `audioModeration` — transcribe the lyrics in a media file's audio and flag sexualized minors.
+  - `WORKFLOW_STEP_TYPES`: add `multimodalEmbedding` — normalized embeddings of text, images or short videos (`wemm-2b`, 64–2048 dimensions).
+
+  The three new step types have no generated template in the pinned `@civitai/client` yet, so `WorkflowStepTemplateFor<…>` is a compile error for each of them, as for the other entries of that gap.
+
+  `WORKFLOW_STEP_TYPES` / `IMAGE_GEN_ENGINES` are hand-maintained mirrors of the `discriminator.mapping`s in `https://orchestration.civitai.com/openapi/v2-consumers.json`, which moves per orchestrator build — so they drift without anyone touching this repo. `krea3` was read on 2026-10-16, the three step types on 2026-10-24.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. Purely additive: nothing that compiled before stops compiling, and there is no runtime behaviour change.
+
+## 0.77.0
+
+### Minor Changes
+
+- 994b502: **BREAKING (0.x minor): App Blocks `kind: 'training'` now trains on images the viewer uploads, not on a server-prepared dataset** — the SDK half of civitai/civitai#6461.
+
+  The training run is unchanged; how its dataset is named is not:
+
+  - `WorkflowBodyTraining.items: BlockTrainingDatasetItem[]` (`{ air, caption }`, 1–50, one blob at most once) **replaces** `datasetId`. `BLOCK_TRAINING_CAPTION_MAX_CHARS` is now 8,192.
+  - Upload the images with `useImageUpload({ purpose: 'trainingData' }).open()` (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to 50 images in a Civitai modal; `open()` resolves with `[{ url, air }]` (`BlockTrainingDataImage[]`), or `null` on cancel. Pair each `air` with a caption.
+  - `RUN_TRAINING` gains the host code `training data not uploaded here`: the host refuses, before any dialog, a quote naming a blob it did not upload for this block (e.g. after a reload). `RunTrainingError.trainingDataNotUploaded` flags it; no run, nothing charged — upload again and estimate again.
+
+  Removed, with no replacement beyond the above:
+
+  - `@civitai/blocks-react`: `usePrepareTrainingDataset`, `UsePrepareTrainingDataset`, `PrepareTrainingDatasetError`, `PREPARE_TRAINING_DATASET_ERROR_CODES`, `isPrepareTrainingDatasetErrorCode`, and the `BlockPrepareTrainingDatasetHostError` / `BlockTrainingDatasetResult` / `BlockTrainingRejectionReason` re-exports. Mock host: the `trainingDatasetRejected` and `trainingDatasetError` options are gone; `cannedTrainingDataUpload` (the images an upload returns) and `trainingDataNotUploadedHere` (refuse every run as a host that forgot its uploads) are new, and the mock now checks a run's whole body against its quote.
+  - `@civitai/app-sdk/blocks`: the `PREPARE_TRAINING_DATASET` / `TRAINING_DATASET_RESULT` message pair, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason` and `BlockPrepareTrainingDatasetHostError`. New: the `'trainingData'` upload purpose, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult` (the multi-image `IMAGE_UPLOAD_RESULT.selected` shape), and `BlockRunTrainingHostError` member `'training data not uploaded here'`.
+  - `@civitai/sdk`: the copied `WorkflowBodyTraining` follows (`items`, not `datasetId`), and `BlockTrainingDatasetItem` is exported from the package root. The host reply ledger is regenerated from civitai/civitai#6461.
+
+  Training from apps stays behind the host flag `app-blocks-training-kind` (off by default), page apps only.
+
+## 0.76.0
+
+### Minor Changes
+
+- 6196655: A dev-tunnel preview's document store is local to the tab (civitai/civitai-app-starters#710).
+
+  `@civitai/sdk`: when the host marks the frame `storageMode: 'local-preview'` in `BLOCK_INIT`, `initialize()` serves `app.storage.collection(name)` and `app.storage.info()` from an in-memory store (`createFakeStorage`, loaded with a dynamic `import()`) that enforces the LOCAL manifest's declarations, and sends no request to `blocks/storage/*`. The manifest reaches the SDK only from `blockManifestPlugin()` on the Vite dev server; without it, every document-store call rejects `local_preview_no_manifest` (404, not retryable, nothing sent). New: `app.storage.mode` (`'remote' | 'local-preview'`), the `StorageMode` type, and the local error codes `local_preview_no_manifest`, `local_preview_invalid_manifest` and `local_preview_unavailable` (all 404, not retryable). Model-version ownership (`ownedModelVersions`) is not checked locally; the server checks it. The mode switches only on the host's exact signal, never on token scopes. Without it, a real route's `insufficient_scope` now carries a hint after the server's message (declare `apps:storage`; granted once approved; previews are local when the host marks them). The deprecated key/value stores and `@civitai/blocks-react`'s storage hooks are unchanged and keep the real routes.
+
+  `@civitai/app-sdk`: `blockManifestPlugin()` exposes the manifest's `scopes` and `storage` to `@civitai/sdk` on the dev server only (a `<script>` at the end of `index.html`'s `<head>`; never in a build). `BlockInitPayload` gains the optional `storageMode?: 'local-preview'`.
+
+## 0.75.0
+
+### Minor Changes
+
+- ab5bf92: **`useMediaUpload()` uploads an image, video or audio file as a generation input, and returns a `url` to pass into a workflow step.** The host refuses data URIs and inline base64 in step inputs, so this is the way to get media into a step. `const { open, upload } = useMediaUpload()`: `open({ kind })` opens the host's file picker and resolves with the upload or `null`; `upload({ kind, bytes, mimeType? })` uploads bytes the app made in the tab (a canvas, a crop, a `MediaRecorder` recording) with no picker.
+
+  - **Release hold satisfied:** civitai/civitai#6149, the host change that answers `OPEN_MEDIA_UPLOAD`, is merged and deployed to production. A host that predates it does not answer the message at all, so `open` and `upload` would wait out the human-interaction timeout (10 minutes) and then reject with `RequestTimeoutError`.
+  - **What each kind accepts**, by the file's content: `'image'` PNG, JPEG or WebP (the host resizes it to 64–2048 px per side and re-encodes it as JPEG, so `mimeType` is always `image/jpeg`); `'video'` MP4 or WebM; `'audio'` MP3, WAV or WebM. The result is `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`: `width` and `height` are set for image and video and absent for audio, and `durationMs` is set for video and audio when the browser reports a duration.
+  - **Limits:** 24 MB per image (the host decodes an image in full before resizing it) and 64 MB per video or audio file; `upload` refuses a larger buffer before sending, with the host's `file exceeds the 24 MB image upload limit` or `file exceeds the 64 MB upload limit`. `upload` is limited to 8 uploads and 128 MB per 60 seconds per page; past that it rejects with `busy`. `open` is not rate-limited.
+  - **`null` and refusals:** `open` resolves `null` when nothing was uploaded (the viewer closed the picker, or the app is in review mode or not ready). `upload` never resolves without a file: a declined upload rejects with `the host did not upload the media (the app is in review mode or not ready)`. Every refusal rejects with the host's message, including `no block token` (bytes mode, when the host holds no token), `media upload failed — please try again` and `this video was refused by the upload service` / `this audio was refused by the upload service`; a non-page surface answers `unsupported on this host`.
+  - **Refused before sending,** with the host's own strings: an unknown `kind`, a `bytes` that is not a non-empty `ArrayBuffer`, a non-string `mimeType`, and a buffer over the kind's cap.
+  - `useImageUpload().open({ purpose: 'generationSource' })` is unchanged and still valid for images.
+  - New exports from `@civitai/blocks-react`: `useMediaUpload` and the types `UseMediaUpload`, `MediaUploadOpenOptions` and `MediaUploadBytesOptions`; `@civitai/blocks-react/testing` adds the type `MockMediaUploads`.
+  - `@civitai/app-sdk`: the message union gains `OPEN_MEDIA_UPLOAD { requestId, kind, purpose: 'generationSource', bytes?, mimeType? }` and `MEDIA_UPLOAD_RESULT { requestId, selected?, error? }`, plus the types `BlockMediaKind` and `BlockMediaUploadInfo` on `./blocks`. `OPEN_MEDIA_UPLOAD` is added to `BLOCK_TO_PARENT_MESSAGE_TYPES`. Use this `@civitai/app-sdk` release or later with this `@civitai/blocks-react` release. `OPEN_IMAGE_UPLOAD` and `IMAGE_UPLOAD_RESULT` are unchanged.
+  - The reply validator accepts `MEDIA_UPLOAD_RESULT` with a string `error`, a bare reply, or a `selected` with a non-empty `url`, a known `kind`, a string `mimeType`, a whole `sizeBytes` ≥ 0, positive whole `width` and `height` (required for image and video, absent for audio) and a finite `durationMs` ≥ 0 when present. Anything else is dropped.
+  - **Mock host (`createMockHost` / `Harness`):** answers at once. New option `cannedMediaUploads` sets each kind's upload (a kind left out answers a built-in default; `null` dismisses that kind's picker). Bytes uploads run the host's checks in the host's order, including the content sniff and the rate window. The mock cannot decode media, so it never produces the host's decode-time refusals; `mediaUploadError` forces one. `mediaUploadError: 'no block token'` is placed where the host checks it: a bytes upload is refused before the cap and the window, and not counted. Both are live-tunable through `setScenario`. A model-slot `context` answers `unsupported on this host`.
+  - **`dev:live`:** refuses the request, because the upload needs the viewer's signed-in session. Both calls reject with `media upload is not supported in dev:live — use dev:mock`.
+  - **Inline-media docs point at `useMediaUpload`:** `WorkflowBodyPassThroughStep.input` in `@civitai/app-sdk` (and its copy in `@civitai/sdk`) and the `@civitai/blocks-react` README's step-input rules now say to upload an image, video or audio with `useMediaUpload()` (an image also works with `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`) and pass the returned `url`. The mock host's inline-media refusal already names `useMediaUpload`, matching the host's message.
+
+### Patch Changes
+
+- 924d710: Docs: the `buildImageGenBody` example passes a hosted image URL instead of a `data:` URI, and `WorkflowBodyPassThroughStep.input` says the block host refuses inline media (a media data URI or long raw base64) — upload with `useImageUpload({ purpose: 'generationSource' })` or pick with `useImagePicker()` and pass the `url`.
+
+## 0.74.0
+
+### Minor Changes
+
+- ae33f6c: **App reactions: a block can read and set the viewer's reactions on images it was served (scope `social:react:self`, civitai/civitai#6144).** A reaction made this way is a reaction on civitai.com: it pays the reactor and the image owner as the site's own button does, moves rankings, notifies, and draws on the same per-viewer quota. Apps may set `Like`, `Heart`, `Laugh` and `Cry`, never `Dislike`. Image is the only entity type.
+
+  - **`@civitai/app-sdk`.** The `SET_ENTITY_REACTION` → `ENTITY_REACTION_RESULT` and `GET_ENTITY_REACTIONS` → `ENTITY_REACTIONS_RESULT` messages, as the host implements them: a write takes `{ entityType, entityId, reaction, reacted, ticket? }` (a desired state, not a toggle) and answers `{ entityType, entityId, reaction, reacted, changed, counts, viewerReactions, statsUnknown }`; a read takes `{ entityType, ids, tickets? }` (at most 100 ids) and answers `{ entityType, byId, unavailable }`, where `byId` is keyed by the id as a string and an id without a valid ticket is listed in `unavailable` instead of answered. Every failure is one of the closed `ENTITY_REACTION_ERROR_CODES`: `invalid-request`, `sign-in-required`, `review-mode`, `not-ready`, `needs-consent`, `entity-unavailable`, `rate-limited`. New exports from `./blocks`: `APP_REACTIONS`, `STORED_REACTIONS`, `REACTION_ENTITY_TYPES`, `REACTION_READ_MAX_IDS`, `REACT_TICKET_MAX_LENGTH`, `ENTITY_REACTION_ERROR_CODES`, `isEntityReactionErrorCode`, `isAppReaction`, and the types `BlockAppReaction`, `BlockStoredReaction`, `BlockReactionEntityType`, `BlockEntityReactionErrorCode`, `BlockReactionCounts`, `BlockEntityReactionState`, `BlockEntityReactionResult`, `BlockEntityReactionsResult`. `BLOCK_TO_PARENT_MESSAGE_TYPES` lists both requests.
+  - **`@civitai/blocks-react`.** `useReactions(entityType, ids, { tickets })` returns `{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` in chunks of 100 on mount, then reads only the images that need it (an id added to `ids`, or one whose ticket changed), because the host counts every read against the block instance's shared catalog rate limit. An answer is never applied over a write on the same image that started after the read was sent, and an older answer never overwrites a newer one. `toggle(id, reaction, reacted)` moves `byId[id]` at once, puts it back on failure, adopts the host's `viewerReactions` on success, and rejects with a `ReactionError` (`.code`, `.signInRequired`, `.needsConsent`, `.timedOut`, `.busy`). A `toggle` on an image without a ticket, or on one whose same reaction is already in flight, is refused without sending anything: the server checks the ticket after its rate limit, so sending it would spend one of the viewer's reactions. A busy refusal rejects the call without setting the hook's `error`. After a failed write the image is read again if the write timed out (it may have landed) or the image has no state. Also exported: `ReactionError`, `REACTIONS`, `REACTION_ERROR_CODES`, `isReactionErrorCode`, and the reaction types from `@civitai/app-sdk/blocks`. `createMockHost` and `<Harness>` answer both messages: seed images with `reactionStates`, force a code with `reactionError` (both live-tunable with `setScenario`; a forced `review-mode` or `not-ready` is answered before the sign-in, payload and scope checks, as the host's own gate orders them), and declare `social:react:self` in `declaredScopes` or every call answers `needs-consent`, as the real host does for an ungranted scope. The mock accepts any well-formed ticket, since a real one is an HMAC only the server can check. `@civitai/blocks-react/testing` exports the `MockReactionSeed` type. The live dev host refuses both with `entity-unavailable`: the server's reaction procedures need the viewer's civitai.com session.
+  - **`@civitai/components`.** `<civitai-reaction>` takes a `reaction` property (a string such as `Like`, reflected as an attribute). When it is non-empty it is carried as-is in the `react` event's `detail.reaction` and is the accessible name when there is no `label`; the element does not check it against any list. `emoji` stays display only. Without a `reaction`, or with an empty one, the event detail is exactly `{ emoji, reacted, count }`, as before.
+  - **`@civitai/sdk`.** The host snapshot is refreshed from civitai `cd79a91fe4`, so `request()` settles `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD` instead of refusing them as unknown, and `SCOPES` names `social:react:self`.
+
+## 0.73.0
+
+### Minor Changes
+
+- 25ad9f9: **A shared storage collection can require that the model versions it stores are the writer's own (`ownedModelVersions`, civitai/civitai#6132).**
+
+  - **`@civitai/app-sdk`.** The vendored manifest schema is re-vendored from https://civitai.com/schemas/app-block/v1.json, and `BlockStorageSharedCollectionDeclaration` gains `ownedModelVersions?: string[]`: 1 to 4 distinct pointers into a document's `data` (each 1 to 4 segments of `/` then a letter or `_` and up to 63 letters, digits or `_`, such as `/workflow/modelVersionId`). The canonical allows it only on a shared collection with `write: "own"`, and `defineBlock` enforces that from the schema. On every create and update civitai.com refuses a declared field holding anything but a model version the writer owns: 403 `resource_not_owned`, before moderation and before any write budget. An absent field is allowed. The same re-vendor brings the canonical's new `social:react:self` scope (app reactions, civitai/civitai#6144: sensitive and consent-gated), now `BLOCK_SCOPES.SOCIAL_REACT_SELF`. This package has no reaction helper yet. Additive for authors: nothing that validated before is rejected.
+  - **`@civitai/sdk`.** `StorageErrorCode` names `resource_not_owned`. `createFakeStorage` enforces a collection's `ownedModelVersions` rule in the server's order: before the trust gate, the write budget and moderation, with every value checked before any ownership. The fake has no model versions of its own, so `FakeStorageViewer.modelVersions` lists the ids a viewer owns. It defaults to none, so every id is refused, as the server refuses one that is not the writer's. A declaration the platform would refuse (on a private or `write: "none"` collection, or a malformed pointer list) makes `createFakeStorage` throw.
+
+## 0.72.0
+
+### Minor Changes
+
+- ad67f18: `OPEN_IMAGE_PICKER` gains an opt-in `publicOnly?: boolean`. With `publicOnly: true` the host's `'posted'` library offers only images whose post is published and not `Private`, so the pick is usable where the store requires a public image, such as an App Store sub-listing card image (`imageId` on `POST /api/v1/blocks/sub-listings/upsert`, `app.subListings.upsert` in `@civitai/sdk`). The `'generated'` library is unaffected. Absent or `false` keeps today's behaviour; an app picking a private input (a generation source) leaves it off.
+
+  Compatibility: a host that predates the field ignores it and still offers `Private`-post images, so an app that sets it must still handle the store's `image_not_public` refusal.
+
+## 0.71.0
+
+### Minor Changes
+
+- a53587e: **The manifest gains an optional `storage` (document-store collections) declaration, typed and validated.** `storage.collections` maps a collection name to a declaration discriminated on `visibility`: a `private` collection (a key space per viewer) or a `shared` one (one key space for the app, which must declare `write`: `own`, `none`, or the reserved `anyone` / `owner`). A collection may also declare `kind`, `indexes` (field path → `string` | `number` | `boolean` | `time`), and on a shared collection `counters`, `marks` and `showAuthor`.
+
+  - **Types.** `BlockManifestV1.storage`, plus the exported `BlockStorageDeclaration`, `BlockStorageCollectionDeclaration`, `BlockStoragePrivateCollectionDeclaration`, `BlockStorageSharedCollectionDeclaration`, `BlockStorageIndexes` and `BlockStorageIndexType` from `@civitai/app-sdk/blocks` and `@civitai/app-sdk/manifest`.
+  - **Scopes.** `BLOCK_SCOPES.APPS_STORAGE` (`apps:storage`) and `BLOCK_SCOPES.APPS_STORAGE_PUBLISH` (`apps:storage:publish`). `BLOCK_SCOPE_PATTERN` now accepts 2 segments as well as 3 or 4, because `apps:storage` has two.
+  - **Schema.** Re-vendors the canonical App Block manifest schema from https://civitai.com/schemas/app-block/v1.json, which now declares `storage` and the two scopes. `defineBlock` validates against it: 1 to 16 collections named `^[a-z][a-z0-9_]{0,31}$`; a shared collection must declare `write` and a private one carries none of the shared-only fields; a `write: "none"` collection declares at least one counter or mark; at most 8 counters and 8 marks, never `report`; at most 4 indexes, never named `key`, `createdAt` or `updatedAt`; no other keys at any level.
+  - 🔴 **This is a tightening, which is why the bump is `minor`.** The schema root allows undeclared keys, so until now a top-level `storage` key of any shape passed `defineBlock` unvalidated. A manifest that already carries a `storage` key that does not match the declaration above now fails.
+  - **Not checked locally:** the scope couplings (any collection needs `apps:storage`; a viewer-written shared collection needs `apps:storage:publish`) and the reserved features (`kind: "log"`, `ttlSeconds`, `dailyWritesPerAuthor`, `write: "anyone"` / `"owner"`), which validate here and are refused at submit. See `KNOWN_GAPS['storage-server-only-rules']`. The platform's manifest validator remains authoritative.
+  - This types the declaration only. It adds no storage client.
+  - **Docs.** The pass-through step's `maxBuzz` docs no longer say the per-call budget is "capped at 1000". The budget has a platform default and a separate platform cap; the docs now link the pinned limits table at https://developer.civitai.com/apps/guide/text-to-image.md#limits-table. `@civitai/sdk` carries a generated copy of that doc comment, which is why it gets a `patch` here.
+
+## 0.70.1
+
+### Patch Changes
+
+- 04e067d: `getTransport().request(type)` now knows the reply name and shape of every request type
+  the host answered when this version was built, and refuses at once a type the host never
+  answered.
+
+  - The reply ledger is generated from the host's inventory (`snapshots/host-messages.json`,
+    now carrying each request's reply name, framing and success keys) and covers all 43
+    host request types instead of 6. `request('GET_VIEWER')` resolves `{ viewer }` rather
+    than hanging; the `APP_STORAGE_*` and `SHARED_*` replies resolve with their fields
+    rather than rejecting `malformed` on success; `CANCEL_APP_WORKFLOW`'s failure keeps
+    the host's message.
+  - A type the host does not answer rejects immediately with a `BridgeError` of code
+    `invalid` instead of waiting forever. A fire-and-forget message says to use `notify()`,
+    and where BREAKING.md names a replacement the message names it (e.g. `GET_VIEWER` →
+    `app.site.get('blocks/me')`). The list of types is fixed at publish time, so a type
+    the host adds later is refused too, and the message names the SDK version and host
+    snapshot and says to upgrade.
+  - Knowing the reply is not a promise that one comes: `request()` still has no deadline
+    of its own, and the host stays silent in some cases. `REQUEST_TOKEN`
+    (`getToken({ fresh: true })`) gets no reply while the host holds no token,
+    `GET_WILDCARD_PACK` gets none in a model-page slot (only full-page app hosts answer
+    it), and the host drops rate-limited or replayed requests without replying. Pass a
+    `signal` to bound any call that must settle.
+  - `SCOPES` (and `Scope`) gain the scopes the host now grants: `apps:storage`,
+    `apps:storage:publish`, `apps:store:items:write`, `goods:read:self` and
+    `goods:purchase:self`.
+  - `BlockSnapshot.viewer`'s doc pointed at `/me`, which refuses a block token; it now
+    says `app.site.get('blocks/me')`.
+
+  `@civitai/app-sdk`: `ViewerInfo.id`/`username`'s deprecation notes name
+  `app.site.get('blocks/me')` for blocks outside React, not only `useViewer()`.
+
+## 0.70.0
+
+### Minor Changes
+
+- f70f171: **`useImagePicker()` lets the viewer pick from the images they already have on Civitai (#626).** `const { open } = useImagePicker()`, then `const image = await open()` opens the host's picker over the viewer's own posted images and generator outputs. It resolves with the image the viewer picked, `{ source, url, width, height, nsfwLevel, imageId? }`, or `null` if nothing was picked. The app never lists the library and receives only what was picked.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5855 is merged and deployed to civitai.com.** A host that predates it does not answer the message at all, so `open` waits out the human-interaction timeout (10 minutes) and then rejects with `RequestTimeoutError`.
+  - 🔴 **A pick can be a mature image.** The viewer is offered what their own browsing settings allow, so `nsfwLevel` can be a mature level (it is never `0`). An app that shows a pick to anyone other than the viewer who picked it has to gate that on `nsfwLevel` itself. The full rule for what is pickable, and what `url`, `width` and `height` mean for each library, is on the `BlockPickedImageInfo` type and in the `@civitai/blocks-react` README.
+  - **`url` is not the same thing for both libraries.** A `'posted'` pick's `url` is a resized copy with both sides between 64 and 2048 pixels, not the original file. A `'generated'` pick's `url` is the generator's own output link and may stop working after a while: use it promptly and do not store it.
+  - **Several images in one session.** `open({ multiple: { max } })` resolves with a **list** of up to `max` images, or `[]` if nothing was picked. `max` is a whole number of at least 1. A value above 20 (`IMAGE_PICKER_MULTIPLE_MAX`) is clamped to 20; `0`, a negative number or a fraction rejects before anything is sent. `open({ multiple: maybe ? { max } : undefined })` is accepted too, and resolves with either shape.
+  - **One library only.** `open({ sources: ['posted'] })` or `open({ sources: ['generated'] })` offers just that library. Leaving `sources` out offers both. An empty `sources`, or a value other than `'posted'` and `'generated'`, rejects before anything is sent.
+  - **`imageId` is set only on a `'posted'` pick.** A generator output that was never posted has no image id.
+  - **`null` and `[]` mean nothing was picked.** Usually the viewer closed the picker (a signed-out viewer sees it with a sign-in button, and closing it is the same). The host also answers that way at once, without showing a picker, while the app is viewed in review mode or is not ready.
+  - **A refusal rejects.** If the host refuses the request, `open` rejects with an `Error` carrying the host's message, for a single pick and a `multiple` pick alike. A `multiple` reply that carries no list rejects with `the host returned no image list`.
+  - **Page apps only.** On any other surface the host answers at once and `open` rejects with `unsupported on this host`.
+  - **No scope is needed**, and the request carries no token.
+  - **As a generation source:** a pick's `url` is Civitai-hosted, so `{ url, width, height }` passes the generation body's source-image URL check. Nothing more is promised: the generation body's own rules still apply, including 64 to 2048 pixels per side, which a generated pick can exceed.
+  - New exports from `@civitai/blocks-react`: `useImagePicker`, `IMAGE_PICKER_MULTIPLE_MAX`, and the types `UseImagePicker`, `ImagePickerOpenOptions` and `ImagePickerMultiple`.
+  - `@civitai/app-sdk`: the message union gains `OPEN_IMAGE_PICKER { requestId, sources?, multiple? }` and `IMAGE_PICKER_RESULT { requestId, selected?, selectedImages?, error? }`, plus the types `BlockImagePickerSource` and `BlockPickedImageInfo` on `./blocks`. `OPEN_IMAGE_PICKER` is added to `BLOCK_TO_PARENT_MESSAGE_TYPES`. Use this `@civitai/app-sdk` release or later with this `@civitai/blocks-react` release: an older one does not have the two types.
+  - The reply validator accepts `IMAGE_PICKER_RESULT` with a string `error`, or with `selected` / `selectedImages` whose every entry has a known `source`, a non-empty `url`, positive `width` and `height`, a numeric `nsfwLevel`, and an `imageId` that is either absent or a positive whole number. A list with one malformed entry is dropped whole.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** answers at once, with no picker to click through. New option `cannedImagePicks` is the viewer's library; it defaults to one posted image and one generated image. The mock keeps the images matching the request's `sources`, then answers a single pick with the first and a `multiple` pick with the first `max` (capped at 20). `null` or `[]` simulates a viewer who closes the picker. Like the host, it offers a repeated image once and drops an `imageId` from a generated image. It does not model browsing settings: it returns whatever `nsfwLevel` an entry carries. It answers an invalid `sources` or `multiple` with an error, and `unsupported on this host` on a model-slot `context`. It can be changed at runtime through `setScenario`.
+  - **`dev:live`:** refuses the request, because nothing a dev token can call lists the viewer's images. `open` rejects with `the image picker is not supported in dev:live — use dev:mock`.
+
+## 0.69.1
+
+### Patch Changes
+
+- 7f1b93c: **`@civitai/sdk`: `app.workflows`, generation for a block, multi-step workflows included.**
+
+  A block built on `@civitai/sdk` can now estimate, submit, follow and cancel a generation without hand-writing requests or importing types from another package:
+
+  ```ts
+  import { initialize, type WorkflowBody } from "@civitai/sdk";
+
+  const app = await initialize();
+  const body: WorkflowBody = {
+    kind: "workflow",
+    steps: [
+      /* … */
+    ],
+  };
+
+  const estimate = await app.workflows.estimate(body);
+  if (estimate.status !== "failed") {
+    const idempotencyKey = crypto.randomUUID(); // one per viewer action, reused on every retry
+    const submitted = await app.workflows.submit(body, { idempotencyKey });
+    if (submitted.status !== "failed") {
+      const done = await app.workflows.wait(submitted.workflowId);
+    }
+  }
+  ```
+
+  - `app.workflows` has `estimate`, `submit`, `get`, `watch`, `wait`, `cancel` and `list`. They go through the host's `/api/v1/blocks/workflows/*` routes, so the host prices, budgets and attributes the work. Every body kind those routes accept works, `kind: 'workflow'` included. It needs the block token and the `ai:write:budgeted` scope.
+  - It is a different client from `app.orchestration`, which calls the orchestrator directly with an OAuth access token and still refuses a block token. Its refusal message now names `app.workflows`.
+  - A refusal is an answer, not a throw. When the host declines to price or run a body it replies with a snapshot whose `status` is `'failed'`, with `error`, often an `errorCode`, and for a budget refusal the `cost.total` it would not charge. Every call resolves with that snapshot. A call rejects only when the request itself was refused (`ApiError`, with the HTTP status) or a reply carried no snapshot (`CivitaiError`).
+  - One reply is neither: when the host could not confirm whether a viewer-confirmed run (a `kind: 'training'` body, or a step with a `quoteId`) was created, `submit` rejects with the new exported `SubmissionUnconfirmedError`, which carries the snapshot. That run may be running and charged, so do not report it as "nothing spent" and do not resubmit blindly; check `app.workflows.list()` first.
+  - A resolved `failed` snapshot from `submit` with the placeholder id `'failed'` means that request was refused before it was submitted; it says nothing about an earlier attempt that ended unknown. One with a real id is a run that was created and failed, and Buzz may have been spent.
+  - `app.workflows` takes the block token only. A block holding an OAuth access token is answered `401`, and the error message says to use `app.orchestration`.
+  - `submit` requires an `idempotencyKey` and rejects before sending without one. Mint it once per viewer action and reuse it on every retry. `submit` does not retry a failed request on its own.
+  - A rejected `submit` is not "not started". After a `5xx`, a `409` or no answer the outcome is unknown: retry with the same key or check `app.workflows.list()`, and never mint a new key for the same viewer action. For a `kind: 'training'` body or a step with a `quoteId` the host identifies the run by the quote, not the key, so check `list()` before confirming a new quote.
+  - `watch` and `wait` hold each read on the host, space their reads, wait out a brief outage and stop on a refusal. Pass a `signal` to stop early.
+  - The contract types are exported from the package root: `WorkflowBody` and its members (`WorkflowBodyWorkflow`, `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `WorkflowBodyTextToImage`, …), `BlockWorkflowSnapshot`, `KnownBlockWorkflowErrorCode` and `AppWorkflow`. They are a generated copy of the types `@civitai/app-sdk/blocks` defines, kept identical by a guard test.
+
+  Nothing existing changed: `app.orchestration`, `app.site`, `app.storage` and `app.sharedStorage` behave as before.
+
+  **`@civitai/app-sdk`, `@civitai/blocks-react`: README only.** Each README now opens with a short note on which package to start from: `@civitai/sdk` is the client new block apps start on, `@civitai/app-sdk/blocks` is the body-type and message contract, and `@civitai/blocks-react` is the React hook binding over the same host contract. All three remain supported. No code changed in either package.
+
+## 0.69.0
+
+### Minor Changes
+
+- 469e645: **`BLOCK_READY` now reports which SDK the block was built with, and its version.**
+
+  The `BLOCK_READY` payload gains two optional fields:
+
+  - `sdkName`: which package's transport sent the message. `'blocks-react'` for `@civitai/blocks-react`, `'sdk'` for `@civitai/sdk`. The two packages version independently, so a version alone cannot tell them apart.
+  - `sdkVersion`: that package's plain semver, with no package name and no `v`.
+
+  Both transports now send them, so the host can see which SDK versions are in use.
+
+  They are informational. Neither is a protocol version and nothing is negotiated on them. They are optional in both directions: blocks built before this release omit them, and a host that does not read them ignores them. No migration is needed.
+
+  `@civitai/app-sdk`: type only. `BlockToParentMessage`'s `BLOCK_READY` payload is now `{ height: number; sdkVersion?: string; sdkName?: 'blocks-react' | 'sdk' }`.
+
+## 0.68.0
+
+### Minor Changes
+
+- 92f854d: **A registered-step estimate with no price quote now fails with an `errorCode` instead of showing the step's declared price.**
+
+  `KnownBlockWorkflowErrorCode` gains three values. They apply to a REGISTERED `kind: 'step'` body (one with a `step` id), not the pass-through `$type` arm. Each arrives on `estimate()` (which rejects with `WorkflowEstimateError`) and on that body's cell of a batch estimate, as `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`:
+
+  | `errorCode`                | Means                                                                       | `error`                                                                                                                                                                                                                                                                  |
+  | -------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | `'step_quote_rejected'`    | the orchestrator refused the request; resending the same body will not help | `No price quote for this step: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this step: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` |
+  | `'step_quote_unavailable'` | no usable answer; the one a retry can clear                                 | `No price quote for this step: none could be obtained; try again`                                                                                                                                                                                                        |
+  | `'step_quote_unpriced'`    | the orchestrator answered without a price                                   | `No price quote for this step: the orchestrator answered without one`                                                                                                                                                                                                    |
+
+  `submit()` is unchanged.
+
+  `@civitai/blocks-react`: README only — a refusal table for the three codes. The mock host always quotes a registered step, so it does not send them.
+
+## 0.67.0
+
+### Minor Changes
+
+- 61c1cae: **Confirmed steps: a pass-through job priced above the per-call budget can run once the viewer confirms its exact price. Plus labelled 3D outputs.** Mirrors the host contract of civitai/civitai#5786. Additive: nothing changes for a host that does not carry it, and nothing changes for a body within the budget.
+
+  🔴 **Availability.** The host side is behind the per-viewer flag `app-blocks-confirmed-step`, which ships off, and requires a civitai.com host carrying civitai/civitai#5786. Page apps only, `ai:write:budgeted`, a signed-in viewer. Refused for development, dev-tunnel and review tokens, so **`dev:live` cannot exercise it** — build the flow against the mock host. Where the feature is unavailable nothing errors: the estimate simply carries no `stepQuote`.
+
+  **`@civitai/app-sdk`** (`@civitai/app-sdk/blocks`)
+
+  - `BlockWorkflowSnapshot.stepQuote?: BlockStepQuote` (`{ quoteId, total, stepType, expiresAt }`) — on a pass-through `step` estimate whose **fixed** price (positive, not variable or metered) is above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000). `total` is the price the viewer confirms and is charged. Single-use; expires after 15 minutes.
+  - Only a **single** estimate carries `stepQuote`; a batch-estimate cell never does. Where a quote would be granted, the estimate fails instead (the `'failed'` snapshot, which `estimate()` rejects with) for a training `$type` in any casing — `a training step type cannot run as a confirmed step — use kind:'training'` — and for an `input` that is not plain JSON (including an empty slot in a sparse array) — `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — <path> is <what>` (match on the text before the dash). Both are server messages with no `errorCode`.
+  - `WorkflowBodyPassThroughStep.quoteId?: string` — set only on a confirmed run. `BLOCK_STEP_QUOTE_ID_REGEX` (`/^sq_[a-f0-9]{32}$/`) is its shape.
+  - New message pair: `RUN_CONFIRMED_STEP { requestId, body }` → `CONFIRMED_STEP_RESULT { requestId, snapshot? , error? }`, and `BlockRunConfirmedStepHostError` for the host's own codes: `review-mode`, `block is not ready`, `sign in to run`, `invalid confirmed step request`, `no block token`, `declined`, `daily-limit-exceeded`, `submission-unconfirmed`. `RUN_CONFIRMED_STEP` joins `BLOCK_TO_PARENT_MESSAGE_TYPES`.
+  - `KnownBlockWorkflowErrorCode` gains `'daily-limit-exceeded'`: a viewer-confirmed job (a training run or a confirmed step) would exceed what remains today of the daily Buzz limit the viewer set for the app. Nothing was charged. ⚠️ Adding a member to this union is a compile error for a consumer with an exhaustive `switch` over it and no `default`; the field itself was always an open string, and its docs have always said to keep one.
+  - `BlockWorkflowSnapshot.model3dOutputs?` and `AppWorkflow.model3dOutputs?`: `BlockModel3dOutput[]` (`{ url, format, variant }`) — which entry of `imageUrls` / `images` is which 3D model (`polyGen`). Every labelled url is still in the image list, unchanged. Omitted when there are none.
+
+  **`@civitai/blocks-react`**
+
+  - **`useRunConfirmedStep()`** → `{ runConfirmedStep(body), pending, error }`, modelled on `useRunTraining()`. `estimate(body)` → `runConfirmedStep({ ...body, quoteId: stepQuote.quoteId })` → `watch(workflowId)`. Sent under the 10-minute human-interaction bound. It rejects with a `RunConfirmedStepError` whose flags carry the money meaning: `.declined` and `.dailyLimitExceeded` (no job), `.refused` (a refunded spend-cap refusal; no job), `.unconfirmed` / `.timedOut` (a job **may** be running and charged), `.signInRequired`. Also exported: `RUN_CONFIRMED_STEP_ERROR_CODES`, `isRunConfirmedStepErrorCode`, `isStepQuoteId`, and the types `UseRunConfirmedStep`, `QuotedStepBody`, `RunConfirmedStepErrorCode`.
+  - 🔴 **No automatic retry of any kind.** Every confirmation is its own job — there is no idempotency key — so after `submission-unconfirmed` a retry is a new, separately charged job. The hook never re-sends and never prompts for consent.
+  - `runConfirmedStep` refuses, before sending anything, a body whose `quoteId` is missing or not `sq_`-shaped. `useBuzzWorkflow().submit()` refuses a `step` body that carries a `quoteId`, the way it already refuses a training body: only the host's dialog can confirm a quote.
+  - The inbound validators accept `CONFIRMED_STEP_RESULT`, `stepQuote` and `model3dOutputs`, and refuse a present-but-malformed value, as for the other optional snapshot fields.
+  - **Mock host** (`createMockHost` / `Harness`): a pass-through `step` estimate carries a `stepQuote` whenever the mock's price (`generation.costPerGen`, or `cost`) is above `buzzBudget` (default 200) and at most 5,000, for a signed-in viewer. ⚠️ A test that estimates such a body against the mock and asserts the whole snapshot now sees the extra field. New options: `runConfirmedStepError` (`'declined'`, `'daily-limit-exceeded'`, `'submission-unconfirmed'`, or a server message; `?confirmedStep=declined|daily-limit|unconfirmed` in the dev harness), `runConfirmedStepCapRefusal`, and `generation.model3dOutputs`. As on the server, a batch-estimate cell carries no `stepQuote`, and an over-budget estimate of a training `$type` or of non-plain-JSON `input` fails with the server's message. The mock stores its quotes and refuses an unknown, expired or already-run one, a changed body (compared in canonical form, so key order does not matter), and a plain `SUBMIT_WORKFLOW` carrying a `quoteId`. It has no dialog and prices every estimate as fixed.
+  - **`dev:live`** answers `RUN_CONFIRMED_STEP` with a refusal immediately rather than leaving the request to time out.
+
+  No peer-range change: `@civitai/blocks-react` imports the new `@civitai/app-sdk` surface as types only, so its runtime still loads against the existing floor. Install the matching `@civitai/app-sdk` minor to get the new types.
+
+- 07a6986: RELEASE HOLD: mirrors civitai/civitai#5812, which is merged but not yet deployed. Until civitai.com runs it, an estimate of an unpriced `kind: 'workflow'` body still resolves with the spend ceiling as `cost.total`; release this once #5812 is live.
+
+  **A `kind: 'workflow'` estimate with no price quote now fails with an `errorCode` instead of showing the spend ceiling as the price.**
+
+  `KnownBlockWorkflowErrorCode` gains three values. Each arrives on `estimate()` (which rejects with `WorkflowEstimateError`) and on that body's cell of a batch estimate, as `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`:
+
+  | `errorCode`                    | Means                                                                    | `error`                                                                                                                                                                                                                                                                          |
+  | ------------------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `'workflow_quote_rejected'`    | the orchestrator refused the body; resending the same body will not help | `No price quote for this workflow: the orchestrator rejected the request: <reason>` when the reason is safe to show, else `No price quote for this workflow: the orchestrator rejected the request; check the step inputs and references (retrying the same body will not help)` |
+  | `'workflow_quote_unavailable'` | no usable answer; the one a retry can clear                              | `No price quote for this workflow: none could be obtained; try again`                                                                                                                                                                                                            |
+  | `'workflow_quote_unpriced'`    | the orchestrator answered without a price                                | `No price quote for this workflow: the orchestrator answered without one`                                                                                                                                                                                                        |
+
+  `submit()` is unchanged: the same unquoted body still proceeds, reserved at the app's per-generation budget × the number of steps. A failed estimate does not predict a refused submit. A workflow with a training step or a `repeat` is still refused on both, with the codes it had (`training-quote-*`, `workflow_repeat_unbounded`); the message now states the cause (`workflow step N: a workflow with a repeat needs a price quote and <cause>`), and only `none could be obtained; try again` is one a retry of the same body can clear.
+
+  **Migration.** An app that renders `cost.total` from a workflow estimate should catch `WorkflowEstimateError` and branch on `err.snapshot.errorCode`. The docs no longer say that an estimate equal to the ceiling may be unpriced; that remains true only of a host without #5812.
+
+  **Mock host (`@civitai/blocks-react/testing`).** `generation.workflowUnpriced` now also takes the cause, `'rejected' | 'unavailable' | 'unpriced'` (type `MockWorkflowQuoteFailure`); `true` keeps working and means `'unavailable'`. With it set, `estimate()` of a workflow with no training step or `repeat` now FAILS with `workflow_quote_<cause>` and the host's message, where 0.71.0 priced it at `buzzBudget` × steps; `submit()` still proceeds at that ceiling with no fee. The training and `repeat` refusals carry the chosen cause (`training-quote-<cause>`). A test that asserted the ceiling as the mock's unpriced estimate now sees a rejection.
+
+## 0.66.0
+
+### Minor Changes
+
+- ec7a8a6: RELEASE HOLD: do not release this until civitai/civitai#5795 (branch `zach/app-blocks-workflow-kind`) is merged and deployed to civitai.com. A host that predates it refuses a `kind: 'workflow'` body, so `estimate()` and `submit()` reject for every app that sends one.
+
+  **A new `WorkflowBody` kind, `kind: 'workflow'`: several orchestrator steps submitted as one workflow, where a later step can consume an earlier step's result.**
+
+  ```ts
+  const body: WorkflowBody = {
+    kind: "workflow",
+    arguments: { prompt: "a lighthouse at dusk" },
+    steps: [
+      {
+        name: "draw",
+        $type: "imageGen",
+        input: {
+          engine: "google",
+          model: "nano-banana-2",
+          prompt: { $ref: "$arguments", path: "prompt" },
+        },
+        suppressOutput: true,
+      },
+      {
+        name: "cutout",
+        $type: "imageBackgroundRemoval",
+        input: { image: { $ref: "draw", path: "output.images[0].url" } },
+      },
+    ],
+  };
+  ```
+
+  It goes through the existing messages and hooks: `useBuzzWorkflow().estimate / submit / watch / cancel`, a `useBatchEstimate()` cell, and `useWorkflowBatch()`. There is no new bridge message and no new hook.
+
+  - **The body.** 1 to 8 steps (`BLOCK_WORKFLOW_MAX_STEPS`), each `{ name?, $type, input, suppressOutput? }`, plus optional `arguments`. A value anywhere in `input` may be a reference `{ $ref, path, default?, format? }`, where `$ref` is `'$arguments'`, an earlier step's `name`, or an earlier unnamed step by position (`'$0'`). A step cannot reference itself or a later step. A `name` matches `/^[a-z][a-z0-9_-]{0,31}$/`, is unique within the body and is not `block-step`. `suppressOutput: true` marks an intermediate step whose images are not surfaced. There is no `maxBuzz`: the ceiling is the app's per-generation budget × the number of steps, enforced by the host. Any orchestrator `$type` is accepted except the platform-internal ones (scanners, moderation classifiers, hashing, web scrape/search, and the retired `textToImage` step type).
+  - **`repeat` over `arguments` only, at most 16 iterations** (`BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`, nested repeats multiplied). Its input is exactly `{ for: { $ref: '$arguments', path, as }, template: { $type, name?, input? } }`, `path` naming an array in `arguments`, nested at most 4 deep; the `as` name may not equal a step name. Repeat children appear in `snapshot.steps` as `<name>.<n>`. The single-step pass-through `kind: 'step'` arm now refuses `repeat` outright, since it has no `arguments` to iterate.
+  - **`merge`**: every `fields` entry needs a string `$ref` (`$arguments` or an earlier step, never a repeat variable) and a `reduce`; each counts toward the 64-reference cap.
+  - **Velocity**: the app's velocity limit counts one unit per step, and a `repeat` step one per iteration.
+  - 🔴 **The estimate is not a maximum.** The orchestrator re-prices a step once the values it references are known and charges the difference.
+  - **A workflow the host cannot price still proceeds**, reserved at the ceiling — except one containing a training step (refused without a quote, as on the single-step arm) or a `repeat` step at any depth (also refused without a quote, before any reservation, as `workflow_repeat_unbounded`).
+  - **One author fee per workflow**, on the quoted base, itemised as `cost.authorFee` on the estimate. If the workflow bills more, the fee charged is held to the fee shown; a workflow that does not succeed has its whole fee reversed, even if earlier steps delivered output.
+  - **`BlockWorkflowSnapshot.steps`** (optional): each step's `name`, `$type`, `status`, `imageUrls`, `output` and `error`. Top-level `imageUrls` is the union of the steps that did not set `suppressOutput`; `cost` stays workflow-level. 🔴 A `failed` snapshot can carry `cost.total > 0` and usable `imageUrls`, because steps that succeeded before the failing one stay charged.
+  - **Four new `errorCode` values** on `KnownBlockWorkflowErrorCode`: `workflow_step_denied`, `workflow_ref_invalid`, `workflow_too_many_steps`, `workflow_repeat_unbounded`.
+
+  `@civitai/app-sdk` adds the types `WorkflowBodyWorkflow`, `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs<T>` (a typed input with references allowed in it) and `BlockWorkflowStepSnapshot`, and the constants `BLOCK_WORKFLOW_MAX_STEPS` and `BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`. Adding a member to `WorkflowBody` is a compile error for code that `switch`es exhaustively over `kind`; add a `'workflow'` case.
+
+  `@civitai/blocks-react`:
+
+  - The inbound validator accepts `snapshot.steps` and drops a snapshot whose `steps` is malformed or carries a step status outside the six workflow statuses.
+  - The mock host (`createMockHost` / `Harness`) estimates, submits and polls the kind. It prices each step with `generation.costPerGen` (a function now receives the step as a second argument, `MockWorkflowStepInfo`, exported from `/testing`) multiplied by a `repeat` step's iteration count, and adds `generation.authorFee` once. It refuses more than 8 steps; a bad step name or a malformed `repeat`; an unbounded `repeat`; a self, forward or unknown reference, a bad `merge` source or a repeat `as` name equal to a step name; and a platform-internal `$type` — with the four codes above and in that order, on estimate, batch estimate and submit. Polls report `steps`, finishing them in order, with `suppressOutput` honoured. The new `generation.failWorkflowStep` knob fails one named step so a partial failure can be tested. The spend-scope refusal applies to this kind as to every other. The mock checks where a reference points, not whether its `path` exists; it never re-prices and does not expand repeat children. `generation.workflowUnpriced: true` simulates a workflow the host could not quote: one with a training step is refused (`training-quote-unavailable`), one with a `repeat` at any depth is refused (`workflow_repeat_unbounded`), and any other is reserved at `buzzBudget` × steps with no fee.
+
+## 0.65.1
+
+### Patch Changes
+
+- f7f4697: Docs only: the `useWorkflowBatch` README and two doc comments said each grid cell is submitted "with its own confirmation". The host shows no confirmation dialog for a submit; any confirm step is the app's own UI. No behaviour change.
+
+## 0.65.0
+
+### Minor Changes
+
+- 9cb2cef: **A training price-quote refusal now carries a machine-readable `errorCode`.** `BlockWorkflowSnapshot` gains an optional `errorCode`, a stable companion to `error` for a block to branch on instead of matching the prose. The host already sends it (civitai/civitai#5689 is live); until now the SDK did not declare it.
+
+  - **Where it appears:** the refusal for a pass-through `step` body whose `$type` is a training type (`'training'` or `'imageResourceTraining'`) when the host could not get a price quote: `{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`. That is the reply to `estimate()` (rejects with `WorkflowEstimateError`), to `submit()` (rejects with `WorkflowSubmitError`, before anything is reserved), and to that body's cell in a batch estimate. Read it from `err.snapshot.errorCode`. The `kind: 'training'` arm does not set it.
+  - **Known values** (new exported type `KnownBlockWorkflowErrorCode`): `'training-quote-rejected'` (the request itself was refused; resending it will not help), `'training-quote-unavailable'` (no usable answer; a retry may succeed), `'training-quote-unpriced'` (answered without a price).
+  - 🔴 **An unknown value is possible.** The field is typed `KnownBlockWorkflowErrorCode | (string & {})`, the host may add codes, and the inbound validator accepts any string. Keep a default branch.
+  - **Absent** on every other reply and from a host that predates the field.
+  - The inbound snapshot validator accepts the field and refuses a present value that is not a string, as it does for the other optional snapshot fields. (Earlier `@civitai/blocks-react` releases already delivered the field untouched at runtime, since the validator does not strip unknown keys; it was just untyped and unchecked.)
+  - **Mock host:** unchanged. It does not quote training steps, so it has no refusal to attach a code to.
+
+## 0.64.1
+
+### Patch Changes
+
+- 7e188ca: Re-vendor the canonical App Block manifest schema from
+  https://civitai.com/schemas/app-block/v1.json.
+
+  The vendored schema is published — it ships in the tarball, is exported as
+  `./schemas/app-block/v1.json`, and `defineBlock` validates against it at
+  runtime — so mirroring the bytes only takes effect once the package is
+  released. This changeset is what releases them.
+
+  `patch` is the automated default for a vendored-schema parity fix, correct when
+  the re-vendor is permissive-only, which the reviewer checks before merging. The
+  rule and what counts as a tightening are in `RELEASING.md`:
+  https://github.com/civitai/civitai-app-starters/blob/main/RELEASING.md
+
+  (That is an absolute URL on purpose: this text is copied verbatim into the
+  published CHANGELOG, where a relative repo path resolves to nothing — and
+  `RELEASING.md` is not in the npm tarball.)
+
+## 0.64.0
+
+### Minor Changes
+
+- d642754: **`useBatchEstimate()` prices a grid of generations in one request (#578, item 1).** `const { estimateBatch } = useBatchEstimate()`, then `estimateBatch(bodies)` sends up to 16 workflow bodies, each exactly what `useBuzzWorkflow().estimate()` takes. It resolves with `{ cells, aggregate }`: `cells[i]` answers `bodies[i]`, either `{ ok: true, cost, snapshot }` or `{ ok: false, error, timedOut, snapshot }`, where `error` is the same `WorkflowEstimateError` a single `estimate()` of that body rejects with. `aggregate` is `{ total, pricedCells, cellCount }`. `total` sums the cells that priced and covers the whole list only when `pricedCells === cellCount`.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5696 is merged and deployed to civitai.com.** A host without it does not answer the message at all, so `estimateBatch` waits out its timeout (120 s by default) before rejecting.
+  - **Estimate only.** Nothing is submitted and no Buzz is held or spent. There is no batch submit, watch or cancel. Each cell is still submitted with `useBuzzWorkflow().submit()` and its own confirmation.
+  - **One request against the estimate allowance per call**, however many cells. Cells are metered on an allowance of their own, shared the same way (on a page app, by every viewer of the app). A call over either limit is refused whole.
+  - `kind: 'training'` bodies are refused per cell; estimate a training run with `estimate()`.
+  - **Whole-call failures reject with `BatchEstimateError`**, whose `code` is one of `'unsupported'` (the host answered `unsupported on this host`), `'timeout'` (no reply in time), `'invalid-request'` (empty, or more than `BATCH_ESTIMATE_MAX_CELLS` = 16 bodies, refused before sending) or `'failed'` (anything else, with the host's text on `hostError`). Fall back to one `estimate()` per cell only on `'unsupported'`; the README shows how. A `'timeout'` usually means a slow host, not an old one: show the estimate as unavailable and retry later rather than sending one estimate per cell. An app that must detect a host predating the message can probe once with a one-body batch and a short `estimateBatch(bodies, { timeoutMs })`.
+  - **The host bounds the time one call takes.** When its budget runs out the call still resolves, with the cells that priced and `ok: false` cells with `timedOut: true` for the rest. Branch on `timedOut`, not on `snapshot.error`: the hook maps the host's wording so apps never match it.
+  - New exports: `useBatchEstimate`, `BatchEstimateError`, `BATCH_ESTIMATE_MAX_CELLS`, and the types `UseBatchEstimate`, `BatchEstimateResult`, `BatchEstimateCell`, `BatchEstimateErrorCode`, `EstimateBatchOptions`, `BlockEstimateBatchAggregate`.
+  - `@civitai/app-sdk`: the message union gains `ESTIMATE_WORKFLOW_BATCH { requestId, bodies }` and `ESTIMATE_BATCH_RESULT { requestId, snapshots?, aggregate?, error? }`, plus the `BlockEstimateBatchAggregate` type on `./blocks`.
+  - The reply validator accepts `ESTIMATE_BATCH_RESULT` with either a bare string `error` or `snapshots` (each a valid workflow snapshot) plus a numeric `aggregate`. It refuses anything else.
+  - **Mock host (`createMockHost` / `Harness`):** prices each cell exactly as it prices one `ESTIMATE_WORKFLOW` of that body. `costPerGen` and `failEstimate` apply per cell, and a training cell is refused as the server refuses it. New option `generation.batchEstimate`: `'supported'` (default), `'unsupported'` (replies `unsupported on this host`) or `'silent'` (never replies, like an older host). New option `generation.batchEstimateTimedOutCells`: cell indices answered with the host's per-cell snapshot when its time budget runs out (they come back `timedOut: true`). Both can be changed at runtime through `setScenario`.
+  - **`dev:live`** forwards the call to `blocks.estimateWorkflowBatch`. Against a civitai.com without that procedure it rejects with `'failed'` (the server's not-found text), not `'unsupported'`.
+
+- 0a049d8: **A price quote now itemises the app fee: `cost.authorFee` (civitai/civitai-app-starters#579).** `BlockWorkflowSnapshot['cost']` was `{ total }`, and `total` includes the app author's per-generation fee, so an app could not show "generation X + app fee Y". `cost` gains an optional `authorFee`: the part of `total` that is the fee, in whole Buzz. `total` keeps its meaning and value, so an app that never reads the new field is unaffected.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5688 is merged and deployed to civitai.com.** The field is sent by the host. Against a host that predates that change `cost.authorFee` is **absent** on every reply and `total` is exactly what it is today, so nothing breaks, but the documented field would not appear.
+  - **A number** on the `estimate()` result for a `textToImage` or registered-`step` body, and on the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price. **`0` means a fee was looked up and none applies** to the request.
+  - **Absent** when the total is not itemised: an older host; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost; the registered-`step` `submit()` refusal for a missing orchestrator price quote, which refuses before any fee is looked up; and `customComfy`, pass-through `step` and `training` quotes, which price no fee. Do not read absent as `0`.
+  - The inbound snapshot validator accepts the field and refuses a present value that is not a finite number `>= 0`, as it does for the other optional snapshot fields.
+  - **Mock host (`createMockHost` / the dev harness):** new `generation.authorFee` (a number, a `(body) => number`, or `false`; URL `?authorFee=<n>` / `?authorFee=off`). The fee is added into the quote's `cost.total` on top of `costPerGen` and itemised beside it, on the estimate and on the `submitCapRefusal` reply, for `textToImage` and registered-`step` bodies. A simulated balance is debited `costPerGen + authorFee`. 🔴 **The default is `0`, so those two replies now carry `authorFee: 0`** where they carried `cost: { total }` alone; a test that deep-equals the mock's `cost` needs the extra key, or `authorFee: false` to simulate an older host.
+
+- 94f3c2b: **`useResourcePicker()` can collect several LoRAs in one picker session (#580).** Pass `multiple: { max }` and `open` resolves with a **list** of the picked resources, in the order the viewer picked them, instead of a single resource: `const loras = await open({ resourceType: 'LORA', multiple: { max: 3 } })`. Dismissing the picker resolves with `[]`. Each entry is the same `BlockResourceInfo` a single pick returns, and every id is still re-validated at estimate and submit.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5687 is merged and deployed to civitai.com.** A host that predates it ignores `multiple` and opens the single-pick picker. `open` still resolves with a list there, of the one LoRA the viewer picked or `[]`, so nothing breaks, but the viewer cannot pick several until the host ships.
+  - **Without `multiple`, nothing changes.** `open` sends the same message and resolves with one resource or `null`, exactly as before.
+  - **LoRA only.** `multiple` with `resourceType: 'Checkpoint'` is a type error, and at runtime `open` rejects before sending anything. It is never treated as a single pick.
+  - **`max` is a whole number of at least 1, capped at 5**, the cap on `additionalResources`. A larger value is clamped to 5; `0`, a negative number or a fraction makes `open` reject. The cap is exported as `RESOURCE_PICKER_MULTIPLE_MAX`. The host applies the same clamp and the same refusals.
+  - `baseModelGroup` works with `multiple` as it does for a single pick.
+  - If the host refuses a `multiple` request, `open` rejects with the host's message.
+  - New exports from `@civitai/blocks-react`: `RESOURCE_PICKER_MULTIPLE_MAX` and the types `ResourcePickerOpenOptions` and `ResourcePickerMultiple`.
+  - `@civitai/app-sdk`: the `OPEN_RESOURCE_PICKER` payload type gains `multiple?: { max: number }`, and `RESOURCE_PICKER_RESULT` gains `selectedResources?: BlockResourceInfo[]` and `error?: string`. All optional, so existing callers are unchanged. A single-pick reply still carries only `selected`.
+  - The reply validator checks every entry of `selectedResources` the way it checks `selected`. A list with one malformed entry is dropped whole.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** a `multiple` request resolves with two curated LoRAs by default, cut to the request's `max`. New option `cannedMultiPicks` sets the list; `null` or `[]` simulates a dismissed picker, and `cannedPicks: { LORA: null }` dismisses both pick modes. The mock answers a raw `multiple` + Checkpoint request, or an invalid `max`, with the host's error.
+  - **`dev:live`:** the in-harness picker has a multi-select mode. A card click stages or un-stages a LoRA, and the "Add" button sends the staged list in the order it was staged.
+
+- 7bffea3: **Rate-limited shared-storage writes now say when to retry (#597).** When the server refuses a shared write because the viewer's per-app budget is empty, `useSharedStorage()`'s `append`, `update`, `vote`, `unvote`, `withdraw` and `report` reject with the new **`SharedStorageRateLimitError`**, carrying `retryAfterSeconds` (whole seconds, at least 1) and `retryAt` (an ISO-8601 instant). It extends `Error`, the class every other shared-storage refusal is thrown as, so existing `catch` code keeps working and `.message` is still the server's text (`Too many submissions — retry in 312s`). A refusal without the metadata (an older host, or a refusal that is not a rate limit) is still a plain `Error`.
+
+  - `@civitai/app-sdk`: new type `SharedStorageRateLimit` on `./blocks`, and an optional `rateLimit?: SharedStorageRateLimit` on the six shared write replies (`SHARED_APPEND_RESULT`, `SHARED_UPDATE_RESULT`, `SHARED_VOTE_RESULT`, `SHARED_UNVOTE_RESULT`, `SHARED_WITHDRAW_RESULT`, `SHARED_REPORT_RESULT`).
+  - **Tolerant of a bad value.** No reply validator checks `rateLimit`, so it can never cause a reply to be dropped. The hook parses it: a malformed one (wrong types, a non-integer or a value below 1, a missing field, an unparseable `retryAt`, a non-object) is ignored and the refusal is thrown as a plain `Error`.
+  - **`dev:live`** forwards `error.data.rateLimit` from the tRPC refusal onto the bridge reply. It does not retry a shared-storage write: only POLL retries transient statuses, and a 429 on POLL is still retried.
+  - **Mock host:** new `shared.rateLimitNext` (refuse the next N writes as rate-limited) and `shared.rateLimit` (`{ retryAfterSeconds?, retryAt? }`, defaulting to 60 s from now), both settable through `setScenario`.
+  - README: a new "Shared-storage write limits" section under `useSharedStorage()` lists the per-(viewer, app) write limits, the refusal shape and how to handle the error.
+
+## 0.63.0
+
+### Minor Changes
+
+- 02242ee: **The manifest gains an optional `analytics` (custom events) declaration, typed and validated.** `analytics.events` maps an event name to an optional `description` and a `properties` map, and each property is `{ type: 'enum', values: string[] }`, `{ type: 'number' }` or `{ type: 'boolean' }`. There is no free-text string type.
+
+  - **Types.** `BlockManifestV1.analytics`, plus the exported `BlockAnalyticsDeclaration`, `BlockAnalyticsEventDeclaration` and `BlockAnalyticsPropertyDeclaration` from `@civitai/app-sdk/blocks` and `@civitai/app-sdk/manifest`.
+  - **Schema.** Re-vendors the canonical App Block manifest schema from https://civitai.com/schemas/app-block/v1.json, which now declares `analytics`. `defineBlock` validates against it: event and property names must match `^[a-z][a-z0-9_]{0,63}$`; at most 50 events and 10 properties per event; an enum declares 1 to 50 distinct non-empty values of at most 64 characters; a `description` is at most 200 characters; no other keys are allowed at any level.
+  - 🔴 **This is a tightening, which is why the bump is `minor`.** The schema root allows undeclared keys, so until now a top-level `analytics` key of any shape passed `defineBlock` unvalidated. A manifest that already carries an `analytics` key that does not match the declaration above now fails.
+  - The platform's manifest validator remains authoritative.
+
+### Patch Changes
+
+- 5f60c53: **`defineBlock` now reports the right error for a rejected `analytics` property declaration.** A property declaration is one of three shapes selected by its `type`, and a rejected one used to be reported with the first shape's rule whichever `type` it named. It is now reported against the shape its `type` names:
+
+  - `{ type: 'number', min: 0 }` and `{ type: 'boolean', label: 'x' }` used to say `…values is required`. They now name the unknown key: `…min is not a known property when \`type\` is "number"`.
+  - `{ type: 'number', values: ['1'] }` used to say `…type must be equal to constant`. It now says `…values is not a known property when \`type\` is "number"`.
+  - An unknown key on an `enum` declaration keeps its field and now ends `when \`type\` is "enum"`instead of`here`.
+
+  `BlockManifestError.field` moves with the message in the first two cases (to the offending key). **No verdict changes:** every manifest is accepted or rejected exactly as before, and every other message is unchanged.
+
+## 0.62.0
+
+### Minor Changes
+
+- e1912ed: **`useUploadImageBytes()` uploads an image the block produced in the tab, so the app can post it (#582).** `const { upload } = useUploadImageBytes()`, then `upload(bytes, { filename? })` sends an `ArrayBuffer` to the host with no picker. It resolves with the same moderated image a picked `useImageUpload()` upload returns (`imageId`, `nsfwLevel`, `contentRating`, `url`). Post it through the existing `useCreatePostFromApp()` as `{ kind: 'published', imageIds: [image.imageId] }`. The contract is civitai/civitai#5639.
+
+  - 🔴 **RELEASE HOLD: do not release this until civitai/civitai#5639 is merged and deployed to civitai.com.** That PR is still gaining commits and will merge whole, so no intermediate head of it is enough. A host that predates the variant ignores `bytes` and opens its upload picker instead, so the call settles on whatever the viewer picks.
+  - **Page apps only, and the token needs `posts:write:self`.** On a slot (model) host the call rejects at once with the host's generic `unsupported on this host`. The server refuses the upload without the scope, and the hook does not prompt for it: ask first with `useRequestConsent()` and upload once `useBlockToken().scopes` holds it.
+  - **Images only:** PNG, WebP or JPEG by magic bytes, else `file type is not allowed`. The cap is 40 MiB; the hook refuses a larger buffer before sending it, with the host's error `file exceeds the maximum upload size`. The host also allows 3 uploads and 80 MiB per 60 seconds per page (`busy`). A `Blob`, a typed array or an empty buffer is `invalid image-upload request`. The upload is blocking: the host replies once the scan settles.
+  - `upload` rejects with the host's error string, or a server message passed through verbatim, on every refusal. It rejects with `the host returned no uploaded image` when a reply carries neither an image nor an error. With no reply in 10 minutes it rejects with a `RequestTimeoutError`; the image may still have been stored, so a retry after a timeout can create a duplicate.
+  - `@civitai/app-sdk`: the `OPEN_IMAGE_UPLOAD` payload type gains `bytes?: ArrayBuffer` and `filename?: string`, and `IMAGE_UPLOAD_RESULT` gains `error?: string`. Both are optional, so existing callers are unchanged.
+  - The reply validator now accepts `IMAGE_UPLOAD_RESULT { requestId, error }` and refuses a non-string `error`. Without that, a refusal would have been dropped and the hook would have waited out its timeout.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** the `bytes` variant runs the host's checks in the host's order: the request shape (`invalid image-upload request`), the cap, the 60-second window (`busy`), then the type. New options: `uploadImageBytesResult` (the image an accepted upload returns), `uploadImageBytesError` (a forced refusal after those checks; live-tunable via `setScenario`, and `undefined` clears it), `onUploadImageBytes` (the sniffed type, the stored filename and a copy of the bytes) and `postableImageIds` (ids seeded as already issued and postable, as production treats an image this app stamped for the viewer in an earlier session that is not in a post yet). `workflow` sources are unchanged. The mock does not model the page-only rule, the scope check, the real scan or an older host's picker.
+  - 🔴 **BREAKING (dev host): the mock's `CREATE_POST_FROM_APP` now refuses a `{ kind: 'published' }` source naming an id it did not issue.** It uses the refusal strings of the server's `resolveAppPublishedImages`, but not its data. Production accepts the viewer's own images that this app stamped and that are not in a post yet, from this session or an earlier one. The mock accepts only ids it issued as postable in this session (an accepted bytes upload or a `PUBLISH_GENERATION_OUTPUTS` reply) plus the ids seeded with `postableImageIds`, each in one post only. Anything else is refused with `an image is not available to post` (or `no valid image ids in a published source` when the source has no positive integer id).
+    **What breaks.** A test or harness that posted a `published` id the mock never issued now gets that refusal. That includes a picked `useImageUpload()` id, which production also refuses because it leaves picked uploads unstamped.
+    **Migration.** For an image the block uploaded before the test started, seed it: `createMockHost({ postableImageIds: [id] })`. Otherwise drive the id through the mock first, with `PUBLISH_GENERATION_OUTPUTS` (`usePublishGenerationOutputs().publish()`, ids from `publishImageIds`) or an accepted `useUploadImageBytes()` upload. A picked `useImageUpload()` id cannot be posted as `published` in production either, so a test relying on that should change.
+  - `dev:live` has no bytes path: it replies dismissed, as it does for the picker, so `upload` rejects with `the host returned no uploaded image`. Its console message for a bytes upload now says so and names `createMockHost({ uploadImageBytesResult })`.
+
+## 0.61.0
+
+### Minor Changes
+
+- 529e5b2: **`useSaveImage()` can save a file the block produced in the tab (#583).** `saveImage({ bytes, filename? })` hands an `ArrayBuffer` to the host, which downloads it from its unsandboxed top frame. This is the sanctioned way for an in-tab tool, such as a metadata healer or an exporter, to deliver a file. A blob-anchor `<a download>` does nothing in a block, because its sandbox lacks `allow-downloads` and the validator refuses that token for unverified blocks.
+
+  - **Page apps only.**
+  - **The host classifies by content.** PNG, WebP and JPEG are recognised by magic bytes. Anything else must be valid UTF-8 with no NUL byte: it is saved as JSON when it parses and `filename` ends `.json` (case-insensitive) after the host replaces each `?` and `#` with `_`, and as text/plain otherwise. Everything else is refused with `file type is not allowed`. An empty buffer is refused with `invalid save-image request`. The saved extension is forced from the classified type.
+  - **The cap is 50 MiB.** The hook refuses a larger buffer before sending it, with the host's error `file exceeds the maximum save size`. That is the hook's only client-side refusal: every other input is forwarded and judged by the host, which replies `invalid save-image request` to a request that is not exactly one of `url` / `imageId` / `bytes`, or whose `bytes` is not a non-empty `ArrayBuffer` (pass `await blob.arrayBuffer()`, not the `Blob` or a `Uint8Array`). The buffer is copied across `postMessage`, never transferred.
+  - 🔴 **A host that predates this variant replies `invalid save-image request`.** Until the civitai.com host ships it, `saveImage({ bytes })` rejects with that string in production.
+  - `@civitai/app-sdk`: the `SAVE_IMAGE` payload type gains `bytes?: ArrayBuffer`.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** it applies the same request-shape gate and content classification to `bytes`, including the empty-buffer refusal. It also gains a `saveImageError` knob (forced refusal; live-tunable via `setScenario`, and `undefined` clears it) and an `onSaveBytes` callback reporting what would have been downloaded (the classified type, the filename with its forced extension, and a copy of the bytes). Its invalid-request error is now the host's string `invalid save-image request`, where it used to be `INVALID_REQUEST`. A `SAVE_IMAGE` without a routable `requestId` is now dropped, as its sibling handlers already did. The mock does not model the page-only refusal or the host's `busy` concurrency cap; force `busy` with `saveImageError`.
+  - `dev:live` still refuses every `SAVE_IMAGE`, the `bytes` variant included.
+
+## 0.60.0
+
+### Minor Changes
+
+- a207b1e: Catalog sync: two step types the orchestrator accepts are now in `WORKFLOW_STEP_TYPES`.
+
+  - `liveTextToSpeech`: streaming text-to-speech. Inputs mirror `textToSpeech`, limited to low-latency streaming voices; the step's output gives an input URL you post text chunks to and one continuous audio stream (`pcm` or `ogg`) for the whole session.
+  - `promptModeration`: listed under "Platform internals" — it serves Civitai's own pipelines and is not meant for third-party apps. It moderates a positive / negative prompt pair and returns a calibrated score, threshold and flag per label, along with the model and policy version used.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. It is purely additive: nothing that compiled before stops compiling, and there is no runtime change. Both types sit in the `CatalogStepTypesWithoutAGeneratedType` ledger until `@civitai/client` republishes with templates for them.
+
+## 0.59.0
+
+### Minor Changes
+
+- 2a0f4c9: Sync the vendored App Block manifest schema + SDK constants with the canonical server-published schema (https://civitai.com/schemas/app-block/v1.json). Adds the 4-segment App Store sub-listing scope `apps:store:items:write` (civitai/civitai#5511 — publish the viewer's own app items as store cards under the calling app) to `BLOCK_SCOPES` (`APPS_STORE_ITEMS_WRITE`) and the schema's `scopes` enum, and names it in the schema's `scopeJustifications` sensitive-scope list. The scope is SENSITIVE (a declaring manifest must justify it, or the server rejects it at submit — not checked by `defineBlock`, see `KNOWN_GAPS`) and consent-exempt on the server (gated per call). Additive for authors: `defineBlock` now accepts a manifest declaring it; nothing previously accepted is rejected.
+
+### Patch Changes
+
+- e174afd: Docs only. `@civitai/components` MARKUP.md: correct which in-repo pages set an ancestor text colour — no in-repo page sets `#1a1a1a` / `#e6e6e6` any more — every `starters/examples/*` app sets `color: var(--civitai-color-text)` on `:root` and `civitai-block-starter` on `body`, so they join `demo/` and `playground/` as pages that inherit the token. `@civitai/app-sdk` README: the `blockManifestPlugin` sentence no longer counts "six" examples (there are eleven, and all register it).
+
+## 0.58.0
+
+### Minor Changes
+
+- 830aa0e: App Blocks `kind: 'training'` — train a LoRA from a page app, priced by a real quote and confirmed by the viewer in Civitai's own dialog.
+
+  Requires a civitai.com host carrying civitai/civitai#5434 and civitai/civitai#5438, with the host flag `app-blocks-training-kind` enabled for the viewer (it ships off). Page apps only, `ai:write:budgeted`, and refused from development and review sessions.
+
+  **`@civitai/app-sdk`**
+
+  - `WorkflowBodyTraining` (`kind: 'training'`) joins the `WorkflowBody` union, with `AiToolkitTrainingParams` mirroring the host's ai-toolkit schema. No `maxBuzz`, no timeout knob.
+  - `BlockWorkflowSnapshot.trainingQuote` — `{ quoteId, total, imageCount, expiresAt }` on a training estimate.
+  - Messages `PREPARE_TRAINING_DATASET` → `TRAINING_DATASET_RESULT` and `RUN_TRAINING` → `TRAINING_RESULT`, with `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason`, and the host refusal codes `BlockPrepareTrainingDatasetHostError` / `BlockRunTrainingHostError`.
+  - The host bounds as constants: `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5000), `BLOCK_TRAINING_DATASET_MAX_ITEMS`, `BLOCK_TRAINING_CAPTION_MAX_CHARS`, `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`, `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`, `BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS`, `BLOCK_TRAINING_MODEL_KEY_MAX_CHARS`.
+
+  **`@civitai/blocks-react`**
+
+  - `usePrepareTrainingDataset()` → `prepareDataset(items)` with `PrepareTrainingDatasetError`. A resolved dataset always admits at least one image; when nothing is admitted the server's refusal rejects the call. Prompts for `ai:write:budgeted` and retries once on a grant. Sent under the 120s server-work bound (the server's image import alone may take 60s).
+  - `useRunTraining()` → `runTraining({ ...body, quoteId })` with `RunTrainingError` (`.declined` = no run; `.refused` / `code: 'refused'` = a spend-cap or temporary-availability refusal of the confirmed run, refunded (the quote is used up), `.message` is the server's reason; `.unconfirmed` = a run may exist, check before retrying). A resolved snapshot is always a submitted run. Ten-minute consent bound; never auto-retried.
+  - `useBuzzWorkflow().estimate()` returns the quote; `useBuzzWorkflow().submit()` now refuses a `kind: 'training'` body before sending anything.
+  - Inbound validators for both replies and for `trainingQuote` (error fields shape-checked only, rejection reasons checked as strings).
+  - Mock host: a kind-faithful training path (stored datasets and quotes, the 5,000 ceiling, single-use quotes) with knobs `trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`, `runTrainingError`, `runTrainingCapRefusal`; a dataset with nothing admitted is refused as on the server; `generation.trainedEpochs` now also applies to a `kind: 'training'` run.
+  - `dev:live` refuses both training bridges, as the server refuses development tokens for training.
+
+- 206a7b3: Add `trainedEpochs` to `AppWorkflow` rows.
+
+  **`AppWorkflow.trainedEpochs` (`@civitai/app-sdk`).** The app-queue read
+  (`useAppWorkflows` / `QUERY_APP_WORKFLOWS`) can now report a training run's
+  epochs on each row, so a block can offer "publish epoch n" from its queue
+  without polling each run. Same shape and rule as
+  `BlockWorkflowSnapshot.trainedEpochs`: only moderation-approved runs are listed,
+  the checkpoint itself is not exposed, and the field is omitted when there are no
+  epochs. Optional, and absent on hosts that do not emit it yet.
+
+  **Validator (`@civitai/blocks-react`).** The `AppWorkflow` row guard (used by
+  both `APP_WORKFLOWS_RESULT` and `CANCEL_APP_WORKFLOW_RESULT`) now shape-checks
+  `trainedEpochs` when present, through the same helper as the snapshot guard:
+  absent is valid, present-but-malformed drops the reply, and `$type` is checked as
+  a string so a host adding a value does not break shipped blocks.
+
+  **Mock host.** The app-queue read still replies with the canned `appWorkflows`
+  rows verbatim — they carry no body, so the mock cannot tell a training row from
+  any other. Put `trainedEpochs` on the rows you pass there; it reaches the hook
+  intact.
+
+## 0.57.0
+
+### Minor Changes
+
+- 1d0d37d: Add the nested-document `srcdoc` helper, and document why a block cannot frame
+  its own bundled content.
+
+  **The constraint (#532).** A nested `<iframe src="…">` pointing at an app's own
+  bundle can never load, and nothing in the manifest fixes it. Two platform
+  policies combine: outside the internal trust tier the sandbox withholds
+  `allow-same-origin`, so the block document's origin is **opaque** (measured,
+  `window.origin === "null"`); and every path served from
+  `https://<blockId>.civit.ai/` carries `Content-Security-Policy: frame-ancestors
+…` plus `X-Frame-Options: SAMEORIGIN`, stamped at the platform edge rather than
+  by the app's own server.
+
+  An **opaque ancestor matches no `frame-ancestors` source list at all** — `*`
+  included, because CSP3 ASCII-serializes the ancestor origin and URL-parses it,
+  and `"null"` fails that parse before any source matching happens. So widening
+  the allowlist is not a fix either.
+
+  The table below is an **external platform measurement taken on 2026-10-03**, in
+  a local two-origin Chromium replica of the platform's frame topology. That
+  replica is deliberately not committed — it would be a second, drifting model of
+  a platform these packages do not own — so **no test here exercises any row, and
+  a green suite says nothing about them.** Treat it as a dated observation, and
+  re-measure it if the platform changes its sandbox trust tiers or the response
+  headers its static host stamps. Within the replica the no-headers positive
+  control is what makes the BLOCKEDs attributable to the headers rather than to
+  the harness; that is a claim about the replica's internal consistency, not that
+  the replica matches production.
+
+  | nested document's headers                        | result (replica, 2026-10-03) |
+  | ------------------------------------------------ | ---------------------------- |
+  | _(none)_ — positive control                      | **LOADED**                   |
+  | `frame-ancestors *`                              | BLOCKED                      |
+  | `frame-ancestors <app-host> <top-host>`          | BLOCKED                      |
+  | `frame-ancestors <unrelated>` — negative control | BLOCKED                      |
+  | `X-Frame-Options: SAMEORIGIN` only               | BLOCKED                      |
+
+  **`@civitai/app-sdk/blocks` gains two values and three types** — minor, not
+  patch, because the `./blocks` subpath grows public surface:
+  `fetchNestedDocument(options)` and `NestedDocumentError`, plus
+  `FetchNestedDocumentOptions`, `NestedDocument` and `NestedDocumentErrorCode`.
+  Zero new dependencies; the module is browser-safe and the subpath stays
+  runtime-agnostic. The `<base href>` rewrite itself stays **module-internal**:
+  nothing in or out of the tree calls it on its own, and an export is far cheaper
+  to add later than to remove once published.
+
+  The helper does the one thing that works: fetch the document's markup (the
+  static host answers `Access-Control-Allow-Origin: *`, so a null-origin `fetch`
+  succeeds where a frame load does not), rewrite its base URL to the absolute
+  location it came from, and hand the string to an iframe's `srcdoc` — which
+  inherits the parent's opaque origin and carries no response headers of its own.
+
+  **The `<base href>` is the whole mechanism, and it fails silently.** A `srcdoc`
+  document's base URL is `about:srcdoc`, inheriting the embedder's, so every
+  relative `src=` in the fetched markup resolves to nothing and no error message
+  mentions a base. One rule covers both directions: with no `<base href>` the base
+  becomes the **directory of the response's final URL** (`…/game/index.html` →
+  `…/game/`), so a redirect is followed rather than resolved one directory too
+  high; with a `<base href>` already present it is **resolved against that URL and
+  replaced**, so the author's intent survives and its form becomes absolute. A
+  `<base target>` with no `href` sets no base URL per spec and is left alone.
+
+  🔴 **An EMPTY `href` IS base-setting, and the first revision of this branch got
+  that wrong in the harmful direction.** The spec keys the document base URL on
+  the first `<base>` that HAS an `href` content attribute, and `""` parses
+  successfully against the document's own URL — so `<base href="">` sets the base
+  to the document, not to nothing. Reading it as absent left the tag a parser
+  actually honours pointing at the embedder: for `<head><base href=""><base
+href="/real/"></head>` the scan skipped past the empty tag to the second one, so
+  the helper rewrote the DECOY and left the empty tag first: it reported
+  `hadExistingBase: true` with a `/real/` base while Chromium resolved every
+  asset against the embedder's URL — the opaque-origin failure this module
+  exists to prevent, and a `baseHref` the caller was told was in use when it was
+  not. The empty tag is now the one rewritten. Whitespace-only is the same case
+  (the URL parser strips leading and trailing spaces) and both are pinned
+  together. Measured in real Chromium rather than read off the spec, in
+  `useNestedDocument.browser.test.tsx`: with `<base href="">` present the later
+  `/decoy-real/` tag has no effect, and deleting the empty tag from the fixture
+  makes the decoy win — which is what shows the measurement discriminates.
+
+  **It is NOT a de-duplication, and an earlier draft of this changeset said it
+  was.** The claim "the output never carries two `<base>` tags" was false at five
+  surfaces and is corrected at all of them. What is guaranteed is that **the
+  `<base href>` an HTML parser USES — the first base-setting one — is absolute**.
+  Markup declaring `<base href="/a/"><base href="/b/">` comes back with two, the
+  first rewritten and the second left exactly as it was (inert, as it already
+  was); and a `<base target>` left in place sits beside the inserted one, which
+  the suite has asserted all along.
+
+  **Only real markup is rewritten.** A `<base href>` or a `<head>` inside an HTML
+  comment, or inside a `<script>`/`<style>` body, is ignored; tag names match
+  case-insensitively (`<HEAD>`, `<Base>`); and a quoted attribute value may
+  contain `>`.
+
+  **`@civitai/blocks-react` gains `useNestedDocument({ src, baseUrl })`** →
+  `{ srcDoc, status, error }`, with `status` in
+  `'idle' | 'loading' | 'ready' | 'error'`. The three fields come from one state
+  object, so `srcDoc` is non-null exactly when `ready` and `error` exactly when
+  `error`. A mount with a `src` starts at `loading` rather than flashing `idle`;
+  unmounting aborts the fetch and writes no state.
+
+  Changing `src` restarts and aborts the previous fetch, and `status` returns to
+  `'loading'` **in the same render that changes `src`** — so no frame ever shows
+  the previous document as `'ready'` beside a new `src`.
+
+  The fetch carries a **30-second deadline**. The hook owns its `AbortController`
+  and never exposes it, so without one a response that never arrived left the hook
+  on `'loading'` forever with nothing a caller could cancel. On the deadline the
+  request is aborted and `status` becomes `'error'` with a message naming the
+  timeout. 30 seconds matches this package's existing `'protocol'`-class bound
+  (`DEFAULT_REQUEST_TIMEOUT_MS`, `ENTITLEMENTS_TIMEOUT_MS`): a static-host round
+  trip with no person in the loop. A timeout is reported; the hook's own aborts
+  (unmount, a `src` change) stay silent, as they must.
+
+  **Prefer a single-document design, and the docs now say so first.** An engine
+  build (Defold, Unity WebGL, Phaser) is a `<canvas>` plus a JS loader that
+  normally mounts straight into the block's own document, which avoids the problem
+  class entirely. The helper is the fallback for when a separate document is
+  genuinely required. `docs/build-your-first-app-block.md` carries that guidance
+  in full, immediately after the manifest's sandbox rules — where an author
+  designing the app actually hits it. Every other surface (both package READMEs,
+  the barrel comments, the three test headers) states the constraint in one sentence
+  and points at a single canonical derivation instead of restating it. It had been
+  duplicated across 11 surfaces with nothing checking them for agreement — which
+  is how two measured claims in the test headers beside it went stale.
+
+  **The returned string is deliberately NOT sanitized**, and that is stated at
+  every surface rather than left implicit: it is the app's own bundled markup and
+  scripts, and stripping them would remove the thing the nested document exists to
+  run. The consequence is the contract — pass a `src` you control, and put your own
+  `sandbox` attribute on the nested iframe.
+
+  **Coverage.** 53 unit tests in `@civitai/app-sdk`
+  (`test/blocks/nestedDocument.test.ts`) over every branch — base injection with
+  and without a `<head>`, with and without an existing `<base>`, quoted/unquoted/
+  empty/whitespace-only hrefs (including an empty one declared AHEAD of a real
+  one), doctype-only and empty documents, a `<base href>` and a `<head>`
+  hidden in an HTML comment, a `<base` inside an inline `<script>` and inside a
+  `<style>` body, `>` inside a double- and a single-quoted attribute value,
+  uppercase and mixed-case tags, two `<base href>` tags, relative-src resolution
+  against an explicit base / `document.baseURI` / `location.href` / nothing at
+  all, a redirected response, a response carrying no `url`, non-OK status,
+  rejected fetch, failed body read, abort pass-through, and a missing `fetch`
+  global. Every expected value is a literal string, never derived from the
+  implementation.
+
+  17 browser-mode tests in `@civitai/blocks-react`
+  (`test/useNestedDocument.browser.test.tsx`) cover the hook's state machine and —
+  this is why they are in the browser tier — mount the produced string as a real
+  `srcdoc` and assert `img.src` **as Chromium resolved it**, so the base-href claim
+  is a measured resolution rather than a restatement of the string the
+  implementation built. A negative control renders the same markup _without_ a
+  base and shows it resolving to the embedder instead. One case mounts a document
+  whose inline script holds a `<base …>` **string literal** and asserts the script
+  still RUNS and the literal is byte-identical — a property only a real JS engine
+  can show, with a positive control proving a `srcdoc` script can set the title in
+  this harness at all. Suites that assert a zero carry a positive control beside
+  it.
+
+  7 unit-tier tests in `@civitai/blocks-react`
+  (`test/useNestedDocument.test.tsx`) pin the two properties the browser tier
+  structurally cannot see — the 30-second deadline (at the deadline, and a
+  29,999 ms boundary on the other side of it; an unmount abort NOT reported as a
+  timeout; the timer released synchronously on cleanup; and a control showing an
+  ordinary HTTP error still reports the host's own message) and that no render
+  pairs a new `src` with the previous document.
+
+  🔴 **A `Response` stub with no `url` is why the requested-vs-final URL defect was
+  invisible to both tiers**, so every stub in both files now carries one and the
+  redirect cases pass a different one on purpose.
+
+  **Mutation-checked, 21 mutant SPELLINGS over the two implementation files (15 in
+  `nestedDocument.ts`, 6 in `useNestedDocument.ts`), all killed** — 17 if
+  same-defect spellings are collapsed into families. Unmutated baseline run as the
+  positive control (53/53, 7/7, 17/17). Exact-literal replacement with the
+  occurrence count asserted to be 1, restoring from a `cp -a` copy and re-checking
+  its sha256 after every restore, so a failed restore cannot score a borrowed kill
+  for the next mutant.
+
+  ⚠ **This line read "17 mutants" and that number is not derivable under any one
+  convention** — it came from splitting the prefix-match bullet into two while
+  collapsing the three "stop replacing" spellings and the two quote spellings into
+  one each, i.e. two conventions in one tally. Counted from the records below:
+  **21 spellings, 17 families**. The convention is now stated rather than implied,
+  and both numbers are given so neither has to be re-derived. The per-mutant
+  records were correct; only the headline was wrong. Re-run from scratch on
+  2026-10-04 after the empty-`href` fix changed the base-detection path, so every
+  count below is a fresh measurement and the previously recorded ones are
+  superseded. Several produced findings worth recording rather than a tick:
+
+  - **Delete the `<base>` insertion** (`return { html, … }` instead of
+    `insertInto(html, tag, scan)`) → 19 of 53 unit tests red, and 5 of 17 browser
+    tests, including the in-browser mechanism test with exactly the production
+    symptom: `expected 'http://localhost:…/sprite.png' to be
+'https://nested-fixture.example/engine/sprite.png'`.
+  - **Base on the document instead of its directory** (`docUrl.href` instead of
+    `new URL('.', docUrl).href`) → 25 of 53 unit tests red, first with
+    `expected '<base href="…/engine/boot.html">' to be '<base href="…/engine/">'`.
+    🔴 **But only 2 of the 17 browser tests see it** — the two that assert the
+    whole `srcDoc` string; every in-browser `img.src` assertion SURVIVES it. That
+    is not a gap in the test: a `<base href>` naming the document resolves a
+    relative URL identically to one naming its directory, so the two are
+    behaviourally equivalent for asset loading and no amount of resolution testing
+    can separate them. The directory form is kept because it is what the caller is
+    handed as `baseHref`; the literal-string assertions are what pin it, and that
+    division is stated in both test headers rather than left to look like
+    redundant coverage.
+  - 🔴 **Treat an EMPTY `href` as absent** (`href !== ''` back on `scanDocument`'s
+    `wantHref` test) → 2 of 53 unit red and 1 of 17 browser. **This was the
+    implementation, and both tiers asserted it, until 2026-10-04** — which is the
+    one mutant in this battery that was a real shipped defect rather than a
+    hypothetical. The browser red is the one that shows the harm instead of the
+    bytes: `expected 'http://localhost:…/?sessionId=…' to be
+'https://nested-fixture.example/engine/boot.html'`, i.e. `document.baseURI`
+    landing on the EMBEDDER. The whitespace-only case is NOT red under it
+    (`'   ' !== ''`), which is exactly why the two are now pinned side by side.
+  - **Stop replacing an existing `<base href>`** → killed in every faithful
+    spelling, but the count **depends on the spelling**, so there is no single
+    number for this mutant: inserting alongside immediately after `<head>` → 9
+    unit tests red; the scan reporting no base at all → 13; detecting the tag,
+    ignoring its href and inserting the directory base alongside with
+    `hadExistingBase: true` → 13. Nine assertions are red in **all three** — among
+    them the two that count `<base` occurrences — which is what makes the guard
+    sound rather than any one of the numbers. The third spelling's own count moved
+    6 → 13 between sweeps because the spelling is not recoverable from a
+    paraphrase, so the replacement is now written out.
+  - **Mis-handle the quoted-attribute state** → also spelling-dependent, because
+    the state has two characters in it: honouring only `'` → 12 red; honouring
+    only `"` → 2 red. Each spelling is blind to the other quote character, which
+    is why both a double- and a single-quoted `>` fixture are present.
+  - **Stop skipping HTML comments** → 2 red. 🔴 **This mutant SURVIVED the first
+    sweep, and finding that is what the sweep was for.** The two plainest
+    commented-`<base>`/`<head>` fixtures cannot see it: with the comment skip
+    gone, the markup-declaration branch (`<!…>`) still swallows the comment,
+    because it ends at the first `>` and those fixtures have none before the
+    decoy. The guard was unreachable and scored a false green. Two fixtures with a
+    `>` early in the comment reach it, and those are the two reds.
+  - **Stop skipping `<script>`/`<style>` bodies** → 2 unit red, and exactly 1
+    browser red: the script-runs case, the only assertion anywhere that a real JS
+    engine executed the rewritten document.
+  - **Drop tag-name case-insensitivity** → 2 red. **Match the tag name as a
+    prefix** rather than whole (the scanner's equivalent of dropping a `\b`) → 1
+    red each for `head` and `base`, the `<header>`/`<basefont>` test.
+  - **Ignore the response's final URL** → 2 red, the two redirect cases.
+  - **Reinstate a quadratic regex existing-base walk** (`html.matchAll(
+/<base\b[^>]*>/gi)` plus an `href` pattern per match) → 5 red, including the
+    pathological-input timing guard with its own message, while the 576 KB
+    **benign control stayed green**. That pair is what attributes a failure to the
+    input's SHAPE rather than to a loaded machine.
+
+                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                    single measurements on one machine.
+
+  - **In the hook:** the deadline wired to the shared controller but not
+    distinguished from an unmount (the swallowing described below) → 1 red,
+    `expected 'loading' to be 'error'`; flagging without aborting → 1 red, same
+    assertion, different cause; the constant 30_000 → 5_000 → 2 red (the message
+    and the boundary); dropping the render-phase reset → 2 red; keeping the reset
+    but returning the stale state → the same 2.
+  - 🔴 **Dropping `clearTimeout` from the effect cleanup also SURVIVED the first
+    sweep**, and for a reason worth keeping: it changes no state at all, because
+    `abort()` on an already-aborted controller is a no-op and `.finally` clears
+    the timer a microtask later anyway. What it does change is that every unmount
+    leaves a 30-second timer holding the effect's closure — so the pending-timer
+    COUNT is the observable, and that assertion had to be added rather than
+    assumed.
+
+  **Two real defects were fixed in this branch rather than worked around.**
+
+  1. **`js/polynomial-redos` (CodeQL, high) — and the alert was only half of it.**
+     The first revision found the existing `<base href>` with a single pattern,
+     `/<base\b[^>]*?\bhref\s*=\s*(…)[^>]*>/i`: a lazy `[^>]*?` nested inside a
+     match that also ends in `[^>]*`, so the engine retries the inner scan from
+     every start position. The second revision split it into two linear-looking
+     regexes, which **cleared the alert and left the asymptotics quadratic** —
+     `/<base\b[^>]*>/g` still rescans `[^>]*` from every `<base` start when the
+     document holds a long run with no `>`. That is 4× per doubling, and measured
+     in **seconds** on a 192 KB input (1.8-2.9 s across three sittings — the spread
+     is machine load, which is why the figure is given as a range and the
+     asymptotic shape, not as a single number). The fix is a single left-to-right
+     scanner that advances its cursor by at least one character per iteration and
+     never restarts, pinned by the timing guard above: single-digit milliseconds
+     at that same 192 KB, against a 500 ms bound.
+  2. **Finding a `<base>` in the wrong places was actively harmful, not merely
+     over-eager.** A `<base href>` in an HTML comment was "found" and the
+     replacement spliced _inside_ the comment, leaving the document with **zero**
+     base elements where ignoring the comment inserts after `<head>` and works; a
+     `<base` in an inline script string was rewritten into a syntax error, so the
+     script did not run at all; and a `<base>` whose attribute value contained `>`
+     was read as having no `href`, silently discarding the author's declared base.
+     The scanner tracks comments, raw-text bodies and quoted attribute values, so
+     all three are now the documented behaviour with a literal-string test each.
+
+- 8bde67a: Catalog sync: two step types the orchestrator accepts are now in `WORKFLOW_STEP_TYPES`.
+
+  - `liveTranscription`: live speech-to-text from audio streamed while the user talks. The step's output gives an upload URL for raw 16 kHz PCM chunks and a transcript URL that streams partial and final text.
+  - `merge`: combines fields from earlier steps' outputs into one result.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. It is purely additive: nothing that compiled before stops compiling, and there is no runtime change. Both types sit in the `CatalogStepTypesWithoutAGeneratedType` ledger until `@civitai/client` republishes with templates for them.
+
+- 5279f8f: Mirror the host's workflow-snapshot fields, and add the training-publish pair.
+
+  **`BlockWorkflowSnapshot` now types every field the host emits (#524).** Five
+  fields the host has sent for several releases were missing from the SDK type, so
+  a block could only read them through a cast: `modelSubstitutions`,
+  `textOutputs`, `textOutputWithheld`, `toolCalls` and `stepOutputs`.
+  `snapshot.textOutputs` — the reply of a `chat-completion` step — now
+  type-checks without one. New exported types: `BlockModelSubstitution`,
+  `ModelSubstitutionReason`, `BlockStepToolCall`.
+
+  **Training-publish fields (host support pending).** `trainedEpochs` on
+  `BlockWorkflowSnapshot` lists the epochs of a pass-through `training` /
+  `imageResourceTraining` step that produced a checkpoint; the checkpoint itself
+  is deliberately not exposed. The viewer publishes one by being navigated
+  (`useCivitaiNavigate`, `scope: 'site'`) to
+  `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `publishedModel`
+  (on both `BlockWorkflowSnapshot` and `AppWorkflow`) then reports the resulting
+  model. Both are optional and absent on hosts that do not emit them yet. New
+  exported types: `BlockTrainedEpoch`, `BlockPublishedModel`.
+
+  **Validator (`@civitai/blocks-react`).** The inbound snapshot and `AppWorkflow`
+  guards now shape-check every new field when present, on the same terms as
+  `autoClaim`: absent is valid, present-but-malformed drops the message. The
+  open-ended string unions (`modelSubstitutions[].reason`, `trainedEpochs[].$type`,
+  `toolCalls[].type`) are checked as strings rather than against today's members, so a host adding a
+  value does not drop polls in already-shipped blocks.
+
+  **Mock host.** A pass-through `training` / `imageResourceTraining` body can now
+  succeed with `trainedEpochs` (new opt-in `generation.trainedEpochs` knob, default
+  `0`, which omits the field) and, when `generation.trainingPublishedModel` is set, a
+  `publishedModel`. Only those two `$type`s get them. The mock never fabricates a
+  checkpoint url, and it does not simulate the real `maxBuzz` timeout.
+
+  **Docs.** `training` and `imageResourceTraining` were described as
+  platform-internal, "not an invitation". The host explicitly allows both on the
+  pass-through arm; the README and the orchestrator docblocks now say so, with the
+  bounds that apply (see `WorkflowBodyPassThroughStep.maxBuzz`).
+
+### Patch Changes
+
+- 220aa39: docs: delete the unverifiable host citations from the App Storage error docblocks
+
+  `appStorageErrors.ts`'s header and two of its member docblocks cited the host's
+  internals twice over: one host error string presented as _the_ App Block storage
+  kill-switch refusal, and a walk-through of the host code that raises it, down to
+  line numbers in a file in another repository.
+
+  Both are **deleted rather than re-pointed**, and the deletion is the fix:
+
+  - A line number in another repository's file is a citation nothing here can
+    check. There is no test, guard or CI job in this repository that reads the
+    host's router, so an unrelated insertion upstream silently invalidates every
+    offset — and re-pointing them would only reset the clock on the same defect.
+  - The string was never load-bearing. `classifyAppStorageError` matches only the
+    six messages this module exports — five by containment, the per-value one by
+    pattern — so it answers `null` for the cited string exactly as it does for
+    every other non-ceiling rejection. The docblocks already labelled it an
+    _illustration, not a bound_, and the structural claim it illustrated — every
+    rejection outside the classified family arrives on the same `error` field and
+    classifies `null` — stands on the bridge's blanket catch arms, not on any
+    example.
+
+  What is kept: the retraction history of the two enumeration attempts, including
+  that the second missed four more messages and that one of those fit neither of
+  its published tables. That is the reason this module carries no list of host
+  strings, and it needs none of the deleted specifics to make its point. Nothing
+  replaces the removed illustration — inventing a fresh one would re-create a
+  citation with the same expiry.
+
+  Prose only, in both packages — no runtime behaviour changed and no export moved.
+  Patch releases because the published artifacts _are_ these documents: the
+  docblocks ship inside `@civitai/app-sdk`'s `.d.ts` (and so reach IDE hover), and
+  the `@civitai/blocks-react` README ships in its tarball.
+
+- 8589877: Docs: correct how the host bounds a pass-through step (`kind: 'step'`, bare
+  `$type`). It asks the orchestrator for a `whatif` quote on both `estimate` and
+  `submit`. When quoted, it reserves `max(maxBuzz, quote)` — gated against the
+  token's per-call budget, so it can exceed 250 — and stamps no step timeout;
+  `maxBuzz` is the step timeout only when there is no quote. `estimate` returns
+  that reservation, not a bare echo of `maxBuzz`. The `WorkflowBodyPassThroughStep`
+  and `trainedEpochs` docblocks, the README, the orchestrator step-catalog notes
+  and the mock host's `trainedEpochs` knob said otherwise. Docs only; no runtime
+  change.
+
+## 0.56.1
+
+### Patch Changes
+
+- b8c6a18: Publish the re-vendored canonical App Block manifest schema, which now carries
+  `goods[].justification`.
+
+  The bytes were mirrored by #529 but never released, and the vendored schema is
+  **published**: it ships in the tarball, is exported as
+  `./schemas/app-block/v1.json`, and `defineBlock` validates against it at
+  runtime. So every installed copy of this package was still validating manifests
+  against the previous schema.
+
+  That was not a cosmetic lag. `goods.items` sets `additionalProperties: false`,
+  so the stale copy **rejected** `justification` rather than merely failing to
+  check it — while the server **requires** that field when `kind` is
+  `"app_unlock"`. An author declaring the first paid app therefore had a manifest
+  the platform demands and this SDK refused.
+
+  The TypeScript side of the field shipped separately in `0.56.0`; this releases
+  the schema that validates it.
+
+  **Why `patch`.** This is a vendored-schema parity fix and it is permissive-only,
+  which `RELEASING.md` now names as a `patch` carve-out. The change ADDS an optional
+  property under `goods.items`, which has `additionalProperties: false`, so it can
+  only make a manifest that previously FAILED start validating — no manifest that
+  validated before this change fails after it. And pre-1.0 a caret pins the minor,
+  so a `minor` here would withhold the corrected schema from every caret-pinned
+  consumer, leaving them with a package that rejects manifests the platform
+  requires. That is the opposite of the fix.
+
+## 0.56.0
+
+### Minor Changes
+
+- 0f4eca4: Type `justification` on `BlockManifestGood`, and document the three extra rules
+  the platform applies to an `app_unlock` good.
+
+  **Minor, not patch**: `BlockManifestGood` gains a public optional field,
+  `justification?: string`. Without it a manifest the platform _requires_ cannot be
+  written in TypeScript — `goods[].justification` is mandatory on an `app_unlock`
+  good server-side, so an author declaring a paid app would have had their
+  `defineBlock` call rejected at compile time for writing the field the submit
+  gate demands.
+
+  **This lands AHEAD of the schema bytes on purpose, and that ordering is the
+  point.** The canonical schema in `civitai/civitai` grows the matching
+  `justification` property in the same arc, and the re-vendor bot that pulls those
+  bytes in gates its PR on `pnpm --filter @civitai/app-sdk test`. That gate
+  includes `canonical-derivation.test.ts`'s nested-property guard, which fails on
+  any schema property not typed on the interface modelling it. Measured both arms
+  against the vendored schema with the property added:
+
+  - schema has `justification`, interface does not → **red**, with
+    `goods.justification (missing on BlockManifestGood)`
+  - schema has it and the interface types it → **green**
+
+  So without this change the bot's gate fails, it opens no PR at all, and
+  `Canonical schema drift-check` stays red on every PR in this repo until someone
+  adds the field by hand. With it, the re-vendor is a clean byte-only follow-up.
+
+  **No schema re-vendor here.** `packages/civitai-app-sdk/schemas/app-block/v1.json`
+  is left byte-identical to the live canonical. The drift-check compares the
+  vendored copy against the **live published URL**, so vendoring the new bytes now —
+  before a `main` → `release` cut publishes them — would turn that job red
+  _immediately_ rather than at the deploy. Verified green with the type change
+  alone: 429 tests across 27 files.
+
+  Existing manifests are unaffected: the field is optional, and the platform
+  requires it only for `kind: 'app_unlock'`, which no published app declares.
+
+  The `kind` doc comment now also records the three `app_unlock`-only rules the
+  platform validator enforces and the JSON Schema deliberately does not express —
+  `priceBuzz` at most 5000 (not the 50000 the general bound allows), at most one
+  `app_unlock` good per manifest, and the mandatory `justification` — so a local
+  validation pass is visibly necessary rather than sufficient.
+
 ## 0.55.0
 
 ### Minor Changes
@@ -698,10 +1746,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                    after    @civitai/theme       0.3.1                   — 1 copy
-                             @civitai/components  0.4.2                   — 1 copy
+                                                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

@@ -7,7 +7,7 @@ export const DENIED_ORCHESTRATION_TOOLS = new Set(['get_workflow', 'cancel_workf
 export const ALLOWED_SITE_TOOLS = new Set(['search_models', 'get_model', 'get_model_version', 'search_images']);
 
 /** The tools that run workflows; which service they run is in their input, not their name. */
-const JOB_TOOLS = new Set(['run_step', 'run_workflow']);
+export const JOB_TOOLS: ReadonlySet<string> = new Set(['run_step', 'run_workflow']);
 
 export function isJobTool(name: string): boolean {
   return JOB_TOOLS.has(name);

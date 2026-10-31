@@ -45,6 +45,10 @@ export const EVENTS: Record<string, EventBinding[]> = {
   'civitai-modal': [{ prop: 'onClose', event: 'close' }],
   'civitai-reaction': [{ prop: 'onReact', event: 'react', detail: 'ReactionDetail' }],
   'civitai-tabs': [{ prop: 'onChange', event: 'change' }],
+  'civitai-resource-picker': [
+    { prop: 'onPick', event: 'pick', detail: 'PickedResource' },
+    { prop: 'onDismiss', event: 'dismiss' },
+  ],
   'civitai-workflow-button': [
     { prop: 'onPriced', event: 'priced' },
     { prop: 'onSubmitted', event: 'submitted' },

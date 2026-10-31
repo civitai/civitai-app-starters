@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components",
-  "version": "0.9.1",
+  "version": "0.13.0",
   "description": "Attribute-driven, framework-agnostic component CSS for civitai App Blocks. Plain HTML or any framework, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,8 @@
     "**/*.css",
     "**/*.define.js",
     "**/elements/register.js",
-    "**/elements/register-site.js"
+    "**/elements/register-site.js",
+    "**/testing/happy-dom.js"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -27,6 +28,10 @@
     "./internals": {
       "types": "./dist/elements/internals.d.ts",
       "import": "./dist/elements/internals.js"
+    },
+    "./testing/happy-dom": {
+      "types": "./dist/testing/happy-dom.d.ts",
+      "import": "./dist/testing/happy-dom.js"
     },
     "./civitai-button": {
       "types": "./dist/elements/civitai-button.d.ts",
@@ -402,6 +407,14 @@
     "./civitai-workflow-button/define": {
       "types": "./dist/sdk/civitai-workflow-button.define.d.ts",
       "default": "./dist/sdk/civitai-workflow-button.define.js"
+    },
+    "./civitai-resource-picker": {
+      "types": "./dist/sdk/civitai-resource-picker.d.ts",
+      "default": "./dist/sdk/civitai-resource-picker.js"
+    },
+    "./civitai-resource-picker/define": {
+      "types": "./dist/sdk/civitai-resource-picker.define.d.ts",
+      "default": "./dist/sdk/civitai-resource-picker.define.js"
     }
   },
   "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs. `!dist/utilities.generated.*` is a BELT-AND-BRACES exclusion, not a live one: scripts/build-utilities.ts no longer emits that module at all (see its note — ~39 kB no consumer could reach). It stays because `tsc` does NOT clean dist/, so an incremental local build keeps the stale .js/.d.ts from before it was removed, and `npm pack` ships whatever is in dist/. VERIFIED: dropping this line packs them again from a stale tree.",

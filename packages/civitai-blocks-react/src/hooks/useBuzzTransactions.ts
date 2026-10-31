@@ -5,6 +5,7 @@ import type { BlockBuzzTransaction, BlockBuzzTransactionsParams } from '@civitai
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * One Buzz-transaction row, REHYDRATED for block consumption: identical to the
@@ -69,6 +70,7 @@ function toIso(v: unknown): string | null {
  * const { transactions, cursor, loading, error } = useBuzzTransactions({ type: 'Tip', limit: 20 });
  */
 export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBuzzTransactions {
+  useTransportConnection();
   const [transactions, setTransactions] = useState<BuzzTransaction[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

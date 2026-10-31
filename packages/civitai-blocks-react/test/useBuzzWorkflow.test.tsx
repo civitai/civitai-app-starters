@@ -398,8 +398,9 @@ describe('useBuzzWorkflow', () => {
   //
   // 🔴 THIS TEST WAS WRITTEN BEFORE THE FIX, AS A SCOPE PIN, AND IT SURVIVES THE
   // FIX UNCHANGED — that is the whole point of it. The budget-rejection arm MUST
-  // KEEP RESOLVING: a block recovers from it by opening a top-up flow, and
-  // turning it into a throw would break that recovery. The guard added for #251
+  // KEEP RESOLVING: it is a priced outcome the block reports (the run did not
+  // start, at this quoted price), and turning it into a throw would erase that.
+  // (It is not a top-up cue — buying Buzz raises none of these caps.) The guard added for #251
   // rejects only the OTHER producer (a caught server exception posted as
   // `failureSnapshot(err)`, which carries NO `cost`), so this arm is untouched.
   //
@@ -843,6 +844,56 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.status).toBe('failed');
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // `errorCode` — the machine-readable companion to `error` that the host sets
+  // on the refusal for a pass-through TRAINING step it could not price. These
+  // drive the WHOLE inbound path a real reply takes: `postMessage` → origin
+  // check → `isValidWorkflowReply` → `projectInboundPayload` → the hook → the
+  // rejected error's `.snapshot`. The fixtures are the host's real reply shape:
+  // no `cost`, the `'failed'` sentinel id, and the host's own sentences.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it.each([
+    ['training-quote-rejected', 'Training could not be priced: dataset entry 3 has no caption'],
+    ['training-quote-unavailable', 'Training needs a price quote and none could be obtained; try again.'],
+    ['training-quote-unpriced', 'Training needs a price quote and the orchestrator answered without one.'],
+  ])('estimate() delivers errorCode %s on the rejected error’s snapshot', async (errorCode, error) => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error, errorCode });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err).toBeInstanceOf(WorkflowEstimateError);
+    expect(err.snapshot.errorCode).toBe(errorCode);
+    expect(err.snapshot.error).toBe(error);
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.result?.errorCode).toBe(errorCode);
+  });
+
+  it('submit() delivers errorCode on the rejected error’s snapshot', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Training could not be priced: the learning rate is out of range',
+      errorCode: 'training-quote-rejected',
+    });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    expect(err).toBeInstanceOf(WorkflowSubmitError);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.errorCode).toBe('training-quote-rejected');
+  });
+
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
@@ -1138,6 +1189,90 @@ describe('useBuzzWorkflow', () => {
     await pollPromise;
     await waitFor(() => expect(result.current.status).toBe('done'));
     expect(result.current.result?.imageUrls).toEqual(['https://cdn/x.png']);
+  });
+
+  // The #524 fields + the training-publish pair, end to end through the REAL
+  // transport validator. Values are pairwise distinct so a field swapped for
+  // another cannot pass.
+  const FULL_HOST_FIELDS = {
+    modelSubstitutions: [{ requested: 101, applied: 202, reason: 'unrecognized' }],
+    textOutputs: ['first reply', 'second reply'],
+    textOutputWithheld: { reason: 'A response was withheld.' },
+    toolCalls: [{ id: 'call_7', type: 'function', function: { name: 'lookup', arguments: '{"q":3}' } }],
+    stepOutputs: [{ $type: 'someNewStep', output: { score: 0.42 } }],
+    trainedEpochs: [
+      { $type: 'training', epochNumber: 4 },
+      { $type: 'training', epochNumber: 9 },
+    ],
+    publishedModel: { modelId: 555, modelVersionId: 666, published: true },
+  };
+
+  function replyStatus(requestId: string, snapshot: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'WORKFLOW_STATUS', payload: { requestId, snapshot } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('poll() delivers every host snapshot field verbatim, readable without a cast', async () => {
+    // INVARIANT GUARD, not regression coverage: the inbound validator has never
+    // stripped unknown keys, so these values arrived before #524 too — what #524
+    // changed is that they now TYPE-check (the reads below have no cast; see
+    // `workflow-snapshot-fields.test-d.ts` in app-sdk). Pinned so a future
+    // validator that starts projecting the snapshot cannot silently drop them.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-full');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    replyStatus(sent.payload.requestId, { workflowId: 'wf-full', status: 'succeeded', ...FULL_HOST_FIELDS });
+
+    await pollPromise;
+    await waitFor(() => expect(result.current.status).toBe('done'));
+    const snap = result.current.result;
+    expect(snap?.modelSubstitutions).toEqual(FULL_HOST_FIELDS.modelSubstitutions);
+    expect(snap?.textOutputs).toEqual(FULL_HOST_FIELDS.textOutputs);
+    expect(snap?.textOutputWithheld).toEqual(FULL_HOST_FIELDS.textOutputWithheld);
+    expect(snap?.toolCalls).toEqual(FULL_HOST_FIELDS.toolCalls);
+    expect(snap?.stepOutputs).toEqual(FULL_HOST_FIELDS.stepOutputs);
+    expect(snap?.trainedEpochs).toEqual(FULL_HOST_FIELDS.trainedEpochs);
+    expect(snap?.publishedModel).toEqual(FULL_HOST_FIELDS.publishedModel);
+  });
+
+  it('poll() DROPS a snapshot whose new field is malformed, and settles on the next well-formed reply', async () => {
+    // Regression coverage: before the validator knew these fields, the
+    // malformed reply below was accepted and the block read `textOutputs` as a
+    // string where its type promises `string[]`.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-bad');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: 'not an array',
+      });
+      // Positive control on the SAME request id: a well-formed reply settles it.
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: ['ok'],
+      });
+      await pollPromise;
+      await waitFor(() => expect(result.current.status).toBe('done'));
+      expect(result.current.result?.textOutputs).toEqual(['ok']);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // -------------------------------------------------------------------------

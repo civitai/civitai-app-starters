@@ -1,4 +1,5 @@
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useCivitaiRoute} returns. An alias — see `./returnTypeLedger.js`
@@ -63,6 +64,7 @@ export type UseCivitaiRoute = string;
  * moves and nothing renders.
  */
 export function useCivitaiRoute(): UseCivitaiRoute {
+  useTransportConnection();
   const context = useTransportSnapshot().context;
   // A PRESENCE test, not a slot-id test, and not a cast. `BlockContext` is a
   // union whose `UnknownSlotContext` arm declares `slotId` and nothing else, and

@@ -6,6 +6,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useCheckpointPicker} returns. */
 export interface UseCheckpointPicker {
@@ -61,6 +62,8 @@ export interface UseCheckpointPicker {
  * host. Pass `null` to clear the override and fall back to the publisher
  * default at next mount. Throws on host-side validation failure (e.g.
  * "wrong-ecosystem") — surface the message to the user; don't retry blindly.
+ * MODEL SLOTS ONLY: on a page (`app.page`) the host refuses every `persist`,
+ * so it always throws there; a page app keeps the pick in its own state.
  *
  * Both flows are host-mediated: the block never touches the picker UI or
  * the user-settings table directly. Same trust model as useBuzzPurchase /
@@ -78,6 +81,7 @@ export interface UseCheckpointPicker {
  * const { selected } = await open({ baseModelGroup: checkpoint.baseModel });
  */
 export function useCheckpointPicker(): UseCheckpointPicker {
+  useTransportConnection();
   const open = useCallback(
     async (opts?: { baseModelGroup?: string; currentVersionId?: number }) => {
       // Both keys are spread conditionally, and an empty or whitespace-only

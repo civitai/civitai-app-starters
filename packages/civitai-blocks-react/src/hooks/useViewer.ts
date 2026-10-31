@@ -5,6 +5,7 @@ import type { BlockViewer } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useViewer} returns.
@@ -51,6 +52,7 @@ export interface UseViewer {
  * return <span>{viewer?.username}</span>;
  */
 export function useViewer(): UseViewer {
+  useTransportConnection();
   const [viewer, setViewer] = useState<BlockViewer | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);

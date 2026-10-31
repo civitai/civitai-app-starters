@@ -62,11 +62,23 @@ import {
   type BlockViewer,
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
+  type BlockResourceFile,
+  type BlockResourceFileErrorCode,
   type AppWorkflow,
+  type BlockModel3dOutput,
+  type BlockPublishedModel,
+  type BlockRunConfirmedStepHostError,
+  type BlockTrainedEpoch,
+  type BlockWorkflowSnapshot,
   type BlockGatedImage,
+  type BlockImagePickerSource,
+  type BlockPickedImageInfo,
   type BlockCollectionFollowErrorCode,
+  type BlockEntityReactionErrorCode,
   type BlockCreatePostHostError,
   type BlockCreatePostResult,
+  type BlockRunTrainingHostError,
+  type BlockTrainingDataImage,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -80,6 +92,7 @@ import {
   isKnownBlockScope,
   resolveUngrantableConsentNotice,
 } from './consent.js';
+import { PAGE_CHECKPOINT_PERSIST_ERROR, emulatesPageHost } from './hostSurface.js';
 import {
   requiredStorageScope,
   storageResultType,
@@ -91,6 +104,42 @@ import {
   idempotencyKeyDeniedMessage,
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
+import { stepInputRefusal } from './mockHostStepInput.js';
+import {
+  SAVE_IMAGE_INVALID_REQUEST_ERROR,
+  prepareSaveBytes,
+  saveImageRequestKind,
+} from './saveBytes.js';
+import {
+  UPLOAD_BYTES_INVALID_ERROR,
+  admitUploadBytes,
+  resolveUploadBytesRequest,
+  type UploadBytesWindowEntry,
+} from './uploadBytes.js';
+import {
+  mockMediaUploadReply,
+  type MediaUploadWindowEntry,
+  type MockMediaUploads,
+} from './mediaUploadBytes.js';
+import {
+  mockUnpricedWorkflowRefusal,
+  mockUnquotedWorkflowEstimateRefusal,
+  type MockWorkflowQuoteFailure,
+  mockWorkflowBodyRefusal,
+  mockWorkflowStepGenerations,
+  mockWorkflowStepName,
+} from './mockWorkflowGraph.js';
+import { BATCH_ESTIMATE_CELL_TIMEOUT_ERROR } from '../hooks/useBatchEstimate.js';
+import {
+  RUN_CONFIRMED_STEP_ERROR_CODES,
+  STEP_QUOTE_ID_PATTERN,
+} from '../hooks/useRunConfirmedStep.js';
+import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
+import {
+  createMockReactions,
+  REACTION_SCOPE,
+  type MockReactionSeed,
+} from './mockHostReactions.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -129,6 +178,13 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     case 'customComfy':
       return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
+      return undefined;
+    // A training body names no pool either: the host's `blockTrainingBodySchema`
+    // is `.strict()` with no `accountType`.
+    case 'training':
+      return undefined;
+    // Nor does a multi-step body: the kind has no `accountType` field.
+    case 'workflow':
       return undefined;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
@@ -170,14 +226,17 @@ const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
- * = every submit RESOLVES an insufficient-Buzz `failed` snapshot, priced
- * (exercises the per-cell Top-Up CTA); `'some'` = ~1 in 3 submits fail.
+ * = every submit fails as if the viewer were OUT OF BUZZ, until an
+ * `OPEN_BUZZ_PURCHASE` resets the mode to `'none'`; `'some'` = ~1 in 3
+ * submits fail with a generic error.
  *
- * 🔴 THE TWO OUTCOMES ARE NO LONGER THE SAME SHAPE (civitai/civitai-app-starters#251).
- * `'all'`/`'insufficient'` RESOLVE — they carry a `cost`, so they are a budget
- * OUTCOME. `'some'` **REJECTS** with `code: 'exception'` — it emits the host's
- * cost-less `failureSnapshot(err)`. A mixed grid therefore needs both a
- * `snap.status` branch and a `catch`.
+ * 🔴 EVERY FAILING MODE **REJECTS** with `WorkflowSubmitError` code
+ * `'exception'` — each emits the host's cost-less `failureSnapshot(err)`. That
+ * includes `'all'`/`'insufficient'`, which until this was fixed RESOLVED a
+ * priced `failed` snapshot. Production never does that for an empty wallet: the
+ * orchestrator refuses the debit, the server throws, and the host replies with
+ * `failureSnapshot(err)` (no `cost`). See {@link MockBuzzScenario}. A priced,
+ * RESOLVING refusal is a spend CAP — {@link MockGenerationScenario.submitCapRefusal}.
  */
 export type MockHostFailMode = 'none' | 'some' | 'all' | 'insufficient';
 
@@ -207,7 +266,26 @@ export type MockCannedImageScan =
  * A per-generation cost: a fixed number, or a function of the submitted
  * {@link WorkflowBody} (so a dev can vary cost by model / step count).
  */
-export type CostSpec = number | ((req: WorkflowBody) => number);
+export type CostSpec =
+  | number
+  | ((req: WorkflowBody, step?: MockWorkflowStepInfo) => number);
+
+/**
+ * The step a {@link CostSpec} function is pricing, passed as its SECOND
+ * argument when the body is `kind: 'workflow'`: the mock calls
+ * {@link MockGenerationScenario.costPerGen} once per step and sums the results.
+ * `undefined` for every other kind, which is priced with one call.
+ */
+export type { MockWorkflowQuoteFailure };
+
+export interface MockWorkflowStepInfo {
+  /** Zero-based position in the body's `steps`. */
+  index: number;
+  /** The step's `name`, or `'$<index>'` for an unnamed step. */
+  name: string;
+  $type: string;
+  input: Record<string, unknown>;
+}
 
 /**
  * A result image url: a fixed string, or a function of the submitted body
@@ -223,8 +301,32 @@ export interface MockGenerationScenario {
   /**
    * Cost reported on `ESTIMATE_RESULT` + the succeeded snapshot. A number, or
    * a `(body) => number`. Overrides the legacy top-level `cost`. Default `8`.
+   *
+   * A `kind: 'workflow'` body is priced PER STEP: this is called once for each
+   * step (a function receives the step as its second argument, see
+   * {@link MockWorkflowStepInfo}), multiplied by that step's generations (a
+   * `repeat` counts its iterations, nested repeats multiplied), and summed, so a
+   * plain number prices an N-step workflow with no `repeat` at N times it.
    */
   costPerGen?: CostSpec;
+  /**
+   * The app author's per-generation fee, itemised as `cost.authorFee` on a
+   * QUOTE — the `ESTIMATE_RESULT` and the {@link submitCapRefusal} reply — and
+   * added into that quote's `cost.total` on top of {@link costPerGen}, as the
+   * real host does. A number, or a `(body) => number`. Default `0`, which is
+   * reported as `authorFee: 0` ("no fee on this request").
+   *
+   * Like the real host, only a `textToImage`, registered-`step` or `workflow`
+   * body is itemised; `customComfy`, pass-through `step` and `training` quotes
+   * carry no `authorFee`. A `workflow` body is charged this ONCE, however many
+   * steps it has. The succeeded snapshot's `cost.total` stays {@link costPerGen}
+   * (a submitted workflow reports the generation's own cost), while a simulated
+   * {@link MockBuzzScenario.balance} is debited `costPerGen + authorFee`.
+   *
+   * `false` simulates a host that PREDATES the field: `authorFee` is omitted
+   * everywhere and no fee is added — use it to test your "not itemised" branch.
+   */
+  authorFee?: CostSpec | false;
   /**
    * Synthetic latency before the SUBMITTED→succeeded transition lands, in ms.
    * A single number, or a `[min, max]` range (uniform random). Applied to the
@@ -282,20 +384,75 @@ export interface MockGenerationScenario {
    */
   failEstimateMessage?: string;
   /**
+   * How the mock answers `ESTIMATE_WORKFLOW_BATCH` (`useBatchEstimate()`), so a
+   * block can exercise its per-cell fallback locally.
+   *
+   * - `'supported'` (default) — prices each cell exactly as an
+   *   `ESTIMATE_WORKFLOW` of that body would be priced (`costPerGen`,
+   *   `failEstimate` and the training rules all apply per cell) and replies with
+   *   the snapshots in order plus the host's aggregate.
+   * - `'unsupported'` — replies `{ error: 'unsupported on this host' }`, the
+   *   host's generic answer for a message it has no handler for.
+   *   `estimateBatch()` rejects with `BatchEstimateError` code `'unsupported'`.
+   * - `'silent'` — never replies, which is what a host that PREDATES the message
+   *   does. `estimateBatch()` rejects with code `'timeout'` once its wait ends;
+   *   pass a short `timeoutMs` to it in a test.
+   *
+   * Live-tunable via `setScenario({ generation: { batchEstimate } })`.
+   */
+  batchEstimate?: 'supported' | 'unsupported' | 'silent';
+  /**
+   * Indices of batch cells the mock answers as NOT PRICED IN TIME — the snapshot
+   * the host returns for a cell when the call's time budget runs out before that
+   * cell priced: `{ workflowId:'failed', status:'failed', error:'estimate timed out' }`
+   * (the host's string, held once in `BATCH_ESTIMATE_CELL_TIMEOUT_ERROR`).
+   * The other cells price normally and the call still resolves, so this tests a
+   * PARTIAL grid: the cell is `ok: false`, `timedOut: true`, with
+   * `WorkflowEstimateError` code `'failed'`. Applies only with
+   * `batchEstimate: 'supported'`. Default: unset (no cell times out).
+   */
+  batchEstimateTimedOutCells?: number[];
+  /**
+   * Make `CANCEL_WORKFLOW` answer the way the real host answers a cancel it
+   * REFUSED because the estimate allowance is used up: `{ workflowId, status:
+   * 'processing' }`. The cancel is not applied, so later polls keep reporting
+   * the workflow as running. `true` refuses every cancel; an array refuses only
+   * those workflow ids. Use it to test a cancel button's "not cancelled, try
+   * again" path, including `useWorkflowBatch().cancelAll()`'s `refused` and
+   * `notAttempted` lists.
+   *
+   * Live-tunable via `setScenario({ generation: { cancelRefused } })`. Default:
+   * unset (every cancel applies).
+   */
+  cancelRefused?: boolean | readonly string[];
+  /**
+   * The terminal status each polled workflow ends with, so a grid can be tested
+   * with a mix of outcomes. Called once per workflow, on the poll that finishes
+   * it, with the workflow id and the body it was submitted with (`undefined`
+   * for an id this mock did not submit, such as one restored after a reload).
+   *
+   * `'failed'` and `'expired'` reply `{ workflowId, status, error }` with no
+   * `cost` and no images. Default: every workflow `'succeeded'`.
+   */
+  workflowOutcome?: (
+    workflowId: string,
+    body: WorkflowBody | undefined,
+  ) => 'succeeded' | 'failed' | 'expired';
+  /**
    * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
    * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
    * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
    * `WorkflowSubmitError` whose `code` is `'exception'`.
    *
-   * 🔴 THIS IS THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE, and that gap
-   * is how civitai/civitai-app-starters#251 stayed invisible: the balance /
-   * `insufficient` knobs model a budget REJECTION (a priced outcome the block
-   * recovers from with a top-up), so a block author testing "what if submit goes
-   * wrong" only ever saw the arm that resolves. The `failEstimate` knob is the
-   * estimate-side twin of this one.
+   * This knob was added for civitai/civitai-app-starters#251, when no other submit
+   * knob produced a rejection at all. The out-of-Buzz knobs
+   * ({@link MockBuzzScenario}) now emit this same shape, because production does;
+   * this one stays as the way to inject an arbitrary server message with the
+   * wallet untouched. The `failEstimate` knob is the estimate-side twin of this
+   * one.
    *
-   * Checked FIRST, before the disallowed-account / insufficient-Buzz / generic
-   * paths: a host-side throw pre-empts every server-side decision.
+   * Checked FIRST, before the disallowed-account / spend-cap / out-of-Buzz /
+   * generic paths: a host-side throw pre-empts every server-side decision.
    *
    * Default: unset (submits behave normally).
    */
@@ -306,34 +463,496 @@ export interface MockGenerationScenario {
    * check how your block's developer-facing error surface renders one.
    */
   failSubmitExceptionMessage?: string;
-  /** A single result image url (or `(body) => url`). */
+  /**
+   * Make every SUBMIT come back as a server SPEND-CAP refusal — the priced,
+   * RESOLVING shape `{ workflowId:'failed', status:'failed', cost:{ total }, error }`,
+   * where `total` is this generation's cost. `useBuzzWorkflow().submit()`
+   * RESOLVES it (no rejection); the block reads `status === 'failed'`.
+   *
+   * This is what the real submit returns when a cap stops the run before
+   * anything is spent: the app's per-generation budget, the viewer's daily (or
+   * private-run) cap, the per-app consent budget, the app's spend or rate limit,
+   * or a dev-session cap. 🔴 **Buying Buzz fixes none of them**, so a block must
+   * not offer a top-up for this reply. Running OUT of Buzz is a different shape —
+   * a rejection; see {@link MockBuzzScenario}.
+   *
+   * Pass the server's text (e.g. `'insufficient buzz budget: estimate 600 exceeds
+   * budget 200'`), or `true` for a default message. Checked after the
+   * disallowed-account path and before the out-of-Buzz path, matching the real
+   * ordering: the caps are checked before the orchestrator is asked to debit.
+   * Live-tunable via `setScenario({ generation: { submitCapRefusal } })`; set it
+   * to `undefined` there to clear it. URL: `?capRefusal=1` (or `=<text>`).
+   * Default: unset.
+   */
+  submitCapRefusal?: string | true;
+  /**
+   * Make ONE step of a `kind: 'workflow'` run fail, so a block can exercise a
+   * PARTIAL failure. Name the step as its snapshot entry names it: its `name`,
+   * or `'$<index>'` for a step the body left unnamed. The poll that finishes
+   * the workflow then answers `status: 'failed'` with:
+   *  - `steps`: every step before it `'succeeded'`, the named step `'failed'`
+   *    with an `error`, every step after it `'canceled'`;
+   *  - `cost.total`: the sum of the steps that succeeded (they stay charged), so
+   *    it is `> 0` unless the FIRST step is the one that fails;
+   *  - `imageUrls`: the images of the succeeded steps that did not set
+   *    `suppressOutput`.
+   *
+   * What the real orchestrator reports for the steps AFTER a failed one is its
+   * own business; `'canceled'` here is the mock's stand-in for "did not run".
+   *
+   * Ignored by every other kind, and when no step matches. Takes precedence
+   * over {@link workflowOutcome} for the workflow it applies to. Live-tunable
+   * via `setScenario({ generation: { failWorkflowStep } })`. Default: unset.
+   */
+  failWorkflowStep?: string;
+  /**
+   * Simulate the host getting NO price quote for a `kind: 'workflow'` body, and
+   * say why: `'rejected'` (the orchestrator refused the body), `'unavailable'`
+   * (no usable answer — the one cause a retry can clear) or `'unpriced'` (an
+   * answer without a price). `true` means `'unavailable'`.
+   *
+   *  - A workflow with a training step (`errorCode: 'training-quote-<cause>'`)
+   *    or a `repeat` step at any depth (`'workflow_repeat_unbounded'`) is
+   *    refused on BOTH `estimate()` and `submit()`, before any reservation.
+   *  - Any other workflow: `estimate()` FAILS with `'workflow_quote_<cause>'`
+   *    and no `cost`, while `submit()` still PROCEEDS, reserved at the CEILING —
+   *    {@link MockHostOptions.buzzBudget} × the number of steps — with no author
+   *    fee (no quote, no fee base). A failed estimate does not predict a refused
+   *    submit.
+   *
+   * `error` is the host's sentence for the cause. The mock has no orchestrator
+   * reason to pass on, so `'rejected'` always reads the host's reason-less form.
+   * Ignored by every other kind. Live-tunable via
+   * `setScenario({ generation: { workflowUnpriced } })`. Default: unset (every
+   * workflow is quoted at its per-step `costPerGen`).
+   */
+  workflowUnpriced?: boolean | MockWorkflowQuoteFailure;
+  /**
+   * A single result image url (or `(body) => url`). For a `kind: 'workflow'`
+   * run this (and {@link images}) is the LAST step that did not set
+   * `suppressOutput`; each earlier visible step gets its own labelled
+   * placeholder.
+   */
   image?: ImageSpec;
   /**
    * Multiple result image urls (or `(body) => url[]`). Takes precedence over
    * {@link image} when both are set.
    */
   images?: string[] | ((req: WorkflowBody) => string[]);
+  /**
+   * How many trained epochs a succeeded training run reports on
+   * {@link BlockWorkflowSnapshot.trainedEpochs} — epochs `1…n`, each tagged with
+   * the run's `$type`. Applies only to a PASS-THROUGH `{ kind: 'step', $type:
+   * 'training' }` / `'imageResourceTraining'` body (tagged with that `$type`) and
+   * to a `kind: 'training'` run started through `RUN_TRAINING` (tagged
+   * `'training'`, the step the host builds for it); every other body is
+   * unaffected.
+   *
+   * Default `0`: the field is omitted, as the host omits it for a run that
+   * produced no checkpoint. Opt in with `n > 0` to simulate a finished run —
+   * it is off by default because a real run on this arm is bounded by the
+   * spend rules below, so a default success would promise what the host may
+   * not deliver.
+   *
+   * The mock never fabricates a checkpoint url: the block contract does not
+   * include one, so nothing here does either. A training snapshot's `imageUrls` stand for
+   * the run's SAMPLE images only (the same {@link image}/{@link images} knobs
+   * apply).
+   *
+   * 🔴 The real host's spend and timeout rules for this arm (see
+   * `WorkflowBodyPassThroughStep.maxBuzz` in `@civitai/app-sdk/blocks`) are
+   * NOT simulated: the mock neither quotes nor times out, so a success here
+   * says nothing about whether your run is quoted, what it costs, or whether
+   * it finishes.
+   *
+   * Snapshot-only: the app-queue read (`QUERY_APP_WORKFLOWS`) replies with the
+   * canned {@link MockHostOptions.appWorkflows} rows verbatim — they carry no
+   * body, so the mock cannot tell a training row from any other. To exercise
+   * {@link AppWorkflow.trainedEpochs}, put it on the rows you pass there.
+   */
+  trainedEpochs?: number;
+  /**
+   * When set, a succeeded pass-through training snapshot also carries this as
+   * {@link BlockWorkflowSnapshot.publishedModel} — simulating a run the viewer
+   * has started (`published: false`) or finished (`published: true`) publishing
+   * through the model wizard. Default: unset (field omitted). For the app-queue
+   * read, put `publishedModel` (and `trainedEpochs`) on the rows you pass as
+   * `appWorkflows`.
+   */
+  trainingPublishedModel?: BlockPublishedModel;
+  /**
+   * The 3D models a succeeded PASS-THROUGH step reports on
+   * {@link BlockWorkflowSnapshot.model3dOutputs} — what a `polyGen` job returns.
+   * As on the real host, every labelled `url` is ALSO in the snapshot's
+   * `imageUrls`: when set, the mock answers with exactly these urls there, in
+   * this order, unless {@link images} / {@link image} say otherwise (then the
+   * labels are sent as given and it is on you to keep the two consistent).
+   *
+   * Applies only to a pass-through `{ kind: 'step', $type }` body — the only arm
+   * the host labels. Default: unset, and the field is OMITTED, as the host omits
+   * it for a workflow that produced no 3D model.
+   *
+   * Snapshot-only, like {@link trainedEpochs}: for the app-queue read put
+   * `model3dOutputs` on the rows you pass as {@link MockHostOptions.appWorkflows}.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
 }
 
 /**
- * BUZZ scenario controls — simulate a balance so the insufficient-Buzz / top-up
- * UX is exercisable. The mock host treats `balance` as a spendable wallet:
- * each succeeding generation DEBITS its cost; a submit whose cost would exceed
- * the remaining balance resolves to an insufficient-Buzz `failed` snapshot
- * (exercising the Top-Up CTA), and `OPEN_BUZZ_PURCHASE` REFILLS the balance.
+ * The pass-through training `$type` a body names, if any. Exact match — the
+ * orchestrator's `$type` discriminator is case-sensitive. Only the pass-through
+ * arm carries a `$type`, so no separate `kind` narrow is needed.
+ */
+const passThroughTrainingType = (
+  body: WorkflowBody,
+): BlockTrainedEpoch['$type'] | undefined => {
+  const t = (body as { $type?: unknown }).$type;
+  return t === 'training' || t === 'imageResourceTraining' ? t : undefined;
+};
+
+/**
+ * The orchestrator `$type` a body's run trains with, if it trains at all: the
+ * pass-through training `$type`s above, and `'training'` for a
+ * `kind: 'training'` body — the host builds an ai-toolkit `training` step for it.
+ */
+const trainingStepType = (body: WorkflowBody): BlockTrainedEpoch['$type'] | undefined =>
+  body.kind === 'training' ? 'training' : passThroughTrainingType(body);
+
+/**
+ * The training bounds the mock enforces — COPIES of `@civitai/app-sdk/blocks`'s
+ * `BLOCK_TRAINING_DATASET_MAX_ITEMS`, `BLOCK_TRAINING_CAPTION_MAX_CHARS` and
+ * `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`, deliberately not value-imported: a value
+ * import of a symbol the newest PUBLISHED app-sdk lacks raises this package's
+ * peer floor (`tests/guards/blocks-react-peer-floor.test.mjs`). The copy is held
+ * to the SDK's value by `test/trainingKindFlow.test.tsx`, which imports both.
+ */
+export const MOCK_TRAINING_BOUNDS = {
+  datasetMaxItems: 50,
+  captionMaxChars: 8192,
+  maxBuzzPerRun: 5000,
+} as const;
+
+/** A consumer-blob key: the host's `BLOB_KEY_REGEX` (civitai/civitai#6461). */
+const MOCK_BLOB_KEY = /^[A-Za-z0-9]{1,64}(\.[A-Za-z0-9]{1,8})?$/;
+/** The path a blob url names its key under. */
+const MOCK_BLOB_PATH_PREFIX = '/v2/consumer/blobs/';
+/** The host's cap on an item's `air` string (`SOURCE_IMAGE_URL_MAX`). */
+const MOCK_AIR_MAX_CHARS = 2048;
+
+/**
+ * The blob key an item's `air` names, or `null` — the host's
+ * `trainingBlobKeyFromAir`: the bare key, or an https url whose path is exactly
+ * `/v2/consumer/blobs/<key>` (its query dropped).
+ *
+ * ⚠️ NARROWER THAN THE HOST: the real check also requires the url to be on a
+ * Civitai-hosted origin; the mock accepts any https host so a harness can use
+ * placeholder urls. Name an item by its `air` (the bare key) and the two agree.
+ */
+const mockBlobKeyFromAir = (air: string): string | null => {
+  if (MOCK_BLOB_KEY.test(air)) return air;
+  let url: URL;
+  try {
+    url = new URL(air);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || !url.pathname.startsWith(MOCK_BLOB_PATH_PREFIX)) return null;
+  const key = url.pathname.slice(MOCK_BLOB_PATH_PREFIX.length);
+  return MOCK_BLOB_KEY.test(key) ? key : null;
+};
+
+/** The host's key identity (`trainingBlobKeyIdentity`): keys are case-insensitive. */
+const blobKeyIdentity = (key: string): string => key.toLowerCase();
+
+/**
+ * The server's `kind: 'training'` item schema (`blockTrainingDatasetItemsSchema`,
+ * civitai/civitai#6461), mirrored for the ESTIMATE: 1…50 items, each EXACTLY
+ * `{ air, caption }` with a caption up to 8,192 characters, every `air` a blob key
+ * or blob url, and no blob named twice. Returns the items with each `air`
+ * canonicalised to its bare key — what the server quotes and hashes — or the
+ * refusal message.
+ */
+function resolveTrainingItems(
+  items: unknown,
+): { items: Array<{ air: string; caption: string }> } | { refusal: string } {
+  if (!Array.isArray(items)) return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  if (items.length < 1 || items.length > MOCK_TRAINING_BOUNDS.datasetMaxItems) {
+    return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  }
+  const shaped = items.every((it) => {
+    if (typeof it !== 'object' || it === null || Array.isArray(it)) return false;
+    const keys = Object.keys(it);
+    if (keys.length !== 2 || !keys.includes('air') || !keys.includes('caption')) return false;
+    const { air, caption } = it as { air: unknown; caption: unknown };
+    return (
+      typeof air === 'string' &&
+      air.length <= MOCK_AIR_MAX_CHARS &&
+      typeof caption === 'string' &&
+      caption.length <= MOCK_TRAINING_BOUNDS.captionMaxChars
+    );
+  });
+  if (!shaped) return { refusal: MOCK_TRAINING_ITEMS_ERROR };
+  const out: Array<{ air: string; caption: string }> = [];
+  const seen = new Set<string>();
+  for (const it of items as Array<{ air: string; caption: string }>) {
+    const key = mockBlobKeyFromAir(it.air);
+    if (key === null) return { refusal: MOCK_TRAINING_AIR_ERROR };
+    if (seen.has(blobKeyIdentity(key))) return { refusal: MOCK_TRAINING_DUPLICATE_ERROR };
+    seen.add(blobKeyIdentity(key));
+    out.push({ air: key, caption: it.caption });
+  }
+  return { items: out };
+}
+
+/**
+ * The real server's refusal for ANY money call from a token without the spend
+ * scope: civitai's `estimateWorkflow`, `estimateWorkflowBatch`, `submitWorkflow`
+ * and the training procedures all throw `FORBIDDEN` with exactly this message
+ * BEFORE any pricing, rate-limit or budget work. ONE constant for every mock
+ * path that refuses on `consentGranted === false`, so the copies cannot drift.
+ */
+export const MOCK_SPEND_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
+/** The real server's refusal for an unknown, expired or spent quote on `RUN_TRAINING`. */
+export const MOCK_TRAINING_QUOTE_GONE_ERROR =
+  'training quote not found, expired or already used — estimate again';
+/**
+ * The estimate's refusals for `items` outside the server's schema. The first two
+ * are the server's own custom messages (`blockTrainingDatasetItemsSchema`); the
+ * third stands for every other zod issue (count, caption length, missing or extra
+ * keys), whose real text is zod's formatting and not a contract.
+ */
+export const MOCK_TRAINING_AIR_ERROR =
+  'air must be a consumer blob key or its Civitai-hosted blob url';
+export const MOCK_TRAINING_DUPLICATE_ERROR = 'a training dataset names each image once';
+export const MOCK_TRAINING_ITEMS_ERROR =
+  'training items must be 1 to 50 { air, caption } entries with captions of at most 8192 characters';
+/** The host code for a quote naming an image the host did not upload for the block. */
+const MOCK_TRAINING_NOT_UPLOADED_HERE: BlockRunTrainingHostError = 'training data not uploaded here';
+/** How many images a default `trainingData` upload returns. */
+const DEFAULT_TRAINING_DATA_UPLOAD_COUNT = 3;
+/**
+ * The forced `RUN_TRAINING` errors that settle BEFORE the server claims (and so
+ * consumes) the quote: the host's own gate and dialog codes. Derived from the
+ * host-code list — every code except `submission-unconfirmed`, which the host
+ * emits only after a submit was sent. Any other forced error (a server message
+ * such as "Not enough Buzz for this training run.") stands for a refusal the
+ * server made AFTER its claim, so it consumes the quote.
+ */
+const PRE_CLAIM_RUN_TRAINING_ERRORS: ReadonlySet<string> = new Set(
+  RUN_TRAINING_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
+);
+
+type MockWorkflowBody = Extract<WorkflowBody, { kind: 'workflow' }>;
+
+/**
+ * The host's cell cap for one `ESTIMATE_WORKFLOW_BATCH` (civitai/civitai
+ * `BLOCK_ESTIMATE_BATCH_MAX_CELLS`). The hook's `BATCH_ESTIMATE_MAX_CELLS` is the
+ * same number; the mock keeps its own copy so it refuses exactly as the host does
+ * when a block bypasses the hook.
+ */
+const MOCK_ESTIMATE_BATCH_MAX_CELLS = 16;
+/** The server's per-cell refusal of a `kind: 'training'` body inside a batch. */
+const MOCK_TRAINING_IN_BATCH_ERROR =
+  'a training estimate cannot be part of a batch — estimate it on its own';
+/** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
+const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
+/** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
+const TRAINING_QUOTE_TTL_MS = 15 * 60_000;
+
+/**
+ * The per-job ceiling of a confirmed step — a COPY of `@civitai/app-sdk/blocks`'s
+ * `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, not value-imported for the reason
+ * given on {@link MOCK_TRAINING_BOUNDS}. Pinned to the SDK's value by
+ * `test/confirmedStepFlow.test.tsx`, which imports both.
+ */
+export const MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+/** The real quote lifetime (`BLOCK_QUOTE_GRANT_TTL_SECONDS`, 15 min) — the training quote's, shared. */
+const STEP_QUOTE_TTL_MS = TRAINING_QUOTE_TTL_MS;
+/**
+ * The real server's refusal when the host reads back a step quote it does not
+ * hold — unknown, expired, or already used by an earlier run. This is the
+ * PREVIEW's message, which is the one `RUN_CONFIRMED_STEP` reaches first.
+ */
+export const MOCK_STEP_QUOTE_GONE_ERROR = 'step quote not found or expired';
+/** The real server's refusal for a confirmed run whose body is not the quoted one. */
+export const MOCK_STEP_BODY_MISMATCH_ERROR =
+  'the step body differs from the one that was quoted — estimate again';
+/**
+ * The real server's refusal for a `quoteId` body sent as a plain
+ * `SUBMIT_WORKFLOW`: nothing but `RUN_CONFIRMED_STEP`'s dialog records the
+ * viewer's confirmation.
+ */
+export const MOCK_STEP_NOT_CONFIRMED_ERROR =
+  'this step has not been confirmed by the viewer in this session';
+/**
+ * The forced `RUN_CONFIRMED_STEP` errors that settle BEFORE the server claims
+ * (and so consumes) the quote: the host's own gate, dialog and daily-limit
+ * codes. Derived from the host-code list — every code except
+ * `submission-unconfirmed`, which the host emits only after a submit was sent.
+ */
+const PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS: ReadonlySet<string> = new Set(
+  RUN_CONFIRMED_STEP_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
+);
+
+/**
+ * The orchestrator's training `$type`s, which never run as a confirmed step —
+ * matched CASE-INSENSITIVELY, as the server refuses a caller-supplied `$type`
+ * (`isTrainingStepTypeIgnoringCase`): `Training` or `IMAGERESOURCETRAINING` is
+ * refused like the canonical spelling. Only for refusing a submitted `$type`;
+ * the trained-epochs simulation keys on the exact spelling, as the host does.
+ */
+const TRAINING_STEP_TYPES_FOLDED: ReadonlySet<string> = new Set([
+  'training',
+  'imageresourcetraining',
+]);
+const isTrainingStepTypeName = (stepType: string): boolean =>
+  TRAINING_STEP_TYPES_FOLDED.has(stepType.toLowerCase());
+
+/**
+ * The orchestrator `$type` of a PASS-THROUGH step body, else `undefined`. Keyed
+ * on the VALUE of `step`, as the host keys it — a registered step names a
+ * `step` id and is a different arm.
+ */
+const passThroughStepType = (body: WorkflowBody): string | undefined => {
+  const b = body as { kind?: unknown; step?: unknown; $type?: unknown };
+  return b.kind === 'step' && b.step === undefined && typeof b.$type === 'string'
+    ? b.$type
+    : undefined;
+};
+
+/**
+ * The real server's refusal for a TRAINING `$type` (`training`,
+ * `imageResourceTraining`) on the confirmed-step path — at the estimate, where a
+ * quote would otherwise be granted, and at the confirmed submit. Training runs
+ * have their own kind.
+ */
+export const MOCK_STEP_TRAINING_TYPE_ERROR =
+  "a training step type cannot run as a confirmed step — use kind:'training'";
+/**
+ * The fixed PREFIX of the real server's refusal for a confirmed-step body whose
+ * `input` is not plain JSON. The full message continues with the offending path
+ * and what was found there (`body.input.when is a Date`), which varies — match on
+ * this prefix.
+ */
+export const MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX =
+  'a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ';
+
+/** Thrown by {@link canonicalStepJson} for a value that is not plain JSON. */
+class NonJsonStepBodyError extends Error {}
+
+/** How the server names a non-JSON value in its refusal. */
+const describeNonJson = (value: unknown): string => {
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'number') return `the non-finite number ${String(value)}`;
+  if (typeof value === 'object' && value !== null) {
+    const name = (Object.getPrototypeOf(value) as { constructor?: { name?: string } } | null)
+      ?.constructor?.name;
+    return name ? `a ${name}` : 'a non-plain object';
+  }
+  return `a ${typeof value}`;
+};
+
+/**
+ * The canonical form the server hashes a quoted body in, mirrored: JSON with
+ * object keys sorted at EVERY depth, so two bodies with the same values compare
+ * equal however they were written. EXACT, OR IT THROWS — only plain objects,
+ * arrays, strings, finite numbers, booleans and `null` are accepted. A `Date`,
+ * `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an `undefined`
+ * array element or an empty slot in a sparse array throws {@link NonJsonStepBodyError} naming the path, because a
+ * looser form would give two different such values the same bytes. An object
+ * key whose value is `undefined` is skipped, as JSON drops it.
+ */
+const canonicalStepJson = (value: unknown, path: string): string => {
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    // BY INDEX, not `map`: `map` and `join` skip a hole, so a sparse array would
+    // bind as if its empty slots were not there. The server refuses a hole.
+    const entries: string[] = [];
+    for (let i = 0; i < value.length; i += 1) {
+      if (!(i in value)) throw new NonJsonStepBodyError(`${path}[${i}] is an empty array slot`);
+      entries.push(canonicalStepJson(value[i], `${path}[${i}]`));
+    }
+    return `[${entries.join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value) as unknown;
+    if (proto !== Object.prototype && proto !== null) {
+      throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+    }
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((k) => record[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalStepJson(record[k], `${path}.${k}`)}`);
+    return `{${entries.join(',')}}`;
+  }
+  throw new NonJsonStepBodyError(`${path} is ${describeNonJson(value)}`);
+};
+
+/**
+ * What the server binds a step quote to: the body WITHOUT its `quoteId` (the one
+ * field the run adds), in canonical form. Returns the fingerprint, or the
+ * server's refusal message when the body is not plain JSON.
+ */
+const stepBodyFingerprint = (
+  body: Record<string, unknown>,
+): { fingerprint: string } | { refusal: string } => {
+  const { quoteId: _quoteId, ...rest } = body;
+  try {
+    return { fingerprint: canonicalStepJson(rest, 'body') };
+  } catch (e) {
+    if (e instanceof NonJsonStepBodyError) {
+      return { refusal: `${MOCK_STEP_NON_JSON_INPUT_ERROR_PREFIX}${e.message}` };
+    }
+    throw e;
+  }
+};
+
+/**
+ * BUZZ scenario controls — simulate a viewer who runs out of Buzz. The mock host
+ * treats `balance` as a spendable wallet: each succeeding generation DEBITS its
+ * cost, a submit whose cost would exceed the remaining balance fails as
+ * OUT OF BUZZ, and `OPEN_BUZZ_PURCHASE` REFILLS the balance.
+ *
+ * 🔴 OUT OF BUZZ **REJECTS** — `useBuzzWorkflow().submit()` throws a
+ * `WorkflowSubmitError` with code `'exception'`, the reason on
+ * `err.snapshot.error`. That is what production does. The orchestrator refuses
+ * the debit (HTTP 403), the server turns that into a thrown `BAD_REQUEST`, and
+ * the host replies with its cost-less `failureSnapshot(err)`. These knobs used to
+ * RESOLVE a priced `failed` snapshot instead, so a block tested against the mock
+ * could build a "resolved refusal → top-up" flow that production never reaches.
+ *
+ * Nothing structural tells this rejection apart from other `'exception'`s (the
+ * server message is upstream text, not a contract). To decide whether to offer
+ * a top-up, compare the viewer's spendable balance (`useBuzzBalance()`) with the
+ * quoted cost — never the error text. In the mock, that balance is
+ * {@link MockHostOptions.buzzBalance}, which is separate from `balance` below.
+ *
+ * A priced, RESOLVING refusal is a spend CAP, which a top-up cannot fix — see
+ * {@link MockGenerationScenario.submitCapRefusal}.
  */
 export interface MockBuzzScenario {
   /**
    * Simulated spendable balance. When set, generations debit against it and a
-   * gen that would exceed it returns an insufficient-Buzz outcome. When
-   * `undefined`, balance is NOT simulated (back-compat: only the legacy
-   * `failMode` drives insufficiency).
+   * gen that would exceed it is refused as out of Buzz (a REJECTION, see above).
+   * When `undefined`, balance is NOT simulated (back-compat: only the legacy
+   * `failMode` and {@link insufficient} drive the out-of-Buzz path).
    */
   balance?: number;
   /**
-   * Force every submit down the insufficient-Buzz path regardless of balance.
-   * Equivalent to the legacy `failMode: 'insufficient'`; provided here so the
-   * insufficient UX is reachable from the `buzz` group alone.
+   * Force every submit down the out-of-Buzz path regardless of balance — it
+   * REJECTS with code `'exception'` (see above). Equivalent to the legacy
+   * `failMode: 'insufficient'`; provided here so the path is reachable from the
+   * `buzz` group alone. `OPEN_BUZZ_PURCHASE` clears it — and clears
+   * `failMode: 'insufficient' | 'all'` too (back to `'none'`), so a top-up
+   * followed by a retry succeeds whichever knob forced the out-of-Buzz state.
    */
   insufficient?: boolean;
 }
@@ -377,8 +996,10 @@ export interface MockStorageScenario {
    * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
    * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
    * bytes (`octet_length(value::jsonb::text)`), which is larger for every
-   * container — up to ~1.5x for a long array. So this ceiling is up to half
-   * again more generous than production's, and unlike the mock's other known
+   * container — ~1.5x for a long array of small integers, and measured up to
+   * 44.4x for a numeric-heavy one (an array of `1e308`). So this ceiling is
+   * more generous than production's, by a factor that depends on the data,
+   * and unlike the mock's other known
    * divergences that error is PERMISSIVE: a fixture that fits here can be
    * rejected live. civitai/civitai-app-starters#347. Size against
    * `getQuota()`, and treat a local pass as evidence, not proof.
@@ -452,6 +1073,24 @@ export interface MockSharedScenario {
    * error UX.
    */
   failNext?: number;
+  /**
+   * Refuse the next N shared WRITES (`append`/`update`/`vote`/`unvote`/
+   * `withdraw`/`report`) as RATE-LIMITED (counts down), the way the platform
+   * does when a per-(viewer, app) budget is empty: the reply carries the
+   * server's refusal text plus `rateLimit` metadata, so the hook rejects with
+   * `SharedStorageRateLimitError`. Checked before {@link failNext}, as the
+   * server checks the budget before attempting the write. Live-tunable via
+   * `setScenario({ shared: { rateLimitNext } })`.
+   */
+  rateLimitNext?: number;
+  /**
+   * The metadata a {@link rateLimitNext} refusal carries. `retryAfterSeconds`
+   * defaults to 60; `retryAt` defaults to now + `retryAfterSeconds`, computed
+   * when each refusal is sent. Pass a malformed value to exercise a block's
+   * fallback: the hook parses it, ignores the malformed value and throws a plain
+   * `Error`.
+   */
+  rateLimit?: { retryAfterSeconds?: number; retryAt?: string };
 }
 
 /**
@@ -474,6 +1113,16 @@ export interface MockHostOptions {
    * real mint WITHHOLDS it until the viewer consents, so this defaults to
    * `false` — the first token carries NO budgeted scope, and `REQUEST_CONSENT`
    * grants it + pushes a `TOKEN_REFRESH` (the lazy-consent round-trip).
+   *
+   * 🔴 WHILE IT IS `false` THE MOCK ENFORCES THE SCOPE, as the real server does:
+   * `ESTIMATE_WORKFLOW`, `ESTIMATE_WORKFLOW_BATCH` and `SUBMIT_WORKFLOW` (and the
+   * training paths) refuse the whole call with `block lacks ai:write:budgeted
+   * scope`, in the shape the page host sends for each. `submit()` recovers on
+   * its own (its consent prompt-and-retry grants and re-sends with the same
+   * idempotency key); `estimate()` and the batch estimate do NOT retry, so a
+   * block must call `requestConsent({ scopes: ['ai:write:budgeted'] })` and
+   * estimate again once the grant lands. A test that is not ABOUT consent sets
+   * this to `true`.
    */
   consentGranted?: boolean;
   /**
@@ -496,8 +1145,8 @@ export interface MockHostOptions {
   consentGrantable?: boolean;
   /**
    * How submits behave. Default `'none'` (all succeed). See
-   * {@link MockHostFailMode} — `'some'` REJECTS while `'all'`/`'insufficient'`
-   * RESOLVE, since #251.
+   * {@link MockHostFailMode} — every failing mode REJECTS with code
+   * `'exception'`; `'all'`/`'insufficient'` model an out-of-Buzz viewer.
    */
   failMode?: MockHostFailMode;
   /**
@@ -506,6 +1155,45 @@ export interface MockHostOptions {
    * for that type. Defaults to a curated Checkpoint + LoRA pick.
    */
   cannedPicks?: Partial<Record<BlockResourcePickerType, CannedPick | null>>;
+  /**
+   * What a MULTI-select `OPEN_RESOURCE_PICKER` (`multiple: { max }`, LoRA only)
+   * answers with: these picks, in this order, cut to the request's `max` (itself
+   * clamped to 5) — the real host's `selectedResources`. `null` or `[]`
+   * simulates a dismissed picker (→ an empty list). Defaults to two curated
+   * LoRAs, or to `[]` when `cannedPicks.LORA` is `null`, so one "the viewer
+   * dismissed" setting covers both pick modes.
+   *
+   * The mock applies the real host's refusals too: `multiple` with a Checkpoint,
+   * or a `max` that is not a whole number ≥ 1, is answered with an `error`.
+   */
+  cannedMultiPicks?: CannedPick[] | null;
+  /**
+   * The viewer's pickable images, as `OPEN_IMAGE_PICKER` answers from them
+   * (what `useImagePicker().open()` resolves with). The mock has no picker UI:
+   * it answers at once, as if the viewer picked from the top of this list.
+   *
+   * The list is first FILTERED to the request's `sources` (all of it when the
+   * request names none). A single pick then answers with the first image left,
+   * and a multi pick (`multiple: { max }`) with the first `max` of them (`max`
+   * itself clamped to 20). When nothing is left the reply is a dismiss. `null`
+   * or `[]` simulates a viewer who dismisses every time.
+   *
+   * As on the real host, an entry repeating an earlier one (same `source` and
+   * `url`) is offered once, and an `imageId` on a `'generated'` entry is
+   * dropped. Nothing else is checked: the mock does not model browsing levels
+   * or ratings, so it hands back whatever `nsfwLevel` an entry carries.
+   *
+   * Defaults to one posted image (with an `imageId`) and one generated image
+   * (without one), so both libraries answer out of the box.
+   *
+   * The mock applies the real host's refusals too: a `sources` that is not a
+   * non-empty array of `'posted'` / `'generated'`, or a `multiple` that is
+   * not `{ max }` with a whole number ≥ 1, is answered with an `error`, and so
+   * is any request on a
+   * model-slot `context` (`unsupported on this host`: the picker is a page-app
+   * affordance). Live-tunable via {@link MockHost.setScenario}.
+   */
+  cannedImagePicks?: BlockPickedImageInfo[] | null;
   /**
    * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` when the block
    * requests `purpose:'display'` (the default) — what `useImageUpload().open()`
@@ -549,8 +1237,8 @@ export interface MockHostOptions {
    */
   generation?: MockGenerationScenario;
   /**
-   * BUZZ scenario: simulated balance + force-insufficient. See
-   * {@link MockBuzzScenario}.
+   * BUZZ scenario: simulated balance + force-out-of-Buzz. Both REJECT the
+   * submit, as production does. See {@link MockBuzzScenario}.
    */
   buzz?: MockBuzzScenario;
   /**
@@ -558,8 +1246,9 @@ export interface MockHostOptions {
    * block via the host-mediated `GET_BUZZ_BALANCE` → `BUZZ_BALANCE_RESULT`
    * bridge (what the `useBuzzBalance` hook reads). Distinct from the
    * {@link MockBuzzScenario.balance} spendable-wallet knob, which only drives
-   * the insufficient-Buzz / top-up SUBMIT path — this is the displayable
-   * per-pool balance. Absent → {@link DEFAULT_BUZZ_BALANCE} (a plausible
+   * the out-of-Buzz SUBMIT rejection — this is the displayable per-pool balance,
+   * and the number a block should compare with the quoted cost to decide on a
+   * top-up. Set both when exercising that flow. Absent → {@link DEFAULT_BUZZ_BALANCE} (a plausible
    * non-zero wallet, so a block shows a balance out of the box).
    */
   buzzBalance?: MockBuzzBalance;
@@ -641,8 +1330,9 @@ export interface MockHostOptions {
   /**
    * The bare (post-less) scanned `Image` row ids returned from
    * `PUBLISH_GENERATION_OUTPUTS` (what `usePublishGenerationOutputs().publish()`
-   * resolves with). Absent → {@link DEFAULT_PUBLISH_IMAGE_IDS}. Live-tunable via
-   * {@link MockHost.setScenario}.
+   * resolves with). Absent → {@link DEFAULT_PUBLISH_IMAGE_IDS}. Each reply makes
+   * these ids postable once in a `CREATE_POST_FROM_APP` `published` source (see
+   * {@link createPostResult}). Live-tunable via {@link MockHost.setScenario}.
    */
   publishImageIds?: number[];
   /**
@@ -684,6 +1374,21 @@ export interface MockHostOptions {
    */
   wildcardPackError?: BlockWildcardPackErrorCode;
   /**
+   * The parsed file returned from `GET_RESOURCE_FILE` (what `useResourceFile`
+   * reads). Absent → {@link DEFAULT_RESOURCE_FILE}, one UI-format graph. Ignored
+   * when {@link resourceFileError} is set. The mock returns it whatever
+   * `modelVersionId` / `fileId` the block asks for.
+   */
+  resourceFile?: BlockResourceFile;
+  /**
+   * Force `GET_RESOURCE_FILE` to reply with this code from the CLOSED set
+   * (`not-found` | `forbidden` | `unauthorized` | `too-large` | `parse-failed` |
+   * `busy` | `rate-limited`) instead of a file — exercises `useResourceFile`'s
+   * error UI. Absent → a file is returned. Live-tunable via
+   * {@link MockHost.setScenario}, where passing the key as `undefined` clears it.
+   */
+  resourceFileError?: BlockResourceFileErrorCode;
+  /**
    * Force `SET_COLLECTION_FOLLOW` to reply with an `error` instead of writing —
    * exercises `useCollectionFollow`'s refusal handling. Pass a
    * {@link BlockCollectionFollowErrorCode} for a HOST refusal (`'declined'` is
@@ -699,10 +1404,52 @@ export interface MockHostOptions {
    */
   collectionFollowError?: BlockCollectionFollowErrorCode | string;
   /**
+   * The images `GET_ENTITY_REACTIONS` / `SET_ENTITY_REACTION` know, keyed by
+   * image id: counts and the viewer's existing reactions. An id that is not
+   * seeded starts with zero counts and no reactions. Writes persist for the
+   * life of the mock. Live-tunable via {@link MockHost.setScenario} (a new seed
+   * REPLACES the state).
+   *
+   * 🔴 BOTH MESSAGES ARE SCOPE-GATED HERE, as on the real host: unless
+   * {@link MockHostOptions.declaredScopes} includes `social:react:self`, every
+   * call replies `needs-consent`. A `null` {@link MockHostOptions.viewer}
+   * replies `sign-in-required`. Any well-formed ticket is accepted — a real one
+   * is an HMAC this mock cannot verify — but an image WITHOUT one is refused,
+   * as production refuses it. See `./mockHostReactions.ts`.
+   */
+  reactionStates?: Record<number, MockReactionSeed>;
+  /**
+   * Force both reaction messages to reply with this `error` once the request
+   * would otherwise proceed — one of `REACTION_ERROR_CODES` (`rate-limited`,
+   * `entity-unavailable`, `review-mode`, `not-ready`…) or any string for a code
+   * a newer host might add. Absent → the request succeeds. Live-tunable via
+   * {@link MockHost.setScenario}; pass `null` there to clear it.
+   *
+   * `review-mode` and `not-ready` are answered FIRST, ahead of the sign-in,
+   * payload and scope checks, because the real host's gate checks them first;
+   * every other code is answered only once those pass, as a server answer is.
+   */
+  reactionError?: BlockEntityReactionErrorCode | string | null;
+  /**
    * The post reported on `CREATE_POST_FROM_APP` (what
    * `useCreatePostFromApp().createPost()` resolves with). Absent →
    * {@link DEFAULT_CREATE_POST_RESULT}. Ignored when {@link createPostError} is
    * set. Live-tunable via {@link MockHost.setScenario}.
+   *
+   * A `{ kind: 'published', imageIds }` source is checked as the server's
+   * `resolveAppPublishedImages` checks it (civitai/civitai#5639). Production
+   * accepts the viewer's own images that this app stamped and that are not in a
+   * post yet, from this session or an earlier one. The mock has no earlier
+   * sessions, so it accepts ONLY ids issued as postable on this mock instance
+   * (an accepted `OPEN_IMAGE_UPLOAD { bytes }` reply,
+   * {@link uploadImageBytesResult}, or a `PUBLISH_GENERATION_OUTPUTS` reply,
+   * {@link publishImageIds}) plus the ids seeded with {@link postableImageIds}.
+   * Any other id, a picked `useImageUpload()` id (production leaves it
+   * unstamped) or an id a previous post already adopted is refused with
+   * `an image is not available to post`, and a source with no positive integer
+   * id with `no valid image ids in a published source`. A refused post adopts
+   * nothing. `workflow` sources are not checked. The mock does not model the
+   * scan wait, the viewer's ceiling or the server's input schema.
    */
   createPostResult?: BlockCreatePostResult;
   /**
@@ -722,6 +1469,243 @@ export interface MockHostOptions {
    * exercised by `declined`, never by the timing or the content.
    */
   createPostError?: BlockCreatePostHostError | string;
+  /**
+   * The images an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` returns — what
+   * `useImageUpload({ purpose: 'trainingData' }).open()` resolves with. Absent →
+   * {@link DEFAULT_TRAINING_DATA_UPLOAD_COUNT} images with FRESH keys on every
+   * upload, so two uploads never collide. `null` (or `[]`) → the viewer cancelled.
+   * Live-tunable via {@link MockHost.setScenario}.
+   *
+   * The mock REMEMBERS every key it hands out, per install, as the real host
+   * does per block instance: `RUN_TRAINING` refuses a quote naming any other key
+   * with `training data not uploaded here`, before any other check, and keeps the
+   * quote. Keys compare case-insensitively; an item may name its blob by the
+   * `url` too.
+   *
+   * KIND-FAITHFUL, like the rest of the training path: the estimate refuses items
+   * outside the server's schema, a quote is run at most once and is checked
+   * against the whole body it was quoted for (minus `quoteId`), and every
+   * training call needs `ai:write:budgeted` on the token
+   * ({@link MockHostOptions.consentGranted}) and a signed-in viewer. What it
+   * cannot model: blob storage, the Civitai-hosted-url rule on `air`, the flag,
+   * and the page-only / dev-token refusals.
+   */
+  cannedTrainingDataUpload?: BlockTrainingDataImage[] | null;
+  /**
+   * Make `RUN_TRAINING` refuse EVERY quote with `training data not uploaded
+   * here`, as the real host does after a page reload forgot the uploads. Settles
+   * before the server claims the quote, so the quote survives. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  trainingDataNotUploadedHere?: boolean;
+  /**
+   * The Buzz total a `kind: 'training'` estimate quotes. Default `500`. Above
+   * `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000) the estimate fails exactly as the
+   * server's does. The run's terminal snapshot reports this as its `cost`.
+   * Live-tunable via {@link MockHost.setScenario}.
+   */
+  trainingQuoteTotal?: number;
+  /**
+   * Force `RUN_TRAINING` to reply with an `error` instead of starting a run — a
+   * {@link BlockRunTrainingHostError} (`'declined'`: the viewer dismissed the
+   * dialog, no run; `'submission-unconfirmed'`: the run MAY exist) or any other
+   * string for a server message. Absent → the run starts.
+   *
+   * Whether the QUOTE survives follows the real flow: the host's own gate and
+   * dialog codes (`declined`, `review-mode`, `block is not ready`, `sign in to
+   * train`, `invalid training request`, `no block token`, `training data not
+   * uploaded here`) settle before the
+   * server claims the quote, so it stays runnable; `submission-unconfirmed` and
+   * any server message settle after the claim, so it is used up — re-running it
+   * gets the quote-gone error. Live-tunable via {@link MockHost.setScenario};
+   * `undefined` clears it.
+   *
+   * 🔴 Same real gap as {@link createPostError}: the consent dialog is HOST
+   * chrome, so the mock settles immediately where the real host waits on a click.
+   */
+  runTrainingError?: BlockRunTrainingHostError | string;
+  /**
+   * Make `RUN_TRAINING` resolve the server's spend-cap or temporary-availability
+   * refusal instead of a run:
+   * a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total: <quote> },
+   * error: <this string> }` — the shape the real training submit returns when
+   * the viewer's daily / private-run Buzz cap, the per-app consent budget, the
+   * app's spend or rate limit (or its "temporarily unavailable" deny), or a
+   * dev-session cap stops the run (refunded, no run). `useRunTraining()` rejects
+   * it with `.refused`. Pass the server's text, e.g. `'daily Buzz cap reached: …'`.
+   * 🔴 The quote is CONSUMED, as on the server (it is claimed before the cap
+   * checks): running the same `quoteId` again gets the quote-gone error — estimate
+   * again. Absent → the run starts. Live-tunable via {@link MockHost.setScenario};
+   * `setScenario({ runTrainingCapRefusal: undefined })` clears it.
+   */
+  runTrainingCapRefusal?: string;
+  /**
+   * Force `RUN_CONFIRMED_STEP` to reply with an `error` instead of starting the
+   * job — a {@link BlockRunConfirmedStepHostError} or any other string for a
+   * server message. Absent → the viewer "confirms" and the job starts.
+   *
+   *  - `'declined'` — the viewer dismissed the confirm. No job.
+   *  - `'daily-limit-exceeded'` — the job would exceed the viewer's own daily
+   *    Buzz limit for the app. No job; the real host explains it in its chrome.
+   *  - `'submission-unconfirmed'` — the job MAY exist.
+   *
+   * A CONFIRMED STEP IS QUOTED BY THE ESTIMATE, with no knob of its own: a
+   * pass-through `{ kind: 'step', $type }` estimate carries
+   * {@link BlockWorkflowSnapshot.stepQuote} whenever the mock's price for it
+   * ({@link MockGenerationScenario.costPerGen}, or `cost`) is above the token's
+   * per-call budget ({@link MockHostOptions.buzzBudget}, default 200) and at most
+   * 5,000, for a signed-in viewer. So `generation: { costPerGen: 800 }` is all it
+   * takes to reach this path. ONLY a single `ESTIMATE_WORKFLOW` quotes one: a
+   * batch-estimate cell never carries `stepQuote`, as on the server. And where a
+   * quote would be granted, two bodies make the estimate FAIL instead, with the
+   * server's message: a training `$type` (`training`, `imageResourceTraining`,
+   * in any casing), and an `input` that is not plain JSON (a `Date`, `Map`,
+   * `Set`, `BigInt`, `NaN`, an empty slot in a sparse array, …).
+   *
+   * Whether the QUOTE survives follows the real flow: the host's own gate,
+   * dialog and daily-limit codes settle before the server claims the quote, so
+   * it stays runnable; `submission-unconfirmed` and any server message settle
+   * after the claim, so it is used up — running it again gets the quote-gone
+   * error. Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   * URL: `?confirmedStep=declined|daily-limit|unconfirmed`.
+   *
+   * 🔴 Same real gap as {@link runTrainingError}: the confirm is HOST chrome, so
+   * the mock settles immediately where the real host waits on a click. The mock
+   * also prices every estimate as FIXED — the real host gives a variable or
+   * metered price no `stepQuote` at all.
+   */
+  runConfirmedStepError?: BlockRunConfirmedStepHostError | string;
+  /**
+   * Make `RUN_CONFIRMED_STEP` resolve the server's spend-cap refusal instead of
+   * a job: a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total:
+   * <quote> }, error: <this string> }` (refunded, no job).
+   * `useRunConfirmedStep()` rejects it with `.refused`. 🔴 The quote is CONSUMED,
+   * as on the server. Absent → the job starts. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  runConfirmedStepCapRefusal?: string;
+  /**
+   * Force `SAVE_IMAGE` to reply with this `error` instead of saving — any of
+   * the host's free-text refusals (`'image url is not allowed'`,
+   * `'image is not available'`, `'busy'`, …), or
+   * `'invalid save-image request'` to model a host that PREDATES the `bytes`
+   * variant (what production replies to `saveImage({ bytes })` until the host
+   * ships it). Applies to every variant; checked after the request-shape gate,
+   * so an invalid request still gets `invalid save-image request`. Absent →
+   * the save succeeds (subject to the `bytes` classification below).
+   * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   *
+   * The `bytes` variant is classified exactly as the host's contract says
+   * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, else
+   * UTF-8 text with no NUL (JSON when it parses and the CLEANED `filename` —
+   * `?`/`#` replaced with `_`, path dropped — ends `.json`, case-insensitive),
+   * else `file type is not allowed`; an empty buffer,
+   * `invalid save-image request`; over the host's byte cap,
+   * `file exceeds the maximum save size`. 🔴 What the mock cannot model: that
+   * the variant is PAGE-ONLY (it does not know which surface the block renders
+   * on; a slot host has no `SAVE_IMAGE` handler and rejects it with
+   * `unsupported on this host`),
+   * the host's concurrency and per-window rate limits (`busy` — force it
+   * here), and the real browser
+   * download. {@link onSaveBytes} reports what would have been saved.
+   */
+  saveImageError?: string;
+  /**
+   * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
+   * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
+   * `text/plain`), the download `filename` exactly as the host cleans it (the
+   * same character rules, then the extension forced from that type), and the
+   * `bytes` themselves.
+   * The mock cannot trigger a browser download, so this is the observable a
+   * test or harness asserts on.
+   */
+  onSaveBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
+  /**
+   * The moderated image an ACCEPTED `OPEN_IMAGE_UPLOAD { bytes }` replies with
+   * (what `useUploadImageBytes().upload()` resolves with). Absent →
+   * {@link DEFAULT_IMAGE_BYTES_UPLOAD}, whose `imageId` differs from
+   * {@link DEFAULT_IMAGE_UPLOAD}'s so a block that confuses a picked upload
+   * with an uploaded one is visible. Each accepted upload makes its `imageId`
+   * postable ONCE in a `CREATE_POST_FROM_APP` `{ kind: 'published', imageIds }`
+   * source on this same mock instance, as the real host allows for the app that
+   * uploaded it; see {@link createPostResult} for what the mock refuses.
+   * Live-tunable via {@link MockHost.setScenario}.
+   *
+   * The `bytes` variant runs the host's admission rules
+   * (civitai/civitai#5639, `imageUploadBytes.ts`) in the host's order: not a
+   * non-empty `ArrayBuffer`, or `purpose: 'generationSource'` →
+   * `invalid image-upload request`; over 40 MiB →
+   * `file exceeds the maximum upload size` (checked FIRST); a full rolling
+   * window (8 uploads or 80 MiB per 60 s, per mounted page host; here, per mock
+   * instance) → `busy`; not PNG / WebP / JPEG by magic bytes →
+   * `file type is not allowed`; then
+   * {@link uploadImageBytesError}, standing in for the server persist and the
+   * scan. 🔴 What the mock cannot model: that the variant is PAGE-ONLY, the
+   * `posts:write:self` scope check (force `block lacks posts:write:self scope`
+   * with {@link uploadImageBytesError}), the real scan, the no-reply for a
+   * `requestId` reused while in flight (the mock replies at once), and that a
+   * host OLDER than the variant opens its picker instead.
+   */
+  uploadImageBytesResult?: BlockUploadedImageInfo;
+  /**
+   * Force an `OPEN_IMAGE_UPLOAD { bytes }` that passed the admission rules
+   * above to reply with this `error`: a server refusal the real host forwards
+   * (`block lacks posts:write:self scope`,
+   * `Rate limit exceeded, please retry shortly.`, a scan refusal, …), or
+   * `busy` / `no block token`. The upload still counts against the window, as
+   * on the host. Absent → it succeeds. Live-tunable via
+   * {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  uploadImageBytesError?: string;
+  /**
+   * Called with each `bytes` upload the mock ACCEPTS: the sniffed `mimeType`
+   * (`image/png`, `image/webp` or `image/jpeg`), the `filename` as the host
+   * stores it (the `useSaveImage()` bytes cleaning, the sniffed extension, at
+   * most 255 characters), and a copy of the `bytes`.
+   */
+  onUploadImageBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
+  /**
+   * What `OPEN_MEDIA_UPLOAD` (`useMediaUpload()`) answers, per kind. A kind
+   * left out answers a built-in default for that kind; `null` makes the viewer
+   * close that kind's picker (`open()` resolves `null`). A bytes `upload()`
+   * answers the kind's entry (or the default) with the sniffed `mimeType` and
+   * the buffer's `sizeBytes` for video and audio, and `image/jpeg` for an
+   * image, as the host re-encodes it.
+   *
+   * The host's checks run in the host's order (`./mediaUploadBytes.ts`): kind,
+   * purpose, then for bytes an invalid buffer, the cap (24 MB for an image,
+   * 64 MB for video and audio), the bytes-mode
+   * window (8 uploads or 128 MB per 60 s, per install) → `busy`, the content
+   * sniff per kind, and a declared `mimeType` that disagrees. A model-slot
+   * `context` answers `unsupported on this host`. 🔴 The mock cannot decode
+   * media, so the host's decode-time refusals (an unreadable file, a video with
+   * no video track, an image too small to resize) never happen here: force one
+   * with {@link mediaUploadError}. Live-tunable via {@link MockHost.setScenario}.
+   */
+  cannedMediaUploads?: MockMediaUploads;
+  /**
+   * Force an `OPEN_MEDIA_UPLOAD` that passed the checks above to reply with
+   * this `error`: a host-only refusal such as `this file has no video track`,
+   * `media upload failed — please try again`, or
+   * `this video was refused by the upload service`. A bytes upload it fails
+   * still counts against the window, as on the host. `no block token` is the
+   * exception: like the host, the mock refuses a bytes upload with it right
+   * after the buffer check, before the cap and the window, and does not count
+   * it. Absent → it succeeds.
+   * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  mediaUploadError?: string;
+  /**
+   * Image ids the mock treats as already issued and postable when the host is
+   * created, as production treats an image this app stamped for the viewer in
+   * an EARLIER session that is not in a post yet. Each seeded id may be posted
+   * ONCE in a `CREATE_POST_FROM_APP` `{ kind: 'published', imageIds }` source;
+   * see {@link createPostResult} for what the mock refuses. Use it for a test
+   * that posts an image the block uploaded before the test started, instead of
+   * driving an upload or `PUBLISH_GENERATION_OUTPUTS` first. Absent → none.
+   * Read once at creation; not live-tunable.
+   */
+  postableImageIds?: number[];
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
@@ -812,6 +1796,9 @@ export interface MockHostOptions {
    * shape carries the field, so a context you pass WITHOUT a `theme` key still
    * gets the harness theme (and still follows a later `setTheme`). Only a slot
    * this SDK has no shape for is left alone — there is no `theme` field to set.
+   *
+   * The slot also decides `SET_USER_CHECKPOINT`, as in production: refused on
+   * `app.page` (the default), persisted on a model slot.
    */
   context?: BlockContext;
   /**
@@ -891,6 +1878,8 @@ export type MockHostScenarioPatch = Pick<
   | 'cost'
   | 'pollsUntilDone'
   | 'cannedPicks'
+  | 'cannedMultiPicks'
+  | 'cannedImagePicks'
   | 'cannedImageUpload'
   | 'cannedGenerationSourceUpload'
   | 'cannedImageScan'
@@ -907,9 +1896,20 @@ export type MockHostScenarioPatch = Pick<
   | 'buzzReadError'
   | 'wildcardPack'
   | 'wildcardPackError'
+  | 'resourceFile'
+  | 'resourceFileError'
   | 'collectionFollowError'
+  | 'reactionStates'
+  | 'reactionError'
   | 'createPostResult'
   | 'createPostError'
+  | 'cannedTrainingDataUpload'
+  | 'trainingDataNotUploadedHere'
+  | 'trainingQuoteTotal'
+  | 'runTrainingError'
+  | 'runTrainingCapRefusal'
+  | 'runConfirmedStepError'
+  | 'runConfirmedStepCapRefusal'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -917,6 +1917,11 @@ export type MockHostScenarioPatch = Pick<
   | 'gatedImages'
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
+  | 'saveImageError'
+  | 'uploadImageBytesResult'
+  | 'uploadImageBytesError'
+  | 'cannedMediaUploads'
+  | 'mediaUploadError'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -935,6 +1940,7 @@ export interface MockBuzzHandle {
  *
  * After install, a harness UI can drive scenarios live:
  *  - `setScenario(patch)` — merge new generation/buzz/storage/failMode controls.
+ *    `setScenario({ resourceFileError: undefined })` clears a forced resource-file error.
  *  - `setTheme('light' | 'dark')` — flip the site theme and push `THEME_CHANGE`.
  *  - `buzz.setBalance(n)` / `buzz.getBalance()` — flip the simulated wallet.
  *
@@ -986,6 +1992,80 @@ const DEFAULT_LORA_PICK: CannedPick = {
   clipSkip: null,
 };
 
+// The second curated LoRA a MULTI-select request returns after
+// DEFAULT_LORA_PICK. Every field differs from the first so a block that mixes
+// two picks up (or renders one twice) shows it.
+const DEFAULT_SECOND_LORA_PICK: CannedPick = {
+  versionId: 777003,
+  modelId: 555003,
+  modelName: 'Ink Wash Lines',
+  versionName: 'v1.1',
+  baseModel: 'SDXL 1.0',
+  modelType: 'LORA',
+  strength: 0.8,
+  minStrength: -1,
+  maxStrength: 2,
+  trainedWords: ['ink wash'],
+  clipSkip: null,
+};
+
+/** The multi-select cap — the real host's, and `additionalResources`'. */
+const MOCK_RESOURCE_PICKER_MULTI_MAX = 5;
+
+/** The multi-pick cap of `OPEN_IMAGE_PICKER`, the real host's. */
+const MOCK_IMAGE_PICKER_MULTI_MAX = 20;
+
+/** The libraries `OPEN_IMAGE_PICKER` knows. */
+const MOCK_IMAGE_PICKER_SOURCES: readonly BlockImagePickerSource[] = ['posted', 'generated'];
+
+/** The host's refusal for a bad `sources`, and for a bad `multiple`. */
+const MOCK_IMAGE_PICKER_SOURCES_ERROR =
+  'OPEN_IMAGE_PICKER: sources must be a non-empty list of "posted" and/or "generated".';
+const MOCK_IMAGE_PICKER_MULTIPLE_ERROR =
+  'OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.';
+
+/**
+ * A canned pick as the host puts it on the wire: the contract's fields only,
+ * and `imageId` only on a posted pick (a generator output has no image id, so
+ * one set on a canned `'generated'` entry is dropped).
+ */
+function toWireImagePick(image: BlockPickedImageInfo): BlockPickedImageInfo {
+  const { source, url, width, height, nsfwLevel, imageId } = image;
+  return {
+    source,
+    url,
+    width,
+    height,
+    nsfwLevel,
+    ...(source === 'posted' && typeof imageId === 'number' ? { imageId } : {}),
+  };
+}
+
+/**
+ * The images the mock host answers `OPEN_IMAGE_PICKER` from when
+ * {@link MockHostOptions.cannedImagePicks} is omitted: one per library, and
+ * every field differs between them so a block that mixes two picks up shows
+ * it. The generated one has NO `imageId`, as on the real host, and the posted
+ * one's `url` is a resized rendition, not the original file.
+ */
+const DEFAULT_IMAGE_PICKS: BlockPickedImageInfo[] = [
+  {
+    source: 'posted',
+    url: 'https://image.civitai.com/mock/width=832/dev-posted-image.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 12345801,
+  },
+  {
+    source: 'generated',
+    url: 'https://image.civitai.com/mock/original=true/dev-generated-image.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  },
+];
+
 /**
  * The canned image the mock host "returns" from `OPEN_IMAGE_UPLOAD`. Mirrors the
  * host's moderated {@link BlockUploadedImageInfo} projection (imageId/nsfwLevel/
@@ -1007,6 +2087,21 @@ const DEFAULT_IMAGE_UPLOAD: BlockUploadedImageInfo = {
  * — no imageId/nsfwLevel). `null` simulates a user-dismissed modal. The url is a
  * Civitai-hosted image so a dev can feed it straight into a `sourceImage` body.
  */
+/**
+ * The moderated image the mock host returns from an accepted
+ * `OPEN_IMAGE_UPLOAD { bytes }` when {@link MockHostOptions.uploadImageBytesResult}
+ * is omitted. Its `imageId` deliberately differs from {@link DEFAULT_IMAGE_UPLOAD}'s.
+ */
+const DEFAULT_IMAGE_BYTES_UPLOAD: BlockUploadedImageInfo = {
+  imageId: 12345701,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/mock/original=true/dev-bytes-upload.png',
+};
+
+/** Where the default `trainingData` upload's placeholder blob urls point. */
+const DEFAULT_TRAINING_DATA_URL_BASE = 'https://blobs.mock.invalid/v2/consumer/blobs/';
+
 const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
   url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
   width: 1024,
@@ -1041,8 +2136,15 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  */
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
+/**
+ * The out-of-Buzz rejection's `error`. Production's text is whatever the
+ * orchestrator's 403 said (or the server's generic insufficient-funds default),
+ * so neither this string nor the real one is a contract — never branch on it.
+ */
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
+/** Default `error` for `generation.submitCapRefusal: true`. */
+const DEFAULT_SUBMIT_CAP_REFUSAL = 'Buzz spend cap reached (simulated).';
 
 /** Default message for a simulated balance-read failure ({@link MockHostOptions.buzzBalanceError}). */
 const DEFAULT_BUZZ_BALANCE_ERROR = 'balance unavailable';
@@ -1213,6 +2315,39 @@ const DEFAULT_WILDCARD_PACK: BlockWildcardPack = {
 };
 
 /**
+ * Default file reported on `GET_RESOURCE_FILE`: one plain `.json` workflow in the
+ * ComfyUI UI format (a `nodes` array), so a block renders a graph out of the box.
+ */
+const DEFAULT_RESOURCE_FILE: BlockResourceFile = {
+  meta: {
+    modelId: 618700,
+    modelVersionId: 691700,
+    fileId: 591700,
+    fileName: 'sample-workflow.json',
+    modelName: 'Sample Workflow',
+    versionName: 'v1.0',
+    creatorUsername: 'creator',
+  },
+  entries: [
+    {
+      path: 'sample-workflow.json',
+      format: 'ui',
+      graph: {
+        last_node_id: 2,
+        last_link_id: 1,
+        nodes: [
+          { id: 1, type: 'CheckpointLoaderSimple', inputs: [], outputs: [{ name: 'MODEL', links: [1] }] },
+          { id: 2, type: 'KSampler', inputs: [{ name: 'model', link: 1 }], outputs: [] },
+        ],
+        links: [[1, 1, 0, 2, 0, 'MODEL']],
+        version: 0.4,
+      },
+    },
+  ],
+  truncated: false,
+};
+
+/**
  * Default app generator SUBQUEUE page reported on `QUERY_APP_WORKFLOWS`. A small
  * mixed-status list (a done gen with two images, one still processing) so a block
  * renders a realistic subqueue out of the box. `cursor: null` = the only page.
@@ -1351,9 +2486,12 @@ function jsonByteSize(value: unknown): number {
 /**
  * Reads the URL query toggles the gen-matrix dev harness uses, so a starter's
  * dev harness keeps working with `?viewer/?consent/?fail/?theme/?pick/?pickCkpt`.
- * Layer-1 additions: `?balance/?latency/?costPerGen/?failNext/?failRate/?seed`
- * map onto the new scenario groups so a dev can flip insufficient-buzz /
- * failures / latency without editing code.
+ * Layer-1 additions: `?balance/?latency/?costPerGen/?authorFee/?failNext/?failRate/?seed`
+ * map onto the new scenario groups so a dev can flip out-of-Buzz /
+ * failures / latency without editing code. `?capRefusal=1` (or `=<text>`) sets
+ * {@link MockGenerationScenario.submitCapRefusal}.
+ * `?confirmedStep=declined|daily-limit|unconfirmed` sets
+ * {@link MockHostOptions.runConfirmedStepError}.
  *
  * Returns a partial overlay applied ON TOP of explicit {@link MockHostOptions}
  * (URL wins — it's the interactive dev knob). No-op outside a browser.
@@ -1439,6 +2577,14 @@ export function readMockHostUrlOptions(
   if (costPerGen !== null && Number.isFinite(Number(costPerGen))) {
     generation.costPerGen = Number(costPerGen);
   }
+  // `?authorFee=<n>` itemises an app fee on the quote; `?authorFee=off`
+  // simulates a host that predates the field.
+  const authorFee = params.get('authorFee');
+  if (authorFee === 'off') {
+    generation.authorFee = false;
+  } else if (authorFee !== null && authorFee !== '' && Number.isFinite(Number(authorFee))) {
+    generation.authorFee = Number(authorFee);
+  }
 
   const failNext = params.get('failNext');
   if (failNext !== null && Number.isInteger(Number(failNext))) {
@@ -1448,6 +2594,22 @@ export function readMockHostUrlOptions(
   if (failRate !== null && Number.isFinite(Number(failRate))) {
     generation.failRate = Number(failRate);
   }
+  // ?capRefusal=1|true → the default cap message; any other non-empty value is
+  // used as the server text verbatim.
+  const capRefusal = params.get('capRefusal');
+  if (capRefusal !== null && capRefusal.trim() !== '') {
+    generation.submitCapRefusal =
+      capRefusal === '1' || capRefusal === 'true' ? true : capRefusal;
+  }
+
+  // ?confirmedStep=declined|daily-limit|unconfirmed → how RUN_CONFIRMED_STEP
+  // settles (see `runConfirmedStepError`). Absent, or any other value: the viewer
+  // "confirms" and the job starts. Pair it with a `?costPerGen=` above the
+  // per-call budget, which is what makes the estimate quote a confirmed step.
+  const confirmedStep = params.get('confirmedStep');
+  if (confirmedStep === 'declined') out.runConfirmedStepError = 'declined';
+  else if (confirmedStep === 'daily-limit') out.runConfirmedStepError = 'daily-limit-exceeded';
+  else if (confirmedStep === 'unconfirmed') out.runConfirmedStepError = 'submission-unconfirmed';
 
   if (Object.keys(generation).length > 0) out.generation = generation;
   if (Object.keys(buzz).length > 0) out.buzz = buzz;
@@ -1504,7 +2666,7 @@ export function readMockHostUrlOptions(
  * const host = createMockHost({ generation: { failNext: 1, latencyMs: 1500 }, buzz: { balance: 5 } });
  * const uninstall = host.install();
  * // … drive the block / assertions …
- * host.buzz.setBalance(0);       // flip to insufficient mid-session
+ * host.buzz.setBalance(0);       // out of Buzz mid-session: submit() now rejects ('exception')
  * host.setScenario({ generation: { failRate: 1 } });
  * uninstall();
  */
@@ -1543,6 +2705,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let legacyCost = options.cost ?? 8;
   let cannedPicks: Partial<Record<BlockResourcePickerType, CannedPick | null>> =
     options.cannedPicks ?? { Checkpoint: DEFAULT_CHECKPOINT_PICK, LORA: DEFAULT_LORA_PICK };
+  // Canned MULTI-select picks. `undefined` = derive from the single LoRA pick
+  // (see the option's docs); `null` = dismissed.
+  let cannedMultiPicks: CannedPick[] | null | undefined = options.cannedMultiPicks;
+  // The viewer's pickable images for OPEN_IMAGE_PICKER. `null` = dismisses.
+  let cannedImagePicks: BlockPickedImageInfo[] | null =
+    options.cannedImagePicks === undefined ? DEFAULT_IMAGE_PICKS : options.cannedImagePicks;
   // Canned image-upload result. `null` = dismissed; undefined = default image.
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
@@ -1570,6 +2738,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Wildcard-pack bridge data + forced discriminated-error knob.
   let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
   let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
+  // Resource-file bridge data + forced closed-set error knob.
+  let resourceFile: BlockResourceFile = options.resourceFile ?? DEFAULT_RESOURCE_FILE;
+  let resourceFileError: BlockResourceFileErrorCode | undefined = options.resourceFileError;
   // Collection-follow bridge.
   //
   // 🔴 THERE IS DELIBERATELY NO FOLLOW-STATE MAP HERE, and an earlier version's
@@ -1582,10 +2753,53 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // survived review. There is no READ op on this bridge for such a map to feed,
   // so the honest shape is not to offer one.
   let collectionFollowError: string | undefined = options.collectionFollowError;
+  // App reactions: per-image state + a forced-error knob, owned by
+  // `./mockHostReactions.ts`. The scope test is PRESENCE in the manifest's
+  // declared scopes, the same set the storage gate reads.
+  const reactionScopeDeclared = (options.declaredScopes ?? []).includes(REACTION_SCOPE);
+  const reactions = createMockReactions({
+    seed: options.reactionStates,
+    error: options.reactionError ?? undefined,
+    signedIn: () => viewer !== null,
+    hasScope: () => reactionScopeDeclared,
+  });
   // App Blocks → Post bridge: the canned post + a forced-refusal knob.
   let createPostResult: BlockCreatePostResult =
     options.createPostResult ?? DEFAULT_CREATE_POST_RESULT;
   let createPostError: string | undefined = options.createPostError;
+  // App Blocks training: the canned upload, the "host forgot its uploads" knob,
+  // the quote total, and forced-refusal knobs. The uploaded keys and the quotes
+  // themselves live per install.
+  let cannedTrainingDataUpload: BlockTrainingDataImage[] | null | undefined =
+    options.cannedTrainingDataUpload;
+  let trainingDataNotUploadedHere: boolean = options.trainingDataNotUploadedHere === true;
+  let trainingQuoteTotal: number = options.trainingQuoteTotal ?? DEFAULT_TRAINING_QUOTE_TOTAL;
+  let runTrainingError: string | undefined = options.runTrainingError;
+  // SAVE_IMAGE: a forced-refusal knob (see `saveImageError`).
+  let saveImageError: string | undefined = options.saveImageError;
+  // OPEN_IMAGE_UPLOAD { bytes }: the canned result, a forced-refusal knob, and
+  // the host's rolling window (per install, like the host's per mount).
+  let uploadImageBytesResult: BlockUploadedImageInfo =
+    options.uploadImageBytesResult ?? DEFAULT_IMAGE_BYTES_UPLOAD;
+  let uploadImageBytesError: string | undefined = options.uploadImageBytesError;
+  let uploadBytesWindow: UploadBytesWindowEntry[] = [];
+  // OPEN_MEDIA_UPLOAD: canned per-kind answers, a forced refusal, and the
+  // bytes-mode window (per install, like the host's per mount).
+  let cannedMediaUploads: MockMediaUploads = options.cannedMediaUploads ?? {};
+  let mediaUploadError: string | undefined = options.mediaUploadError;
+  let mediaUploadWindow: MediaUploadWindowEntry[] = [];
+  // The ids a `CREATE_POST_FROM_APP` `{ kind: 'published' }` source may name:
+  // ONLY ids this mock itself issued as postable (an accepted bytes upload, or a
+  // PUBLISH_GENERATION_OUTPUTS reply) plus the seeded `postableImageIds` (an
+  // earlier session's stamped, unposted images), and only until a post adopts
+  // them. Mirrors the host's `resolveAppPublishedImages` (civitai/civitai#5639):
+  // this app's provenance stamp and `postId IS NULL`. A picked `useImageUpload()`
+  // image is never added: production leaves it unstamped, so it is not postable.
+  const postableImageIds = new Set<number>(options.postableImageIds ?? []);
+  let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
+  // Confirmed step: forced-refusal knobs. The quotes themselves live per install.
+  let runConfirmedStepError: string | undefined = options.runConfirmedStepError;
+  let runConfirmedStepCapRefusal: string | undefined = options.runConfirmedStepCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -1639,6 +2853,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   const sharedStore = new Map<string, SharedRow>();
   let sharedSeq = 0;
   let sharedFailNext = sharedScenario.failNext ?? 0;
+  let sharedRateLimitNext = sharedScenario.rateLimitNext ?? 0;
+  let sharedRateLimitMeta = sharedScenario.rateLimit;
+  /**
+   * When a {@link MockSharedScenario.rateLimitNext} refusal is pending, consume
+   * one and return the reply's error fields; otherwise `null`. The message
+   * matches the platform's wording per write family
+   * (`apps-shared.router.ts`: submissions / votes / withdrawals / reports).
+   */
+  const takeSharedRateLimit = (
+    noun: 'submissions' | 'votes' | 'withdrawals' | 'reports',
+  ): { error: string; rateLimit: { retryAfterSeconds: number; retryAt: string } } | null => {
+    if (sharedRateLimitNext <= 0) return null;
+    sharedRateLimitNext -= 1;
+    const retryAfterSeconds = sharedRateLimitMeta?.retryAfterSeconds ?? 60;
+    const retryAt =
+      sharedRateLimitMeta?.retryAt ?? new Date(Date.now() + retryAfterSeconds * 1000).toISOString();
+    return {
+      error: `Too many ${noun} — retry in ${retryAfterSeconds}s`,
+      rateLimit: { retryAfterSeconds, retryAt },
+    };
+  };
   const sharedNow = new Date().toISOString();
   // Seed newest-LAST so the last-listed seed has the highest seq (newest-first).
   for (const s of sharedScenario.seed ?? []) {
@@ -1665,10 +2900,66 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     viewerVoted: row.voters.has(mockUserId),
   });
 
+  /** Why a `kind: 'workflow'` body has no price quote, or `null` when it is quoted. */
+  const workflowQuoteFailure = (): MockWorkflowQuoteFailure | null => {
+    const knob = gen.workflowUnpriced;
+    if (knob === true) return 'unavailable';
+    return knob === 'rejected' || knob === 'unavailable' || knob === 'unpriced' ? knob : null;
+  };
+
   // Resolve a per-gen cost from the scenario (or legacy `cost`).
+  // A `kind: 'workflow'` body is the SUM of its steps — see `workflowStepCosts`.
   const costFor = (body: WorkflowBody): number => {
+    if (body.kind === 'workflow') return workflowStepCosts(body).reduce((sum, c) => sum + c, 0);
     const spec: CostSpec | undefined = gen.costPerGen ?? legacyCost;
     return typeof spec === 'function' ? spec(body) : (spec ?? legacyCost);
+  };
+
+  /**
+   * `costPerGen`, called once per step of a `kind: 'workflow'` body and
+   * multiplied by that step's generations — 1, or a `repeat`'s iteration count —
+   * because the orchestrator's quote prices every child of a bounded repeat.
+   */
+  const workflowStepCosts = (body: MockWorkflowBody): number[] => {
+    // Unpriced: reserved at the ceiling, one per-generation budget per step.
+    if (workflowQuoteFailure() !== null) return body.steps.map(() => buzzBudget);
+    const spec: CostSpec = gen.costPerGen ?? legacyCost;
+    return (Array.isArray(body.steps) ? body.steps : []).map((step, index) => {
+      const each =
+        typeof spec === 'function'
+          ? spec(body, {
+              index,
+              name: mockWorkflowStepName(step, index),
+              $type: step.$type,
+              input: step.input,
+            })
+          : spec;
+      return each * mockWorkflowStepGenerations(step.$type, step.input, body.arguments);
+    });
+  };
+
+  // `null` = this quote is not itemised (a fee-less kind, or `authorFee: false`).
+  const authorFeeFor = (body: WorkflowBody): number | null => {
+    if (gen.authorFee === false) return null;
+    // A REGISTERED step is keyed on the VALUE of `step`, as the host keys it —
+    // never `'step' in body`: `{ kind: 'step', step: undefined, ... }` is a legal
+    // pass-through body, and a pass-through quote prices no fee.
+    // A `workflow` body quotes ONE fee for the whole workflow: this function is
+    // called once per body and never per step.
+    const quotesFee =
+      body.kind === 'textToImage' ||
+      body.kind === 'workflow' ||
+      (body.kind === 'step' && typeof body.step === 'string');
+    if (!quotesFee) return null;
+    // An unpriced workflow has no quoted base, so no fee is priced on it.
+    if (body.kind === 'workflow' && workflowQuoteFailure() !== null) return 0;
+    const spec = gen.authorFee ?? 0;
+    return typeof spec === 'function' ? spec(body) : spec;
+  };
+  /** The `cost` of a QUOTE: the fee is inside `total` and itemised beside it. */
+  const quotedCost = (body: WorkflowBody): { total: number; authorFee?: number } => {
+    const fee = authorFeeFor(body);
+    return fee === null ? { total: costFor(body) } : { total: costFor(body) + fee, authorFee: fee };
   };
 
   const latencyFor = (): number => {
@@ -1752,7 +3043,63 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     let tokenSerial = 0;
     let submitCount = 0;
     // body + cost remembered per workflow so the succeeded snapshot can echo them.
-    const workflows = new Map<string, { polls: number; cost: number; body: WorkflowBody }>();
+    // `body` is absent for an id this mock never submitted (a workflow id an app
+    // restored after a reload). `canceled` is set by `CANCEL_WORKFLOW`, so later
+    // polls keep answering `canceled` instead of resuming the countdown.
+    const workflows = new Map<
+      string,
+      {
+        polls: number;
+        cost: number;
+        body?: WorkflowBody;
+        canceled?: boolean;
+        /** Per-step prices of a `kind: 'workflow'` run, fixed at submit. */
+        stepCosts?: number[];
+      }
+    >();
+    // Training: the blob keys this install's uploads handed out (by identity —
+    // the host's per-block-instance memory), and the quotes its estimates stored
+    // (id → what a run is checked against).
+    const trainingUploads = new Set<string>();
+    let trainingUploadSerial = 0;
+    const trainingQuotes = new Map<
+      string,
+      {
+        fingerprint: string | null;
+        itemKeys: string[];
+        total: number;
+        expiresAtMs: number;
+        spent: boolean;
+      }
+    >();
+    /**
+     * What a training quote is bound to: the body without `quoteId`, its items
+     * canonicalised (the server quotes the bare key). `null` when the body is not
+     * plain JSON or its items do not resolve — then no run can match it.
+     */
+    const trainingFingerprint = (raw: Record<string, unknown>): string | null => {
+      const resolved = resolveTrainingItems(raw.items);
+      if ('refusal' in resolved) return null;
+      const { quoteId: _quoteId, ...rest } = raw;
+      try {
+        return canonicalStepJson({ ...rest, items: resolved.items }, 'body');
+      } catch {
+        return null;
+      }
+    };
+    // Confirmed steps: the quotes this install's estimates stored (id → what a
+    // run is checked against). Same serial as the training handles, so every
+    // handle this install mints is distinct.
+    const stepQuotes = new Map<
+      string,
+      { fingerprint: string; total: number; expiresAtMs: number; spent: boolean }
+    >();
+    let trainingSerial = 0;
+    /** `<prefix>` + 32 hex characters — the real handles' shape. */
+    const trainingHandle = (prefix: 'tq_' | 'sq_'): string => {
+      trainingSerial += 1;
+      return `${prefix}${trainingSerial.toString(16).padStart(32, '0')}`;
+    };
     const timers = new Set<ReturnType<typeof setTimeout>>();
 
     const dispatchToBlock = (data: unknown) => {
@@ -1777,15 +3124,154 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       };
     };
 
+    /**
+     * The training-only fields of a succeeded snapshot — see
+     * {@link MockGenerationScenario.trainedEpochs}. KIND-FAITHFUL, unlike the
+     * rest of the money path: only a pass-through `training` /
+     * `imageResourceTraining` body gets them, because only such a step produces
+     * a checkpoint. Empty for every other body, so their snapshots are unchanged.
+     */
+    const trainingFields = (
+      body: WorkflowBody,
+    ): Pick<BlockWorkflowSnapshot, 'trainedEpochs' | 'publishedModel'> => {
+      const $type = trainingStepType(body);
+      if (!$type) return {};
+      const count = Math.max(0, Math.floor(gen.trainedEpochs ?? 0));
+      return {
+        ...(count > 0
+          ? {
+              trainedEpochs: Array.from({ length: count }, (_, i) => ({
+                $type,
+                epochNumber: i + 1,
+              })),
+            }
+          : {}),
+        ...(gen.trainingPublishedModel ? { publishedModel: { ...gen.trainingPublishedModel } } : {}),
+      };
+    };
+
+    /**
+     * The `steps` (and the top-level `imageUrls` they add up to) of a
+     * `kind: 'workflow'` run, given each step's status. A step reports images
+     * only once it has `'succeeded'` and only if it did not set
+     * `suppressOutput`; the top-level list is the union of those, in step order.
+     */
+    const workflowStepsView = (
+      workflowId: string,
+      body: MockWorkflowBody,
+      statusOf: (index: number) => BlockWorkflowSnapshot['status'],
+      failedError?: string,
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+      const lastVisible = body.steps.reduce((last, s, i) => (s.suppressOutput === true ? last : i), -1);
+      const steps = body.steps.map((step, index) => {
+        const status = statusOf(index);
+        const name = mockWorkflowStepName(step, index);
+        const visible = status === 'succeeded' && step.suppressOutput !== true;
+        return {
+          name,
+          $type: step.$type,
+          status,
+          ...(visible
+            ? {
+                imageUrls:
+                  index === lastVisible
+                    ? imagesFor(workflowId, body)
+                    : [
+                        `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
+                          name,
+                        )}`,
+                      ],
+              }
+            : {}),
+          ...(status === 'failed' && failedError !== undefined ? { error: failedError } : {}),
+        };
+      });
+      const imageUrls = steps.flatMap((s) => s.imageUrls ?? []);
+      return { steps, ...(imageUrls.length > 0 ? { imageUrls } : {}) };
+    };
+
+    /** A RUNNING `kind: 'workflow'` run after `polls` polls: steps finish in order. */
+    const workflowProgressView = (
+      workflowId: string,
+      body: MockWorkflowBody,
+      polls: number,
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+      const total = body.steps.length;
+      const failing = failingWorkflowStep(body);
+      const done = Math.min(
+        Math.floor((total * polls) / Math.max(1, pollsUntilDone)),
+        total - 1,
+        failing === -1 ? total - 1 : failing,
+      );
+      return workflowStepsView(workflowId, body, (i) =>
+        i < done ? 'succeeded' : i === done ? 'processing' : 'pending',
+      );
+    };
+
+    /** Index of the step `generation.failWorkflowStep` names, or `-1`. */
+    const failingWorkflowStep = (body: MockWorkflowBody): number => {
+      const target = gen.failWorkflowStep;
+      if (target === undefined) return -1;
+      return body.steps.findIndex((s, i) => mockWorkflowStepName(s, i) === target);
+    };
+
+    /**
+     * The terminal snapshot of a `kind: 'workflow'` run whose step
+     * `generation.failWorkflowStep` names failed, or `null` when none does.
+     * Earlier steps stay `'succeeded'` and CHARGED, so `cost.total` is their sum
+     * and their visible images are still there.
+     */
+    const workflowPartialFailure = (workflowId: string): BlockWorkflowSnapshot | null => {
+      const wf = workflows.get(workflowId);
+      const body = wf?.body;
+      if (!wf || body?.kind !== 'workflow') return null;
+      const failing = failingWorkflowStep(body);
+      if (failing === -1) return null;
+      const error = `mock: step "${mockWorkflowStepName(body.steps[failing]!, failing)}" failed`;
+      const charged = (wf.stepCosts ?? []).slice(0, failing).reduce((sum, c) => sum + c, 0);
+      return {
+        workflowId,
+        status: 'failed',
+        cost: { total: charged },
+        error,
+        ...workflowStepsView(
+          workflowId,
+          body,
+          (i) => (i < failing ? 'succeeded' : i === failing ? 'failed' : 'canceled'),
+          error,
+        ),
+      };
+    };
+
     const succeededSnapshot = (workflowId: string) => {
       const wf = workflows.get(workflowId);
       const cost = wf?.cost ?? legacyCost;
       const body = wf?.body ?? ({} as WorkflowBody);
+      if (body.kind === 'workflow') {
+        return {
+          workflowId,
+          status: 'succeeded' as const,
+          cost: { total: cost },
+          ...workflowStepsView(workflowId, body, () => 'succeeded'),
+          spentAccountType: primaryFunder(buzzBalance),
+        };
+      }
+      // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
+      const model3d =
+        gen.model3dOutputs && gen.model3dOutputs.length > 0 && passThroughStepType(body)
+          ? gen.model3dOutputs.map((m) => ({ ...m }))
+          : undefined;
       return {
+        ...trainingFields(body),
+        ...(model3d ? { model3dOutputs: model3d } : {}),
         workflowId,
         status: 'succeeded' as const,
         cost: { total: cost },
-        imageUrls: imagesFor(workflowId, body),
+        // Every labelled model url is also an `imageUrls` entry on the real host.
+        imageUrls:
+          model3d && !gen.images && !gen.image
+            ? model3d.map((m) => m.url)
+            : imagesFor(workflowId, body),
         // Pick-aware APPROXIMATION of the real backend's
         // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
         // LARGEST realized debit (`primaryDebitedAccountType`), and its currency
@@ -1818,7 +3304,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             imageIds?: number[];
             title?: string;
             resourceType?: BlockResourcePickerType;
-            purpose?: 'display' | 'generationSource';
+            purpose?: 'display' | 'generationSource' | 'trainingData';
             asyncScan?: boolean;
             body?: WorkflowBody;
             key?: string;
@@ -1831,6 +3317,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             reason?: string;
             url?: string;
             imageId?: number;
+            // SAVE_IMAGE `bytes` variant. `unknown`, not `ArrayBuffer`: the
+            // gate's job is to refuse a non-buffer a block actually sent.
+            bytes?: unknown;
+            filename?: unknown;
             collectionId?: number;
             follow?: boolean;
             // CREATE_POST_FROM_APP. Typed `unknown` deliberately: this is an
@@ -1844,6 +3334,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // here would assert the property under test — a block compiled
             // against an older SDK, or plain JS, can put anything in this field.
             idempotencyKey?: unknown;
+            // ESTIMATE_WORKFLOW_BATCH. `unknown`: the list shape is what is checked.
+            bodies?: unknown;
           };
         };
 
@@ -1912,6 +3404,187 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
         }
+
+        /**
+         * The snapshot ONE estimate of `body` replies with. Shared by
+         * ESTIMATE_WORKFLOW and ESTIMATE_WORKFLOW_BATCH so a batch cell is priced
+         * exactly as a single estimate of the same body.
+         */
+        const estimateSnapshotFor = (
+          body: WorkflowBody,
+          // TRUE only from the single ESTIMATE_WORKFLOW. The server's batch
+          // estimate persists nothing, so a batch cell never stores a
+          // confirmed-step quote and never carries a `stepQuote`.
+          opts: {
+            storeQuotes: boolean;
+            // Where the body sits in what the server parsed: `['body']` for the
+            // single estimate's procedure input, `[]` for a batch cell.
+            issuePathPrefix: ReadonlyArray<string | number>;
+          },
+        ): BlockWorkflowSnapshot => {
+          // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
+          // the two real producers byte-for-byte so a block's `catch` around
+          // `estimate()` is exercisable locally — see the knob's docs for why
+          // that was previously impossible (civitai/civitai#4159).
+          if (gen.failEstimate === 'failed') {
+            // Mirrors the host's `failureSnapshot(err)` exactly: the 'failed'
+            // sentinel id (a real one would be empty and get dropped by the
+            // inbound validator), no `cost`.
+            return {
+              workflowId: 'failed',
+              status: 'failed',
+              error: gen.failEstimateMessage ?? 'mock: estimate failed',
+            };
+          }
+          if (gen.failEstimate === 'no-cost') {
+            // A SUCCESSFUL snapshot that simply has no price — no `error` to
+            // explain it, which is what makes this producer the harder of the
+            // two to diagnose from the block side.
+            return { workflowId: 'wf_estimate', status: 'pending' };
+          }
+          // 🔴 THE SPEND-SCOPE GATE — EVERY body kind, not just training.
+          // civitai's `estimateWorkflow` throws `FORBIDDEN` with exactly this
+          // message as its FIRST act after authenticating the token, before any
+          // pricing, and the page host catches the throw into
+          // `failureSnapshot(err)` — the `'failed'` sentinel id, no `cost`. That
+          // is the signal a block answers with `requestConsent(...)` and a retry.
+          // Until #608 only the training arm checked it, so the refusal → consent
+          // → retry loop was unreachable for every other estimate in `pnpm dev`.
+          //
+          // Sits AFTER the `failEstimate` knobs on purpose: an explicitly forced
+          // failure is what the author asked to see, and `estimate()` is not
+          // consent-retried, so a scope refusal ahead of it would hide the knob
+          // behind a message the author never asked for.
+          //
+          // The batch path refuses the WHOLE call before it reaches this function
+          // (see ESTIMATE_WORKFLOW_BATCH), so this branch is the single-estimate
+          // one in practice.
+          //
+          // 🔴 THE STEP-INPUT GATE comes first of the server's checks — see
+          // ./mockHostStepInput.ts. Its rules are zod refinements of the body,
+          // so they refuse at the procedure's `.input()`, before the handler's
+          // scope check. The host catches that into `failureSnapshot(err)`.
+          const inputRefusal = stepInputRefusal(body, opts.issuePathPrefix);
+          if (inputRefusal !== null) {
+            return { workflowId: 'failed', status: 'failed', error: inputRefusal };
+          }
+          if (!consentGranted) {
+            return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
+          }
+          // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
+          // kind-agnostic rule above, because the real arm is not a priced
+          // pass-through: it checks the dataset items against the server's
+          // schema, refuses a price above the per-run ceiling, and STORES a quote
+          // the run is later checked against. (Uploads are NOT checked here —
+          // the server's estimate does not; the host checks them at the run.) (The spend scope is checked above, for every kind.)
+          // Each refusal is the server's message in the host's `failureSnapshot`
+          // shape.
+          if (body.kind === 'training') {
+            const refuse = (error: string): BlockWorkflowSnapshot => ({
+              workflowId: 'failed',
+              status: 'failed',
+              error,
+            });
+            const resolved = resolveTrainingItems((body as { items?: unknown }).items);
+            if ('refusal' in resolved) return refuse(resolved.refusal);
+            const imageCount = resolved.items.length;
+            const total = trainingQuoteTotal;
+            if (total > MOCK_TRAINING_BOUNDS.maxBuzzPerRun) {
+              return refuse(
+                `this training run costs ${total} Buzz, above the per-run limit of ${MOCK_TRAINING_BOUNDS.maxBuzzPerRun} for apps`,
+              );
+            }
+            const quoteId = trainingHandle('tq_');
+            const expiresAtMs = Date.now() + TRAINING_QUOTE_TTL_MS;
+            trainingQuotes.set(quoteId, {
+              fingerprint: trainingFingerprint(body as unknown as Record<string, unknown>),
+              itemKeys: resolved.items.map((it) => it.air),
+              total,
+              expiresAtMs,
+              spent: false,
+            });
+            return {
+              workflowId: 'wf_estimate',
+              status: 'pending',
+              cost: { total },
+              trainingQuote: {
+                quoteId,
+                total,
+                imageCount,
+                expiresAt: new Date(expiresAtMs).toISOString(),
+              },
+            };
+          }
+          // CONFIRMED-STEP QUOTE — kind-faithful, like the training arm above. A
+          // pass-through step whose (fixed) price is above the token's per-call
+          // budget and within the per-job ceiling gets a stored, viewer-
+          // confirmable quote beside its ordinary estimate; every other estimate
+          // is exactly what it was. The server grants it only to a signed-in
+          // viewer's page token, which is what `viewer !== null` stands for here.
+          const stepType = passThroughStepType(body);
+          const stepPrice = stepType === undefined ? 0 : costFor(body);
+          if (
+            opts.storeQuotes &&
+            stepType !== undefined &&
+            viewer !== null &&
+            stepPrice > buzzBudget &&
+            stepPrice <= MOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB
+          ) {
+            // From here a quote WOULD be granted, so the two bodies that must
+            // never get one are refused out loud, as the server refuses them: it
+            // throws `BAD_REQUEST`, which the page host catches into
+            // `failureSnapshot(err)` — so `estimate()` rejects instead of
+            // returning a price. Below the budget (or in a batch) neither check
+            // runs and the estimate is the ordinary one.
+            if (isTrainingStepTypeName(stepType)) {
+              return { workflowId: 'failed', status: 'failed', error: MOCK_STEP_TRAINING_TYPE_ERROR };
+            }
+            const bound = stepBodyFingerprint(body as unknown as Record<string, unknown>);
+            if ('refusal' in bound) {
+              return { workflowId: 'failed', status: 'failed', error: bound.refusal };
+            }
+            const quoteId = trainingHandle('sq_');
+            const expiresAtMs = Date.now() + STEP_QUOTE_TTL_MS;
+            stepQuotes.set(quoteId, {
+              fingerprint: bound.fingerprint,
+              total: stepPrice,
+              expiresAtMs,
+              spent: false,
+            });
+            return {
+              workflowId: 'wf_estimate',
+              status: 'pending',
+              cost: quotedCost(body),
+              stepQuote: {
+                quoteId,
+                total: stepPrice,
+                stepType,
+                expiresAt: new Date(expiresAtMs).toISOString(),
+              },
+            };
+          }
+          // MULTI-STEP — the second kind-faithful arm: the host refuses a body
+          // it will not run BEFORE pricing it, with an `errorCode`, in the
+          // `failureSnapshot` shape (no `cost`). A body that passes is priced
+          // below like any other: `quotedCost` sums the steps and adds ONE fee.
+          if (body.kind === 'workflow') {
+            // With no quote the estimate has no price to show: it fails with the
+            // cause, never the ceiling. (The submit of the same body proceeds.)
+            const failure = workflowQuoteFailure();
+            const refusal =
+              mockWorkflowBodyRefusal(body) ??
+              (failure === null
+                ? null
+                : (mockUnpricedWorkflowRefusal(body, failure) ??
+                  mockUnquotedWorkflowEstimateRefusal(failure)));
+            if (refusal !== null) return { workflowId: 'failed', status: 'failed', ...refusal };
+          }
+          return {
+            workflowId: 'wf_estimate',
+            status: 'pending',
+            cost: quotedCost(body),
+          };
+        };
 
         switch (typed.type) {
           case 'REQUEST_TOKEN':
@@ -2023,47 +3696,105 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // a registry (that's server-only); the mock accepts any id, fail-open. The
             // sentinel `workflowId` is non-empty so the snapshot survives the
             // SDK inbound validator (which drops empty-workflowId snapshots).
+            // The pricing itself is `estimateSnapshotFor`, shared with the batch.
             const body = typed.payload?.body ?? ({} as WorkflowBody);
-            // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
-            // the two real producers byte-for-byte so a block's `catch` around
-            // `estimate()` is exercisable locally — see the knob's docs for why
-            // that was previously impossible (civitai/civitai#4159).
-            if (gen.failEstimate === 'failed') {
-              dispatchToBlock({
-                type: 'ESTIMATE_RESULT',
-                payload: {
-                  requestId,
-                  // Mirrors the host's `failureSnapshot(err)` exactly: the
-                  // 'failed' sentinel id (a real one would be empty and get
-                  // dropped by the inbound validator), no `cost`.
-                  snapshot: {
-                    workflowId: 'failed',
-                    status: 'failed',
-                    error: gen.failEstimateMessage ?? 'mock: estimate failed',
-                  },
-                },
-              });
-              return;
-            }
-            if (gen.failEstimate === 'no-cost') {
-              dispatchToBlock({
-                type: 'ESTIMATE_RESULT',
-                // A SUCCESSFUL snapshot that simply has no price — no `error` to
-                // explain it, which is what makes this producer the harder of the
-                // two to diagnose from the block side.
-                payload: { requestId, snapshot: { workflowId: 'wf_estimate', status: 'pending' } },
-              });
-              return;
-            }
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
               payload: {
                 requestId,
-                snapshot: {
-                  workflowId: 'wf_estimate',
-                  status: 'pending',
-                  cost: { total: costFor(body) },
-                },
+                snapshot: estimateSnapshotFor(body, { storeQuotes: true, issuePathPrefix: ['body'] }),
+              },
+            });
+            return;
+          }
+
+          case 'ESTIMATE_WORKFLOW_BATCH': {
+            // The batch twin of ESTIMATE_WORKFLOW, in the host's order: the
+            // request shape, then the list, then each cell through
+            // `estimateSnapshotFor` — the function ESTIMATE_WORKFLOW prices with,
+            // so a cell is priced exactly as one estimate of that body would be.
+            // Nothing is submitted and no Buzz moves.
+            if (!isRoutableRequestId(requestId)) return;
+            const mode = gen.batchEstimate ?? 'supported';
+            // A host that predates the message sends nothing at all.
+            if (mode === 'silent') return;
+            if (mode === 'unsupported') {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'unsupported on this host' },
+              });
+              return;
+            }
+            const bodies: unknown = typed.payload?.bodies;
+            if (!Array.isArray(bodies) || bodies.length === 0) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'invalid estimate batch' },
+              });
+              return;
+            }
+            if (bodies.length > MOCK_ESTIMATE_BATCH_MAX_CELLS) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'estimate batch too large' },
+              });
+              return;
+            }
+            // 🔴 THE SPEND-SCOPE GATE, WHOLE-CALL. civitai's
+            // `estimateWorkflowBatch` throws `FORBIDDEN` before pricing a single
+            // cell, and the host (`estimateBatchGate.ts`) catches the throw into
+            // `{ requestId, error: err.message }` — NOT a per-cell failure, and
+            // no `snapshots`/`aggregate`. The SDK surfaces it as
+            // `BatchEstimateError` code `'failed'` with this text on `hostError`.
+            // After the request-shape checks above, because those are the host's
+            // own gate and run before the server is consulted.
+            if (!consentGranted) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: MOCK_SPEND_SCOPE_ERROR },
+              });
+              return;
+            }
+            const snapshots = (bodies as WorkflowBody[]).map((cell, index): BlockWorkflowSnapshot => {
+              // The host's snapshot for a cell its call budget ran out on.
+              if (gen.batchEstimateTimedOutCells?.includes(index)) {
+                return {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: BATCH_ESTIMATE_CELL_TIMEOUT_ERROR,
+                };
+              }
+              // The server refuses a training cell in a batch: a training
+              // estimate stores the quote the viewer later confirms, so it is
+              // estimated on its own. Refused BEFORE `estimateSnapshotFor`, which
+              // would store one.
+              if (cell?.kind === 'training') {
+                return {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: MOCK_TRAINING_IN_BATCH_ERROR,
+                };
+              }
+              return estimateSnapshotFor(cell ?? ({} as WorkflowBody), {
+                storeQuotes: false,
+                issuePathPrefix: [],
+              });
+            });
+            // The server's aggregate rule: the cells that priced, i.e. not
+            // `'failed'` and carrying a numeric `cost.total`.
+            let total = 0;
+            let pricedCells = 0;
+            for (const snapshot of snapshots) {
+              if (snapshot.status === 'failed' || typeof snapshot.cost?.total !== 'number') continue;
+              total += snapshot.cost.total;
+              pricedCells += 1;
+            }
+            dispatchToBlock({
+              type: 'ESTIMATE_BATCH_RESULT',
+              payload: {
+                requestId,
+                snapshots,
+                aggregate: { total, pricedCells, cellCount: snapshots.length },
               },
             });
             return;
@@ -2079,14 +3810,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // the largest-wallet stamp. No recipe-registry validation.
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
-            const cost = costFor(body);
 
             // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
             // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
             // 'failed' sentinel id and NO `cost`, which is what separates an
             // errored submit from a priced budget rejection
-            // (civitai/civitai-app-starters#251). Checked FIRST — a host-side
-            // throw pre-empts every server-side decision below.
+            // (civitai/civitai-app-starters#251). Checked FIRST — a forced
+            // host-side throw pre-empts every server-side decision below,
+            // including the spend-scope gate.
             if (gen.failSubmitException === true) {
               dispatchToBlock({
                 type: 'WORKFLOW_SUBMITTED',
@@ -2101,6 +3832,112 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+
+            // 🔴 THE STEP-INPUT GATE (./mockHostStepInput.ts): inline media in a
+            // pass-through step input, then its byte cap. zod refinements of the
+            // body, so the server refuses at `.input()` — ahead of the spend-scope
+            // gate below, which is the handler's first act. Nothing is debited.
+            {
+              const inputRefusal = stepInputRefusal(body, ['body']);
+              if (inputRefusal !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_SUBMITTED',
+                  payload: {
+                    requestId,
+                    snapshot: { workflowId: 'failed', status: 'failed', error: inputRefusal },
+                  },
+                });
+                return;
+              }
+            }
+
+            // 🔴 THE SPEND-SCOPE GATE. civitai's `submitWorkflow` throws
+            // `FORBIDDEN` with this message as its first act after
+            // authenticating the token — before the budget, the training
+            // confirmation, the currency resolution and any debit — and the page
+            // host's SUBMIT_WORKFLOW handler catches the rejected mutation into
+            // `failureSnapshot(err)`: the `'failed'` sentinel, NO `cost`. So
+            // `submit()` rejects as `'exception'`, and `withConsentRetry` (the
+            // token lacks `ai:write:budgeted`) prompts, this mock grants and
+            // pushes TOKEN_REFRESH, and the SAME-KEY retry lands below. Nothing
+            // is debited and no workflow is recorded on this arm.
+            if (!consentGranted) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR },
+                },
+              });
+              return;
+            }
+
+            // A `kind: 'training'` body is never started by SUBMIT_WORKFLOW: the
+            // server charges a training run only against a quote a signed-in
+            // session confirmed, which only RUN_TRAINING's dialog records. The
+            // server's own refusal, in the host's `failureSnapshot` shape.
+            // (`useBuzzWorkflow().submit()` refuses before sending; this covers a
+            // raw transport send.)
+            if (body.kind === 'training') {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error:
+                      'this training run has not been confirmed by the viewer in this session',
+                  },
+                },
+              });
+              return;
+            }
+            // A pass-through body naming a `quoteId` asks to be charged against a
+            // viewer-confirmed quote, and only RUN_CONFIRMED_STEP's dialog records
+            // that confirmation — so as a plain submit the server refuses it. Its
+            // own message, in the host's `failureSnapshot` shape.
+            // (`useBuzzWorkflow().submit()` refuses before sending; this covers a
+            // raw transport send.)
+            if (
+              body.kind === 'step' &&
+              (body as { quoteId?: unknown }).quoteId !== undefined
+            ) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: MOCK_STEP_NOT_CONFIRMED_ERROR,
+                  },
+                },
+              });
+              return;
+            }
+            // A `kind: 'workflow'` body the host will not run is refused here,
+            // before any cap, balance or debit — the same refusal, with the same
+            // `errorCode`, the estimate gives. No `cost`, so `submit()` rejects.
+            if (body.kind === 'workflow') {
+              const failure = workflowQuoteFailure();
+              const refusal =
+                mockWorkflowBodyRefusal(body) ??
+                (failure === null ? null : mockUnpricedWorkflowRefusal(body, failure));
+              if (refusal !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_SUBMITTED',
+                  payload: {
+                    requestId,
+                    snapshot: { workflowId: 'failed', status: 'failed', ...refusal },
+                  },
+                });
+                return;
+              }
+            }
+            const cost = costFor(body);
+            // What the viewer pays: the generation plus the app fee.
+            const charged = cost + (authorFeeFor(body) ?? 0);
 
             // Disallowed-account path (content-rating clamp): the real backend
             // rejects a picked pool outside the app's maturity policy at the
@@ -2131,14 +3968,44 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
 
-            // Insufficient-Buzz path: legacy failMode, the buzz scenario's
-            // force flag, OR a simulated balance that can't cover this gen.
+            // Spend-CAP refusal (`generation.submitCapRefusal`). The server
+            // checks its caps (per-call budget, daily, consent, per-app, dev
+            // session) BEFORE it asks the orchestrator to debit, so this comes
+            // ahead of the out-of-Buzz path below.
+            if (gen.submitCapRefusal !== undefined) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    // The server stamps this `'failed'` sentinel on every cap
+                    // refusal (a refused submit has no orchestrator id).
+                    workflowId: 'failed',
+                    status: 'failed',
+                    // 🔴 THE PRICE IS LOAD-BEARING. The real server quotes the
+                    // cost it refused to charge at every cap exit, and `cost`
+                    // presence is what makes `submit()` RESOLVE this rather than
+                    // reject it as an errored submit
+                    // (civitai/civitai-app-starters#251). Do not drop it.
+                    cost: quotedCost(body),
+                    error:
+                      gen.submitCapRefusal === true
+                        ? DEFAULT_SUBMIT_CAP_REFUSAL
+                        : gen.submitCapRefusal,
+                  },
+                },
+              });
+              return;
+            }
+
+            // OUT-OF-BUZZ path: legacy failMode, the buzz scenario's force
+            // flag, OR a simulated balance that can't cover this gen.
             const balanceSimulated = typeof buzz.balance === 'number';
             const insufficient =
               failMode === 'all' ||
               failMode === 'insufficient' ||
               buzz.insufficient === true ||
-              (balanceSimulated && (buzz.balance as number) < cost);
+              (balanceSimulated && (buzz.balance as number) < charged);
 
             // Generic generation failure: failNext countdown, failRate dice, or
             // the legacy 'some' (~1 in 3) mode.
@@ -2162,25 +4029,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: 'failed',
                     status: 'failed',
-                    // The `'failed'` id above matches the server, which stamps
-                    // that same sentinel on every budget/cap refusal (a refused
-                    // submit has no orchestrator id). Nothing here depends on the
-                    // id — the price below is what makes this arm RESOLVE — but
-                    // the mock must not teach a shape the wire never carries.
+                    // 🔴 DELIBERATELY NO `cost` — the host's `failureSnapshot(err)`
+                    // shape exactly, so `submit()` REJECTS with code
+                    // `'exception'`. That is what production sends when a viewer
+                    // is out of Buzz. The orchestrator answers the real submit
+                    // with a 403. civitai's `throwOrchestratorFailure` maps that
+                    // to `throwInsufficientFundsError`, a thrown `BAD_REQUEST`.
+                    // `blocks.submitWorkflow`'s catch refunds the reservation and
+                    // rethrows it, and the iframe host's SUBMIT_WORKFLOW handler
+                    // catches the mutation's rejection into `failureSnapshot(err)`,
+                    // which has no `cost`.
                     //
-                    // 🔴 THE PRICE IS LOAD-BEARING, NOT COSMETIC. The real server
-                    // quotes the cost it refused to charge at EVERY budget/cap
-                    // exit on the submit path — the per-call `buzzBudget` gate,
-                    // the per-user daily cap, the per-app aggregate/velocity cap
-                    // and the dev-tunnel session cap, on all three body kinds —
-                    // and `cost` presence is exactly what tells a priced
-                    // REJECTION apart from an errored submit
-                    // (civitai/civitai-app-starters#251). Omitting it here made
-                    // the mock's top-up path indistinguishable from a server
-                    // exception, so `submit()` would reject it and the top-up UX
-                    // would be unreachable in the harness that exists to
-                    // exercise it. Do not drop this field.
-                    cost: { total: cost },
+                    // This arm used to carry `cost` and RESOLVE, on the theory
+                    // that out-of-Buzz was one of the server's priced cap
+                    // refusals. It is not: those caps compare against a budget,
+                    // not the wallet, and only they quote a price. A block
+                    // tested against the old shape built a "resolved refusal →
+                    // top-up" flow that production never reaches. Do not add a
+                    // `cost` back; the priced arm is `submitCapRefusal` above.
                     error: INSUFFICIENT_BUZZ_ERROR,
                   },
                 },
@@ -2208,8 +4074,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                     // failed". The backend DOES have generic transient submit
                     // failures — a fail-closed `unavailable` deny and a
                     // missing-price-quote exit — but it returns those as PRICED,
-                    // RESOLVING snapshots, which is a shape this mock does not
-                    // yet simulate. Do not read this branch as covering them.
+                    // RESOLVING snapshots. Simulate those with `submitCapRefusal`
+                    // and the server's text; do not read this branch as covering
+                    // them.
                     error: GENERIC_GEN_ERROR,
                   },
                 },
@@ -2218,9 +4085,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
 
             // Success path: debit the simulated balance + remember body/cost.
-            if (balanceSimulated) buzz.balance = (buzz.balance as number) - cost;
+            if (balanceSimulated) buzz.balance = (buzz.balance as number) - charged;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
-            workflows.set(workflowId, { polls: 0, cost, body });
+            workflows.set(workflowId, {
+              polls: 0,
+              cost,
+              body,
+              ...(body.kind === 'workflow' ? { stepCosts: workflowStepCosts(body) } : {}),
+            });
             dispatchToBlock({
               type: 'WORKFLOW_SUBMITTED',
               payload: { requestId, snapshot: { workflowId, status: 'pending' } },
@@ -2230,10 +4102,46 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            const wf = workflows.get(workflowId);
-            const polls = (wf?.polls ?? 0) + 1;
-            if (wf) wf.polls = polls;
-            if (polls >= pollsUntilDone) {
+            // An id this mock did not submit (e.g. restored from storage after a
+            // reload) gets a record on its first poll, so it counts down to done
+            // like any other instead of answering `processing` forever.
+            let wf = workflows.get(workflowId);
+            if (!wf) {
+              wf = { polls: 0, cost: legacyCost };
+              workflows.set(workflowId, wf);
+            }
+            if (wf.canceled) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: { workflowId, status: 'canceled' as const } },
+              });
+              return;
+            }
+            const polls = wf.polls + 1;
+            wf.polls = polls;
+            // A `kind: 'workflow'` run with a step told to fail ends `failed`
+            // with its earlier steps intact (`generation.failWorkflowStep`).
+            const partialFailure = polls >= pollsUntilDone ? workflowPartialFailure(workflowId) : null;
+            if (partialFailure !== null) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: partialFailure },
+              });
+              return;
+            }
+            const outcome =
+              polls >= pollsUntilDone ? (gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded') : null;
+            if (outcome === 'failed' || outcome === 'expired') {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: {
+                  requestId,
+                  snapshot: { workflowId, status: outcome, error: `mock: workflow ${outcome}` },
+                },
+              });
+              return;
+            }
+            if (outcome === 'succeeded') {
               // Apply synthetic latency on the terminal (succeeded) poll only.
               const delay = latencyFor();
               if (delay > 0) {
@@ -2252,7 +4160,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             } else {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: { requestId, snapshot: { workflowId, status: 'processing' as const } },
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId,
+                    status: 'processing' as const,
+                    // A multi-step run reports how far its steps have got.
+                    ...(wf.body?.kind === 'workflow'
+                      ? workflowProgressView(workflowId, wf.body, polls)
+                      : {}),
+                  },
+                },
               });
             }
             return;
@@ -2260,7 +4178,44 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'CANCEL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            workflows.delete(workflowId);
+            const refused = gen.cancelRefused;
+            if (refused === true || (Array.isArray(refused) && refused.includes(workflowId))) {
+              // The real host's answer when the estimate allowance is used up: a
+              // NON-terminal snapshot, and the cancel is not sent.
+              dispatchToBlock({
+                type: 'WORKFLOW_CANCELED',
+                payload: { requestId, snapshot: { workflowId, status: 'processing' } },
+              });
+              return;
+            }
+            const wf = workflows.get(workflowId);
+            if (wf && !wf.canceled && wf.polls >= pollsUntilDone) {
+              // Already finished: like the real host, report the real terminal
+              // status rather than pretending the cancel took.
+              const partialFailure = workflowPartialFailure(workflowId);
+              if (partialFailure !== null) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_CANCELED',
+                  payload: { requestId, snapshot: partialFailure },
+                });
+                return;
+              }
+              const outcome = gen.workflowOutcome?.(workflowId, wf.body) ?? 'succeeded';
+              dispatchToBlock({
+                type: 'WORKFLOW_CANCELED',
+                payload: {
+                  requestId,
+                  snapshot:
+                    outcome === 'succeeded'
+                      ? succeededSnapshot(workflowId)
+                      : { workflowId, status: outcome, error: `mock: workflow ${outcome}` },
+                },
+              });
+              return;
+            }
+            // Keep the record, marked canceled, so later polls answer `canceled`
+            // rather than counting down to `succeeded`.
+            workflows.set(workflowId, { ...(wf ?? { polls: 0, cost: legacyCost }), canceled: true });
             dispatchToBlock({
               type: 'WORKFLOW_CANCELED',
               payload: { requestId, snapshot: { workflowId, status: 'canceled' } },
@@ -2272,7 +4227,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // Refill the simulated balance so the post-top-up retry succeeds.
             const newBalance = typeof buzz.balance === 'number' ? buzz.balance + 1000 : 1000;
             if (typeof buzz.balance === 'number') buzz.balance = newBalance;
+            // A purchase ends EVERY forced out-of-Buzz state, not just the `buzz`
+            // group's flag: `failMode: 'insufficient' | 'all'` is documented as
+            // the same knob, and leaving it set made `?fail=insufficient` loop
+            // reject → top-up → reject. `'some'` is a generic failure, not a
+            // wallet, so a purchase leaves it alone.
             buzz.insufficient = false;
+            if (failMode === 'insufficient' || failMode === 'all') failMode = 'none';
             dispatchToBlock({
               type: 'BUZZ_PURCHASE_RESULT',
               payload: { requestId, purchased: true, newBalance },
@@ -2411,6 +4372,25 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'GET_RESOURCE_FILE': {
+            // Token-INDEPENDENT read, like GET_WILDCARD_PACK. A forced error
+            // replies with the closed-set code (never free text), as the real
+            // host does. The canned file is returned for any version / file id.
+            if (!isRoutableRequestId(requestId)) return;
+            if (resourceFileError !== undefined) {
+              dispatchToBlock({
+                type: 'RESOURCE_FILE_RESULT',
+                payload: { requestId, error: resourceFileError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'RESOURCE_FILE_RESULT',
+              payload: { requestId, file: resourceFile },
+            });
+            return;
+          }
+
           case 'QUERY_APP_WORKFLOWS': {
             // App generator SUBQUEUE read. Drop a request with no requestId
             // (unroutable). A forced error replies with the FREE-TEXT error
@@ -2506,6 +4486,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'SET_ENTITY_REACTION': {
+            // App reactions. Every path with a routable requestId replies exactly
+            // once; the decision order is the real host's (see
+            // `./mockHostReactions.ts`).
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'ENTITY_REACTION_RESULT',
+              payload: { requestId, ...reactions.set(typed.payload) },
+            });
+            return;
+          }
+
+          case 'GET_ENTITY_REACTIONS': {
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'ENTITY_REACTIONS_RESULT',
+              payload: { requestId, ...reactions.get(typed.payload) },
+            });
+            return;
+          }
+
           case 'CREATE_POST_FROM_APP': {
             // Publish a REAL Post on the viewer's profile from the app's own
             // outputs. Drop a request with no requestId (unroutable) — same as
@@ -2532,11 +4533,188 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // `published` sources: the server's `resolveAppPublishedImages`
+            // refusals, verbatim. Ids are de-duplicated and non-positive /
+            // non-integer ones dropped first; none left → `no valid image ids
+            // in a published source`. Then ONE message for "unknown", "not this
+            // app's" (a picked upload is unstamped) and "already in a post", so
+            // the reply is no existence oracle. Refused, never skipped.
+            const adopted: number[] = [];
+            for (const source of sources as Array<{ kind?: unknown; imageIds?: unknown }>) {
+              if (source?.kind !== 'published') continue;
+              const raw = Array.isArray(source.imageIds) ? source.imageIds : [];
+              const ids = [...new Set(raw)].filter(
+                (n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0,
+              );
+              const refusal =
+                ids.length === 0
+                  ? 'no valid image ids in a published source'
+                  : ids.some((id) => !postableImageIds.has(id))
+                    ? 'an image is not available to post'
+                    : undefined;
+              if (refusal !== undefined) {
+                dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
+                return;
+              }
+              adopted.push(...ids);
+            }
+            // Posted: the adopted images now have a `postId`, so never again.
+            for (const id of adopted) postableImageIds.delete(id);
             dispatchToBlock({
               type: 'CREATE_POST_RESULT',
               payload: { requestId, result: { ...createPostResult } },
             });
             return;
+          }
+
+          case 'RUN_TRAINING': {
+            // The host's gate (`runTrainingGate.ts`): no requestId → drop;
+            // signed-out → `sign in to train`; not a `kind:'training'` body with
+            // a `quoteId` → `invalid training request`. Then the server: the
+            // spend scope, then the quote (unknown, expired or already spent).
+            if (!isRoutableRequestId(requestId)) return;
+            const reply = (payload: Record<string, unknown>) =>
+              dispatchToBlock({ type: 'TRAINING_RESULT', payload: { requestId, ...payload } });
+            if (viewer === null) return reply({ error: 'sign in to train' });
+            const raw = typed.payload?.body as unknown;
+            const b =
+              raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? (raw as Record<string, unknown>)
+                : null;
+            if (!b || b.kind !== 'training' || typeof b.quoteId !== 'string' || !b.quoteId) {
+              return reply({ error: 'invalid training request' });
+            }
+            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
+            const quote = trainingQuotes.get(b.quoteId);
+            if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
+              return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });
+            }
+            // The host reads the quote back and refuses, with no dialog, one
+            // naming any blob it did not upload for this block — before the
+            // server claims it, so the quote survives.
+            if (
+              trainingDataNotUploadedHere ||
+              quote.itemKeys.some((key) => !trainingUploads.has(blobKeyIdentity(key)))
+            ) {
+              return reply({ error: MOCK_TRAINING_NOT_UPLOADED_HERE });
+            }
+            // Which outcomes consume the quote, modelled on the real flow: the
+            // host's gate and consent dialog come first (quote kept); the
+            // server's submit then claims the quote with a GETDEL
+            // (`claimTrainingQuote`) BEFORE any of its own checks, so every
+            // server outcome — a refusal, a body mismatch, a cap refusal,
+            // `submission-unconfirmed`, a run — consumes it. The mock's check
+            // ORDER below is its own; only the spent/kept split is the server's.
+            if (runTrainingError !== undefined) {
+              if (!PRE_CLAIM_RUN_TRAINING_ERRORS.has(runTrainingError)) quote.spent = true;
+              return reply({ error: runTrainingError });
+            }
+            quote.spent = true;
+            const runFingerprint = trainingFingerprint(b);
+            if (runFingerprint === null || runFingerprint !== quote.fingerprint) {
+              return reply({
+                error: 'the training body differs from the one that was quoted — estimate again',
+              });
+            }
+            // The server's cap / availability refusals RESOLVE (refunded, no run
+            // started) — after the quote was consumed above.
+            if (runTrainingCapRefusal !== undefined) {
+              return reply({
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: quote.total },
+                  error: runTrainingCapRefusal,
+                },
+              });
+            }
+            submitCount += 1;
+            const workflowId = `wf_${submitCount}_${Date.now()}`;
+            workflows.set(workflowId, {
+              polls: 0,
+              cost: quote.total,
+              body: raw as WorkflowBody,
+            });
+            return reply({ snapshot: { workflowId, status: 'pending' } });
+          }
+
+          case 'RUN_CONFIRMED_STEP': {
+            // The host's gate (`runConfirmedStepGate.ts`): no requestId → drop;
+            // signed-out → `sign in to run`; not a pass-through `kind:'step'`
+            // body naming an `sq_`-shaped `quoteId` → `invalid confirmed step
+            // request`. Then the server: the spend scope, then the quote the host
+            // reads back for its dialog (unknown, expired or already spent).
+            if (!isRoutableRequestId(requestId)) return;
+            const reply = (payload: Record<string, unknown>) =>
+              dispatchToBlock({
+                type: 'CONFIRMED_STEP_RESULT',
+                payload: { requestId, ...payload },
+              });
+            if (viewer === null) return reply({ error: 'sign in to run' });
+            const raw = typed.payload?.body as unknown;
+            const b =
+              raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? (raw as Record<string, unknown>)
+                : null;
+            if (
+              !b ||
+              b.kind !== 'step' ||
+              typeof b.$type !== 'string' ||
+              typeof b.quoteId !== 'string' ||
+              !STEP_QUOTE_ID_PATTERN.test(b.quoteId)
+            ) {
+              return reply({ error: 'invalid confirmed step request' });
+            }
+            if (!consentGranted) return reply({ error: MOCK_SPEND_SCOPE_ERROR });
+            const quote = stepQuotes.get(b.quoteId);
+            if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
+              return reply({ error: MOCK_STEP_QUOTE_GONE_ERROR });
+            }
+            // Which outcomes consume the quote — the same split as RUN_TRAINING
+            // above: the host's gate, its daily-limit explanation and its confirm
+            // come first (quote kept); the submit then claims the quote before any
+            // of its own checks, so every server outcome consumes it.
+            if (runConfirmedStepError !== undefined) {
+              if (!PRE_CLAIM_RUN_CONFIRMED_STEP_ERRORS.has(runConfirmedStepError)) {
+                quote.spent = true;
+              }
+              return reply({ error: runConfirmedStepError });
+            }
+            // The submit's preflight refuses a training `$type` BEFORE it touches
+            // the quote, so the quote is kept.
+            if (isTrainingStepTypeName(b.$type)) {
+              return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
+            }
+            quote.spent = true;
+            // The body is hashed AFTER the claim, so a body the server cannot bind
+            // (non-plain-JSON input) and a body that differs both consume the quote.
+            const bound = stepBodyFingerprint(b);
+            if ('refusal' in bound) return reply({ error: bound.refusal });
+            if (bound.fingerprint !== quote.fingerprint) {
+              return reply({ error: MOCK_STEP_BODY_MISMATCH_ERROR });
+            }
+            // The server's cap refusals RESOLVE (refunded, no job started) — after
+            // the quote was consumed above.
+            if (runConfirmedStepCapRefusal !== undefined) {
+              return reply({
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: quote.total },
+                  error: runConfirmedStepCapRefusal,
+                },
+              });
+            }
+            // Every confirmation is its own job: the charge is the confirmed
+            // price, never `maxBuzz`.
+            submitCount += 1;
+            const workflowId = `wf_${submitCount}_${Date.now()}`;
+            workflows.set(workflowId, {
+              polls: 0,
+              cost: quote.total,
+              body: raw as WorkflowBody,
+            });
+            return reply({ snapshot: { workflowId, status: 'pending' } });
           }
 
           case 'PUBLISH_GENERATION_OUTPUTS': {
@@ -2552,6 +4730,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            for (const id of publishImageIds) postableImageIds.add(id);
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
               payload: { requestId, result: { imageIds: [...publishImageIds] } },
@@ -2604,11 +4783,145 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'OPEN_RESOURCE_PICKER': {
             const rtype = typed.payload?.resourceType;
+            // MULTI-select (`multiple: { max }`) — the real host's rules, in the
+            // real host's order: LoRA family only, `max` a whole number ≥ 1
+            // (clamped to 5), and a LIST reply (`selectedResources`, `[]` when
+            // dismissed) with no `selected`. A request WITHOUT the key falls
+            // through to the single-pick reply below, unchanged.
+            const multiple = (typed.payload as { multiple?: unknown } | undefined)?.multiple;
+            if (multiple !== undefined && multiple !== null) {
+              const refuse = (error: string) =>
+                dispatchToBlock({ type: 'RESOURCE_PICKER_RESULT', payload: { requestId, error } });
+              if (!['lora', 'locon', 'dora'].includes(String(rtype).trim().toLowerCase())) {
+                refuse(
+                  `OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not ${String(rtype)}.`,
+                );
+                return;
+              }
+              const max =
+                typeof multiple === 'object' ? (multiple as { max?: unknown }).max : undefined;
+              if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+                refuse('OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.');
+                return;
+              }
+              const picks =
+                cannedMultiPicks !== undefined
+                  ? (cannedMultiPicks ?? [])
+                  : cannedPicks.LORA
+                    ? [cannedPicks.LORA, DEFAULT_SECOND_LORA_PICK]
+                    : [];
+              dispatchToBlock({
+                type: 'RESOURCE_PICKER_RESULT',
+                payload: {
+                  requestId,
+                  selectedResources: picks.slice(0, Math.min(max, MOCK_RESOURCE_PICKER_MULTI_MAX)),
+                },
+              });
+              return;
+            }
             const selected = rtype ? cannedPicks[rtype] : undefined;
             dispatchToBlock({
               type: 'RESOURCE_PICKER_RESULT',
               payload: { requestId, ...(selected ? { selected } : {}) },
             });
+            return;
+          }
+
+          case 'OPEN_IMAGE_PICKER': {
+            // The viewer picking from their own images. No picker UI here: the
+            // mock answers at once from `cannedImagePicks`, with the real
+            // host's rules in the real host's order. A request nobody can
+            // route is dropped, as the host drops it.
+            if (!isRoutableRequestId(requestId)) return;
+            const refuse = (error: string) =>
+              dispatchToBlock({ type: 'IMAGE_PICKER_RESULT', payload: { requestId, error } });
+            // A page-app affordance: every other surface answers the generic
+            // refusal.
+            if (!emulatesPageHost(options.context)) {
+              refuse('unsupported on this host');
+              return;
+            }
+            const pickerPayload = (typed.payload ?? {}) as { sources?: unknown; multiple?: unknown };
+            // `sources`: omitted = both. Otherwise a non-empty array of known
+            // members; repeats are harmless.
+            let wanted: readonly string[] = MOCK_IMAGE_PICKER_SOURCES;
+            if (pickerPayload.sources !== undefined) {
+              const requested = pickerPayload.sources;
+              if (
+                !Array.isArray(requested) ||
+                requested.length === 0 ||
+                !requested.every((s) => MOCK_IMAGE_PICKER_SOURCES.includes(s))
+              ) {
+                refuse(MOCK_IMAGE_PICKER_SOURCES_ERROR);
+                return;
+              }
+              wanted = requested as string[];
+            }
+            // `multiple`: ANY present value asks for a multi pick, so `null` and
+            // a non-object are refused, as the host refuses them. Checked
+            // before the library is read, in the host's order.
+            const multiple = pickerPayload.multiple;
+            let max: number | null = null;
+            if (multiple !== undefined) {
+              const requestedMax =
+                multiple && typeof multiple === 'object'
+                  ? (multiple as { max?: unknown }).max
+                  : undefined;
+              if (
+                typeof requestedMax !== 'number' ||
+                !Number.isInteger(requestedMax) ||
+                requestedMax < 1
+              ) {
+                refuse(MOCK_IMAGE_PICKER_MULTIPLE_ERROR);
+                return;
+              }
+              max = Math.min(requestedMax, MOCK_IMAGE_PICKER_MULTI_MAX);
+            }
+            // The library, narrowed to the requested sources, with a repeated
+            // image (same source and url) collapsed onto its first occurrence.
+            const available: BlockPickedImageInfo[] = [];
+            for (const image of cannedImagePicks ?? []) {
+              if (!wanted.includes(image.source)) continue;
+              if (available.some((kept) => kept.source === image.source && kept.url === image.url))
+                continue;
+              available.push(image);
+            }
+            if (max !== null) {
+              dispatchToBlock({
+                type: 'IMAGE_PICKER_RESULT',
+                payload: { requestId, selectedImages: available.slice(0, max).map(toWireImagePick) },
+              });
+              return;
+            }
+            const first = available[0];
+            dispatchToBlock({
+              type: 'IMAGE_PICKER_RESULT',
+              payload: { requestId, ...(first ? { selected: toWireImagePick(first) } : {}) },
+            });
+            return;
+          }
+
+          case 'OPEN_MEDIA_UPLOAD': {
+            // Generation-input media upload. The rules live in
+            // ./mediaUploadBytes.ts, in the host's order; there is no picker
+            // UI, so picker mode answers at once from `cannedMediaUploads`.
+            if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'MEDIA_UPLOAD_RESULT',
+                payload: { requestId, error: 'unsupported on this host' },
+              });
+              return;
+            }
+            const answer = mockMediaUploadReply({
+              payload: typed.payload ?? {},
+              canned: cannedMediaUploads,
+              forcedError: mediaUploadError,
+              recent: mediaUploadWindow,
+              now: Date.now(),
+            });
+            mediaUploadWindow = answer.recent;
+            dispatchToBlock({ type: 'MEDIA_UPLOAD_RESULT', payload: { requestId, ...answer.reply } });
             return;
           }
 
@@ -2618,6 +4931,58 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             //   • 'generationSource' → the UNSCANNED source { url, width, height }
             //   • 'display' (default / absent) → the MODERATED image
             // `null` → dismissed (no `selected`), so the hook resolves to null.
+            // The `bytes` variant (civitai/civitai#5639): no picker, the host's
+            // admission rules in the host's order (./uploadBytes.ts), then the
+            // forced refusal standing in for the server persist + scan.
+            const bytesReq = resolveUploadBytesRequest(typed.payload ?? {});
+            if (bytesReq.kind !== 'none') {
+              if (!isRoutableRequestId(requestId)) return;
+              const reply = (p: { selected: BlockUploadedImageInfo } | { error: string }) =>
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, ...p } });
+              if (bytesReq.kind === 'invalid') return reply({ error: UPLOAD_BYTES_INVALID_ERROR });
+              const admitted = admitUploadBytes(bytesReq, uploadBytesWindow, Date.now());
+              uploadBytesWindow = admitted.recent;
+              if (!admitted.result.ok) return reply({ error: admitted.result.error });
+              if (uploadImageBytesError !== undefined) return reply({ error: uploadImageBytesError });
+              // A COPY, as production's structured-clone `postMessage` delivers it.
+              options.onUploadImageBytes?.({
+                bytes: bytesReq.bytes.slice(0),
+                mimeType: admitted.result.type,
+                filename: admitted.result.filename,
+              });
+              postableImageIds.add(uploadImageBytesResult.imageId);
+              return reply({ selected: { ...uploadImageBytesResult } });
+            }
+
+            // TRAINING DATA (civitai/civitai#6461): several private images in ONE
+            // reply, `{ images: [{ url, air }] }`. Every key handed out is
+            // remembered for RUN_TRAINING's not-uploaded-here check.
+            if (typed.payload?.purpose === 'trainingData') {
+              let images: BlockTrainingDataImage[] | null;
+              if (cannedTrainingDataUpload === undefined) {
+                images = Array.from({ length: DEFAULT_TRAINING_DATA_UPLOAD_COUNT }, () => {
+                  trainingUploadSerial += 1;
+                  const air = `mockblob${trainingUploadSerial.toString(16).padStart(8, '0')}.png`;
+                  return { url: `${DEFAULT_TRAINING_DATA_URL_BASE}${air}`, air };
+                });
+              } else {
+                images = cannedTrainingDataUpload;
+              }
+              if (!images || images.length === 0) {
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId } });
+                return;
+              }
+              for (const img of images) {
+                const key = mockBlobKeyFromAir(img.air);
+                if (key !== null) trainingUploads.add(blobKeyIdentity(key));
+              }
+              dispatchToBlock({
+                type: 'IMAGE_UPLOAD_RESULT',
+                payload: { requestId, selected: { images: images.map(({ url, air }) => ({ url, air })) } },
+              });
+              return;
+            }
+
             const isGenerationSource = typed.payload?.purpose === 'generationSource';
 
             // NON-BLOCKING display path (asyncScan:true): early-resolve with a
@@ -2715,7 +5080,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             //    counts STORED bytes, `octet_length(value::jsonb::text)`.
             //    `jsonb`'s canonical text inserts a space after every `:` and
             //    every `,`, so stored > wire for every container — approaching
-            //    1.5x for a long array. This gate therefore ADMITS writes
+            //    1.5x for a long array of small integers, and up to 44.4x for
+            //    a numeric-heavy one (`1e308` is stored as its 309 digits).
+            //    This gate therefore ADMITS writes
             //    production rejects. Permissive: a local pass that is not
             //    real, which is the direction that ships a bug.
             //
@@ -2885,6 +5252,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SHARED_APPEND': {
+            const appendLimited = takeSharedRateLimit('submissions');
+            if (appendLimited) {
+              dispatchToBlock({
+                type: 'SHARED_APPEND_RESULT',
+                payload: { requestId, key: '', ...appendLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -2928,6 +5303,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_VOTE': {
             const key = typed.payload?.key ?? '';
+            const voteLimited = takeSharedRateLimit('votes');
+            if (voteLimited) {
+              dispatchToBlock({
+                type: 'SHARED_VOTE_RESULT',
+                payload: { requestId, count: 0, ...voteLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -2956,6 +5339,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_UNVOTE': {
             const key = typed.payload?.key ?? '';
+            const unvoteLimited = takeSharedRateLimit('votes');
+            if (unvoteLimited) {
+              dispatchToBlock({
+                type: 'SHARED_UNVOTE_RESULT',
+                payload: { requestId, count: 0, ...unvoteLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -2983,6 +5374,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_WITHDRAW': {
             const key = typed.payload?.key ?? '';
+            const withdrawLimited = takeSharedRateLimit('withdrawals');
+            if (withdrawLimited) {
+              dispatchToBlock({
+                type: 'SHARED_WITHDRAW_RESULT',
+                payload: { requestId, ok: false, deleted: false, ...withdrawLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3001,6 +5400,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_UPDATE': {
             const key = typed.payload?.key ?? '';
+            const updateLimited = takeSharedRateLimit('submissions');
+            if (updateLimited) {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, ...updateLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3073,6 +5480,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'SHARED_REPORT': {
             const key = typed.payload?.key ?? '';
+            const reportLimited = takeSharedRateLimit('reports');
+            if (reportLimited) {
+              dispatchToBlock({
+                type: 'SHARED_REPORT_RESULT',
+                payload: { requestId, ok: false, ...reportLimited },
+              });
+              return;
+            }
             if (sharedFailNext > 0) {
               sharedFailNext -= 1;
               dispatchToBlock({
@@ -3098,32 +5513,63 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SAVE_IMAGE': {
-            // The mock host can't trigger a real browser download; it just
-            // validates the request shape and acks so `useSaveImage()` resolves.
-            // Exactly one of url / imageId must be present.
-            const hasUrl = typeof typed.payload?.url === 'string' && typed.payload.url.length > 0;
-            const hasId = typeof typed.payload?.imageId === 'number';
-            if (hasUrl === hasId) {
-              dispatchToBlock({
-                type: 'SAVE_IMAGE_RESULT',
-                payload: { requestId, ok: false, error: 'INVALID_REQUEST' },
-              });
-              return;
+            // The mock host can't trigger a real browser download; it applies
+            // the host's request-shape gate and, for `bytes`, the host's
+            // CONTENT classifier (./saveBytes.ts), then acks so `useSaveImage()`
+            // resolves. Exactly one of url / imageId / bytes must be present —
+            // the same rule and string as the real host.
+            if (!isRoutableRequestId(requestId)) return;
+            const p = typed.payload ?? {};
+            const saveReply = (r: { ok: true } | { ok: false; error: string }) =>
+              dispatchToBlock({ type: 'SAVE_IMAGE_RESULT', payload: { requestId, ...r } });
+            // The host's exact shape predicate (./saveBytes.ts) — including that
+            // a non-empty-ArrayBuffer `bytes` is required, and that ANY non-null
+            // url/imageId beside a `bytes` is ambiguous.
+            const kind = saveImageRequestKind(p);
+            if (kind === 'invalid') {
+              return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
             }
-            dispatchToBlock({
-              type: 'SAVE_IMAGE_RESULT',
-              payload: { requestId, ok: true },
-            });
-            return;
+            if (saveImageError !== undefined) return saveReply({ ok: false, error: saveImageError });
+            if (kind === 'bytes' && p.bytes instanceof ArrayBuffer) {
+              // The host's `prepareSaveBytes` (./saveBytes.ts): size cap, clean
+              // the name, classify on the CLEANED name, force the extension.
+              const prepared = prepareSaveBytes({
+                bytes: p.bytes,
+                filename: typeof p.filename === 'string' ? p.filename : undefined,
+              });
+              if (!prepared.ok) return saveReply(prepared);
+              // A COPY, as production's structured-clone `postMessage` delivers
+              // it — the block keeps (and may keep mutating) its own buffer.
+              options.onSaveBytes?.({
+                bytes: p.bytes.slice(0),
+                mimeType: prepared.type,
+                filename: prepared.filename,
+              });
+            }
+            return saveReply({ ok: true });
           }
 
           case 'SET_USER_CHECKPOINT': {
-            // Persist the checkpoint override (mirrors the real host's
-            // block_user_settings write). Accept a numeric versionId OR an
-            // explicit null (clear); anything else is a bad-input NACK, same as
-            // the real IframeHost. Without this reply `useCheckpointPicker().
-            // persist()` hung to its 30s timeout under the mock host.
+            // Without a reply `useCheckpointPicker().persist()` hung to its 30s
+            // timeout under the mock host.
             if (!isRoutableRequestId(requestId)) return;
+            // 🔴 A PAGE REFUSES, ALWAYS — and the default context is a page.
+            // The page host has nowhere to write the override (a page token is
+            // bound to no model), so it answers every request with this exact
+            // reply, whatever `versionId` was sent. Until this branch the mock
+            // answered `ok: true` on a page, so a page app's `persist()` passed
+            // here and failed in production. See ./hostSurface.ts.
+            if (emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: { requestId, ok: false, error: PAGE_CHECKPOINT_PERSIST_ERROR },
+              });
+              return;
+            }
+            // MODEL SLOT: persist the checkpoint override (mirrors the real
+            // host's block_user_settings write). Accept a numeric versionId OR
+            // an explicit null (clear); anything else is a bad-input NACK, same
+            // as the real IframeHost.
             const rawVersionId = typed.payload?.versionId;
             const versionId =
               rawVersionId === null
@@ -3146,6 +5592,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           default:
+            // No reply, as in production. What reaches here is a type with no
+            // reply channel (BLOCK_READY, NAVIGATE, TRACK_EVENT, …) or a type
+            // this protocol does not declare. The real host's `unsupported on
+            // this host` reply is built only for a request type it KNOWS and
+            // has no handler for; a type it does not know gets nothing.
             return;
         }
       },
@@ -3248,6 +5699,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.cost !== undefined) legacyCost = patch.cost;
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
+    if ('cannedMultiPicks' in patch) cannedMultiPicks = patch.cannedMultiPicks;
+    // `null` is a meaningful value (dismisses), and `undefined` restores the
+    // defaults, so check for the KEY's presence.
+    if ('cannedImagePicks' in patch)
+      cannedImagePicks =
+        patch.cannedImagePicks === undefined ? DEFAULT_IMAGE_PICKS : patch.cannedImagePicks;
+    // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
     if ('cannedGenerationSourceUpload' in patch)
       cannedGenerationSourceUpload = patch.cannedGenerationSourceUpload ?? null;
@@ -3264,10 +5722,38 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzzReadError !== undefined) buzzReadError = normalizeReadError(patch.buzzReadError);
     if (patch.wildcardPack !== undefined) wildcardPack = patch.wildcardPack;
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
+    if (patch.resourceFile !== undefined) resourceFile = patch.resourceFile;
+    // Key PRESENCE, not value: `{ resourceFileError: undefined }` clears it.
+    if ('resourceFileError' in patch) resourceFileError = patch.resourceFileError;
     if (patch.collectionFollowError !== undefined)
       collectionFollowError = patch.collectionFollowError;
+    if (patch.reactionStates !== undefined || patch.reactionError !== undefined) {
+      reactions.configure({ seed: patch.reactionStates, error: patch.reactionError });
+    }
     if (patch.createPostResult !== undefined) createPostResult = patch.createPostResult;
     if (patch.createPostError !== undefined) createPostError = patch.createPostError;
+    // `null` is meaningful (a cancel) and `undefined` restores the default, so
+    // check for the KEY's presence.
+    if ('cannedTrainingDataUpload' in patch) cannedTrainingDataUpload = patch.cannedTrainingDataUpload;
+    // The training refusal knobs clear on an explicit `undefined` (key PRESENT in
+    // the patch), so a harness can turn a refusal off without re-installing.
+    if ('trainingDataNotUploadedHere' in patch) {
+      trainingDataNotUploadedHere = patch.trainingDataNotUploadedHere === true;
+    }
+    if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
+    if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
+    if ('saveImageError' in patch) saveImageError = patch.saveImageError;
+    if (patch.uploadImageBytesResult !== undefined) {
+      uploadImageBytesResult = patch.uploadImageBytesResult;
+    }
+    if ('uploadImageBytesError' in patch) uploadImageBytesError = patch.uploadImageBytesError;
+    if ('cannedMediaUploads' in patch) cannedMediaUploads = patch.cannedMediaUploads ?? {};
+    if ('mediaUploadError' in patch) mediaUploadError = patch.mediaUploadError;
+    if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
+    if ('runConfirmedStepError' in patch) runConfirmedStepError = patch.runConfirmedStepError;
+    if ('runConfirmedStepCapRefusal' in patch) {
+      runConfirmedStepCapRefusal = patch.runConfirmedStepCapRefusal;
+    }
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,
@@ -3289,9 +5775,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       if (patch.storage.failNext !== undefined) storageFailNext = patch.storage.failNext;
     }
     if (patch.shared !== undefined) {
-      // Only `failNext` is live-tunable; `seed` is install-time (re-install to
-      // change the backing store).
+      // `failNext`, `rateLimitNext` and `rateLimit` are live-tunable; `seed` is
+      // install-time (re-install to change the backing store).
       if (patch.shared.failNext !== undefined) sharedFailNext = patch.shared.failNext;
+      if (patch.shared.rateLimitNext !== undefined) sharedRateLimitNext = patch.shared.rateLimitNext;
+      if (patch.shared.rateLimit !== undefined) sharedRateLimitMeta = patch.shared.rateLimit;
     }
   }
 

@@ -2,6 +2,8 @@ import '@civitai/components/civitai-alert/define';
 import '@civitai/components/civitai-button/define';
 import '@civitai/components/civitai-loader/define';
 import '@civitai/components/civitai-toast-region/define';
+// The region creates `civitai-toast` elements but does not register them.
+import '@civitai/components/civitai-toast/define';
 
 import { CivitaiChat } from './civitai-chat.js';
 import { CivitaiChatComposer } from './civitai-chat-composer.js';

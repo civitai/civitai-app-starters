@@ -16,7 +16,7 @@ messages have no destination yet.
 | Old message(s) | Now | Status |
 |---|---|---|
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
-| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
+| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `app.workflows`, over `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist**, and `app.workflows` wraps all five (`estimate`, `submit`, `get`/`watch`/`wait`, `cancel`, `list`). 🔴 Use it, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
 | `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
@@ -25,13 +25,22 @@ messages have no destination yet.
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
 | `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
-| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `TRACK_EVENT` | — | Not carried |
+| `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `GET_RESOURCE_FILE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows all three (the host reply ledger lists them): `request('GET_RESOURCE_FILE', { modelVersionId, fileId? })` resolves with `{ file }` on a full-page app host |
+| `TRACK_EVENT` | `app.host.track(eventName, properties)` | **Carried**, same wire as `useBlockAnalytics().track`. 🔴 Only events and properties DECLARED under the manifest's `analytics.events` are recorded — see below |
 
-⚠ `TRACK_EVENT` is filed above beside two one-consumer capabilities, which understates it: it is emitted by
-`useBlockAnalytics`, which the fleet apps call widely. It is listed as *not carried* because **it has
-no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, *"analytics fire-and-forget; no
-host-side sink wired (dropped, never hangs)"*. So those call sites are already no-ops; this is net-new
-capability rather than a migration gap.
+⚠ **`TRACK_EVENT` used to be listed here as *not carried*, because no host handled it — every
+`useBlockAnalytics` call was a no-op.** Both hosts now forward it, so the calls an app already makes start
+counting — but only against the declaration. What is recorded:
+
+- **Declared events only.** An event name the approved manifest does not declare under `analytics.events` is
+  counted as a drop; its name and properties are not stored. An app that never declared its events records
+  nothing but that count.
+- **Declared properties of the declared type only.** Types are `enum` (one of the declared strings), `number`
+  and `boolean`. There is no free-text string, so an id, a prompt or a username sent as a string is dropped.
+  An undeclared property, or a value of the wrong type, is dropped and the rest of the event kept.
+- **Budgets.** Each mount may send 10 events a second and 500 in all, in bodies of at most 32 KiB; an event
+  over a limit is dropped in the browser and counted nowhere. Signed-out viewers are counted, never identified.
+- **Fire-and-forget.** No reply, no acknowledgement. Owners see aggregates in the app's analytics panel.
 
 ## Scope binding is per-route
 
@@ -195,8 +204,8 @@ bridge already called, so behaviour is identical on both transports.
 - **Anonymous viewers may NEVER write or vote.** An anon write is rejected by the write scope's own binding in
   `withBlockScope`, before the handler runs, so it surfaces as **`403`** rather than the handler's own `401`.
 - **Authenticated writers must clear a minimum-trust gate.** After the anon check, writes call
-  `assertSharedWriteTrust` — account age, paid tier, and verified email *or* a linked OAuth account. A signed-in
-  viewer is not automatically a permitted writer.
+  `assertSharedWriteTrust` — account age, completed onboarding, not banned or muted, and verified email *or* a
+  linked OAuth account. A signed-in viewer is not automatically a permitted writer.
 - **Tenancy is structural, not checked.** Every query interpolates a schema name derived from the **verified
   token**, never from client input. An app cannot address another app's shared storage because it cannot name it.
 - **Rate limits are per-operation and per-namespace**, so one operation cannot starve another — browsing a feed
@@ -299,7 +308,7 @@ iframe, and nothing about the call site looks different.
 On `app.host`: `requestSignIn`, `download` (was `SAVE_IMAGE`),
 `openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
 `publishGenerationOutputs`, `resize`, **`autoResize`**, `reportError`, `navigate`
-and `onVisibilityChange`. Reach for `autoResize(element)` over bare `resize` —
+and `onVisibilityChange` — plus `track`, which raises no UI (see `TRACK_EVENT` above). Reach for `autoResize(element)` over bare `resize` —
 it wires the `ResizeObserver` for you and returns a stop function. Consent is `app.requestGrants` (was `requestConsent`).
 
 `publishGenerationOutputs` keeps `usePublishGenerationOutputs`'s wire exactly —

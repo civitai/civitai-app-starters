@@ -5,6 +5,7 @@ import type { BlockBuzzAccount } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useBuzzAccounts} returns.
@@ -45,6 +46,7 @@ export interface UseBuzzAccounts {
  * const { accounts, loading, error } = useBuzzAccounts();
  */
 export function useBuzzAccounts(): UseBuzzAccounts {
+  useTransportConnection();
   const [accounts, setAccounts] = useState<BlockBuzzAccount[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);

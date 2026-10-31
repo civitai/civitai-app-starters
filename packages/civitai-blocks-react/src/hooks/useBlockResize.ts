@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useBlockResize} returns: nothing. It is named anyway so the
@@ -53,6 +54,7 @@ export type UseBlockResize = void;
  * return <div ref={rootRef}>…</div>;
  */
 export function useBlockResize(ref: RefObject<HTMLElement | null>): UseBlockResize {
+  useTransportConnection();
   /** The element the live observer is watching. `null` = watching nothing. */
   const observedRef = useRef<HTMLElement | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);

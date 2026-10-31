@@ -1,5 +1,322 @@
 # @civitai/sdk
 
+## 0.21.0
+
+### Minor Changes
+
+- 5defee7: A block now tells its host when the viewer uses it: after `initialize()` in a block, a `pointerdown`, `keydown`, `wheel` or `focusin` in the frame sends `VIEWER_ACTIVITY` (fire-and-forget, no payload) at most once a minute. Nothing about the event leaves the frame. civitai's App Assistant uses it to keep an app's sandbox awake while someone works in its live preview. Needs a host that lists `VIEWER_ACTIVITY` (civitai); an older host drops it, counted as unhandled.
+
+## 0.20.2
+
+### Patch Changes
+
+- f4a7935: **`GET_RESOURCE_FILE`: read a resource file's parsed JSON (a workflow's graphs) over the bridge** — the SDK half of civitai/civitai-app-starters#664, phase 2.
+
+  - `@civitai/app-sdk/blocks`: the `GET_RESOURCE_FILE { requestId, modelVersionId, fileId? }` → `RESOURCE_FILE_RESULT { requestId, file } | { requestId, error }` message pair, and the types `BlockResourceFile` (`{ meta, entries, truncated }`), `BlockResourceFileMeta`, `BlockResourceFileEntry` (`{ path, format, graph }`), `BlockResourceFileEntryFormat` (`'ui' | 'api' | 'unknown'`) and `BlockResourceFileErrorCode`, a closed set: `not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`, `rate-limited`.
+  - `@civitai/blocks-react`: `useResourceFile(modelVersionId, fileId?)` → `{ file, loading, error, refetch }`, with `ResourceFileError` (`.code` from the closed set). It waits up to 120 s for the host (which downloads and unzips the file), and changing either id resets `file` and `error` before the new fetch. The reply validator drops an unknown code or a malformed file. Mock host: `resourceFile` (the canned reply; by default one UI-format graph) and `resourceFileError` (force a code; `setScenario({ resourceFileError: undefined })` clears it). `dev:live` refuses it with `parse-failed`.
+  - `@civitai/sdk`: the host reply ledger lists `GET_RESOURCE_FILE`, so `BlockTransport.request()` settles it with `{ file }` instead of refusing it. No typed `app.host` wrapper yet.
+
+  No block scope and no manifest change. Full-page app hosts only: the model-page slot does not answer it, and `dev:live` does not serve it. Only free, public versions are served — an unpublished draft or an early-access or paid version answers `not-found`, even for a viewer who bought it.
+
+## 0.20.1
+
+### Patch Changes
+
+- f651458: Docs only. `createFakeStorage`'s default scanner models the server's enforced moderation: a hit is refused `content_rejected` and a scanner outage `moderation_unavailable`. The host picks each app's moderation mode for shared data, and enforce is not its default. Where it runs in shadow (scanned after the write) or is off, neither a hit nor an outage refuses a write. The README and the fake's module comment now say so, and that `moderate: () => null` is what such an app sees. The vendored storage contract is re-vendored to the served copy, whose `conventions.note` now says its moderation cases describe an app whose shared-data moderation is enforced.
+
+## 0.20.0
+
+### Minor Changes
+
+- e32da6a: Add `estimatedCost(snapshot)`: the price an `app.workflows.estimate()` reply quotes, in whole Buzz, or `null` when it quotes none. An estimate is priced when its `status` is not `'failed'` and it carries a numeric `cost.total` — a priced estimate is not `'succeeded'` (it is `'pending'` in practice), so a check for `'succeeded'` reads every price as missing. `0` is a price; a `'failed'` snapshot carrying the cost it refused is not. The `estimate` doc comment and the README examples now price with it.
+
+## 0.19.1
+
+### Patch Changes
+
+- 84bcbe6: `requestGrants` in a dev-tunnel preview no longer asks the host for the document-store scopes. When the host marks the frame `storageMode: 'local-preview'`, the in-tab local store serves `app.storage.collection(name)`, and a preview token never carries `apps:storage` or `apps:storage:publish`, so the host could only refuse them. That refusal took the rest of the request with it: `requestGrants(['ai:write:budgeted', 'apps:storage'])` resolved `false` even though the spend scope was grantable.
+
+  In a local preview those two scopes now count as held. A request for only them resolves `true` without contacting the host, and a mixed request asks only for the rest and resolves with the host's answer for those. Shared storage and the deprecated key/value scopes are still requested from the host, because they keep the real routes in a preview. Outside a local preview nothing changes. The token is unchanged, and so is what the server enforces.
+
+## 0.19.0
+
+### Minor Changes
+
+- 994b502: **BREAKING (0.x minor): App Blocks `kind: 'training'` now trains on images the viewer uploads, not on a server-prepared dataset** — the SDK half of civitai/civitai#6461.
+
+  The training run is unchanged; how its dataset is named is not:
+
+  - `WorkflowBodyTraining.items: BlockTrainingDatasetItem[]` (`{ air, caption }`, 1–50, one blob at most once) **replaces** `datasetId`. `BLOCK_TRAINING_CAPTION_MAX_CHARS` is now 8,192.
+  - Upload the images with `useImageUpload({ purpose: 'trainingData' }).open()` (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to 50 images in a Civitai modal; `open()` resolves with `[{ url, air }]` (`BlockTrainingDataImage[]`), or `null` on cancel. Pair each `air` with a caption.
+  - `RUN_TRAINING` gains the host code `training data not uploaded here`: the host refuses, before any dialog, a quote naming a blob it did not upload for this block (e.g. after a reload). `RunTrainingError.trainingDataNotUploaded` flags it; no run, nothing charged — upload again and estimate again.
+
+  Removed, with no replacement beyond the above:
+
+  - `@civitai/blocks-react`: `usePrepareTrainingDataset`, `UsePrepareTrainingDataset`, `PrepareTrainingDatasetError`, `PREPARE_TRAINING_DATASET_ERROR_CODES`, `isPrepareTrainingDatasetErrorCode`, and the `BlockPrepareTrainingDatasetHostError` / `BlockTrainingDatasetResult` / `BlockTrainingRejectionReason` re-exports. Mock host: the `trainingDatasetRejected` and `trainingDatasetError` options are gone; `cannedTrainingDataUpload` (the images an upload returns) and `trainingDataNotUploadedHere` (refuse every run as a host that forgot its uploads) are new, and the mock now checks a run's whole body against its quote.
+  - `@civitai/app-sdk/blocks`: the `PREPARE_TRAINING_DATASET` / `TRAINING_DATASET_RESULT` message pair, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason` and `BlockPrepareTrainingDatasetHostError`. New: the `'trainingData'` upload purpose, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult` (the multi-image `IMAGE_UPLOAD_RESULT.selected` shape), and `BlockRunTrainingHostError` member `'training data not uploaded here'`.
+  - `@civitai/sdk`: the copied `WorkflowBodyTraining` follows (`items`, not `datasetId`), and `BlockTrainingDatasetItem` is exported from the package root. The host reply ledger is regenerated from civitai/civitai#6461.
+
+  Training from apps stays behind the host flag `app-blocks-training-kind` (off by default), page apps only.
+
+## 0.18.0
+
+### Minor Changes
+
+- 6196655: A dev-tunnel preview's document store is local to the tab (civitai/civitai-app-starters#710).
+
+  `@civitai/sdk`: when the host marks the frame `storageMode: 'local-preview'` in `BLOCK_INIT`, `initialize()` serves `app.storage.collection(name)` and `app.storage.info()` from an in-memory store (`createFakeStorage`, loaded with a dynamic `import()`) that enforces the LOCAL manifest's declarations, and sends no request to `blocks/storage/*`. The manifest reaches the SDK only from `blockManifestPlugin()` on the Vite dev server; without it, every document-store call rejects `local_preview_no_manifest` (404, not retryable, nothing sent). New: `app.storage.mode` (`'remote' | 'local-preview'`), the `StorageMode` type, and the local error codes `local_preview_no_manifest`, `local_preview_invalid_manifest` and `local_preview_unavailable` (all 404, not retryable). Model-version ownership (`ownedModelVersions`) is not checked locally; the server checks it. The mode switches only on the host's exact signal, never on token scopes. Without it, a real route's `insufficient_scope` now carries a hint after the server's message (declare `apps:storage`; granted once approved; previews are local when the host marks them). The deprecated key/value stores and `@civitai/blocks-react`'s storage hooks are unchanged and keep the real routes.
+
+  `@civitai/app-sdk`: `blockManifestPlugin()` exposes the manifest's `scopes` and `storage` to `@civitai/sdk` on the dev server only (a `<script>` at the end of `index.html`'s `<head>`; never in a build). `BlockInitPayload` gains the optional `storageMode?: 'local-preview'`.
+
+## 0.17.1
+
+### Patch Changes
+
+- 924d710: Docs: `WorkflowBodyPassThroughStep.input` (copied from `@civitai/app-sdk`) says the block host refuses inline media in a step input — upload the file and pass its hosted `url` instead.
+- ab5bf92: **`useMediaUpload()` uploads an image, video or audio file as a generation input, and returns a `url` to pass into a workflow step.** The host refuses data URIs and inline base64 in step inputs, so this is the way to get media into a step. `const { open, upload } = useMediaUpload()`: `open({ kind })` opens the host's file picker and resolves with the upload or `null`; `upload({ kind, bytes, mimeType? })` uploads bytes the app made in the tab (a canvas, a crop, a `MediaRecorder` recording) with no picker.
+
+  - **Release hold satisfied:** civitai/civitai#6149, the host change that answers `OPEN_MEDIA_UPLOAD`, is merged and deployed to production. A host that predates it does not answer the message at all, so `open` and `upload` would wait out the human-interaction timeout (10 minutes) and then reject with `RequestTimeoutError`.
+  - **What each kind accepts**, by the file's content: `'image'` PNG, JPEG or WebP (the host resizes it to 64–2048 px per side and re-encodes it as JPEG, so `mimeType` is always `image/jpeg`); `'video'` MP4 or WebM; `'audio'` MP3, WAV or WebM. The result is `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`: `width` and `height` are set for image and video and absent for audio, and `durationMs` is set for video and audio when the browser reports a duration.
+  - **Limits:** 24 MB per image (the host decodes an image in full before resizing it) and 64 MB per video or audio file; `upload` refuses a larger buffer before sending, with the host's `file exceeds the 24 MB image upload limit` or `file exceeds the 64 MB upload limit`. `upload` is limited to 8 uploads and 128 MB per 60 seconds per page; past that it rejects with `busy`. `open` is not rate-limited.
+  - **`null` and refusals:** `open` resolves `null` when nothing was uploaded (the viewer closed the picker, or the app is in review mode or not ready). `upload` never resolves without a file: a declined upload rejects with `the host did not upload the media (the app is in review mode or not ready)`. Every refusal rejects with the host's message, including `no block token` (bytes mode, when the host holds no token), `media upload failed — please try again` and `this video was refused by the upload service` / `this audio was refused by the upload service`; a non-page surface answers `unsupported on this host`.
+  - **Refused before sending,** with the host's own strings: an unknown `kind`, a `bytes` that is not a non-empty `ArrayBuffer`, a non-string `mimeType`, and a buffer over the kind's cap.
+  - `useImageUpload().open({ purpose: 'generationSource' })` is unchanged and still valid for images.
+  - New exports from `@civitai/blocks-react`: `useMediaUpload` and the types `UseMediaUpload`, `MediaUploadOpenOptions` and `MediaUploadBytesOptions`; `@civitai/blocks-react/testing` adds the type `MockMediaUploads`.
+  - `@civitai/app-sdk`: the message union gains `OPEN_MEDIA_UPLOAD { requestId, kind, purpose: 'generationSource', bytes?, mimeType? }` and `MEDIA_UPLOAD_RESULT { requestId, selected?, error? }`, plus the types `BlockMediaKind` and `BlockMediaUploadInfo` on `./blocks`. `OPEN_MEDIA_UPLOAD` is added to `BLOCK_TO_PARENT_MESSAGE_TYPES`. Use this `@civitai/app-sdk` release or later with this `@civitai/blocks-react` release. `OPEN_IMAGE_UPLOAD` and `IMAGE_UPLOAD_RESULT` are unchanged.
+  - The reply validator accepts `MEDIA_UPLOAD_RESULT` with a string `error`, a bare reply, or a `selected` with a non-empty `url`, a known `kind`, a string `mimeType`, a whole `sizeBytes` ≥ 0, positive whole `width` and `height` (required for image and video, absent for audio) and a finite `durationMs` ≥ 0 when present. Anything else is dropped.
+  - **Mock host (`createMockHost` / `Harness`):** answers at once. New option `cannedMediaUploads` sets each kind's upload (a kind left out answers a built-in default; `null` dismisses that kind's picker). Bytes uploads run the host's checks in the host's order, including the content sniff and the rate window. The mock cannot decode media, so it never produces the host's decode-time refusals; `mediaUploadError` forces one. `mediaUploadError: 'no block token'` is placed where the host checks it: a bytes upload is refused before the cap and the window, and not counted. Both are live-tunable through `setScenario`. A model-slot `context` answers `unsupported on this host`.
+  - **`dev:live`:** refuses the request, because the upload needs the viewer's signed-in session. Both calls reject with `media upload is not supported in dev:live — use dev:mock`.
+  - **Inline-media docs point at `useMediaUpload`:** `WorkflowBodyPassThroughStep.input` in `@civitai/app-sdk` (and its copy in `@civitai/sdk`) and the `@civitai/blocks-react` README's step-input rules now say to upload an image, video or audio with `useMediaUpload()` (an image also works with `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`) and pass the returned `url`. The mock host's inline-media refusal already names `useMediaUpload`, matching the host's message.
+
+## 0.17.0
+
+### Minor Changes
+
+- ae33f6c: **App reactions: a block can read and set the viewer's reactions on images it was served (scope `social:react:self`, civitai/civitai#6144).** A reaction made this way is a reaction on civitai.com: it pays the reactor and the image owner as the site's own button does, moves rankings, notifies, and draws on the same per-viewer quota. Apps may set `Like`, `Heart`, `Laugh` and `Cry`, never `Dislike`. Image is the only entity type.
+
+  - **`@civitai/app-sdk`.** The `SET_ENTITY_REACTION` → `ENTITY_REACTION_RESULT` and `GET_ENTITY_REACTIONS` → `ENTITY_REACTIONS_RESULT` messages, as the host implements them: a write takes `{ entityType, entityId, reaction, reacted, ticket? }` (a desired state, not a toggle) and answers `{ entityType, entityId, reaction, reacted, changed, counts, viewerReactions, statsUnknown }`; a read takes `{ entityType, ids, tickets? }` (at most 100 ids) and answers `{ entityType, byId, unavailable }`, where `byId` is keyed by the id as a string and an id without a valid ticket is listed in `unavailable` instead of answered. Every failure is one of the closed `ENTITY_REACTION_ERROR_CODES`: `invalid-request`, `sign-in-required`, `review-mode`, `not-ready`, `needs-consent`, `entity-unavailable`, `rate-limited`. New exports from `./blocks`: `APP_REACTIONS`, `STORED_REACTIONS`, `REACTION_ENTITY_TYPES`, `REACTION_READ_MAX_IDS`, `REACT_TICKET_MAX_LENGTH`, `ENTITY_REACTION_ERROR_CODES`, `isEntityReactionErrorCode`, `isAppReaction`, and the types `BlockAppReaction`, `BlockStoredReaction`, `BlockReactionEntityType`, `BlockEntityReactionErrorCode`, `BlockReactionCounts`, `BlockEntityReactionState`, `BlockEntityReactionResult`, `BlockEntityReactionsResult`. `BLOCK_TO_PARENT_MESSAGE_TYPES` lists both requests.
+  - **`@civitai/blocks-react`.** `useReactions(entityType, ids, { tickets })` returns `{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` in chunks of 100 on mount, then reads only the images that need it (an id added to `ids`, or one whose ticket changed), because the host counts every read against the block instance's shared catalog rate limit. An answer is never applied over a write on the same image that started after the read was sent, and an older answer never overwrites a newer one. `toggle(id, reaction, reacted)` moves `byId[id]` at once, puts it back on failure, adopts the host's `viewerReactions` on success, and rejects with a `ReactionError` (`.code`, `.signInRequired`, `.needsConsent`, `.timedOut`, `.busy`). A `toggle` on an image without a ticket, or on one whose same reaction is already in flight, is refused without sending anything: the server checks the ticket after its rate limit, so sending it would spend one of the viewer's reactions. A busy refusal rejects the call without setting the hook's `error`. After a failed write the image is read again if the write timed out (it may have landed) or the image has no state. Also exported: `ReactionError`, `REACTIONS`, `REACTION_ERROR_CODES`, `isReactionErrorCode`, and the reaction types from `@civitai/app-sdk/blocks`. `createMockHost` and `<Harness>` answer both messages: seed images with `reactionStates`, force a code with `reactionError` (both live-tunable with `setScenario`; a forced `review-mode` or `not-ready` is answered before the sign-in, payload and scope checks, as the host's own gate orders them), and declare `social:react:self` in `declaredScopes` or every call answers `needs-consent`, as the real host does for an ungranted scope. The mock accepts any well-formed ticket, since a real one is an HMAC only the server can check. `@civitai/blocks-react/testing` exports the `MockReactionSeed` type. The live dev host refuses both with `entity-unavailable`: the server's reaction procedures need the viewer's civitai.com session.
+  - **`@civitai/components`.** `<civitai-reaction>` takes a `reaction` property (a string such as `Like`, reflected as an attribute). When it is non-empty it is carried as-is in the `react` event's `detail.reaction` and is the accessible name when there is no `label`; the element does not check it against any list. `emoji` stays display only. Without a `reaction`, or with an empty one, the event detail is exactly `{ emoji, reacted, count }`, as before.
+  - **`@civitai/sdk`.** The host snapshot is refreshed from civitai `cd79a91fe4`, so `request()` settles `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD` instead of refusing them as unknown, and `SCOPES` names `social:react:self`.
+
+## 0.16.0
+
+### Minor Changes
+
+- 25ad9f9: **A shared storage collection can require that the model versions it stores are the writer's own (`ownedModelVersions`, civitai/civitai#6132).**
+
+  - **`@civitai/app-sdk`.** The vendored manifest schema is re-vendored from https://civitai.com/schemas/app-block/v1.json, and `BlockStorageSharedCollectionDeclaration` gains `ownedModelVersions?: string[]`: 1 to 4 distinct pointers into a document's `data` (each 1 to 4 segments of `/` then a letter or `_` and up to 63 letters, digits or `_`, such as `/workflow/modelVersionId`). The canonical allows it only on a shared collection with `write: "own"`, and `defineBlock` enforces that from the schema. On every create and update civitai.com refuses a declared field holding anything but a model version the writer owns: 403 `resource_not_owned`, before moderation and before any write budget. An absent field is allowed. The same re-vendor brings the canonical's new `social:react:self` scope (app reactions, civitai/civitai#6144: sensitive and consent-gated), now `BLOCK_SCOPES.SOCIAL_REACT_SELF`. This package has no reaction helper yet. Additive for authors: nothing that validated before is rejected.
+  - **`@civitai/sdk`.** `StorageErrorCode` names `resource_not_owned`. `createFakeStorage` enforces a collection's `ownedModelVersions` rule in the server's order: before the trust gate, the write budget and moderation, with every value checked before any ownership. The fake has no model versions of its own, so `FakeStorageViewer.modelVersions` lists the ids a viewer owns. It defaults to none, so every id is refused, as the server refuses one that is not the writer's. A declaration the platform would refuse (on a private or `write: "none"` collection, or a malformed pointer list) makes `createFakeStorage` throw.
+
+## 0.15.0
+
+### Minor Changes
+
+- 2e7f458: Add `app.subListings`, a typed client for the App Store sub-listing routes (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`), so an app no longer hand-rolls `app.site.post('blocks/sub-listings/upsert', …)`. `upsert(input)` sends only the six fields the server's strict body accepts (`itemKey`, `title`, `subPath`, `tagline`, `imageId`, `contentRating`) and leaves out an optional that is `null` or `undefined` — every call replaces the whole item, so a left-out optional is cleared; `withdraw(itemKey)` resolves `{ ok, withdrawn }`; `mine()` resolves `{ items }` with `updatedAt` revived as a `Date`. A refusal carrying a `code` rejects as the new `SubListingError`, an `ApiError` subclass whose `code` is typed as `SubListingErrorCode`; a refusal without one stays a plain `ApiError`, and a malformed reply rejects with a `CivitaiError`. New exports: `SubListingError` and the types `SubListingsClient`, `SubListingUpsertInput`, `SubListingUpsertResult`, `SubListingWithdrawResult`, `MySubListing`, `SubListingStatus`, `SubListingContentRating`, `SubListingErrorCode`, `SubListingCallOptions`. No scope or manifest change: the routes still need `apps:store:items:write`, which is never minted for dev-token, dev-tunnel or review sessions.
+
+## 0.14.1
+
+### Patch Changes
+
+- d00a806: Docs only. The legacy shared store's minimum-trust gate no longer lists a paid tier, which the server does not check; it lists account age, completed onboarding, a verified email or linked OAuth account, and not being banned or muted (README, `BREAKING.md`, and the `SharedStorageClient` doc comment). The `app.sharedStorage.list` example no longer filters on `prefix: 'deck:'`: `append` mints every key as a ULID, so a prefix you choose matches none of the rows it creates. The README and the `SharedListQuery.prefix` doc comment now say so.
+
+## 0.14.0
+
+### Minor Changes
+
+- 4a0c705: Add the App Blocks document store client: `app.storage.collection<T>(name)` with
+  `get`, `getMany`, `put` (with `ifVersion`), `create`, `delete` (with `ifVersion`),
+  `list` (one declared-index `where`, `sort`, `author: 'me'`, `markedBy: 'me'` +
+  `mark`, `keyPrefix`, `limit`, `cursor`), `increment`, `mark` and `unmark`, plus
+  `app.storage.info()` and a `StorageError` carrying the server's `code`, `status`,
+  `details` and `retryAfter`, over `/api/v1/blocks/storage/…`.
+
+  `@civitai/sdk/testing` gains `createFakeStorage({ manifest })`, an in-memory store
+  at the client's `Http` seam that enforces the server's storage rules and passes
+  the platform's storage contract. Its rate limits are opt-in
+  (`enforceRateLimits: true`), so an app's own tests are not throttled. As the
+  server does, it refuses withdrawing a `report` mark (`unmark(key, 'report')`) with
+  `invalid_request`, before sign-in or any rate budget.
+
+  A `401` whose body's `code` is `sign_in_required` is no longer retried with a
+  re-minted token: it is about the viewer, not the token, so the retry only cost a
+  second request. Every other `401` is still retried once.
+
+  The legacy key/value methods on `app.storage` (`get`, `set`, `delete`, `list`,
+  `getQuota`) and `app.sharedStorage` are now `@deprecated`, with no change in
+  behaviour; they keep working until apps have moved to collections.
+
+## 0.13.1
+
+### Patch Changes
+
+- a53587e: **The manifest gains an optional `storage` (document-store collections) declaration, typed and validated.** `storage.collections` maps a collection name to a declaration discriminated on `visibility`: a `private` collection (a key space per viewer) or a `shared` one (one key space for the app, which must declare `write`: `own`, `none`, or the reserved `anyone` / `owner`). A collection may also declare `kind`, `indexes` (field path → `string` | `number` | `boolean` | `time`), and on a shared collection `counters`, `marks` and `showAuthor`.
+
+  - **Types.** `BlockManifestV1.storage`, plus the exported `BlockStorageDeclaration`, `BlockStorageCollectionDeclaration`, `BlockStoragePrivateCollectionDeclaration`, `BlockStorageSharedCollectionDeclaration`, `BlockStorageIndexes` and `BlockStorageIndexType` from `@civitai/app-sdk/blocks` and `@civitai/app-sdk/manifest`.
+  - **Scopes.** `BLOCK_SCOPES.APPS_STORAGE` (`apps:storage`) and `BLOCK_SCOPES.APPS_STORAGE_PUBLISH` (`apps:storage:publish`). `BLOCK_SCOPE_PATTERN` now accepts 2 segments as well as 3 or 4, because `apps:storage` has two.
+  - **Schema.** Re-vendors the canonical App Block manifest schema from https://civitai.com/schemas/app-block/v1.json, which now declares `storage` and the two scopes. `defineBlock` validates against it: 1 to 16 collections named `^[a-z][a-z0-9_]{0,31}$`; a shared collection must declare `write` and a private one carries none of the shared-only fields; a `write: "none"` collection declares at least one counter or mark; at most 8 counters and 8 marks, never `report`; at most 4 indexes, never named `key`, `createdAt` or `updatedAt`; no other keys at any level.
+  - 🔴 **This is a tightening, which is why the bump is `minor`.** The schema root allows undeclared keys, so until now a top-level `storage` key of any shape passed `defineBlock` unvalidated. A manifest that already carries a `storage` key that does not match the declaration above now fails.
+  - **Not checked locally:** the scope couplings (any collection needs `apps:storage`; a viewer-written shared collection needs `apps:storage:publish`) and the reserved features (`kind: "log"`, `ttlSeconds`, `dailyWritesPerAuthor`, `write: "anyone"` / `"owner"`), which validate here and are refused at submit. See `KNOWN_GAPS['storage-server-only-rules']`. The platform's manifest validator remains authoritative.
+  - This types the declaration only. It adds no storage client.
+  - **Docs.** The pass-through step's `maxBuzz` docs no longer say the per-call budget is "capped at 1000". The budget has a platform default and a separate platform cap; the docs now link the pinned limits table at https://developer.civitai.com/apps/guide/text-to-image.md#limits-table. `@civitai/sdk` carries a generated copy of that doc comment, which is why it gets a `patch` here.
+
+## 0.13.0
+
+### Minor Changes
+
+- 04e067d: `getTransport().request(type)` now knows the reply name and shape of every request type
+  the host answered when this version was built, and refuses at once a type the host never
+  answered.
+
+  - The reply ledger is generated from the host's inventory (`snapshots/host-messages.json`,
+    now carrying each request's reply name, framing and success keys) and covers all 43
+    host request types instead of 6. `request('GET_VIEWER')` resolves `{ viewer }` rather
+    than hanging; the `APP_STORAGE_*` and `SHARED_*` replies resolve with their fields
+    rather than rejecting `malformed` on success; `CANCEL_APP_WORKFLOW`'s failure keeps
+    the host's message.
+  - A type the host does not answer rejects immediately with a `BridgeError` of code
+    `invalid` instead of waiting forever. A fire-and-forget message says to use `notify()`,
+    and where BREAKING.md names a replacement the message names it (e.g. `GET_VIEWER` →
+    `app.site.get('blocks/me')`). The list of types is fixed at publish time, so a type
+    the host adds later is refused too, and the message names the SDK version and host
+    snapshot and says to upgrade.
+  - Knowing the reply is not a promise that one comes: `request()` still has no deadline
+    of its own, and the host stays silent in some cases. `REQUEST_TOKEN`
+    (`getToken({ fresh: true })`) gets no reply while the host holds no token,
+    `GET_WILDCARD_PACK` gets none in a model-page slot (only full-page app hosts answer
+    it), and the host drops rate-limited or replayed requests without replying. Pass a
+    `signal` to bound any call that must settle.
+  - `SCOPES` (and `Scope`) gain the scopes the host now grants: `apps:storage`,
+    `apps:storage:publish`, `apps:store:items:write`, `goods:read:self` and
+    `goods:purchase:self`.
+  - `BlockSnapshot.viewer`'s doc pointed at `/me`, which refuses a block token; it now
+    says `app.site.get('blocks/me')`.
+
+  `@civitai/app-sdk`: `ViewerInfo.id`/`username`'s deprecation notes name
+  `app.site.get('blocks/me')` for blocks outside React, not only `useViewer()`.
+
+### Patch Changes
+
+- 4e17c0c: The host reply ledger is regenerated from a host snapshot that declares every request's
+  reply keys, so no request type is left to guess its reply shape from the payload.
+
+  - Eight replies whose keys were unknown now have them: `CREATE_POST_FROM_APP`,
+    `PREPARE_TRAINING_DATASET`, `PUBLISH_GENERATION_OUTPUTS` and `SET_COLLECTION_FOLLOW`
+    (nested under `result`), `ESTIMATE_WORKFLOW_BATCH` (`aggregate`, `snapshots`),
+    `OPEN_IMAGE_PICKER` (`selected`, `selectedImages`), and `RUN_CONFIRMED_STEP` and
+    `RUN_TRAINING` (`snapshot`). Reply names and framing are unchanged, and a reply in the
+    shape the host sends resolves exactly as before.
+  - A success reply to one of the four `result` types that carries no `result` now rejects
+    with `BridgeError` `malformed` ("reply carried no result") instead of resolving its
+    bare fields. For `host.publishGenerationOutputs()` it already rejected `malformed`;
+    only the message changes in that case.
+
+## 0.12.1
+
+### Patch Changes
+
+- 4ecd491: `app.workflows.submit` docs (README and JSDoc): drop the claims that a submit naming a new quote is a new run and that the quote identifies a `kind: 'training'` run, neither of which held for a training body, and stop presenting `list()` as proof that a submit did not happen — a listed workflow carries no idempotency key.
+
+## 0.12.0
+
+### Minor Changes
+
+- 7f1b93c: **`@civitai/sdk`: `app.workflows`, generation for a block, multi-step workflows included.**
+
+  A block built on `@civitai/sdk` can now estimate, submit, follow and cancel a generation without hand-writing requests or importing types from another package:
+
+  ```ts
+  import { initialize, type WorkflowBody } from "@civitai/sdk";
+
+  const app = await initialize();
+  const body: WorkflowBody = {
+    kind: "workflow",
+    steps: [
+      /* … */
+    ],
+  };
+
+  const estimate = await app.workflows.estimate(body);
+  if (estimate.status !== "failed") {
+    const idempotencyKey = crypto.randomUUID(); // one per viewer action, reused on every retry
+    const submitted = await app.workflows.submit(body, { idempotencyKey });
+    if (submitted.status !== "failed") {
+      const done = await app.workflows.wait(submitted.workflowId);
+    }
+  }
+  ```
+
+  - `app.workflows` has `estimate`, `submit`, `get`, `watch`, `wait`, `cancel` and `list`. They go through the host's `/api/v1/blocks/workflows/*` routes, so the host prices, budgets and attributes the work. Every body kind those routes accept works, `kind: 'workflow'` included. It needs the block token and the `ai:write:budgeted` scope.
+  - It is a different client from `app.orchestration`, which calls the orchestrator directly with an OAuth access token and still refuses a block token. Its refusal message now names `app.workflows`.
+  - A refusal is an answer, not a throw. When the host declines to price or run a body it replies with a snapshot whose `status` is `'failed'`, with `error`, often an `errorCode`, and for a budget refusal the `cost.total` it would not charge. Every call resolves with that snapshot. A call rejects only when the request itself was refused (`ApiError`, with the HTTP status) or a reply carried no snapshot (`CivitaiError`).
+  - One reply is neither: when the host could not confirm whether a viewer-confirmed run (a `kind: 'training'` body, or a step with a `quoteId`) was created, `submit` rejects with the new exported `SubmissionUnconfirmedError`, which carries the snapshot. That run may be running and charged, so do not report it as "nothing spent" and do not resubmit blindly; check `app.workflows.list()` first.
+  - A resolved `failed` snapshot from `submit` with the placeholder id `'failed'` means that request was refused before it was submitted; it says nothing about an earlier attempt that ended unknown. One with a real id is a run that was created and failed, and Buzz may have been spent.
+  - `app.workflows` takes the block token only. A block holding an OAuth access token is answered `401`, and the error message says to use `app.orchestration`.
+  - `submit` requires an `idempotencyKey` and rejects before sending without one. Mint it once per viewer action and reuse it on every retry. `submit` does not retry a failed request on its own.
+  - A rejected `submit` is not "not started". After a `5xx`, a `409` or no answer the outcome is unknown: retry with the same key or check `app.workflows.list()`, and never mint a new key for the same viewer action. For a `kind: 'training'` body or a step with a `quoteId` the host identifies the run by the quote, not the key, so check `list()` before confirming a new quote.
+  - `watch` and `wait` hold each read on the host, space their reads, wait out a brief outage and stop on a refusal. Pass a `signal` to stop early.
+  - The contract types are exported from the package root: `WorkflowBody` and its members (`WorkflowBodyWorkflow`, `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `WorkflowBodyTextToImage`, …), `BlockWorkflowSnapshot`, `KnownBlockWorkflowErrorCode` and `AppWorkflow`. They are a generated copy of the types `@civitai/app-sdk/blocks` defines, kept identical by a guard test.
+
+  Nothing existing changed: `app.orchestration`, `app.site`, `app.storage` and `app.sharedStorage` behave as before.
+
+  **`@civitai/app-sdk`, `@civitai/blocks-react`: README only.** Each README now opens with a short note on which package to start from: `@civitai/sdk` is the client new block apps start on, `@civitai/app-sdk/blocks` is the body-type and message contract, and `@civitai/blocks-react` is the React hook binding over the same host contract. All three remain supported. No code changed in either package.
+
+## 0.11.1
+
+### Patch Changes
+
+- 469e645: **`BLOCK_READY` now reports which SDK the block was built with, and its version.**
+
+  The `BLOCK_READY` payload gains two optional fields:
+
+  - `sdkName`: which package's transport sent the message. `'blocks-react'` for `@civitai/blocks-react`, `'sdk'` for `@civitai/sdk`. The two packages version independently, so a version alone cannot tell them apart.
+  - `sdkVersion`: that package's plain semver, with no package name and no `v`.
+
+  Both transports now send them, so the host can see which SDK versions are in use.
+
+  They are informational. Neither is a protocol version and nothing is negotiated on them. They are optional in both directions: blocks built before this release omit them, and a host that does not read them ignores them. No migration is needed.
+
+  `@civitai/app-sdk`: type only. `BlockToParentMessage`'s `BLOCK_READY` payload is now `{ height: number; sdkVersion?: string; sdkName?: 'blocks-react' | 'sdk' }`.
+
+## 0.11.0
+
+### Minor Changes
+
+- ef0baf3: **Custom events: the docs now state the real contract, and `dev:live` warns about events production would drop.** Both hosts forward `TRACK_EVENT`, and the platform records an event only when the app's APPROVED manifest declares it under `analytics.events`.
+
+  - `@civitai/blocks-react`: `useBlockAnalytics()`'s TSDoc and README section are rewritten. They no longer promise that every event reaches a pipeline. They now say: only declared events are recorded (an undeclared one is counted as a drop and its name is not stored); only declared properties of the declared type are kept; there is no free-text string type (`enum`, `number`, `boolean`); each mount may send 10 events a second and 500 in total, in bodies of at most 32 KiB, and an over-limit event is dropped in the browser and counted nowhere; events are fire-and-forget; owners see aggregates in the app's analytics panel. The hook itself is unchanged.
+  - `@civitai/blocks-react/live`: new optional `LiveHostOptions.manifest`. Pass your imported `block.manifest.json` and every `TRACK_EVENT` is checked against its `analytics.events`. The console warns ONCE per distinct problem: an undeclared event, an undeclared property, or a value that does not match the declared type or enum. A declared, valid event logs nothing. The check never throws and never blocks the block, and there is still no reply. Without `manifest`, the first `TRACK_EVENT` says the check is off. Typed `unknown` because an imported JSON file widens its string literals.
+  - `@civitai/sdk`: new `app.host.track(eventName, properties?)`, which sends `TRACK_EVENT` on the same wire as `useBlockAnalytics().track`. `BREAKING.md` moves `TRACK_EVENT` from "Not carried" to carried and states the declared-only contract.
+  - Examples: every `starters/examples/*` `dev:live` harness passes `manifest`. `page-app` now declares its six events, and stops sending `modelId`, which no declaration can carry: property names are snake_case, and a number property should not carry an identifier.
+
+## 0.10.2
+
+### Patch Changes
+
+- 9887295: docs: the README's `auth: "oauth"` opt-in now names its two other conditions
+
+  The `initialize()` section said a block opts in to an OAuth token by declaring `auth: "oauth"`, and
+  left out two things the host enforces: the manifest must also declare `user:read:self` (every OAuth
+  token carries it, so on civitai.com the host never mints one without it and hands back the block
+  token; the dev tunnel mints one regardless, so the omission only shows up after approval), and
+  `auth: "oauth"` cannot be declared alongside any `apps:storage:*` scope (such a manifest is refused
+  at submit). `@civitai/components-chat`'s README now links here instead of keeping its own copy.
+
+  Prose only, no behaviour change. A patch release because the README ships in the package.
+
+## 0.10.1
+
+### Patch Changes
+
+- a62f280: Classify the two refusals civitai.com now sends when a publishing call needs the
+  viewer's signed-in session. A bare `UNAUTHORIZED` (the session ended, e.g.
+  signed out in another tab) is now `unauthenticated` in `@civitai/sdk` and sets
+  `CreatePostError.signInRequired` in `@civitai/blocks-react`, so an app offering
+  sign-in on that branch shows it instead of "unavailable". "…belongs to a
+  different account; reload the page to continue" is now `forbidden` in
+  `@civitai/sdk`; its message tells the viewer to reload. Existing mappings are
+  unchanged.
+
 ## 0.10.0
 
 ### Minor Changes

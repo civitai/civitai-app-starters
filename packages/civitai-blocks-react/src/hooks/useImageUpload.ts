@@ -4,13 +4,20 @@ import type {
   BlockGenerationSourceImageInfo,
   BlockImageScanResult,
   BlockPendingImageInfo,
+  BlockTrainingDataImage,
   BlockUploadedImageInfo,
   BlockUploadPurpose,
 } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+export type { BlockTrainingDataImage };
+
+import {
+  HUMAN_INTERACTION_TIMEOUT_MS,
+  TRAINING_DATA_UPLOAD_TIMEOUT_MS,
+} from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The
@@ -34,7 +41,7 @@ const SCAN_STATUS_TIMEOUT_MS = 10 * 60_000;
  *
  * 🔴 THIS HOOK IS OVERLOADED, SO ITS RETURN TYPE IS A FAMILY, NOT A SINGLETON
  * (#380). Each overload names its own: {@link UseImageUploadGenerationSource},
- * {@link UseImageUploadAsyncScan}, and this one. A single union would be worse
+ * {@link UseImageUploadTrainingData}, {@link UseImageUploadAsyncScan}, and this one. A single union would be worse
  * than the anonymous literals it replaces — it would hand every caller a
  * `scanStatus` that only one overload actually provides.
  */
@@ -45,6 +52,15 @@ export interface UseImageUpload {
 /** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
 export interface UseImageUploadGenerationSource {
   open: () => Promise<BlockGenerationSourceImageInfo | null>;
+}
+
+/** What {@link useImageUpload} returns for `{ purpose: 'trainingData' }`. */
+export interface UseImageUploadTrainingData {
+  /**
+   * Every image the viewer uploaded, in the host's order, or `null` when they
+   * cancelled. Each `air` is what a `BlockTrainingDatasetItem` names.
+   */
+  open: () => Promise<BlockTrainingDataImage[] | null>;
 }
 
 /** What {@link useImageUpload} returns for `{ asyncScan: true }`. */
@@ -70,7 +86,11 @@ export interface UseImageUploadAsyncScan {
  */
 export interface UseImageUploadImplementation {
   open: () => Promise<
-    BlockUploadedImageInfo | BlockGenerationSourceImageInfo | BlockPendingImageInfo | null
+    | BlockUploadedImageInfo
+    | BlockGenerationSourceImageInfo
+    | BlockPendingImageInfo
+    | BlockTrainingDataImage[]
+    | null
   >;
   scanStatus?: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
 }
@@ -84,14 +104,18 @@ export interface UseImageUploadOptions {
    *  - `'generationSource'` — a PRIVATE img2img source; UNSCANNED, so the host
    *    returns ONLY the source shape {@link BlockGenerationSourceImageInfo}
    *    (`{ url, width, height }`).
+   *  - `'trainingData'` — PRIVATE training images for a `kind: 'training'` run
+   *    (page apps only): up to 50 picked in one host modal, returned together as
+   *    {@link BlockTrainingDataImage}`[]`.
    */
   purpose?: BlockUploadPurpose;
   /**
    * Opt in to the NON-BLOCKING `'display'` flow. When `true`, `open()` resolves
    * EARLY (on persist) with a {@link BlockPendingImageInfo} and the scan verdict
    * is delivered separately via `scanStatus()` (see the async overload). Only
-   * meaningful for `'display'`; ignored for `'generationSource'` (that path has
-   * no host-side scan). Absent/`false` keeps the legacy blocking behavior.
+   * meaningful for `'display'`; ignored for `'generationSource'` and
+   * `'trainingData'` (neither has a host-side scan). Absent/`false` keeps the
+   * legacy blocking behavior.
    */
   asyncScan?: boolean;
 }
@@ -152,9 +176,20 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  *    {@link BlockGenerationSourceImageInfo} (`{ url, width, height }`, UNSCANNED —
  *    the orchestrator scans it at gen time), or `null` on dismiss. Feed it
  *    straight into a `WorkflowBody.sourceImage` for an img2img graph.
+ *  - `'trainingData'` → resolves with EVERY image the viewer uploaded,
+ *    {@link BlockTrainingDataImage}`[]` (`{ url, air }` each), or `null` on
+ *    cancel. Step 1 of a `kind: 'training'` run: pair each `air` with a caption
+ *    for `WorkflowBodyTraining.items`. The host remembers the keys it uploaded
+ *    for this block and refuses a run naming any other
+ *    (`training data not uploaded here`), so upload and run in the same page
+ *    session. A host that predates the purpose answers with one display image,
+ *    which this resolves as `null` — never as a list it did not upload.
  *
  * Human-interactive, so it uses the same generous {@link HUMAN_INTERACTION_TIMEOUT_MS}
- * as the pickers (the host still resolves earlier on upload/dismiss/close).
+ * as the pickers (the host still resolves earlier on upload/dismiss/close) — except
+ * `'trainingData'`, which waits up to {@link TRAINING_DATA_UPLOAD_TIMEOUT_MS} (one
+ * hour): the host replies only after uploading up to 50 originals, which can take
+ * longer than ten minutes.
  * Host-mediated, same trust model as `useResourcePicker` / `useBuzzWorkflow`.
  *
  * Backward-compatible: when `purpose` is omitted the hook sends NO `purpose`
@@ -187,18 +222,27 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  * if (!src) return;
  * await submit({ kind: 'textToImage', modelId, modelVersionId,
  *   sourceImage: src, params: { prompt } });
+ *
+ * @example
+ * // trainingData (private training images, several in one reply)
+ * const { open } = useImageUpload({ purpose: 'trainingData' });
+ * const images = await open();            // [{ url, air }, …] | null
+ * if (!images) return;
+ * const items = images.map((img) => ({ air: img.air, caption: captionFor(img) }));
  */
 export function useImageUpload(options: {
   purpose: 'generationSource';
 }): UseImageUploadGenerationSource;
+export function useImageUpload(options: { purpose: 'trainingData' }): UseImageUploadTrainingData;
 export function useImageUpload(options: {
   purpose?: 'display';
   asyncScan: true;
 }): UseImageUploadAsyncScan;
 export function useImageUpload(options?: { purpose?: 'display' }): UseImageUpload;
 export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
+  useTransportConnection();
   const purpose = options?.purpose;
-  const asyncScan = options?.asyncScan === true && purpose !== 'generationSource';
+  const asyncScan = options?.asyncScan === true && (purpose === undefined || purpose === 'display');
 
   // Per-instance scan tracking, keyed by imageId. Persists across renders; a
   // verdict is correlated back to its upload by imageId + the generated requestId.
@@ -308,6 +352,23 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
       return null;
     }
 
+    if (purpose === 'trainingData') {
+      const { selected } = await sendTypedRequest(
+        getTransport(),
+        { type: 'OPEN_IMAGE_UPLOAD', payload: { purpose } },
+        'IMAGE_UPLOAD_RESULT',
+        // NOT the 10-minute human bound: the host answers only after uploading
+        // every original, which can outlast it — see TRAINING_DATA_UPLOAD_TIMEOUT_MS.
+        { timeoutMs: TRAINING_DATA_UPLOAD_TIMEOUT_MS },
+      );
+      // Only the multi-image shape is an answer to THIS purpose. A host that
+      // predates `trainingData` normalises it to `display` and replies with one
+      // moderated image — nothing a training item can name — so that, an empty
+      // list and a cancel all resolve `null` rather than a fabricated list.
+      if (!selected || !('images' in selected) || selected.images.length === 0) return null;
+      return selected.images.map(({ url, air }) => ({ url, air }));
+    }
+
     // ---- Existing BLOCKING behavior (unchanged) ----
     // Omit `purpose` for the default/display mode so the wire stays
     // byte-compatible with an older host that predates the field.
@@ -320,7 +381,9 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     );
     // Normalize the "dismissed" case to an explicit null so callers can
     // `if (!img) return;` without an `undefined` ambiguity.
-    return selected ?? null;
+    // A multi-image training reply is not an answer to a single-image purpose.
+    if (!selected || 'images' in selected) return null;
+    return selected;
   }, [asyncScan, purpose]);
 
   const scanStatus = useCallback(

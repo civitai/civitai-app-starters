@@ -3,14 +3,28 @@ import { html, nothing, type PropertyDeclarations, type PropertyValues, type Tem
 import { repeat } from 'lit/directives/repeat.js';
 
 import type { LiveTurn } from '../agent/agent.js';
+import type { SubagentTracker } from '../agent/subagents.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
+import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
 import type { ModelDirectory } from '../store/models.js';
+import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
-import { LightElement } from './light.js';
+import { LightElement, emit } from './light.js';
+import type { ToolCallsMode } from './tool-calls.js';
 
 const NEAR_BOTTOM_PX = 48;
+/** How long a new live region is on the page, empty, before its first words go in. */
+const ANNOUNCE_AFTER_MS = 100;
+
+/** A message the viewer sent that waits to go, as the thread shows it after the turns. */
+export interface QueuedView {
+  text: string;
+  /** What it waits for, e.g. "Waiting for your app…". */
+  status: string;
+  files: Attachment[];
+}
 
 export class CivitaiChatThread extends LightElement {
   // The agent and store update turns in place, so the same object can carry new content.
@@ -19,9 +33,23 @@ export class CivitaiChatThread extends LightElement {
     live: { attribute: false, hasChanged: () => true },
     jobs: { attribute: false },
     posts: { attribute: false },
+    panels: { attribute: false },
+    files: { attribute: false },
+    canShare: { type: Boolean, attribute: 'can-share' },
+    instructions: { attribute: false },
+    dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
-    activity: { attribute: false },
+    views: { attribute: false },
+    toolCalls: { attribute: 'tool-calls' },
+    mcpServerIds: { attribute: false },
+    subagents: { attribute: false },
+    canRetry: { type: Boolean, attribute: 'can-retry' },
+    hosted: { type: Boolean },
+    canEdit: { type: Boolean, attribute: 'can-edit' },
+    returnedEdit: { attribute: false },
+    awaitingApproval: { type: Boolean, attribute: 'awaiting-approval' },
+    queued: { attribute: false },
     atBottom: { state: true },
     announcement: { state: true },
   };
@@ -30,10 +58,32 @@ export class CivitaiChatThread extends LightElement {
   declare live: LiveTurn | null;
   declare jobs: JobManager;
   declare posts: PostManager;
+  declare panels: PanelManager;
+  declare files: () => Attachment[];
+  declare canShare: boolean;
+  /** The viewer's custom instructions, for the cards that propose new ones. */
+  declare instructions: string | undefined;
+  /** Panels show in the page beside the chat; the thread only points at them. */
+  declare dockPanels: boolean;
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
-  /** What a tool the embedding page added is doing, in its words. */
-  declare activity?: (toolName: string) => string | undefined;
+  declare views: Record<string, ChatToolView>;
+  declare toolCalls: ToolCallsMode;
+  /** The added MCP servers' ids, so a call row can show which one a tool is from. */
+  declare mcpServerIds: ReadonlySet<string>;
+  /** The subagents running now, for their cards' live progress. */
+  declare subagents?: SubagentTracker;
+  /** Whether the chat can send now, so the latest reply's Retry is on. */
+  declare canRetry: boolean;
+  /** On a host's own backend, whose refusals are not about Civitai Buzz: no reply offers to get more. */
+  declare hosted: boolean;
+  /** Whether the viewer's latest message can be edited now (no reply runs): its Edit shows. */
+  declare canEdit: boolean;
+  /** An edit of the latest message that waited and came back: that message's edit box reopens with it. */
+  declare returnedEdit: { seq: number; text: string } | undefined;
+  /** The live reply waits for the viewer to approve a call: its status line says so. */
+  declare awaitingApproval: boolean;
+  declare queued: QueuedView | null;
   declare atBottom: boolean;
   declare announcement: string;
 
@@ -44,10 +94,20 @@ export class CivitaiChatThread extends LightElement {
     if (this.atBottom) this.#jumpToEnd();
   });
   #gliding = false;
+  #end?: HTMLSlotElement;
   #wasLive = false;
+  #queuedStatus?: string;
 
   constructor() {
     super();
+    this.views = {};
+    this.toolCalls = 'activity';
+    this.mcpServerIds = new Set();
+    this.canRetry = false;
+    this.hosted = false;
+    this.canEdit = false;
+    this.awaitingApproval = false;
+    this.queued = null;
     this.turns = [];
     this.live = null;
     this.atBottom = true;
@@ -90,9 +150,20 @@ export class CivitaiChatThread extends LightElement {
   // Setting state here rather than in updated() folds it into this update instead of scheduling another.
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('live')) this.#announce();
+    // A message that starts waiting, and each change of what it waits for, is said once (the polite
+    // announcer). A thread just made for it (an empty chat's first message) puts its live region on the
+    // page first, empty, and the words a moment later: text present as the region appears is not read.
+    const status = this.queued?.status;
+    if (status !== undefined && status !== this.#queuedStatus) {
+      if (this.hasUpdated) this.announcement = status;
+      else setTimeout(() => this.queued?.status === status && (this.announcement = status), ANNOUNCE_AFTER_MS);
+    }
+    this.#queuedStatus = status;
   }
 
-  protected override updated(): void {
+  protected override updated(changed: PropertyValues): void {
+    // A message that starts waiting is the newest thing in the chat: it is brought into view.
+    if (changed.has('queued') && this.queued && !changed.get('queued')) this.#jumpToEnd();
     const scroller = this.querySelector<HTMLElement>('.cvt-thread-scroll');
     if (scroller && scroller !== this.#scroller) {
       this.#scroller = scroller;
@@ -100,7 +171,19 @@ export class CivitaiChatThread extends LightElement {
       if (list) this.#resize.observe(list);
       this.#jumpToEnd();
     }
+    // The page's content after the last message grows like a message does: followed while at the end.
+    const end = this.querySelector<HTMLSlotElement>('slot[name="thread-end"]');
+    if (end && end !== this.#end) {
+      this.#end = end;
+      this.#resize.observe(end);
+    }
   }
+
+  // Content the page puts after the last message is the newest thing in the chat: it is brought into view.
+  #onEndChange = (event: Event): void => {
+    const slot = event.target as HTMLSlotElement;
+    if (slot.assignedElements({ flatten: true }).length) void this.updateComplete.then(() => this.scrollToEnd());
+  };
 
   // Screen readers hear a reply start and the finished text once, never token by token.
   #announce(): void {
@@ -124,6 +207,20 @@ export class CivitaiChatThread extends LightElement {
     return parts;
   }
 
+  #queuedMessage(): TemplateResult | typeof nothing {
+    const queued = this.queued;
+    if (!queued) return nothing;
+    const files = queued.files.map((a) => ({ key: a.id, kind: a.kind, src: a.url, label: a.name, blocked: a.blocked }));
+    return html`<div class="cvt-user cvt-queued">
+      ${files.length ? html`<civitai-chat-attachment-strip size="sm" .items=${files}></civitai-chat-attachment-strip>` : nothing}
+      ${queued.text ? html`<div class="cvt-bubble">${queued.text}</div>` : nothing}
+      <div class="cvt-queued-status">
+        <span>${queued.status}</span>
+        <civitai-button size="sm" variant="subtle" @click=${() => emit(this, 'cvt-queued-edit')}>Edit</civitai-button>
+      </div>
+    </div>`;
+  }
+
   override render(): TemplateResult {
     const last = this.turns.at(-1)?.seq;
     return html`<div class="cvt-thread-scroll" @scroll=${this.#onScroll}>
@@ -136,15 +233,31 @@ export class CivitaiChatThread extends LightElement {
                 .turn=${turn}
                 .parts=${this.#partsOf(turn)}
                 ?live=${this.live?.seq === turn.seq}
+                .liveTurn=${this.live?.seq === turn.seq ? this.live : null}
+                ?awaiting-approval=${this.live?.seq === turn.seq && this.awaitingApproval}
                 ?latest=${turn.seq === last}
+                ?can-retry=${turn.seq === last && this.canRetry}
+                ?hosted=${this.hosted}
+                ?can-edit=${turn.seq === last && this.canEdit}
+                .returnedEdit=${this.returnedEdit?.seq === turn.seq ? this.returnedEdit : undefined}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
+                .panels=${this.panels}
+                .files=${this.files}
+                ?can-share=${this.canShare}
+                .instructions=${this.instructions}
+                ?dock-panels=${this.dockPanels}
                 .models=${this.models}
                 .resolve=${this.resolve}
-                .activity=${this.activity}
+                .views=${this.views}
+                .toolCalls=${this.toolCalls}
+                .mcpServerIds=${this.mcpServerIds}
+                .subagents=${this.subagents}
               ></civitai-chat-turn>`,
           )}
+          ${this.#queuedMessage()}
         </div>
+        <slot name="thread-end" class="cvt-thread-end" @slotchange=${this.#onEndChange}></slot>
       </div>
       ${this.atBottom
         ? nothing

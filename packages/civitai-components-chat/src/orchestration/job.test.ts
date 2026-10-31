@@ -7,7 +7,7 @@ import { GenerationJob, type JobDeps, type JobToolInfo } from './job.js';
 
 const MODERN: JobToolInfo = { name: 'run_step', whatif: true, submitOnly: true, tagging: true };
 
-function setup(tool: JobToolInfo = MODERN, limit = 100) {
+function setup(tool: JobToolInfo = MODERN, limit = 100, hideMature = true) {
   const feed = controllable<Workflow>();
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const responses: Record<string, ReturnType<typeof toolResult>> = {};
@@ -19,6 +19,7 @@ function setup(tool: JobToolInfo = MODERN, limit = 100) {
       watchWorkflow: vi.fn(() => feed.iterate()),
       addTag: vi.fn(async () => undefined),
       updateWorkflow: vi.fn(async () => undefined),
+      allowMatureContent: vi.fn(async () => undefined),
     },
     cancelWorkflow: vi.fn(async () => undefined),
     mcp: {
@@ -32,7 +33,7 @@ function setup(tool: JobToolInfo = MODERN, limit = 100) {
     },
     resolveArgs: vi.fn(async (args: Record<string, unknown>) => ({ ...args, images: args.images ? ['https://x/up'] : undefined })),
     decide: (price) => decide(price, limit),
-    hideMatureContent: () => true,
+    hideMatureContent: () => hideMature,
     findWorkflows: vi.fn(async (): Promise<Workflow[]> => []),
   };
   const job = new GenerationJob(deps, {
@@ -56,7 +57,7 @@ describe('GenerationJob', () => {
       [true, true],
       [false, false],
     ]);
-    expect(calls[1]!.args).toMatchObject({ images: ['https://x/up'], tags: ['chat-cvt', 'cvt:job', 'cvt:conv:C1'] });
+    expect(calls[1]!.args).toMatchObject({ whatif: false, images: ['https://x/up'], tags: ['chat-cvt', 'cvt:job', 'cvt:conv:C1'] });
     expect(JSON.parse(calls[1]!.args.metadataJson as string)).toMatchObject({ job: 'gen3-1', seq: 3, toolCallId: 'call_1', tool: 'run_step' });
     expect(job.summary()).toMatchObject({ job: 'gen3-1', status: 'running', estimatedBuzz: 44 });
 
@@ -192,5 +193,50 @@ describe('GenerationJob', () => {
     await flush();
     expect(job.state).toBe('failed');
     expect(job.error?.kind).toBe('timeout');
+  });
+
+  it('says what it was asked to make, from a run_step, the last step of a run_workflow, or an older tool', () => {
+    const request = (args: Record<string, unknown>) => new GenerationJob(setup().deps, { id: 'g', conversationId: 'C', seq: 1, toolCallId: 't', tool: MODERN, args }).request;
+    expect(request({ stepType: 'imageGen', input: { prompt: ' a cat ' } })).toBe('a cat');
+    expect(request({ steps: [{ $type: 'imageGen', input: { prompt: 'a frame' } }, { $type: 'videoGen', input: { prompt: 'it walks' } }] })).toBe('it walks');
+    expect(request({ stepType: 'aceStepAudio', input: { musicDescription: 'lo-fi rain' } })).toBe('lo-fi rain');
+    expect(request({ prompt: 'a red bike' })).toBe('a red bike');
+  });
+
+  describe('a mature result paid with Buzz that does not cover it', () => {
+    const blurred = (allowMatureContent: boolean) =>
+      workflow({ id: 'w1', status: 'succeeded', allowMatureContent, steps: [imageStep([{ id: 'b', url: `https://x/b?unlocked=${allowMatureContent}`, nsfwLevel: 'x' } as never])] as never } as never);
+
+    it('unlocks on request and shows the result from a fresh read', async () => {
+      const { job, deps } = setup(MODERN, 100, false);
+      job.apply(blurred(false));
+      expect(job.locked).toBe(true);
+
+      vi.mocked(deps.api.getWorkflow).mockResolvedValueOnce(blurred(true));
+      await job.unlock();
+
+      expect(deps.api.allowMatureContent).toHaveBeenCalledWith('w1');
+      expect(job.locked).toBe(false);
+      expect(job.results[0]!.url).toBe('https://x/b?unlocked=true');
+    });
+
+    it('says when there is not enough Buzz, and stays locked', async () => {
+      const { job, deps } = setup(MODERN, 100, false);
+      job.apply(blurred(false));
+      vi.mocked(deps.api.allowMatureContent).mockRejectedValueOnce(
+        Object.assign(new Error('Failed to remove mature content restriction from workflow. Ensure that you have sufficient red buzz.'), { status: 400 }),
+      );
+
+      await job.unlock();
+
+      expect(job.locked).toBe(true);
+      expect(job.unlockError?.message).toBe("You don't have enough Buzz to unlock this.");
+    });
+
+    it('offers nothing to a viewer who hides mature content', () => {
+      const { job } = setup();
+      job.apply(blurred(false));
+      expect(job.locked).toBe(false);
+    });
   });
 });

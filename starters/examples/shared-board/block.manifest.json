@@ -1,0 +1,38 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "shared-board-demo",
+  "version": "0.1.0",
+  "name": "Shared Board Demo",
+  "type": "block",
+  "targets": [
+    {
+      "slotId": "model.sidebar_top",
+      "priority": 100,
+      "requiredContext": ["modelId", "modelVersionId"]
+    }
+  ],
+  "scopes": [
+    "user:read:self",
+    "apps:storage:shared:read",
+    "apps:storage:shared:write",
+    "apps:storage:read",
+    "apps:storage:write"
+  ],
+  "scopeJustifications": {
+    "apps:storage:shared:read": "Lists the ideas every viewer has posted to this app's shared board, with their vote counts.",
+    "apps:storage:shared:write": "Posts, edits and withdraws the viewer's own ideas, records their up-votes, and files a report on an idea they flag for moderator review.",
+    "apps:storage:read": "Loads the viewer's own unposted draft and the list of ideas they have already reported, which only they can see.",
+    "apps:storage:write": "Saves the viewer's own unposted draft and remembers which ideas they have reported, in their private per-viewer store."
+  },
+  "bootSkeleton": true,
+  "iframe": {
+    "minHeight": 420,
+    "maxHeight": 1200,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "pg",
+  "minApiVersion": "1.0",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}

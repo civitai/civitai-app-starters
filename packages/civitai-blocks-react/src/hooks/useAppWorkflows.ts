@@ -5,6 +5,7 @@ import type { AppWorkflow, AppWorkflowsParams } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { AppWorkflow, AppWorkflowsParams };
 
@@ -63,6 +64,7 @@ export interface UseAppWorkflows {
  * // …render each workflow's images; await cancel(w.workflowId) on a Cancel click.
  */
 export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
+  useTransportConnection();
   const [workflows, setWorkflows] = useState<AppWorkflow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

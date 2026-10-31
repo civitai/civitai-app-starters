@@ -118,8 +118,11 @@ jobs:
           # clone's `pnpm --filter @civitai/components test` fails on that
           # assertion. `release:version` (root package.json) regenerates it in
           # the same step, so the Version PR carries the artifact with the bump.
-          # `@civitai/components` is the ONLY package whose generated output
-          # embeds its own version; that is why the filter is narrow.
+          # `@civitai/blocks-react` and `@civitai/sdk` commit the same kind of
+          # file (`src/version.generated.ts`, reported to the host as
+          # `sdkVersion`) and `release:version` regenerates both too. Those
+          # three are the only packages whose generated output embeds their
+          # own version; that is why the filters are narrow.
           version: pnpm release:version
           title: 'chore(release): version packages'
           commit: 'chore(release): version packages'

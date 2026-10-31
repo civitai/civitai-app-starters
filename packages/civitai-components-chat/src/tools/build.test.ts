@@ -5,6 +5,7 @@ import orchestrationFixture from '../test-fixtures/orchestration-tools.json' wit
 import siteFixture from '../test-fixtures/site-tools.json' with { type: 'json' };
 import type { McpConnection, McpTool } from '../mcp/clients.js';
 import { JobManager } from '../orchestration/jobs.js';
+import { PanelManager } from '../panels/panel.js';
 import { PostManager } from '../posting/post.js';
 import { toolResult } from '../test-support/fakes.js';
 import { buildToolSet, type TurnToolContext } from './build.js';
@@ -68,6 +69,14 @@ describe('buildToolSet', () => {
       expect(names).not.toContain(denied);
     }
     expect(names).not.toContain('create_post');
+  });
+
+  it('offers panels only when it can run steps and the chat has somewhere to keep them', () => {
+    const panels = new PanelManager({ jobs: context().jobs, toolInfo: () => undefined, save: vi.fn() });
+    expect(Object.keys(buildToolSet(catalog(), context({ panels })))).toEqual(expect.arrayContaining(['open_panel', 'update_panel']));
+    expect(Object.keys(buildToolSet(catalog(), context()))).not.toContain('open_panel');
+    const withoutRuns = { ...catalog(), orchestration: catalog().orchestration.filter((t) => !t.name.startsWith('run_')) };
+    expect(Object.keys(buildToolSet(withoutRuns, context({ panels })))).not.toContain('open_panel');
   });
 
   it('offers a post for the user to confirm instead of posting it, for pictures this chat made', async () => {
@@ -149,5 +158,72 @@ describe('buildToolSet', () => {
     const result = (await run(tools.search_models, { query: 'realistic', type: 'Checkpoint' })) as { models: unknown[] };
     expect(ctx.siteApi.get).toHaveBeenCalledWith('models', expect.objectContaining({ query: expect.objectContaining({ query: 'realistic', types: 'Checkpoint', supportsGeneration: 'true' }) }));
     expect(result.models).toEqual([{ id: 9, name: 'Real Vision', type: 'Checkpoint', air: 'urn:air:sdxl:checkpoint:civitai:9@10' }]);
+  });
+});
+
+describe('fetch_page', () => {
+  const FETCH_PAGE: McpTool = { name: 'fetch_page', description: 'Read a web page.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } };
+  const withFetch = (): ToolCatalog => ({ ...catalog(), orchestration: [...catalog().orchestration, FETCH_PAGE] });
+  // 7,178 characters, as the onboarding page the eval read; its end is what a 4,000 cut lost.
+  const PAGE = `# Build an app\n${'Step text that matters. '.repeat(298)}\nLAST LINE: run civitai app submit`.slice(0, 7_178);
+
+  it('reads a whole page of up to 17,000 characters', async () => {
+    expect(PAGE.length).toBe(7_178);
+    const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, PAGE)) } });
+    const tools = buildToolSet(withFetch(), ctx);
+    expect(await run(tools.fetch_page, { url: 'https://developer.example/apps' })).toBe(PAGE);
+  });
+
+  it('says how much of a longer page, or another tool’s long reply, was left out', async () => {
+    const long = 'x'.repeat(17_500);
+    const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, long)) } });
+    const tools = buildToolSet(withFetch(), ctx);
+    expect(await run(tools.fetch_page, { url: 'https://developer.example/long' })).toBe(`${'x'.repeat(17_000)}\n…(500 more characters not shown)`);
+    expect(await run(tools.get_guide, {})).toBe(`${'x'.repeat(4_000)}\n…(13500 more characters not shown)`);
+  });
+
+  it("passes the page server's own 16,000-character cut through whole, its marker included", async () => {
+    // What the server sends for a long page: a title line, its first 16,000 characters, then its marker.
+    const cut = `# A long docs page\n\n${'p'.repeat(16_000)}\n\n[Page truncated]`;
+    const ctx = context({ orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool: vi.fn(async () => toolResult(undefined, cut)) } });
+    const tools = buildToolSet(withFetch(), ctx);
+    const text = (await run(tools.fetch_page, { url: 'https://developer.example/huge' })) as string;
+    expect(text).toBe(cut);
+    expect(text.endsWith('[Page truncated]')).toBe(true);
+  });
+
+  it('fetches a page once per chat, however often it is asked for, and again in another chat', async () => {
+    const callTool = vi.fn(async () => toolResult(undefined, PAGE));
+    const orchestration: McpConnection = { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool };
+    const first = buildToolSet(withFetch(), context({ conversationId: 'cache-1', orchestration }));
+    expect(await run(first.fetch_page, { url: 'https://developer.example/apps' })).toBe(PAGE);
+    // The next reply builds its tools again; the same page, spelled with a fragment and a capital host.
+    const second = buildToolSet(withFetch(), context({ conversationId: 'cache-1', orchestration, seq: 5 }));
+    expect(await run(second.fetch_page, { url: 'https://DEVELOPER.example/apps#start' })).toBe(`(Already fetched in this chat; same content.)\n\n${PAGE}`);
+    expect(callTool).toHaveBeenCalledTimes(1);
+
+    const other = buildToolSet(withFetch(), context({ conversationId: 'cache-2', orchestration }));
+    await run(other.fetch_page, { url: 'https://developer.example/apps' });
+    await run(other.fetch_page, { url: 'https://developer.example/other' });
+    expect(callTool).toHaveBeenCalledTimes(3);
+  });
+
+  it('shares one fetch between two calls of the same step, and asks again after a failure', async () => {
+    let fail = true;
+    const callTool = vi.fn(async () => (fail ? toolResult(undefined, 'upstream 502', true) : toolResult(undefined, PAGE)));
+    const tools = buildToolSet(withFetch(), context({ conversationId: 'cache-3', orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool } }));
+    expect(await run(tools.fetch_page, { url: 'https://developer.example/apps' })).toMatchObject({ error: 'upstream 502' });
+    fail = false;
+    const both = await Promise.all([run(tools.fetch_page, { url: 'https://developer.example/apps' }), run(tools.fetch_page, { url: 'https://developer.example/apps' })]);
+    expect(both).toEqual([PAGE, `(Already fetched in this chat; same content.)\n\n${PAGE}`]);
+    expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it('never caches another tool', async () => {
+    const callTool = vi.fn(async () => toolResult(undefined, 'guide'));
+    const tools = buildToolSet(withFetch(), context({ conversationId: 'cache-4', orchestration: { url: 'x', listTools: vi.fn(), close: vi.fn(), callTool } }));
+    await run(tools.get_guide, { topic: 'a' });
+    await run(tools.get_guide, { topic: 'a' });
+    expect(callTool).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,5 +1,0 @@
-{
-  "appId": "${CIVITAI_APP_ID}",
-  "baseUrl": "https://civitai.com",
-  "blocks": ["./block.manifest.json"]
-}

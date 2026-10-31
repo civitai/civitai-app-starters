@@ -31,7 +31,7 @@
  * behavioural check, and it is worth more than everything below — but it
  * covers ONE of the four starters, because the other three have no CI-run
  * harness that can render them. This guard is what makes the other three
- * non-vacuous, and it runs in the required `Starter` matrix job via
+ * non-vacuous, and it runs in the required `starters` job via
  * `pnpm test:guards`.
  *
  * WHAT IT PINS

@@ -45,10 +45,10 @@
  *     `appStorageErrors.ts` exports the `PAYLOAD_TOO_LARGE` family plus the
  *     bridge's fallback — six messages; every OTHER rejection the host raises
  *     reaches a block on the same field and is not in that module (`invalid
- *     block token`, `block instance revoked`, `Apps are not enabled` —
- *     illustrations, and deliberately not a list: see that module's header for
- *     why no enumeration of them is authoritative). So nothing here would
- *     notice a mock inventing an auth-shaped string either.
+ *     block token`, `block instance revoked` — illustrations, and deliberately
+ *     not a list: see that module's header for why no enumeration of them is
+ *     authoritative). So nothing here would notice a mock inventing an
+ *     auth-shaped string either.
  *   - 🔴 Those six are NOT "every ceiling". The host caps `key` at 200
  *     characters zod-side (`apps.router.ts:460`), which throws no `TRPCError`,
  *     is absent from `appStorageErrors.ts`, and is enforced by NO mock in this
@@ -118,7 +118,10 @@ const ERRORS_MODULE = 'packages/civitai-app-sdk/src/blocks/appStorageErrors.ts';
  */
 const MOCKS = [
   { file: 'packages/civitai-blocks-react/src/internal/mockHost.ts', rejections: 5 },
-  { file: 'starters/examples/kv-storage/src/Harness.tsx', rejections: 1 },
+  // `starters/examples/kv-storage/src/Harness.tsx` left this ledger when it
+  // stopped hand-rolling a KV store and mounted the SDK's `Harness` (i.e. the
+  // mockHost.ts above) instead. If an example ever answers APP_STORAGE_* itself
+  // again, the completeness walk below names it.
 ];
 
 /**
@@ -229,7 +232,7 @@ function scannableFiles() {
 // ---------------------------------------------------------------------------
 // Loading the real module.
 //
-// `pnpm test:guards` runs in the required `Starter` job BEFORE `pnpm install`
+// `pnpm test:guards` runs in the required `starters` job BEFORE `pnpm install`
 // (.github/workflows/ci.yml), so there is no `node_modules` and no bundler.
 // Node strips the types itself; the only thing missing is TypeScript's
 // `./x.js` -> `./x.ts` specifier rewrite, which this resolve hook supplies in
