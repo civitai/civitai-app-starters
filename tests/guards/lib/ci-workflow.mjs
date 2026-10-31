@@ -3,7 +3,7 @@
  * checks `ci-lanes-ledger.test.mjs` runs over it.
  *
  * 🔴 NODE BUILT-INS ONLY, NO YAML LIBRARY. `pnpm test:guards` runs in the
- * required `Starter` job BEFORE `pnpm install`, so a third-party import does not
+ * required `starters` job BEFORE `pnpm install`, so a third-party import does not
  * resolve there (same constraint, and same walk shape, as
  * `revendor-guard-gating.test.mjs`).
  *
@@ -154,22 +154,37 @@ export function triggerBlock(text) {
 
 export const LANES_JOB = 'lanes';
 export const RECORD_JOB = 'record-tree';
-/** Jobs that are not in the ledger because they ARE the lane machinery. */
+/** Jobs that are not hosts because they ARE the lane machinery. */
 const STRUCTURAL = [LANES_JOB, RECORD_JOB];
+/** A one-lane condition: the job-level condition of a one-lane host, and the step condition of a lane step. */
 export const laneCondition = (id) => `\${{ !cancelled() && needs.${LANES_JOB}.outputs.${id} != 'false' }}`;
-/** The job-level condition of a step-gated job: the status function and nothing else. */
+const clause = (id) => `needs.${LANES_JOB}.outputs.${id} != 'false'`;
+/** The job-level condition of a host: its one lane's, or every lane's clause OR-ed under the status function. */
+export const hostCondition = (lanes) =>
+  lanes.length === 1 ? laneCondition(lanes[0]) : `\${{ !cancelled() && (${lanes.map(clause).join(' || ')}) }}`;
+/** The job-level condition of a step-gated host: the status function and nothing else. */
 export const STEP_GATED_JOB_CONDITION = '${{ !cancelled() }}';
-const stepClause = (id) => `needs.${LANES_JOB}.outputs.${id} != 'false'`;
-/** A gated step is `${{ <clause> }}` or `${{ <clause> && <anything> }}`: the clause is a top-level conjunct. */
-export const stepIsGated = (cond, id) =>
-  typeof cond === 'string' &&
-  (cond === `\${{ ${stepClause(id)} }}` || (cond.startsWith(`\${{ ${stepClause(id)} && `) && cond.endsWith(' }}')));
+/** The conditions an ungated (no-lane) step may carry. */
+const UNGATED_CONDITIONS = [null, STEP_GATED_JOB_CONDITION];
 
 /**
- * Everything wrong with `text` as measured against `ledger` (job id -> kind).
- * Empty means the workflow and the ledger agree. Each message starts with a
- * stable tag in square brackets, which is what the negative controls match on.
+ * The lane a step condition gates on, or null. A gated step is
+ * `${{ !cancelled() && <clause> }}` or `${{ !cancelled() && <clause> && <more> }}`:
+ * the status function and then ONE lane's clause as top-level conjuncts. More
+ * conjuncts may only narrow it, so an `||` anywhere after the clause is
+ * refused (`a && b || c` runs on `c` alone).
  */
+export function gatedLane(cond) {
+  if (typeof cond !== 'string') return null;
+  const m = cond.match(/^\$\{\{ !cancelled\(\) && needs\.lanes\.outputs\.([\w-]+) != 'false'( && (.*))? \}\}$/);
+  if (!m) return null;
+  if (m[3] !== undefined && /\|\|/.test(m[3])) return null;
+  return m[1];
+}
+
+/** Kept for callers that ask about one lane: is `cond` gated on exactly `id`? */
+export const stepIsGated = (cond, id) => gatedLane(cond) === id;
+
 /**
  * The `&&`-conjuncts of a `${{ … }}` condition, trimmed, or null when the
  * condition is not a pure conjunction (an `||` or a parenthesis makes the
@@ -183,19 +198,33 @@ export function conjuncts(cond) {
   return m[1].split('&&').map((c) => c.trim().replace(/\s+/g, ' ')).filter(Boolean);
 }
 
-/** The exact conjunct set `record-tree` must carry for a ledger. */
-export function recordConjuncts(ledger) {
-  const core = Object.keys(ledger).filter((id) => ledger[id] === 'core');
-  const advisory = Object.keys(ledger).filter((id) => ledger[id] === 'advisory');
-  return [
+/**
+ * The exact conjunct set `record-tree` must carry for a ledger and its hosts.
+ * A host of core lanes must have SUCCEEDED and each of its lanes must have
+ * been ON (a host succeeds with lanes switched off); a host of advisory lanes
+ * may be skipped, but not failed or cancelled.
+ */
+export function recordConjuncts(ledger, hosts) {
+  const out = [
     '!cancelled()',
     "github.event_name == 'pull_request'",
     `needs.${LANES_JOB}.result == 'success'`,
     `needs.${LANES_JOB}.outputs.lane == 'full'`,
-    ...core.flatMap((id) => [`needs.${id}.result == 'success'`, `needs.${LANES_JOB}.outputs.${id} == 'true'`]),
-    // Skipped by its lane is fine; failed or cancelled is not.
-    ...advisory.flatMap((id) => [`needs.${id}.result != 'failure'`, `needs.${id}.result != 'cancelled'`]),
   ];
+  const hosted = new Set(Object.values(hosts).flat());
+  for (const [host, lanes] of Object.entries(hosts)) {
+    const core = lanes.filter((l) => ledger[l] === 'core');
+    if (core.length) {
+      out.push(`needs.${host}.result == 'success'`, ...core.map((l) => `needs.${LANES_JOB}.outputs.${l} == 'true'`));
+    } else {
+      out.push(`needs.${host}.result != 'failure'`, `needs.${host}.result != 'cancelled'`);
+    }
+  }
+  // A core lane no host carries still has to be ON for a record.
+  for (const l of Object.keys(ledger).filter((l) => ledger[l] === 'core' && !hosted.has(l))) {
+    out.push(`needs.${LANES_JOB}.outputs.${l} == 'true'`);
+  }
+  return out;
 }
 
 /**
@@ -218,13 +247,20 @@ export function evaluateConjunction(cond, ctx) {
   });
 }
 
-export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {}) {
+/**
+ * Everything wrong with `text` as measured against `ledger` (lane -> kind) and
+ * `hosts` (job id -> lanes). Empty means the workflow and the ledger agree.
+ * Each message starts with a stable tag in square brackets, which is what the
+ * negative controls match on.
+ */
+export function problems(text, ledger, { hosts = {}, stepGated = [], ungatedSteps = {} } = {}) {
   const out = [];
   const jobs = parseJobs(text);
   const byId = new Map(jobs.map((j) => [j.id, j]));
   const ledgerIds = Object.keys(ledger);
+  const hostIds = Object.keys(hosts);
 
-  if (jobs.length < 10) {
+  if (jobs.length < 5) {
     out.push(`[parse] only ${jobs.length} jobs parsed from ci.yml; the walk is broken, not the workflow`);
   }
   const lanes = byId.get(LANES_JOB);
@@ -232,23 +268,38 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     out.push(`[lanes-missing] ci.yml has no \`${LANES_JOB}\` job; every lane condition then reads an empty output`);
   }
 
+  // Lanes against hosts: every lane in exactly one host, every hosted lane in the ledger.
+  for (const id of ledgerIds) {
+    const n = hostIds.filter((h) => hosts[h].includes(id)).length;
+    if (n === 0) out.push(`[lane-unhosted] lane \`${id}\` is in JOBS but no host in HOSTS runs it, so nothing checks it`);
+    if (n > 1) out.push(`[lane-multihosted] lane \`${id}\` is in ${n} hosts; its steps and its record condition are ambiguous`);
+  }
+  for (const h of hostIds) {
+    for (const id of hosts[h].filter((l) => !ledgerIds.includes(l))) {
+      out.push(`[host-lane-unknown] host \`${h}\` lists lane \`${id}\`, which is not in JOBS`);
+    }
+    const kinds = new Set(hosts[h].filter((l) => ledgerIds.includes(l)).map((l) => ledger[l]));
+    if (kinds.size > 1) {
+      out.push(`[host-mixed] host \`${h}\` mixes core and advisory lanes; a required host would then fail on a live service, or a core lane go path-scoped`);
+    }
+  }
+
+  // Hosts against ci.yml jobs, in both directions.
   const inWorkflow = jobs.map((j) => j.id).filter((id) => !STRUCTURAL.includes(id));
-  for (const id of inWorkflow.filter((id) => !ledgerIds.includes(id))) {
+  for (const id of inWorkflow.filter((id) => !hostIds.includes(id))) {
     out.push(
-      `[job-not-in-ledger] ci.yml job \`${id}\` is not in JOBS (scripts/ci-lanes.mjs). ` +
-        'A new job must be given a lane kind there before it can run; add it, and add its output to the `lanes` job.',
+      `[job-not-in-hosts] ci.yml job \`${id}\` is not in HOSTS (scripts/ci-lanes.mjs). ` +
+        'A new job must host lanes there before it can run.',
     );
   }
-  for (const id of ledgerIds.filter((id) => !inWorkflow.includes(id))) {
-    out.push(
-      `[ledger-job-not-in-workflow] JOBS lists \`${id}\`, which ci.yml no longer has. ` +
-        'A removed or renamed job must leave the ledger in the same change (and a required job must never be renamed).',
-    );
+  for (const id of hostIds.filter((id) => !inWorkflow.includes(id))) {
+    out.push(`[host-not-in-workflow] HOSTS lists \`${id}\`, which ci.yml does not have; its lanes then run nowhere`);
   }
 
   for (const job of jobs) {
-    if (STRUCTURAL.includes(job.id)) continue;
-    const want = stepGated.includes(job.id) ? STEP_GATED_JOB_CONDITION : laneCondition(job.id);
+    if (STRUCTURAL.includes(job.id) || !hostIds.includes(job.id)) continue;
+    const hostLanes = hosts[job.id];
+    const want = stepGated.includes(job.id) ? STEP_GATED_JOB_CONDITION : hostCondition(hostLanes);
     if (!job.needs.includes(LANES_JOB)) {
       out.push(
         `[needs-lanes] job \`${job.id}\` does not list \`${LANES_JOB}\` in \`needs:\`, so ` +
@@ -260,45 +311,60 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     } else if (job.if !== want) {
       out.push(
         `[condition-shape] job \`${job.id}\` has \`if: ${job.if}\`; expected exactly \`if: ${want}\`. ` +
-          "The status function and the `!= 'false'` comparison are what make a failed or skipped `lanes` run the job.",
+          "The status function and the `!= 'false'` comparisons are what make a failed or skipped `lanes` run the job.",
       );
     }
-  }
 
-  for (const id of stepGated) {
-    const job = byId.get(id);
-    if (!job) continue;
+    // A one-lane host that is not step-gated is gated at job level; its steps are its own business.
+    if (!stepGated.includes(job.id) && hostLanes.length === 1) continue;
+    const allowed = ungatedSteps[job.id] ?? [];
     const steps = parseSteps(job);
-    if (steps.length < ungatedSteps.length + 1) {
-      out.push(`[step-parse] only ${steps.length} steps parsed in step-gated job \`${id}\`; the walk is broken`);
+    if (steps.length < allowed.length + hostLanes.length) {
+      out.push(`[step-parse] only ${steps.length} steps parsed in host \`${job.id}\`; the walk is broken`);
     }
-    const isAllowed = (s) => ungatedSteps.includes(s.label);
+    const seenLanes = new Set();
     for (const s of steps) {
-      const gated = stepIsGated(s.if, id);
-      if (isAllowed(s) && s.if !== null) {
-        out.push(
-          `[always-step-conditional] step \`${s.label}\` of job \`${id}\` must run in every lane but has \`if: ${s.if}\``,
-        );
-      } else if (!isAllowed(s) && !gated) {
-        out.push(
-          `[step-ungated] step \`${s.name ?? s.label}\` of job \`${id}\` does not read the lane output ` +
-            `(it has ${s.if === null ? 'no `if:`' : `\`if: ${s.if}\``}), so it runs in lanes that turned the job off. ` +
-            `Expected \`if: \${{ ${stepClause(id)} }}\`, or that clause AND-ed in front of the step's own condition.`,
-        );
+      const lane = gatedLane(s.if);
+      if (lane !== null) {
+        if (!hostLanes.includes(lane)) {
+          out.push(
+            `[step-foreign-lane] step \`${s.name ?? s.label}\` of \`${job.id}\` is gated on lane \`${lane}\`, ` +
+              `which \`${job.id}\` does not host; it would run when that lane's own host is skipped`,
+          );
+        }
+        seenLanes.add(lane);
+        continue;
       }
+      if (allowed.includes(s.label)) {
+        if (!UNGATED_CONDITIONS.includes(s.if)) {
+          out.push(
+            `[always-step-conditional] step \`${s.label}\` of \`${job.id}\` must run whenever the job runs but has \`if: ${s.if}\``,
+          );
+        }
+        continue;
+      }
+      out.push(
+        `[step-ungated] step \`${s.name ?? s.label}\` of \`${job.id}\` does not read a lane output ` +
+          `(it has ${s.if === null ? 'no `if:`' : `\`if: ${s.if}\``}), so it runs in lanes that turned it off. ` +
+          "Expected `if: ${{ !cancelled() && needs.lanes.outputs.<lane> != 'false' }}`, optionally with more `&&` conjuncts.",
+      );
     }
-    for (const label of ungatedSteps.filter((u) => !steps.some((s) => s.label === u))) {
-      out.push(`[always-step-missing] job \`${id}\` no longer has the every-lane step \`${label}\``);
+    for (const l of hostLanes.filter((l) => !seenLanes.has(l))) {
+      out.push(`[lane-no-steps] host \`${job.id}\` carries lane \`${l}\` but no step is gated on it, so that lane checks nothing`);
+    }
+    for (const label of allowed.filter((u) => !steps.some((s) => s.label === u && UNGATED_CONDITIONS.includes(s.if)))) {
+      out.push(`[always-step-missing] host \`${job.id}\` no longer has the ungated step \`${label}\``);
     }
   }
 
   if (lanes) {
     if (lanes.if !== null) out.push(`[lanes-conditional] the \`${LANES_JOB}\` job has an \`if:\`; it must run on every event`);
     if (lanes.needs.length) out.push(`[lanes-needs] the \`${LANES_JOB}\` job has \`needs:\`; it must be first`);
-    const wantOutputs = ['lane', ...ledgerIds];
+    // `name-prefix` is the one output that is not a lane switch: the required hosts' `name:` reads it.
+    const wantOutputs = ['lane', ...ledgerIds, 'name-prefix'];
     for (const key of wantOutputs.filter((k) => !(k in lanes.outputs))) {
       out.push(
-        `[output-missing] the \`${LANES_JOB}\` job declares no output \`${key}\`; a job reading it gets an empty string and always runs`,
+        `[output-missing] the \`${LANES_JOB}\` job declares no output \`${key}\`; a step reading it gets an empty string and always runs`,
       );
     }
     for (const key of Object.keys(lanes.outputs).filter((k) => !wantOutputs.includes(k))) {
@@ -322,21 +388,21 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
   if (!record) {
     out.push(`[record-missing] ci.yml has no \`${RECORD_JOB}\` job; no tree is ever recorded and main never skips`);
   } else {
-    const want = [LANES_JOB, ...ledgerIds];
+    const want = [LANES_JOB, ...hostIds];
     for (const id of want.filter((id) => !record.needs.includes(id))) {
       out.push(
         `[record-needs-missing] \`${RECORD_JOB}\` does not need \`${id}\`, so it can record a tree before \`${id}\` finished, ` +
-          'or without it having run at all. Every job goes in its `needs:`.',
+          'or without it having run at all. Every host goes in its `needs:`.',
       );
     }
     for (const id of record.needs.filter((id) => !want.includes(id))) {
-      out.push(`[record-needs-unknown] \`${RECORD_JOB}\` needs \`${id}\`, which is not in the ledger`);
+      out.push(`[record-needs-unknown] \`${RECORD_JOB}\` needs \`${id}\`, which is not a host`);
     }
     const have = conjuncts(record.if);
     if (!have) {
       out.push(`[record-condition-shape] \`${RECORD_JOB}\`'s \`if:\` is not a pure \`&&\` conjunction: ${record.if}`);
     } else {
-      const expect = recordConjuncts(ledger);
+      const expect = recordConjuncts(ledger, hosts);
       for (const c of expect.filter((c) => !have.includes(c))) {
         out.push(`[record-condition-missing] \`${RECORD_JOB}\`'s \`if:\` lacks \`${c}\`; without it a run that did not test the full tree can record it`);
       }
@@ -361,7 +427,7 @@ export function problems(text, ledger, { stepGated = [], ungatedSteps = [] } = {
     if (/^\s*(paths|paths-ignore):/.test(l)) {
       out.push(
         `[workflow-paths-filter] ci.yml's \`on:\` block has \`${l.trim()}\`. A workflow that never starts leaves ` +
-          'required contexts pending forever; select jobs with the job-level lane condition instead.',
+          'required contexts pending forever; select lanes with the job- and step-level conditions instead.',
       );
     }
   }

@@ -7,7 +7,7 @@
  * WHY THIS EXISTS (a demonstrated blind spot, not a hypothetical):
  *   The root `pnpm.overrides` maps the first-party `@civitai/*` packages to
  *   `workspace:*`. So every existing CI job — including the required
- *   `Starter (<name>)` matrix — builds the starters against the LOCAL workspace
+ *   `starters` job — builds the starters against the LOCAL workspace
  *   copies, never against the published versions their own package.json files
  *   actually admit (`^0.31.0`, `^0.3.0`, `^0.2.0`, …).
  *

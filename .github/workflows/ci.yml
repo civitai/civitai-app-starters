@@ -4,7 +4,23 @@ on:
   pull_request:
   push:
     branches: [main]
-  # A manual run takes no lane: every job runs.
+  # A manual run with `only: all` (the default) takes no lane: every job runs.
+  #
+  # `only: <lane>` runs that one lane's steps and skips the rest, so a
+  # re-check of one lane does not put every check in the org's shared runner
+  # queue. A narrowed run still writes check runs for this commit, so it
+  # narrows only when no open pull request has this commit as its head (`lanes`
+  # asks the API; an open one or a failed lookup runs every lane), and the
+  # partial hosts report as `[only <lane>] Core (all packages)` and
+  # `[only <lane>] Starters (all five)`. Selection
+  # is decided where every other lane is, in `scripts/ci-lanes.mjs` (lane
+  # `only`), and reaches the jobs through the same `lanes` outputs and the same
+  # `!= 'false'` conditions; no job condition reads `inputs`. So it fails open
+  # like they do: a failed `lanes` runs everything. The `starters` job always
+  # starts (it is step-gated, see that job) and runs only its every-lane
+  # guards unless `only` is `starter`. The options are pinned against `JOBS` by
+  # `tests/guards/ci-lanes-ledger.test.mjs`. On push and pull_request
+  # `inputs.only` is empty and nothing changes.
   #
   # There is deliberately NO `schedule:` here. Every push to main runs all five
   # advisory jobs, which is what notices drift nobody's PR caused (push runs
@@ -15,51 +31,107 @@ on:
   # (the push run is red), and, for schema and catalog drift, as the PR the
   # re-sync workflow above opens. Nothing else: no issue, no notification, and
   # no pull request unless it touches that job's inputs.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Run only this job (default: all)'
+        type: choice
+        default: all
+        options:
+          - all
+          - sdk
+          - schema-drift
+          - starter-pins
+          - orchestrator-catalog-drift
+          - civitai-sdk
+          - blocks-react
+          - design-system
+          - design-system-cross-browser
+          - design-system-drift-guard
+          - readme-snippets
+          - starter
+          - examples
+          - packaging
+          - public-types
+          - agent-runner
 
+# A manual run gets its own group per ref AND `only` value, and a newer one
+# with the same pair cancels the older: it no longer queues behind (or
+# displaces the pending) push run on main, and two dispatches for different
+# jobs do not cancel each other. Push stays grouped by ref WITHOUT
+# cancel-in-progress, unchanged on purpose: main's push run is where an
+# advisory red shows up (see the trigger comment above), and the push gate in
+# `scripts/ci-lanes.mjs` compares each push with the previous tip, so a run
+# cancelled mid-flight would leave a main commit with no verdict and could let
+# a lockfile change go without the install that seeds the PR cache.
+# A dispatch never cancels a pull_request run (different groups). One that is
+# cancelled at a pull request's head leaves `cancelled` check runs on that
+# commit: replaced when the newer dispatch is at the same commit, otherwise
+# left in place. Either way the PR shows a blocking `cancelled`, never a false
+# pass, until something re-runs it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 env:
   NODE_VERSION: '24'
 
 jobs:
-  # WHICH JOBS THIS RUN NEEDS. `scripts/ci-lanes.mjs` is the one place that
-  # decides; every other job reads its own output through the same condition:
+  # LANES AND HOSTS. `scripts/ci-lanes.mjs` is the one place that decides which
+  # LANES a run needs (a lane is one unit of checking: `sdk`, `examples`,
+  # `schema-drift`, ...; `JOBS` in that script) and writes one `lanes` output
+  # per lane. The lanes RUN inside a few HOST jobs (`HOSTS` in the same
+  # script), each lane as a set of named steps, so a red step still names the
+  # lane that failed:
   #
-  #     needs: lanes
-  #     if: ${{ !cancelled() && needs.lanes.outputs.<job-id> != 'false' }}
+  #   core       every core lane but `starter`, after ONE install and ONE build
+  #              of every package (they each paid their own before)
+  #   starters   the `starter` lane: all five starters, after one install and
+  #              build; plus the every-lane guards, which run in EVERY lane
+  #   advisory   four of the five advisory lanes (the live drift checks)
+  #   design-system-cross-browser
+  #              the fifth advisory lane, alone because it runs in a container
   #
-  # 🔴 THE SHAPE OF THAT CONDITION IS THE FAIL-OPEN GUARANTEE; do not "tidy" it.
+  # Before this layout every lane was its own job: 16 runner slots on a
+  # full-lane pull request run and 20 on a push to main, against an org-wide
+  # cap on concurrent hosted jobs. Now it is 4 and 5.
+  #
+  # 🔴 THE SHAPE OF THE CONDITIONS IS THE FAIL-OPEN GUARANTEE; do not "tidy" it.
+  #   - A host job's `if:` is `!cancelled()` AND-ed with its lanes'
+  #     `!= 'false'` clauses OR-ed together; a step's `if:` is `!cancelled()`
+  #     AND-ed with its ONE lane's clause (and optionally more conjuncts).
   #   - `!cancelled()` is a status function, and a status function is what stops
   #     GitHub applying the implicit `success()` that would SKIP every dependent
-  #     the moment this job failed or was skipped. Without it, a broken
+  #     the moment `lanes` failed or was skipped (and, on a step, every later
+  #     lane the moment an earlier lane's step failed). Without it, a broken
   #     classifier turns the whole workflow green-by-skipping, required
   #     contexts included.
-  #   - `!= 'false'` and never `== 'true'`: a job is skipped only when the
+  #   - `!= 'false'` and never `== 'true'`: something is skipped only when the
   #     script positively wrote `false` for it. A failed or skipped `lanes` has
   #     EMPTY outputs, and empty is not `false`, so everything runs.
   #
-  # Selection is job-level on purpose. A job skipped by its own `if:` reports
-  # `skipped`, which satisfies a required context; a workflow-level `paths:`
-  # filter leaves required contexts pending forever.
+  # Selection is job- and step-level on purpose. A job skipped by its own `if:`
+  # reports `skipped`, which satisfies a required context; a workflow-level
+  # `paths:` filter leaves required contexts pending forever.
   #
-  # 🔴 THE CORE JOBS' `needs: lanes` + CONDITION, THE `starter` MATRIX'S
-  # PER-STEP GATING, AND ITS JOB-LEVEL `!cancelled()` ARE NOT DEAD CODE. They
-  # are the wiring the release-PR lane (and the push-to-main tested-tree skip)
-  # switch core jobs off through; delete them and those lanes stop skipping
-  # anything, or, for the matrix, stop reporting the five required
-  # `Starter (<name>)` contexts.
-  #
-  # The lanes themselves (`full`, `release` for a Version Packages PR that is
-  # only a version bump, and `tree-already-tested` for a push to main whose
-  # exact tree a full-lane PR run already passed; see `record-tree` at the
+  # The lanes themselves (`full`, `only`, `release` for a Version Packages PR
+  # that is only a version bump, and `tree-already-tested` for a push to main
+  # whose exact tree a full-lane PR run already passed; see `record-tree` at the
   # bottom) are defined in the script's header.
   #
-  # NOT a required context, and it must not become one: nothing depends on it
-  # succeeding. `tests/guards/ci-lanes-ledger.test.mjs` pins this job's outputs
-  # and every job's condition against the ledger in the script.
+  # REQUIRED CONTEXTS on `main` are the two hosts that carry verdicts for
+  # pull requests: `Core (all packages)` and `Starters (all five)`. Both names
+  # are expressions fed by the `name-prefix` output, which is '' everywhere but
+  # a dispatch narrowed by `only`; there the partial run reports as
+  # `[only <lane>] Core (all packages)` and cannot satisfy a required context.
+  # GitHub never evaluates a SKIPPED job's `name:` expression, so a host that
+  # carries one must never be skipped in a pull_request lane: `starters` is
+  # never skipped at all, and `core` always has a lane on in the full and
+  # release lanes. `tests/guards/ci-lanes-ledger.test.mjs` pins all of this
+  # against the ledger.
+  #
+  # `lanes` is NOT a required context, and it must not become one: nothing
+  # depends on it succeeding.
   lanes:
     name: CI lanes (which jobs this run needs)
     runs-on: ubuntu-latest
@@ -88,6 +160,8 @@ jobs:
       packaging: ${{ steps.decide.outputs.packaging }}
       public-types: ${{ steps.decide.outputs.public-types }}
       agent-runner: ${{ steps.decide.outputs.agent-runner }}
+      # '' except in a narrowed dispatch; read by the Starter job's `name:`.
+      name-prefix: ${{ steps.decide.outputs.name-prefix }}
     steps:
       - uses: actions/checkout@v7
 
@@ -98,11 +172,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  sdk:
-    name: SDK (typecheck + test + build)
+  # ── CORE ────────────────────────────────────────────────────────────────────
+  # Every core lane except `starter`: one install, one build of every package,
+  # then each lane's checks as steps named `<lane>: ...`. A REQUIRED context.
+  #
+  # The setup steps (checkout, pnpm, node, install, the package build) run
+  # whenever the job runs; every other step belongs to exactly one lane and
+  # carries that lane's condition, which is what lets the release lane (only
+  # `packaging`) and a narrowed dispatch run part of this job.
+  #
+  # Self-contained: no civitai/civitai checkout and no live external
+  # dependency beyond the package registry, so it is safe as a required check.
+  # The live-dependent checks are in `advisory` below.
+  core:
+    name: ${{ format('{0}Core (all packages)', needs.lanes.outputs.name-prefix) }}
     needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.sdk != 'false' }}
+    if: ${{ !cancelled() && (needs.lanes.outputs.sdk != 'false' || needs.lanes.outputs.civitai-sdk != 'false' || needs.lanes.outputs.blocks-react != 'false' || needs.lanes.outputs.design-system != 'false' || needs.lanes.outputs.readme-snippets != 'false' || needs.lanes.outputs.examples != 'false' || needs.lanes.outputs.packaging != 'false' || needs.lanes.outputs.public-types != 'false' || needs.lanes.outputs.agent-runner != 'false') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The sum of what the nine jobs this replaces measured at p50 was about 8
+    # minutes, most of it nine installs and builds that now happen once.
+    timeout-minutes: 45
+    # agent-runner: replies run as DBOS workflows, and the golden test reads
+    # back, from DBOS's own tables, the calls a reply makes. That suite FAILS in
+    # CI without the database URL on its step (it skips only outside CI), so a
+    # lost service cannot turn into a silent skip. Postgres 18, as the civitai
+    # service this package was moved out of tests on.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      # Pinned, and asserted by the checker, so a CLI release cannot change the
+      # examples lane's verdict without a reviewed bump here.
+      CIVITAI_CLI_VERSION: '0.1.113'
     steps:
       - uses: actions/checkout@v7
 
@@ -115,85 +224,250 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm --filter @civitai/app-sdk typecheck
-      - run: pnpm --filter @civitai/app-sdk test
-      - run: pnpm --filter @civitai/app-sdk build
+      # 🔴 BEFORE THE BUILD, AND THAT ORDER IS THE WHOLE POINT. The build below
+      # regenerates `packages/civitai-components/src/version.generated.ts` from
+      # package.json (`@civitai/blocks-react` and `@civitai/sdk` commit one too,
+      # and this step checks all three), so by the time `@civitai/components
+      # test` runs its own parity assertion the two sides agree by construction
+      # and it cannot fail. That is how 0.8.1 stayed committed against a 0.9.0
+      # package.json from #492 onward with CI green throughout. This step reads
+      # the COMMITTED file as text and is the only thing here that can see that
+      # drift. Moving it below the build silently disarms it. Self-test:
+      # `pnpm check:generated-version:selftest`.
+      - name: 'design-system: committed version.generated.ts matches package.json'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm check:generated-version
 
-      # AFTER build, on purpose. The vitest suite imports `src/`; every consumer
-      # imports the PUBLISHED specifier (`@civitai/app-sdk/vite`). Those are two
-      # different resolutions and a green suite says nothing about the second --
-      # a typo in `exports`, a `dist` path never emitted, or a schema file that
-      # `files` does not ship all leave the tests green and a scaffold build red.
-      # This resolves the node-only subpaths BY PACKAGE NAME and runs
-      # `defineBlock` once, which is what proves the vendored schema is reachable
-      # from `dist/`.
-      - run: pnpm --filter @civitai/app-sdk test:exports
+      # Every package, in dependency order (pnpm -r is topological). Each lane
+      # used to build its own subset; all of them are in this one.
+      - run: pnpm -r --filter "./packages/*" build
+        if: ${{ !cancelled() }}
 
-  schema-drift:
-    name: Canonical schema drift-check
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.schema-drift != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
+      # ── sdk ──
+      - name: 'sdk: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.sdk != 'false' }}
+        run: pnpm --filter @civitai/app-sdk typecheck
+      - name: 'sdk: test'
+        if: ${{ !cancelled() && needs.lanes.outputs.sdk != 'false' }}
+        run: pnpm --filter @civitai/app-sdk test
+      # The vitest suite imports `src/`; every consumer imports the PUBLISHED
+      # specifier (`@civitai/app-sdk/vite`). This resolves the node-only
+      # subpaths BY PACKAGE NAME against the built `dist/` and runs
+      # `defineBlock` once, which proves the vendored schema ships.
+      - name: 'sdk: published exports resolve'
+        if: ${{ !cancelled() && needs.lanes.outputs.sdk != 'false' }}
+        run: pnpm --filter @civitai/app-sdk test:exports
 
-      # The vendored manifest schema MUST stay byte-identical to the
-      # server-published canonical (the single source of truth shared by the
-      # platform validator + the `civitai` CLI). Fetch it and diff. A non-200
-      # (canonical unreachable) fails the job — the canonical is expected live.
-      # Runs the bare script (curl + diff only) — no node/pnpm needed.
-      - run: ./scripts/check-canonical-schema.sh
+      # ── civitai-sdk ──
+      - name: 'civitai-sdk: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk typecheck
+      - name: 'civitai-sdk: api:check'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk api:check
+      - name: 'civitai-sdk: check:layering'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk check:layering
+      - name: 'civitai-sdk: check:parity'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk check:parity
+      - name: 'civitai-sdk: check:steps'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk check:steps
+      - name: 'civitai-sdk: check:host-replies'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk check:host-replies
+      - name: 'civitai-sdk: test'
+        if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+        run: pnpm --filter @civitai/sdk test
 
-      # The document-store contract @civitai/sdk vendors for its fake and client
-      # suite, byte-diffed against civitai.com the same way (a non-200 fails).
-      # `revendor-canonical-schema.yml` re-vendors it on drift.
-      - run: ./scripts/check-storage-contract.sh
+      # ── blocks-react ──
+      - name: 'blocks-react: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
+        run: pnpm --filter @civitai/blocks-react typecheck
+      - name: 'blocks-react: test'
+        if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
+        run: pnpm --filter @civitai/blocks-react test
+      # Real-browser (vitest browser mode) perf/layout tests for the dev:live
+      # picker overlay. CI uses Playwright's bundled Chromium (NixOS local runs
+      # set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium)).
+      #
+      # 🔴 NO `--with-deps`, AND THAT IS THE FIX RATHER THAN AN OMISSION. That
+      # flag runs apt-get, and the runner's package mirror was where every slow
+      # or timed-out install hung; the browser download itself is fast. On
+      # `ubuntu-latest` it NEWLY installed no shared library for chromium, only
+      # fonts, and it UPGRADED libraries already on the image (libx11,
+      # mesa/libgbm, libfreetype6). A chromium crash inside one of those should
+      # suspect this first. A MISSING LIBRARY FAILS RED, NOT GREEN: nothing in
+      # the browser suites skips when the browser cannot launch. The remedy is
+      # to install that one package, not `--with-deps`.
+      #
+      # Each lane that needs Chromium installs it in its own step, so a narrowed
+      # run of that lane alone still has it; after the first, the install finds
+      # the shared Playwright cache and returns in seconds. Every one is the
+      # same line for the same reason. 5 minutes: worst seen 86 s.
+      - name: 'blocks-react: install Chromium'
+        if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
+        run: pnpm --filter @civitai/blocks-react exec playwright install chromium
+        timeout-minutes: 5
+      - name: 'blocks-react: browser tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
+        run: pnpm --filter @civitai/blocks-react test:browser
 
-  starter-pins:
-    name: Starter pins vs published
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.starter-pins != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
+      # ── design-system (theme + components + components-react + components-chat) ──
+      # @civitai/theme: the SELF-CONTAINED guards only (generation parity and
+      # the breakpoint px-not-em scale guard). The live-civitai drift guards run
+      # in the advisory `design-system-drift-guard` lane.
+      - name: 'design-system: theme typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/theme typecheck
+      - name: 'design-system: theme self-contained tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/theme test:self
+      - name: 'design-system: components typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components typecheck
+      - name: 'design-system: components test'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components test
+      - name: 'design-system: components-react typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-react typecheck
+      - name: 'design-system: components-react test'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-react test
+      # <civitai-chat>: logic in node, the elements in jsdom.
+      - name: 'design-system: components-chat typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-chat typecheck
+      - name: 'design-system: components-chat test'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-chat test
+      - name: 'design-system: install Chromium'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-react exec playwright install chromium
+        timeout-minutes: 5
+      # The React BINDING MECHANICS in real Chromium: property assignment,
+      # refs, typed custom events, shadow-root `change` retargeting.
+      - name: 'design-system: components-react browser tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-react test:browser
+      # The custom elements: real upgrade, ElementInternals and computed styles,
+      # including parity against the attribute markup they replace.
+      - name: 'design-system: components browser tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components test:browser
+      # <civitai-chat> layout in real Chromium: it must fit a phone-width host.
+      - name: 'design-system: components-chat browser tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
+        run: pnpm --filter @civitai/components-chat test:browser
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+      # ── readme-snippets ──
+      # Resolves documented imports against the packages' BUILT declarations.
+      - name: 'readme-snippets: typecheck README code'
+        if: ${{ !cancelled() && needs.lanes.outputs.readme-snippets != 'false' }}
+        run: pnpm typecheck:readme
+      # Negative controls for the step above: the runner can go RED, and it
+      # prints what it still does not cover.
+      - name: 'readme-snippets: selftest'
+        if: ${{ !cancelled() && needs.lanes.outputs.readme-snippets != 'false' }}
+        run: pnpm typecheck:readme:selftest
 
-      # Assert every starter/template @civitai/* pin still admits the
-      # currently-published npm version (a 0.x caret locks the minor, so a
-      # stale pin silently births apps behind the SDK). Pure fetch + compare —
-      # no install needed, and it skips gracefully if npm is unreachable.
-      - run: node scripts/check-starter-pins.mjs
+      # ── examples (`starters/examples/*`) ──
+      # Every example built, typechecked and validated with the CLI the docs
+      # tell people to run on a copied-out example. `civitai app validate` is
+      # static; no live Civitai endpoint is contacted.
+      - name: 'examples: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm -r --filter "./starters/examples/*" typecheck
+      # `vite build` also runs blockManifestPlugin (`defineBlock` against the
+      # vendored canonical schema) on every example manifest.
+      - name: 'examples: build'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm -r --filter "./starters/examples/*" build
+      - name: 'examples: install the civitai CLI (pinned)'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: npm install -g "@civitai/cli@${CIVITAI_CLI_VERSION}"
+      # NEGATIVE + POSITIVE control FIRST: a clean copy must validate clean and
+      # the same copy without its lockfile must not.
+      - name: 'examples: validate selftest'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm check:examples-validate:selftest
+        env:
+          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
+      # `--strict`, in place AND on a copy of only the tracked files (what
+      # `npx tiged` delivers). See the script for the one allowlisted warning.
+      - name: 'examples: civitai app validate'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm check:examples-validate
+        env:
+          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
+      - name: 'examples: install Chromium'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm --filter @civitai/blocks-react exec playwright install chromium
+        timeout-minutes: 5
+      # BEHAVIOUR, not compilation: each example boots under `dev:harness` in
+      # headless Chromium, renders past "Loading…", logs no error, and PAINTS
+      # the host's theme.
+      - name: 'examples: render in Chromium'
+        if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
+        run: pnpm check:examples-render
+        timeout-minutes: 5
 
-  # ADVISORY, like the sibling `schema-drift` job: depends on a LIVE external
-  # endpoint (the orchestrator's public OpenAPI spec), so it can fail for
-  # reasons outside the PR. Do NOT add it to branch protection.
+      # ── packaging: what the TARBALLS contain ──
+      # Every other lane resolves `src/` or the workspace link; this looks at
+      # the artifact npm receives (#376: 270 sourcemaps that resolved nothing).
+      # NEGATIVE + POSITIVE control first, so the check cannot report a
+      # reassuring zero from a checker wired to nothing.
+      - name: 'packaging: shipped sourcemaps selftest'
+        if: ${{ !cancelled() && needs.lanes.outputs.packaging != 'false' }}
+        run: pnpm check:shipped-sourcemaps:selftest
+      - name: 'packaging: shipped sourcemaps'
+        if: ${{ !cancelled() && needs.lanes.outputs.packaging != 'false' }}
+        run: pnpm check:shipped-sourcemaps
+
+      # ── public-types: what a CONSUMER can name (#379) ──
+      # The checker's own unit tests need the installed `typescript`, so the
+      # every-lane `pnpm test:guards` (before any install, in `starters`) skips
+      # them; here GUARDS_REQUIRE_INSTALL turns that skip into a failure. They
+      # drive temp-dir fixtures, so a red here is the guard's logic.
+      - name: 'public-types: checker unit tests'
+        if: ${{ !cancelled() && needs.lanes.outputs.public-types != 'false' }}
+        run: pnpm test:guards:public-types
+        env:
+          GUARDS_REQUIRE_INSTALL: '1'
+      - name: 'public-types: selftest'
+        if: ${{ !cancelled() && needs.lanes.outputs.public-types != 'false' }}
+        run: pnpm check:public-types:selftest
+      - name: 'public-types: built .d.ts closure'
+        if: ${{ !cancelled() && needs.lanes.outputs.public-types != 'false' }}
+        run: pnpm check:public-types
+
+      # ── agent-runner (the durable runner behind <civitai-chat>'s remote mode) ──
+      - name: 'agent-runner: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.agent-runner != 'false' }}
+        run: pnpm --filter @civitai/agent-runner typecheck
+      - name: 'agent-runner: test (with Postgres)'
+        if: ${{ !cancelled() && needs.lanes.outputs.agent-runner != 'false' }}
+        run: pnpm --filter @civitai/agent-runner test
+        env:
+          ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+  # ── STARTERS ────────────────────────────────────────────────────────────────
+  # The five starters in ONE job: one install and one package build, then each
+  # starter's steps, named `<starter>: ...`. A REQUIRED context.
   #
-  # The SDK's WORKFLOW_STEP_TYPES / IMAGE_GEN_ENGINES catalogs are hand-written
-  # mirrors of that spec's discriminator mappings. `pnpm --filter
-  # @civitai/app-sdk test` pins the catalogs to a transcribed fixture offline;
-  # this job pins that fixture to the live spec. Only the pair covers "the
-  # orchestrator shipped a new step type". Pure fetch + compare — no install.
-  orchestrator-catalog-drift:
-    name: Orchestrator catalog drift-check
+  # 🔴 THIS JOB IS GATED PER STEP, NOT PER JOB, AND THAT IS LOAD-BEARING. It
+  # runs `pnpm test:guards`, which must run on every event and in every lane
+  # (`workflow-action-pins.test.mjs` pins that), so every run starts it and
+  # runs the guards and the override and generated-version checks; the
+  # `starter` lane output turns off the install and everything after it. The
+  # job-level `if:` is ONLY the status function: without it a failed or
+  # skipped `lanes` job would skip this one, guards included.
+  starters:
+    name: ${{ format('{0}Starters (all five)', needs.lanes.outputs.name-prefix) }}
     needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.orchestrator-catalog-drift != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - run: node scripts/check-orchestrator-catalogs.mjs
-
-  civitai-sdk:
-    name: '@civitai/sdk (typecheck + test + build)'
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.civitai-sdk != 'false' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -207,23 +481,266 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      # Unit tests for every guard (node:test; no install, no network). They
+      # live in this REQUIRED job on purpose: it is the only required context
+      # that runs before the install, so the guards' own coverage is enforced.
+      # Call the npm script, not a bare `node --test`: it carries
+      # `--test-timeout`, so a guard that hangs fails instead of burning the job.
+      - run: pnpm test:guards
 
-      - run: pnpm --filter @civitai/sdk typecheck
-      - run: pnpm --filter @civitai/sdk api:check
-      - run: pnpm --filter @civitai/sdk check:layering
-      - run: pnpm --filter @civitai/sdk check:parity
-      - run: pnpm --filter @civitai/sdk check:steps
-      - run: pnpm --filter @civitai/sdk check:host-replies
-      - run: pnpm --filter @civitai/sdk test
-      - run: pnpm --filter @civitai/sdk build
+      # RELEASE-DEADLOCK GUARD, before the install so a missing override fails
+      # with the actionable message instead of ERR_PNPM_OUTDATED_LOCKFILE. The
+      # starters pin PUBLISHED caret ranges (they are copied out verbatim by
+      # `npx tiged`, see 2a453e6); `changeset version` rewrites those to
+      # versions not published yet, so every first-party @civitai/* package must
+      # also be pinned to workspace:* in the root pnpm.overrides, or the
+      # Version Packages PR can never install. Offline.
+      - run: node scripts/check-starter-workspace-overrides.mjs
+        if: ${{ !cancelled() }}
 
+      # THE COMMITTED `version.generated.ts` AGAINST ITS package.json, IN EVERY
+      # LANE. `core` runs the same check before its build, but the release lane
+      # turns that step off, and the release PR is exactly where this drifts.
+      # Reads text; must stay ahead of any build step in this job.
+      - run: node scripts/check-generated-version.mjs
+        if: ${{ !cancelled() }}
 
-  blocks-react:
-    name: blocks-react (typecheck + test + build)
+      - name: 'starter: install'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm install --frozen-lockfile
+
+      # Starters consume the first-party packages via published caret ranges
+      # that the root pnpm.overrides redirects to workspace:*, so every package
+      # is built first and each starter typechecks against fresh .d.ts files.
+      - name: 'starter: build every package'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm -r --filter "./packages/*" build
+
+      # ── next-app ──
+      - name: 'next-app: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/next-app typecheck
+      # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.; CI has
+      # no real secrets, and SKIP_ENV_VALIDATION verifies the code compiles.
+      - name: 'next-app: build'
+        id: build-next-app
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/next-app build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+      # EXPIRED-SESSION PROBE. Next.js forbids cookie writes in a Server
+      # Component, a rule that exists only inside a real render. This drives a
+      # real `next start` over HTTP and asserts BOTH arms: a rejected refresh
+      # clears the cookie and renders logged-out, an accepted one re-seals it
+      # and renders signed-in. PROBE_SKIP_BUILD reuses the build above; the
+      # timeout is because a wedged child looks exactly like a slow one.
+      - name: 'next-app: expired-session probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-next-app.outcome == 'success' }}
+        run: pnpm --filter ./starters/next-app probe:expired-session
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # Keyed on the script's existence, not on a starter name, so a rename
+      # cannot silently stop it.
+      - name: 'next-app: test (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/next-app exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/next-app test
+          else
+            echo "No test script for next-app, skipping."
+          fi
+      - name: 'next-app: lint (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/next-app exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/next-app lint
+          else
+            echo "No lint script for next-app, skipping."
+          fi
+
+      # ── sveltekit-app ──
+      - name: 'sveltekit-app: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/sveltekit-app typecheck
+      # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.; CI has
+      # no real secrets, and SKIP_ENV_VALIDATION verifies the code compiles.
+      - name: 'sveltekit-app: build'
+        id: build-sveltekit-app
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/sveltekit-app build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+      # Keyed on the script's existence, not on a starter name, so a rename
+      # cannot silently stop it.
+      - name: 'sveltekit-app: test (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/sveltekit-app exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/sveltekit-app test
+          else
+            echo "No test script for sveltekit-app, skipping."
+          fi
+      - name: 'sveltekit-app: lint (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/sveltekit-app exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/sveltekit-app lint
+          else
+            echo "No lint script for sveltekit-app, skipping."
+          fi
+
+      # ── react-pwa ──
+      - name: 'react-pwa: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/react-pwa typecheck
+      # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.; CI has
+      # no real secrets, and SKIP_ENV_VALIDATION verifies the code compiles.
+      - name: 'react-pwa: build'
+        id: build-react-pwa
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/react-pwa build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+      # STATIC-SERVING PROBE. The prod entry once resolved `./dist` against the
+      # PROCESS CWD and served the SPA fallback by fetching ITSELF: started from
+      # another directory, `/index.html` recursed without bound (25 requests
+      # took the process from 20 open descriptors to 92,124). The probe starts
+      # the built server from a temp directory and asserts a real asset comes
+      # back byte-identical, a burst does not double the socket count, and a
+      # missing dist/index.html exits non-zero.
+      - name: 'react-pwa: static-serving probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-react-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/react-pwa probe:static-serving
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # COOKIE-FLAGS PROBE. `production` derives from APP_URL's scheme (nothing
+      # sets NODE_ENV under `pnpm start`). Drives the real OAuth handshake
+      # against a stand-in hub at BOTH points: https -> Secure + HSTS, http ->
+      # neither. One point alone is passed by `const production = true`.
+      - name: 'react-pwa: cookie-flags probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-react-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/react-pwa probe:cookie-flags
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # Keyed on the script's existence, not on a starter name, so a rename
+      # cannot silently stop it.
+      - name: 'react-pwa: test (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/react-pwa exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/react-pwa test
+          else
+            echo "No test script for react-pwa, skipping."
+          fi
+      - name: 'react-pwa: lint (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/react-pwa exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/react-pwa lint
+          else
+            echo "No lint script for react-pwa, skipping."
+          fi
+
+      # ── svelte-pwa ──
+      - name: 'svelte-pwa: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/svelte-pwa typecheck
+      # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.; CI has
+      # no real secrets, and SKIP_ENV_VALIDATION verifies the code compiles.
+      - name: 'svelte-pwa: build'
+        id: build-svelte-pwa
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/svelte-pwa build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+      # STATIC-SERVING PROBE. The prod entry once resolved `./dist` against the
+      # PROCESS CWD and served the SPA fallback by fetching ITSELF: started from
+      # another directory, `/index.html` recursed without bound (25 requests
+      # took the process from 20 open descriptors to 92,124). The probe starts
+      # the built server from a temp directory and asserts a real asset comes
+      # back byte-identical, a burst does not double the socket count, and a
+      # missing dist/index.html exits non-zero.
+      - name: 'svelte-pwa: static-serving probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-svelte-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/svelte-pwa probe:static-serving
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # COOKIE-FLAGS PROBE. `production` derives from APP_URL's scheme (nothing
+      # sets NODE_ENV under `pnpm start`). Drives the real OAuth handshake
+      # against a stand-in hub at BOTH points: https -> Secure + HSTS, http ->
+      # neither. One point alone is passed by `const production = true`.
+      - name: 'svelte-pwa: cookie-flags probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-svelte-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/svelte-pwa probe:cookie-flags
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # Keyed on the script's existence, not on a starter name, so a rename
+      # cannot silently stop it.
+      - name: 'svelte-pwa: test (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/svelte-pwa exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/svelte-pwa test
+          else
+            echo "No test script for svelte-pwa, skipping."
+          fi
+      - name: 'svelte-pwa: lint (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/svelte-pwa exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/svelte-pwa lint
+          else
+            echo "No lint script for svelte-pwa, skipping."
+          fi
+
+      # ── civitai-block-starter ──
+      - name: 'civitai-block-starter: typecheck'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/civitai-block-starter typecheck
+      # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.; CI has
+      # no real secrets, and SKIP_ENV_VALIDATION verifies the code compiles.
+      - name: 'civitai-block-starter: build'
+        id: build-civitai-block-starter
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: pnpm --filter ./starters/civitai-block-starter build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+      # Keyed on the script's existence, not on a starter name, so a rename
+      # cannot silently stop it.
+      - name: 'civitai-block-starter: test (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/civitai-block-starter exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/civitai-block-starter test
+          else
+            echo "No test script for civitai-block-starter, skipping."
+          fi
+      - name: 'civitai-block-starter: lint (if defined)'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' }}
+        run: |
+          if pnpm --filter ./starters/civitai-block-starter exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/civitai-block-starter lint
+          else
+            echo "No lint script for civitai-block-starter, skipping."
+          fi
+  # ── ADVISORY ────────────────────────────────────────────────────────────────
+  # Four of the five ADVISORY lanes: each depends on something outside this
+  # tree at run time, so it can fail for reasons outside the PR. On a pull
+  # request a lane runs only when the diff touches its inputs (`RULES` in
+  # scripts/ci-lanes.mjs); every push to main runs all of them. Do NOT add this
+  # job to branch protection.
+  advisory:
+    name: Advisory (live drift checks)
     needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.blocks-react != 'false' }}
+    if: ${{ !cancelled() && (needs.lanes.outputs.schema-drift != 'false' || needs.lanes.outputs.starter-pins != 'false' || needs.lanes.outputs.orchestrator-catalog-drift != 'false' || needs.lanes.outputs.design-system-drift-guard != 'false') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -234,144 +751,68 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      # ── schema-drift ──
+      # The vendored manifest schema MUST stay byte-identical to the
+      # server-published canonical (shared by the platform validator and the
+      # `civitai` CLI). A non-200 fails: the canonical is expected live.
+      - name: 'schema-drift: canonical manifest schema'
+        if: ${{ !cancelled() && needs.lanes.outputs.schema-drift != 'false' }}
+        run: ./scripts/check-canonical-schema.sh
+      # The document-store contract @civitai/sdk vendors, byte-diffed the same
+      # way. `revendor-canonical-schema.yml` re-vendors both on drift.
+      - name: 'schema-drift: storage contract'
+        if: ${{ !cancelled() && needs.lanes.outputs.schema-drift != 'false' }}
+        run: ./scripts/check-storage-contract.sh
 
-      # blocks-react consumes @civitai/app-sdk, @civitai/theme and
-      # @civitai/components via workspace:^ and resolves types from their dist/.
-      # Build those deps first so blocks-react isn't typechecking against stale
-      # or missing declarations.
-      - run: pnpm --filter @civitai/app-sdk build
-      - run: pnpm --filter @civitai/theme build
-      - run: pnpm --filter @civitai/sdk build
-      - run: pnpm --filter @civitai/components build
+      # ── starter-pins ──
+      # Every starter/template @civitai/* pin still admits the published npm
+      # version (a 0.x caret locks the minor). Fetch + compare, no install; it
+      # skips gracefully if npm is unreachable.
+      - name: 'starter-pins: pins vs published'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter-pins != 'false' }}
+        run: node scripts/check-starter-pins.mjs
 
-      - run: pnpm --filter @civitai/blocks-react typecheck
-      - run: pnpm --filter @civitai/blocks-react test
-      - run: pnpm --filter @civitai/blocks-react build
+      # ── orchestrator-catalog-drift ──
+      # The SDK's WORKFLOW_STEP_TYPES / IMAGE_GEN_ENGINES catalogs mirror the
+      # orchestrator's public OpenAPI spec. The SDK test pins them to a
+      # transcribed fixture offline; this pins the fixture to the live spec.
+      - name: 'orchestrator-catalog-drift: fixture vs live spec'
+        if: ${{ !cancelled() && needs.lanes.outputs.orchestrator-catalog-drift != 'false' }}
+        run: node scripts/check-orchestrator-catalogs.mjs
 
-      # Real-browser (vitest browser mode) perf/layout tests for the dev:live
-      # picker overlay — happy-dom can't lay out, decode images, or run
-      # IntersectionObserver/PerformanceObserver, so these run in headless
-      # Chromium. Install Playwright's bundled Chromium first.
-      # (CI uses the bundled binary; NixOS local runs set
-      # PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium) instead.)
-      #
-      # 🔴 NO `--with-deps`, AND THAT IS THE FIX RATHER THAN AN OMISSION. That
-      # flag runs apt-get, and apt (the runner's package mirror) was where every
-      # slow or timed-out install in this job and its siblings hung; the
-      # browser download itself is fast. Measurements: the commit that removed
-      # it.
-      #
-      # On `ubuntu-latest` it NEWLY installed no shared library for chromium
-      # (fonts and font tools only). It did UPGRADE libraries already on the
-      # image — libx11, mesa/libgbm, libfreetype6, varying with the image date —
-      # and those upgrades are no longer applied. A chromium crash inside one
-      # of those libraries should suspect this change first.
-      #
-      # 🔴 A MISSING LIBRARY FAILS RED, NOT GREEN: nothing in the browser suites
-      # skips when the browser cannot launch (vitest exits 1 on `Tests  no
-      # tests`; `check-examples-render` exits 1 from `chromium.launch()`). The
-      # remedy is to install that one package, not `--with-deps`.
-      #
-      # Fonts are gone with it: no test asserts a glyph or text width today; one
-      # that does needs its font installed.
-      #
-      # 5 minutes: with apt gone the step is the download only (worst seen 86s).
-      - run: pnpm --filter @civitai/blocks-react exec playwright install chromium
-        timeout-minutes: 5
-      - run: pnpm --filter @civitai/blocks-react test:browser
-
-  # SELF-CONTAINED design-system job. Everything here builds/typechecks/tests
-  # against THIS repo only — no civitai/civitai checkout, no live external
-  # dependency — so it is safe to make a REQUIRED branch-protection check
-  # (a civitai/civitai outage or theme-file move can never block PRs here).
-  # The live-civitai drift guard lives in the separate advisory
-  # `design-system-drift-guard` job below. KEEP this job named `design-system`
-  # so the required-check setting stays stable.
-  design-system:
-    name: design-system (theme + components + components-react)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.design-system != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
+      # ── design-system-drift-guard ──
+      # civitai/civitai's vendored sources (public repo, SPARSE):
+      #   src/providers  ThemeProvider.tsx, guarded by theme-drift.test.ts
+      #   src/utils      breakpoints.json, guarded by breakpoint-drift.test.ts
+      # REQUIRE_DRIFT_GUARD=1 turns an absent or unreadable source into a
+      # FAILURE, so this can't silently regress to a skip.
+      - name: 'design-system-drift-guard: check out civitai/civitai (sparse)'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # 🔴 BEFORE THE BUILD, AND THAT ORDER IS THE WHOLE POINT. Every build step
-      # below regenerates `packages/civitai-components/src/version.generated.ts`
-      # from package.json (`@civitai/blocks-react` and `@civitai/sdk` commit one
-      # too, and this step checks all three), so by the time
-      # `@civitai/components test` runs its own parity assertion ("the stamped
-      # element version matches package.json") the two sides agree by
-      # construction and it cannot fail. That is how 0.8.1
-      # stayed committed against a 0.9.0 package.json from #492 onward with CI
-      # green throughout. This step reads the COMMITTED file as text, needs no
-      # build, and is the only thing here that can see that drift. Moving it
-      # below a build step silently disarms it. Self-test: `pnpm
-      # check:generated-version:selftest`.
-      - run: pnpm check:generated-version
-
-      # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
-      # components (CSS referencing those tokens) -> components-react (bindings).
-      - run: pnpm --filter @civitai/theme build
-      - run: pnpm --filter @civitai/sdk build
-      - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/components-react build
-
-      # @civitai/theme: the SELF-CONTAINED guards only — generation parity
-      # (committed artifacts == fresh generation) and the breakpoint px-not-em
-      # scale guard. Neither needs a civitai checkout. The live-civitai drift
-      # guards are NOT run here; they run in the advisory
-      # `design-system-drift-guard` job. `test:self` names those two files.
-      - run: pnpm --filter @civitai/theme typecheck
-      - run: pnpm --filter @civitai/theme test:self
-
-      - run: pnpm --filter @civitai/components typecheck
-      - run: pnpm --filter @civitai/components test
-
-      - run: pnpm --filter @civitai/components-react typecheck
-      - run: pnpm --filter @civitai/components-react test
-
-      # <civitai-chat>: logic in node, the elements in jsdom. Needs the sdk and
-      # components builds above for their declarations.
-      - run: pnpm --filter @civitai/components-chat typecheck
-      - run: pnpm --filter @civitai/components-chat test
-      - run: pnpm --filter @civitai/components-chat build
-
-      # The React BINDING MECHANICS in real headless Chromium — property
-      # assignment, refs, typed custom events, shadow-root `change` retargeting
-      # (happy-dom cannot upgrade a custom element). NOT the a11y sweep: that
-      # lives in the `@civitai/components test:browser` step below, which owns
-      # the elements. This step also carried HTML-vs-React computed-style
-      # parity until components-react@0.9.0 deleted the hand-written React
-      # layer the parity test compared against. Bundled Chromium in CI.
-      # No `--with-deps`, and a 5-minute cap: see the measurement recorded on
-      # the `blocks-react` job's identical step. All three chromium installs in
-      # this file are the same line for the same reason — fixing only the one
-      # that bit us leaves the identical bug armed at the others.
-      - run: pnpm --filter @civitai/components-react exec playwright install chromium
-        timeout-minutes: 5
-      - run: pnpm --filter @civitai/components-react test:browser
-
-      # The custom elements: real upgrade, ElementInternals and computed styles,
-      # including parity against the attribute markup they replace. Chromium is
-      # already installed by the step above (one shared Playwright cache).
-      - run: pnpm --filter @civitai/components test:browser
-
-      # <civitai-chat> layout in real Chromium (jsdom does no layout): the chat
-      # must fit a phone-width host. Same shared Chromium install as above.
-      - run: pnpm --filter @civitai/components-chat test:browser
+          repository: civitai/civitai
+          ref: main
+          path: .civitai-src
+          sparse-checkout: |
+            src/providers
+            src/utils
+          sparse-checkout-cone-mode: true
+          fetch-depth: 1
+      - name: 'design-system-drift-guard: install'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
+        run: pnpm install --frozen-lockfile
+      - name: 'design-system-drift-guard: build theme'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
+        run: pnpm --filter @civitai/theme build
+      - name: 'design-system-drift-guard: theme and breakpoints vs live civitai/civitai'
+        if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
+        run: pnpm --filter @civitai/theme test:drift
+        env:
+          CIVITAI_REPO: ${{ github.workspace }}/.civitai-src
+          REQUIRE_DRIFT_GUARD: '1'
 
   # ADVISORY cross-engine contract. The chromium half of this contract already
-  # runs inside the REQUIRED `design-system` job, so nothing is only checked
+  # runs inside the REQUIRED `core` job (lane `design-system`), so nothing is only checked
   # here.
   #
   # 🔴 IT RUNS IN THE PLAYWRIGHT IMAGE, BECAUSE WEBKIT CANNOT DO WITHOUT APT ON
@@ -441,506 +882,36 @@ jobs:
       # shadow boundary, form association, `change` escaping, and `::part`.
       - run: pnpm --filter @civitai/components test:contract
 
-  # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
-  # (sparse: src/providers + src/utils) to assert the vendored theme.source.ts
-  # hasn't drifted from civitai's real Mantine theme, and the vendored px
-  # breakpoint scale hasn't drifted from src/utils/breakpoints.json. Because it
-  # can fail for reasons outside
-  # this PR (civitai/civitai unreachable, or its theme file moved), it is kept
-  # ADVISORY — do NOT add it to branch protection. This mirrors the sibling
-  # live-dependent `Canonical schema drift-check` job, which is also advisory.
-  design-system-drift-guard:
-    name: design-system drift guard (vs live civitai/civitai)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.design-system-drift-guard != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # Check out civitai/civitai's vendored sources (public repo, SPARSE):
-      #   src/providers — ThemeProvider.tsx, guarded by theme-drift.test.ts
-      #   src/utils     — breakpoints.json, guarded by breakpoint-drift.test.ts
-      # so both drift guards RUN in CI instead of skipping. REQUIRE_DRIFT_GUARD=1
-      # (below) turns an absent/unreadable source into a FAILURE, so this can't
-      # silently regress to a skip — including if a future edit drops a path here.
-      - uses: actions/checkout@v7
-        with:
-          repository: civitai/civitai
-          ref: main
-          path: .civitai-src
-          sparse-checkout: |
-            src/providers
-            src/utils
-          sparse-checkout-cone-mode: true
-          fetch-depth: 1
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # Build the theme so the drift test resolves against fresh package state.
-      - run: pnpm --filter @civitai/theme build
-
-      # The drift guards only. CIVITAI_REPO points at the sparse civitai checkout
-      # and REQUIRE_DRIFT_GUARD=1 makes them RUN-OR-FAIL (never a silent skip).
-      # `test:drift` names theme-drift.test.ts + breakpoint-drift.test.ts.
-      - run: pnpm --filter @civitai/theme test:drift
-        env:
-          CIVITAI_REPO: ${{ github.workspace }}/.civitai-src
-          REQUIRE_DRIFT_GUARD: '1'
-
-  readme-snippets:
-    name: README snippets (typecheck)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.readme-snippets != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # The snippet checker resolves documented imports against the packages'
-      # BUILT declarations, so build deps first (blocks-react consumes app-sdk,
-      # @civitai/theme and @civitai/components).
-      - run: pnpm --filter @civitai/app-sdk build
-      - run: pnpm --filter @civitai/theme build
-      - run: pnpm --filter @civitai/sdk build
-      - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/blocks-react build
-
-      - run: pnpm typecheck:readme
-
-      # Negative controls for the step above. The snippet runner used to shim
-      # every TYPE-only identifier to `any`, so it reported PASS for a snippet
-      # whose documented type it had never resolved — a green run that was a
-      # claim about the shim, not about the doc. This asserts the runner can go
-      # RED, and prints what it still does not cover.
-      - run: pnpm typecheck:readme:selftest
-
-  starter:
-    name: Starter
-    # 🔴 THIS JOB IS GATED PER STEP, NOT PER JOB, AND BOTH HALVES OF THAT ARE
-    # LOAD-BEARING.
-    #   - It is a MATRIX. A matrix job skipped at job level is never expanded:
-    #     it reports ONE context, `Starter`, and the five REQUIRED contexts
-    #     `Starter (<name>)` stay pending forever.
-    #   - It runs `pnpm test:guards`, which must run on every event and in every
-    #     lane (`workflow-action-pins.test.mjs` pins that).
-    # So every leg always starts and always runs the guards and the override
-    # check; the lane output turns off the install and everything after it.
-    # The job-level `if:` is ONLY the status function: without it a failed or
-    # skipped `lanes` job would skip this one, guards included.
-    needs: lanes
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        starter:
-          - next-app
-          - sveltekit-app
-          - react-pwa
-          - svelte-pwa
-          - civitai-block-starter
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      # Unit tests for BOTH release guards (node:test; no install, no network --
-      # check-starter-pins' suite runs against a stand-in registry). They live in
-      # this REQUIRED matrix job on purpose: it is the only required context that
-      # runs before the install, so the guards' own coverage is enforced rather
-      # than advisory. Deliberately run in every matrix leg rather than under an
-      # `if:` -- a conditional here would silently stop running the moment its
-      # matrix entry was renamed.
-      # Call the npm script, not a bare `node --test`: the script carries
-      # `--test-timeout`, without which a guard that hangs (a removed request
-      # timeout falls back to undici's ~300s) burns the job instead of failing.
-      - run: pnpm test:guards
-
-      # RELEASE-DEADLOCK GUARD. Runs BEFORE the install so a missing override
-      # fails with the actionable message instead of the cryptic
-      # ERR_PNPM_OUTDATED_LOCKFILE the deadlock actually surfaces as.
-      #
-      # The starters pin PUBLISHED caret ranges (not workspace:*) because they
-      # are copied out verbatim by `npx tiged` -- see 2a453e6. `changeset
-      # version` rewrites those carets to versions that are not published yet,
-      # so every first-party @civitai/* package must also be pinned to
-      # workspace:* in the root pnpm.overrides, or the Version Packages PR can
-      # never install and the release deadlocks. Offline; no install needed.
-      # The same guard also blocks re-introducing workspace: into a starter and
-      # asserts a floor on how many pins it covers.
-      - run: node scripts/check-starter-workspace-overrides.mjs
-
-      # THE COMMITTED `version.generated.ts` AGAINST ITS package.json, IN EVERY
-      # LANE. `design-system` runs the same check (before its build, see there),
-      # but the release lane turns that job off, and the release PR is exactly
-      # where this drifts: a bump of `@civitai/components`, `@civitai/blocks-react`
-      # or `@civitai/sdk` whose module was not regenerated leaves the file OUT of
-      # the diff, so no file classifier can see it. Reads each module and its
-      # package.json as text; no install, and it must stay ahead of
-      # any build step in this job, because a build regenerates the module.
-      - run: node scripts/check-generated-version.mjs
-
-      - run: pnpm install --frozen-lockfile
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-
-      # Starters consume the first-party packages via published caret ranges
-      # that the root pnpm.overrides redirects to workspace:* (the block
-      # starter consumes @civitai/sdk + @civitai/components + @civitai/theme).
-      # Building all packages up front so each starter's typecheck sees fresh
-      # .d.ts files.
-      - run: pnpm -r --filter "./packages/*" build
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-
-      - name: Typecheck
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-        run: pnpm --filter ./starters/${{ matrix.starter }} typecheck
-
-      - name: Build
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-        # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.
-        # CI doesn't have real secrets; SKIP_ENV_VALIDATION turns the bailout
-        # off so the build verifies code compiles, not that env is wired.
-        run: pnpm --filter ./starters/${{ matrix.starter }} build
-        env:
-          SKIP_ENV_VALIDATION: '1'
-
-      # EXPIRED-SESSION PROBE (next-app only). Next.js forbids cookie writes in a
-      # Server Component, and that rule exists only inside a real render — no
-      # unit test can reach it. `getSession()` used to refresh in place, so an
-      # expired session took the whole page render down with
-      # `Cookies can only be modified in a Server Action or Route Handler`, and
-      # the browser was never told to drop the dead cookie. Refresh now lives in
-      # middleware; this drives a real `next start` over HTTP and asserts BOTH
-      # arms — rejected refresh clears the cookie and renders logged-out,
-      # accepted refresh re-seals it and renders signed-in.
-      #
-      # PROBE_SKIP_BUILD reuses the `.next` the Build step above just produced.
-      # timeout-minutes for the same reason the playwright steps have one: a
-      # wedged child process is indistinguishable from a slow one, and would
-      # otherwise burn to GitHub's 6-hour cap.
-      - name: Expired-session probe (next-app)
-        if: ${{ needs.lanes.outputs.starter != 'false' && matrix.starter == 'next-app' }}
-        run: pnpm --filter ./starters/next-app probe:expired-session
-        env:
-          PROBE_SKIP_BUILD: '1'
-        timeout-minutes: 5
-
-      # STATIC-SERVING PROBE (the two PWA starters). Their prod entry used to
-      # resolve `./dist` against the PROCESS CWD and serve the SPA fallback by
-      # fetching ITSELF over TCP. Started from any directory other than the
-      # package root — systemd `WorkingDirectory`, a container `WORKDIR`, pm2 —
-      # the static middleware missed, so `/index.html` fell into the same
-      # catch-all that fetched it, recursing without bound. Measured: 25
-      # requests took the process from 20 open descriptors to 92,124, and every
-      # one of them timed out, while the server still logged "Listening".
-      #
-      # The probe starts the built server from a temp directory and asserts a
-      # real asset comes back byte-identical, that a concurrent burst does not
-      # double the socket count, and that a missing dist/index.html exits
-      # non-zero. PROBE_SKIP_BUILD reuses the Build step's output.
-      - name: Static-serving probe (PWA starters)
-        if: ${{ needs.lanes.outputs.starter != 'false' && (matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa') }}
-        run: pnpm --filter ./starters/${{ matrix.starter }} probe:static-serving
-        env:
-          PROBE_SKIP_BUILD: '1'
-        timeout-minutes: 5
-
-      # COOKIE-FLAGS PROBE (the two PWA starters). `production` used to be
-      # `NODE_ENV === 'production'`, and NOTHING SETS NODE_ENV: `pnpm start` is
-      # `node --env-file=.env dist-server/index.js`. So a correctly deployed,
-      # HTTPS-served app took the dev branch — session cookies without `Secure`
-      # and no HSTS — while working perfectly, which is why nobody would notice.
-      # It now derives from APP_URL's scheme. The probe drives the real OAuth
-      # handshake in-process against a stand-in hub and checks BOTH points on
-      # the dimension: https -> Secure + HSTS, http -> neither. One point alone
-      # is passed by `const production = true`.
-      - name: Cookie-flags probe (PWA starters)
-        if: ${{ needs.lanes.outputs.starter != 'false' && (matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa') }}
-        run: pnpm --filter ./starters/${{ matrix.starter }} probe:cookie-flags
-        env:
-          PROBE_SKIP_BUILD: '1'
-        timeout-minutes: 5
-
-      # A starter that ships its own suite runs it here. Keyed on the script's
-      # existence rather than on a matrix name, for the same reason as the lint
-      # step below: an `if:` on a name silently stops running on a rename.
-      - name: Test (if defined)
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-        run: |
-          if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
-            pnpm --filter ./starters/${{ matrix.starter }} test
-          else
-            echo "No test script for ${{ matrix.starter }} — skipping."
-          fi
-
-      - name: Lint (if defined)
-        if: ${{ needs.lanes.outputs.starter != 'false' }}
-        run: |
-          if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
-            pnpm --filter ./starters/${{ matrix.starter }} lint
-          else
-            echo "No lint script for ${{ matrix.starter }} — skipping."
-          fi
-
-  # The `starters/examples/*` apps. Nothing in CI ever built, typechecked
-  # or validated them, and all six that existed then failed `civitai app validate` — the CLI the
-  # docs tell people to run on a copied-out example — while every job here was
-  # green. One job (not a matrix) on purpose: six small Vite apps share one
-  # install and one package build, and one stable context name is what a
-  # branch-protection rule can name.
-  #
-  # Self-contained like the `Starter` matrix: the examples resolve @civitai/*
-  # from the workspace (root pnpm.overrides), and `civitai app validate` is a
-  # static check — no live Civitai endpoint is contacted. The one network
-  # dependency beyond the usual install is the pinned CLI from npm.
-  examples:
-    name: Examples (typecheck + build + civitai app validate)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.examples != 'false' }}
-    runs-on: ubuntu-latest
-    env:
-      # Pinned, and asserted by the checker, so a CLI release cannot change this
-      # job's verdict without a reviewed bump here.
-      CIVITAI_CLI_VERSION: '0.1.113'
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # The examples typecheck against the packages' built declarations.
-      - run: pnpm -r --filter "./packages/*" build
-
-      - name: Typecheck
-        run: pnpm -r --filter "./starters/examples/*" typecheck
-
-      # `vite build` also runs blockManifestPlugin, i.e. `defineBlock` against
-      # the vendored canonical schema, on every example manifest.
-      - name: Build
-        run: pnpm -r --filter "./starters/examples/*" build
-
-      - name: Install the civitai CLI (pinned)
-        run: npm install -g "@civitai/cli@${CIVITAI_CLI_VERSION}"
-
-      # NEGATIVE + POSITIVE control FIRST: a clean copy must validate clean, and
-      # the same copy without its lockfile must not — so the check below cannot
-      # pass on a CLI that reports nothing.
-      - run: pnpm check:examples-validate:selftest
-        env:
-          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
-
-      # `--strict`, on each example in place AND on a copy of only its tracked
-      # files (what `npx tiged` delivers). See the script for the one allowlisted
-      # warning and why.
-      - run: pnpm check:examples-validate
-        env:
-          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
-
-      # BEHAVIOUR, not compilation: boot each example under `dev:harness` in
-      # headless Chromium and check it renders past "Loading…", logs no error,
-      # and PAINTS the host's theme (dark under a light OS was white until the
-      # examples went dark-first). ~15s for the original 6 examples x 3 scenarios locally.
-      # No `--with-deps`, and a 5-minute cap on the install: both for the
-      # reasons measured on the `blocks-react` job's identical step.
-      - run: pnpm --filter @civitai/blocks-react exec playwright install chromium
-        timeout-minutes: 5
-      - run: pnpm check:examples-render
-        timeout-minutes: 5
-
-  # What the TARBALLS contain, as opposed to what the tests import. Every job
-  # above resolves `src/` or the workspace link; none of them has ever looked at
-  # the artifact npm actually receives, which is how all five packages came to
-  # ship 270 sourcemaps that could not resolve a single one of their `sources`
-  # (#376). Its own job because it needs the built `dist/` AND shells out to
-  # `npm pack --dry-run` per package — deliberately NOT a `tests/guards/` unit
-  # test, whose per-test budget a sibling guard already records that call
-  # blowing.
-  packaging:
-    name: Packaging (shipped sourcemaps)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.packaging != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # The maps only exist after a build; the checker FAILS on an unbuilt tree
-      # rather than reporting a vacuous "0 dangling" over an empty scan.
-      - run: pnpm -r --filter "./packages/*" build
-
-      # NEGATIVE + POSITIVE control FIRST, so the check below cannot report a
-      # reassuring zero from a checker wired to nothing. Ordered like the
-      # sibling `readme-snippets` job's selftest, and for the same reason.
-      - run: pnpm check:shipped-sourcemaps:selftest
-
-      - run: pnpm check:shipped-sourcemaps
-
-  # What a CONSUMER can NAME, as opposed to what the packages export by
-  # accident. Every typecheck job above resolves `src/` or the workspace link
-  # and sees every local declaration, so none of them can tell that
-  # `responseToResources`'s parameter type had no name on the published surface
-  # (#379). The real SCAN gets its own job, and is not a `tests/guards/` unit
-  # test, because it needs the installed `typescript` AND a built `dist/` —
-  # `pnpm test:guards` runs in the required matrix job BEFORE the install. The
-  # checker's own logic IS unit-tested (`tests/guards/
-  # check-public-type-closure-patterns.test.mjs`), and that suite is run from
-  # inside THIS job for the same reason: it needs the install too.
-  public-types:
-    name: Public type closure (built .d.ts)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.public-types != 'false' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # The checker's OWN unit tests — `exports` subpath-pattern handling, over
-      # synthetic trees. They live in `tests/guards/` with every other guard
-      # suite, but the required matrix job runs `pnpm test:guards` BEFORE the
-      # install and this suite needs the installed `typescript` (same reason
-      # this job exists at all), so there it SKIPS. Here it must not: the env
-      # flag turns an unresolvable `typescript` into a failure, so the coverage
-      # is enforced in the one tier that can see it rather than quietly
-      # evaporating in the tier that cannot.
-      #
-      # Runs BEFORE the build on purpose — it drives the guard over temp-dir
-      # fixtures, so a red here is the guard's logic, not the tree's state.
-      - run: pnpm test:guards:public-types
-        env:
-          GUARDS_REQUIRE_INSTALL: '1'
-
-      # The `.d.ts` barrels only exist after a build; the checker FAILS on an
-      # unbuilt or half-built tree rather than reporting a vacuous "0 violations"
-      # over nothing scanned.
-      - run: pnpm -r --filter "./packages/*" build
-
-      # NEGATIVE + POSITIVE control FIRST — a deliberately unexported type that
-      # must be reported, and the same fixture exported that must report zero
-      # over a non-zero number of walked references. Ordered like the sibling
-      # `packaging` and `readme-snippets` jobs, and for the same reason.
-      - run: pnpm check:public-types:selftest
-
-      - run: pnpm check:public-types
-
-  # @civitai/agent-runner: the durable runner behind <civitai-chat>'s remote
-  # mode. Its own job because it is the one package here that needs a REAL
-  # Postgres: replies run as DBOS workflows, and the golden test reads back,
-  # from DBOS's own tables, the calls a reply makes (what a recovered run
-  # replays against). That suite FAILS in CI without the URL below (it skips
-  # only outside CI), so a lost service cannot turn into a silent skip.
-  # Postgres 18, as the civitai service this package was moved out of tests on.
-  agent-runner:
-    name: agent-runner (typecheck + test + build, with Postgres)
-    needs: lanes
-    if: ${{ !cancelled() && needs.lanes.outputs.agent-runner != 'false' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-    env:
-      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # The runner's types come from @civitai/components-chat's built
-      # declarations, and that package's from these.
-      - run: pnpm --filter @civitai/theme build
-      - run: pnpm --filter @civitai/sdk build
-      - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/components-chat build
-
-      - run: pnpm --filter @civitai/agent-runner typecheck
-      - run: pnpm --filter @civitai/agent-runner test
-      - run: pnpm --filter @civitai/agent-runner build
-
   # THE TESTED-TREE RECORD, read by the push gate in `scripts/ci-lanes.mjs`.
   #
-  # On a pull_request run that took the FULL lane and in which every CORE job
-  # ran its full step set and succeeded, upload a marker named for the tested
-  # MERGE commit's tree. A push to main whose commit has that exact tree then
-  # skips its core jobs (the advisory five still run there).
+  # On a pull_request run that took the FULL lane and in which every CORE lane
+  # ran its full step set and its host job succeeded, upload a marker named for
+  # the tested MERGE commit's tree. A push to main whose commit has that exact
+  # tree then skips its core lanes (the advisory five still run there).
   #
-  # 🔴 THE CONDITION NAMES EVERY CORE JOB, ONE BY ONE, AND THAT IS THE ONLY SHAPE
+  # 🔴 THE CONDITION NAMES EVERY HOST AND EVERY CORE LANE, ONE BY ONE, AND THAT IS
+  # THE ONLY SHAPE
   # THAT WORKS. `success()` is false whenever any needed job was SKIPPED, and
   # the lanes skip advisory jobs on most PRs, so a `success()` record would
   # never fire; `!contains(needs.*.result, 'skipped')` never fires for the same
   # reason. Both were measured never firing in a sibling repository.
   # `!cancelled()` stops the implicit `success()` from being AND-ed in.
   #
-  # 🔴 `result == 'success'` IS NOT ENOUGH ON ITS OWN: in the release lane the
-  # `starter` legs SUCCEED with their heavy steps switched off. So each core job
-  # also needs its lane output to be `'true'`, and the lane must be `full`. A
+  # 🔴 `result == 'success'` IS NOT ENOUGH ON ITS OWN: a host SUCCEEDS with some
+  # of its lanes switched off (the release lane runs `core` for `packaging`
+  # alone and `starters` for its guards alone). So each core lane also needs its
+  # output to be `'true'`, and the lane must be `full`. A
   # lane-limited run never records; and the artifact name ends in `-full`,
   # which is the only name the gate looks up.
   #
-  # Advisory jobs are in `needs:` and in the condition, but differently: one
-  # that was lane-SKIPPED is fine (the push run re-runs all five against the
+  # The advisory hosts are in `needs:` and in the condition, but differently:
+  # one that was lane-SKIPPED is fine (the push run re-runs all five against the
   # same tree), one that FAILED or was cancelled blocks the record. The gate
   # only accepts a run whose conclusion is `success`, and a failed advisory job
   # makes the run a failure, so that record could never be used.
-  # `tests/guards/ci-lanes-ledger.test.mjs` pins `needs:` to every job and the
-  # condition to every core and advisory job, as sets: adding a job without
-  # both fails.
+  # `tests/guards/ci-lanes-ledger.test.mjs` pins `needs:` to every host and the
+  # condition to every host and core lane, as sets: adding either without both
+  # fails.
   record-tree:
     name: Record the tested tree
     runs-on: ubuntu-latest
@@ -948,41 +919,28 @@ jobs:
       contents: read
     needs:
       - lanes
-      - sdk
-      - schema-drift
-      - starter-pins
-      - orchestrator-catalog-drift
-      - civitai-sdk
-      - blocks-react
-      - design-system
+      - core
+      - starters
+      - advisory
       - design-system-cross-browser
-      - design-system-drift-guard
-      - readme-snippets
-      - starter
-      - examples
-      - packaging
-      - public-types
-      - agent-runner
     if: >-
       ${{ !cancelled()
       && github.event_name == 'pull_request'
       && needs.lanes.result == 'success'
       && needs.lanes.outputs.lane == 'full'
-      && needs.sdk.result == 'success' && needs.lanes.outputs.sdk == 'true'
-      && needs.civitai-sdk.result == 'success' && needs.lanes.outputs.civitai-sdk == 'true'
-      && needs.blocks-react.result == 'success' && needs.lanes.outputs.blocks-react == 'true'
-      && needs.design-system.result == 'success' && needs.lanes.outputs.design-system == 'true'
-      && needs.readme-snippets.result == 'success' && needs.lanes.outputs.readme-snippets == 'true'
-      && needs.starter.result == 'success' && needs.lanes.outputs.starter == 'true'
-      && needs.examples.result == 'success' && needs.lanes.outputs.examples == 'true'
-      && needs.packaging.result == 'success' && needs.lanes.outputs.packaging == 'true'
-      && needs.public-types.result == 'success' && needs.lanes.outputs.public-types == 'true'
-      && needs.agent-runner.result == 'success' && needs.lanes.outputs.agent-runner == 'true'
-      && needs.schema-drift.result != 'failure' && needs.schema-drift.result != 'cancelled'
-      && needs.starter-pins.result != 'failure' && needs.starter-pins.result != 'cancelled'
-      && needs.orchestrator-catalog-drift.result != 'failure' && needs.orchestrator-catalog-drift.result != 'cancelled'
+      && needs.core.result == 'success'
+      && needs.lanes.outputs.sdk == 'true'
+      && needs.lanes.outputs.civitai-sdk == 'true'
+      && needs.lanes.outputs.blocks-react == 'true'
+      && needs.lanes.outputs.design-system == 'true'
+      && needs.lanes.outputs.readme-snippets == 'true'
+      && needs.lanes.outputs.examples == 'true'
+      && needs.lanes.outputs.packaging == 'true'
+      && needs.lanes.outputs.public-types == 'true'
+      && needs.lanes.outputs.agent-runner == 'true'
+      && needs.starters.result == 'success' && needs.lanes.outputs.starter == 'true'
+      && needs.advisory.result != 'failure' && needs.advisory.result != 'cancelled'
       && needs.design-system-cross-browser.result != 'failure' && needs.design-system-cross-browser.result != 'cancelled'
-      && needs.design-system-drift-guard.result != 'failure' && needs.design-system-drift-guard.result != 'cancelled'
       }}
     steps:
       # The default ref for pull_request is the merge commit every other job

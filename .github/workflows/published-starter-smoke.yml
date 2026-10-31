@@ -6,7 +6,7 @@ name: Published-starter smoke
 # WHY IT EXISTS
 #   The root `pnpm.overrides` maps the first-party `@civitai/*` packages to
 #   `workspace:*`, so every job in ci.yml — including the REQUIRED
-#   `Starter (<name>)` matrix — builds the starters against the LOCAL workspace
+#   `starters` job — builds the starters against the LOCAL workspace
 #   copies, never against the published versions their own package.json pins
 #   actually admit. That was demonstrated with a controlled pair: a local-only
 #   export added to a workspace package and imported from `starters/next-app` is
