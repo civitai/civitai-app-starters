@@ -1,0 +1,492 @@
+{
+  "tools": [
+    {
+      "name": "cancel_workflow",
+      "description": "Cancel a running workflow. You can only cancel workflows you own.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "description": "The workflow ID to cancel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "run_workflow",
+      "description": "Run several workflow steps together, in the consumer API format, and return their outputs. Get each step's input shape from get_input_schema; for a single step use run_step. Steps run in order unless independent; a later step can take an earlier step's output with {\"$ref\":\"<step name>\",\"path\":\"output.images[0].url\"} in place of a value.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "description": "Array of steps: {\"$type\": the stepType from get_input_schema, \"input\": {...}, \"name\": optional label other steps use in $ref}. A {\"steps\": [...]} object is accepted too.",
+            "type": "array"
+          },
+          "whatif": {
+            "description": "Price the workflow without running it or spending Buzz",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "waitForCompletion": {
+            "description": "Wait for completion (default true, except for training). Set false to get the workflow ID immediately.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "tags": {
+            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "metadataJson": {
+            "description": "JSON object stored as the workflow's metadata",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "steps"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "get_workflow",
+      "description": "Get a workflow's status and each step's status and output by its ID, with resource links to any files produced. You can only view workflows you own.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "description": "The workflow ID to look up",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "run_step",
+      "description": "Run one step: an image, video, speech, music, upscale, conversion, tagging or any other service. Pass stepType and input as get_input_schema returns them, with input completed within its schema; the input carries everything, including the prompt. For several steps chained together use run_workflow. Returns the step's output with resource links to any files it produced.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stepType": {
+            "description": "Step type from get_input_schema, e.g. imageGen, videoGen, textToSpeech, imageUpscaler",
+            "type": "string"
+          },
+          "input": {
+            "description": "The stepType's input, matching the schema from get_input_schema",
+            "type": "object"
+          },
+          "whatif": {
+            "description": "Price the request without running it or spending Buzz",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "waitForCompletion": {
+            "description": "Wait for completion (default true, except for training). Set false to get the workflow ID immediately.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "tags": {
+            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "metadataJson": {
+            "description": "JSON object stored as the workflow's metadata",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "stepType",
+          "input"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "get_input_schema",
+      "description": "Get the JSON Schema and an example input for a service (one concrete thing a workflow step can do, e.g. image/comfy/sdxl/createImage) to use with run_step or run_workflow. Pass the service id find_services returns, or browse: stepType alone lists that step's choices, parameters narrows them. Omit everything to list the step types.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "description": "Service id as find_services returns it, e.g. image/flux2/klein/createImage. Sets stepType and parameters.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "stepType": {
+            "description": "Step type, e.g. imageGen, videoGen, textToSpeech, convertImage.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "parameters": {
+            "description": "Service parameters to narrow by: engine, then ecosystem/model/version/provider, then operation, e.g. {\"engine\":\"comfy\",\"ecosystem\":\"sdxl\"}.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "resources": {
+            "description": "imageGen only: Civitai checkpoint and/or LoRA AIRs, e.g. urn:air:sdxl:lora:civitai:476872@530000. They must share one ecosystem, which picks the service; the example has them filled in. parameters may still set operation and model.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "caption_media",
+      "description": "Generate a descriptive caption for an image or video. Useful for understanding media content before processing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mediaUrl": {
+            "description": "URL of the image or video to caption",
+            "type": "string"
+          },
+          "temperature": {
+            "description": "Sampling temperature (higher = more creative). Default: 0.5",
+            "type": [
+              "number",
+              "null"
+            ],
+            "default": null
+          },
+          "maxNewTokens": {
+            "description": "Maximum number of tokens to generate. Default: 300",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "whatif": {
+            "description": "Price the request without running it or spending Buzz",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "waitForCompletion": {
+            "description": "Wait for completion (default true). Set false to get the workflow ID immediately.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "tags": {
+            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "metadataJson": {
+            "description": "JSON object stored as the workflow's metadata",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "mediaUrl"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "get_guide",
+      "description": "Get the plan for a multi-step job before starting it: generating with specific Civitai models, turning an image into a video, editing an image, comparing services, or working out what media contains.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "description": "civitai_models, image_to_video, edit_image, compare_services or understand_media",
+            "type": "string",
+            "enum": [
+              "civitai_models",
+              "image_to_video",
+              "edit_image",
+              "compare_services",
+              "understand_media"
+            ]
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "list_workflows",
+      "description": "List your recent workflows. Returns workflow IDs, status, step types, cost, and timing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "take": {
+            "description": "Maximum number of workflows to return (default 10, max 50)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50
+          },
+          "tags": {
+            "description": "Filter by tags (e.g. 'mcp')",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "excludeFailed": {
+            "description": "Exclude failed/expired/canceled workflows",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "transcribe_audio",
+      "description": "Transcribe audio/video to text with optional word-level timestamps.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mediaUrl": {
+            "description": "URL of the audio/video to transcribe",
+            "type": "string"
+          },
+          "language": {
+            "description": "Language hint (e.g. 'en', 'zh')",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "context": {
+            "description": "Context to improve transcription accuracy",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "returnTimestamps": {
+            "description": "Return word-level timestamps (default true)",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "whatif": {
+            "description": "Price the request without running it or spending Buzz",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "waitForCompletion": {
+            "description": "Wait for completion (default true). Set false to get the workflow ID immediately.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "tags": {
+            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "metadataJson": {
+            "description": "JSON object stored as the workflow's metadata",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "mediaUrl"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "find_services",
+      "description": "Find and compare services (one concrete engine, model and operation, e.g. image/flux2/klein/createImage/9b) by speed, cost and success rate, plus OpenRouter chat models, which run as the chatCompletion step. Takes plain language like 'a watercolor fox', 'fast cheap anime image' or 'best video'. Pass a result's service id to get_input_schema.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "What you want in plain words ('a watercolor fox', 'fast cheap anime image', 'upscale a video'), a name ('flux', 'claude'), or an exact service id ('image/flux1-kontext/pro'). Omit it, or pass '*', to list a category.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "category": {
+            "description": "Filter by category: image, video, audio, chat",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "limit": {
+            "description": "Maximum number of results to return (default 10)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    }
+  ]
+}

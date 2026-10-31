@@ -1,5 +1,250 @@
 # @civitai/components
 
+## 0.13.0
+
+### Minor Changes
+
+- ae33f6c: **App reactions: a block can read and set the viewer's reactions on images it was served (scope `social:react:self`, civitai/civitai#6144).** A reaction made this way is a reaction on civitai.com: it pays the reactor and the image owner as the site's own button does, moves rankings, notifies, and draws on the same per-viewer quota. Apps may set `Like`, `Heart`, `Laugh` and `Cry`, never `Dislike`. Image is the only entity type.
+
+  - **`@civitai/app-sdk`.** The `SET_ENTITY_REACTION` → `ENTITY_REACTION_RESULT` and `GET_ENTITY_REACTIONS` → `ENTITY_REACTIONS_RESULT` messages, as the host implements them: a write takes `{ entityType, entityId, reaction, reacted, ticket? }` (a desired state, not a toggle) and answers `{ entityType, entityId, reaction, reacted, changed, counts, viewerReactions, statsUnknown }`; a read takes `{ entityType, ids, tickets? }` (at most 100 ids) and answers `{ entityType, byId, unavailable }`, where `byId` is keyed by the id as a string and an id without a valid ticket is listed in `unavailable` instead of answered. Every failure is one of the closed `ENTITY_REACTION_ERROR_CODES`: `invalid-request`, `sign-in-required`, `review-mode`, `not-ready`, `needs-consent`, `entity-unavailable`, `rate-limited`. New exports from `./blocks`: `APP_REACTIONS`, `STORED_REACTIONS`, `REACTION_ENTITY_TYPES`, `REACTION_READ_MAX_IDS`, `REACT_TICKET_MAX_LENGTH`, `ENTITY_REACTION_ERROR_CODES`, `isEntityReactionErrorCode`, `isAppReaction`, and the types `BlockAppReaction`, `BlockStoredReaction`, `BlockReactionEntityType`, `BlockEntityReactionErrorCode`, `BlockReactionCounts`, `BlockEntityReactionState`, `BlockEntityReactionResult`, `BlockEntityReactionsResult`. `BLOCK_TO_PARENT_MESSAGE_TYPES` lists both requests.
+  - **`@civitai/blocks-react`.** `useReactions(entityType, ids, { tickets })` returns `{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` in chunks of 100 on mount, then reads only the images that need it (an id added to `ids`, or one whose ticket changed), because the host counts every read against the block instance's shared catalog rate limit. An answer is never applied over a write on the same image that started after the read was sent, and an older answer never overwrites a newer one. `toggle(id, reaction, reacted)` moves `byId[id]` at once, puts it back on failure, adopts the host's `viewerReactions` on success, and rejects with a `ReactionError` (`.code`, `.signInRequired`, `.needsConsent`, `.timedOut`, `.busy`). A `toggle` on an image without a ticket, or on one whose same reaction is already in flight, is refused without sending anything: the server checks the ticket after its rate limit, so sending it would spend one of the viewer's reactions. A busy refusal rejects the call without setting the hook's `error`. After a failed write the image is read again if the write timed out (it may have landed) or the image has no state. Also exported: `ReactionError`, `REACTIONS`, `REACTION_ERROR_CODES`, `isReactionErrorCode`, and the reaction types from `@civitai/app-sdk/blocks`. `createMockHost` and `<Harness>` answer both messages: seed images with `reactionStates`, force a code with `reactionError` (both live-tunable with `setScenario`; a forced `review-mode` or `not-ready` is answered before the sign-in, payload and scope checks, as the host's own gate orders them), and declare `social:react:self` in `declaredScopes` or every call answers `needs-consent`, as the real host does for an ungranted scope. The mock accepts any well-formed ticket, since a real one is an HMAC only the server can check. `@civitai/blocks-react/testing` exports the `MockReactionSeed` type. The live dev host refuses both with `entity-unavailable`: the server's reaction procedures need the viewer's civitai.com session.
+  - **`@civitai/components`.** `<civitai-reaction>` takes a `reaction` property (a string such as `Like`, reflected as an attribute). When it is non-empty it is carried as-is in the `react` event's `detail.reaction` and is the accessible name when there is no `label`; the element does not check it against any list. `emoji` stays display only. Without a `reaction`, or with an empty one, the event detail is exactly `{ emoji, reacted, count }`, as before.
+  - **`@civitai/sdk`.** The host snapshot is refreshed from civitai `cd79a91fe4`, so `request()` settles `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD` instead of refusing them as unknown, and `SCOPES` names `social:react:self`.
+
+## 0.12.0
+
+### Minor Changes
+
+- 6727901: `blockTokenSource` takes an optional `signedIn()`. When it returns `false`, a `401` on a `mine` search ends as `unauthorized` straight away, without calling `getToken({ fresh: true })`: the catalog answers an anonymous viewer's `mine` with a `401`, and a new token would get the same answer. Every other `401`, and every `401` when `signedIn` is absent or returns `undefined`, still gets the one fresh-token retry.
+
+## 0.11.0
+
+### Minor Changes
+
+- f4adc63: Add `<civitai-resource-picker>` (`@civitai/components/civitai-resource-picker`, `…/define`): a modal that lets the viewer pick one version of a published resource from the Civitai catalog — their own (`owner="mine"`) or anyone's — with search, a version select (newest first) and badges on gated versions.
+
+  - Results come from a pluggable `source` (`{ search(params, signal) }`). `blockTokenSource({ origin, getToken, fetch? })` ships with it: plain `fetch` against `GET /api/v1/blocks/models` with a raw block token, asking `getToken({ fresh: true })` once for a new token after a `401`. It never falls back to the public `/api/v1/models`.
+  - A `mine` search is shown only when the server echoes `metadata.owner: 'mine'`; any other answer (including none, from a server that predates the parameter) is an error, never a list.
+  - `pick` carries `{ modelId, modelVersionId, name, versionName, creatorUsername, baseModel, earlyAccessDeadline?, access, owner }`; `dismiss` fires on close without a pick; `show()` resolves with the pick or `null`. `owner` is a UX hint, never proof of ownership.
+  - `access` reads the server's `paidAccess` gate: a timed gate is `early-access` (badge "Early access until …"), a permanent one `paid`.
+  - Debounced search, aborts superseded searches and drops late answers, retries `429`/`503` after `Retry-After` (twice, then "Try again"). A failed "Load more" keeps the list and offers that page again; changing `owner` while open drops the shown rows and searches again.
+  - Like the other viewer-bound elements it is in no `register` entry; import its `/define`.
+
+## 0.10.1
+
+### Patch Changes
+
+- 03f355e: `custom-elements.json` now lists what each element inherits. The base classes were never analysed, so every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) was missing the attributes all of them share — `name`, `value`, `label`, `description`, `error`, `required`, `disabled`, `size` — and image, video and audio were missing `src`, `alt`, `fallback`, `pending`, `blocked` and `status`, along with their `load` and `error` events. `<civitai-text-input>` listed 5 attributes; it now lists 13. Each inherited entry carries `inheritedFrom`, and `CivitaiElement`, `CivitaiField` and `CivitaiMediaElement` are declared as modules of their own, with no tag: the set of elements and tags is unchanged. Every element also lists the `change` and `invalid` events `CivitaiElement` re-dispatches out of its shadow root. An entry an element declares itself stays its own (segmented-control's `size` keeps its own type), and an inherited one names the nearest class that declares it. Every element's `superclass` now resolves: to a declaration in the manifest at the module it names, or to the global `HTMLElement` (`package: "global:"`) for the light-DOM elements that extend it. No code changes; only the manifest's content.
+
+## 0.10.0
+
+### Minor Changes
+
+- f3882f0: Add `@civitai/components/testing/happy-dom`, a vitest setup file that installs a minimal `ElementInternals` / `attachInternals` stand-in when the test DOM lacks one. happy-dom implements neither, so `<civitai-button>` and every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) threw `TypeError: this.attachInternals is not a function` on construction in a block's own test suite. Use it with `setupFiles: ['@civitai/components/testing/happy-dom']`. It does nothing where `attachInternals` exists, and no runtime entry imports it.
+
+## 0.9.3
+
+### Patch Changes
+
+- 13d004e: Comment only. The `[data-civitai-ui='text']` rule's comment in `components.css` (also embedded in the generated `componentsCss` string) no longer says in-repo blocks colour a `[data-theme]` root `#e6e6e6`, or that no in-repo consumer renders Text: every Civitai App page sets `color: var(--civitai-color-text)` itself, and the block starter renders `<civitai-text>`. No rule or value changes.
+- e174afd: Docs only. `@civitai/components` MARKUP.md: correct which in-repo pages set an ancestor text colour — no in-repo page sets `#1a1a1a` / `#e6e6e6` any more — every `starters/examples/*` app sets `color: var(--civitai-color-text)` on `:root` and `civitai-block-starter` on `body`, so they join `demo/` and `playground/` as pages that inherit the token. `@civitai/app-sdk` README: the `blockManifestPlugin` sentence no longer counts "six" examples (there are eleven, and all register it).
+
+## 0.9.2
+
+### Patch Changes
+
+- 42e6e11: docs: a `:root` token override loses silently, and all three packages told authors otherwise
+
+  `@civitai/components`' cascade promise — "every rule lives in
+  `@layer civitai.components`, so your own unlayered CSS always wins with no
+  `!important`" — is true of **this package's rules** and false of the **tokens**.
+  `@civitai/theme`'s sheet carries no cascade layer and declares its tokens at
+  `:root` / `[data-theme='…']`, specificity `0-1-0`. So an app's own
+  `:root { --civitai-color-primary: … }` does not outrank them, it **ties**, and
+  stylesheet order decides.
+
+  🔴 **The order that loses is the one the framework itself produces.**
+  `useBlocksStyles()` injects from a `useEffect`, so the token sheet lands _after_
+  a bundler-injected app stylesheet. Measured in Chromium: in that order a `:root`
+  brand override resolves to civitai's own `#1971C2` with no error and no warning
+  — and it does so with or without `data-theme` present, so the host theme stamp
+  is not the cause. An author branding a block the obvious way gets civitai blue
+  and nothing to debug.
+
+  Nothing in the three packages said so. The one piece of correct advice that did
+  exist — `MARKUP.md`'s inline-`style` example — happens to be order-immune, but
+  read as one option among equals rather than as the route that works.
+
+  - `@civitai/components` `src/components.css`: 🔴 **the sheet's own header
+    carried the unqualified promise this release retracts** — _"ALL rules live in
+    `@layer civitai.components` so a consumer's own unlayered CSS always wins the
+    cascade WITHOUT specificity fights"_ — and it is single-sourced into **16** generated
+    artifacts under `src/` by `pnpm --filter @civitai/components generate` (which
+    also rewrites `dist/components.css` and the root `styles.css`, carrying the
+    same header) — so it was the most-published copy of the wrong claim and the
+    last one anyone would look at. Now scoped to _this sheet_ with the token
+    exception stated: one edit, every artifact.
+  - `@civitai/components` `MARKUP.md`: _Cascade / overriding_ now separates the
+    layered rules from the unlayered tokens, says **scope a token override, never
+    declare one at `:root`**, and gives the routes measured to win in either order
+    (inline `style`, or a class on the block root). It also records that a scoped
+    value crosses into component shadow roots. This is the CANONICAL copy; the
+    others below point at it rather than restating it.
+  - `@civitai/components` `README.md`: the correction on the npm page, where the
+    unqualified "your own unlayered CSS always wins" sentence lived — cut to the
+    one-clause rule plus the `MARKUP.md` link it already carried. The utilities
+    section's "override the custom properties to retune every utility at once" now
+    says _on a scope, not `:root`_. ⚠️ With a caveat that matters: those tokens
+    live in `utilities.css`, a **different** unlayered sheet, and nothing injects
+    it for you — a consumer links it themselves, so there the stylesheet order is
+    _theirs_ to control and a `:root` override can be made to work. Scoping is
+    still the advice because it needs no ordering discipline at all. Measured for
+    the token sheet; that sheet is the same shape by construction, not separately
+    measured.
+  - `@civitai/theme` `README.md`: a _Recolouring a token (brand overrides)_
+    section, because this is the sheet with no layer and its own page never
+    mentioned the interaction. It also states plainly what is **not** supported:
+    the package exports token values and `injectTokens(doc?)`, the generator is
+    internal, and only the literal strings `light`/`dark` select a token block, so
+    `data-theme="mybrand"` selects none and inherits dark. You recolour the token
+    set; there is no named-theme API.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: this is the function whose
+    effect-time injection creates the losing order, so the warning belongs on it.
+    🔴 **It is on `useBlocksStyles()`' own JSDoc, not the file-level comment** —
+    measured, the file-level block reaches the published `.d.ts` **not at all**:
+    it floats above a non-exported const that `tsc` elides, so it attaches to no
+    emitted declaration, and `files` ships no `src`. A block author hovering the
+    hook is the named audience and the file comment never reached them. Kept to a
+    pointer rather than a paraphrase of the matrix: a JSDoc copy of another
+    package's README, on another release cadence, is a desync nothing in CI can
+    see, and this repo has already measured that exact failure once.
+  - `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
+    that the emitted sheet contains no `@layer`, and that its base block declares
+    the tokens ON the root element at full specificity — `:root` is required, so
+    `:root` and `:root, :host` pass while `:host` alone, `:where(:root)`,
+    `:root > *` and `:root body` all fail. That is the **defining**
+    property consumers depend on, and until now it was asserted nowhere — the
+    parity test stays green if you layer, because both sides of the comparison
+    move together.
+
+  Prose and JSDoc only — no behaviour change in any of the three. A patch release
+  is needed because the published artifacts _are_ these documents.
+
+  Backed by tests rather than by reasoning, at two levels:
+  `@civitai/components`' `test/token-override-order.browser.test.ts` asserts every
+  documented route in **both** stylesheet orders, with fixture controls naming the
+  real civitai value the trap resolves to; and the theme-package assertions above
+  pin the property those cases are a consequence of. The browser cases record the
+  trap as well as the happy paths, but as EVIDENCE rather than as the tripwire —
+  and measured, they are a PARTIAL detector: a `@layer` wrap reddens both
+  order-dependent cases, while a zero-specificity base (`:where(:root)`) reddens
+  exactly **one**, because `[data-theme='dark']` keeps its `0-1-0` specificity and
+  still wins on order. That is why the property is pinned at source in the theme
+  package, in **two** assertions rather than one: a substring check for `@layer`
+  cannot see `:where(`, so the selector shape is asserted alongside it.
+
+  Not documented, deliberately: `:root:root`. The specificity notch does beat the
+  theme's blocks in both orders, but nobody asked for it, it has no named
+  consumer, it teaches a specificity hack, and it buys nothing a scoped override
+  does not already buy unconditionally.
+
+- Updated dependencies [42e6e11]
+  - @civitai/theme@0.5.1
+
+## 0.9.1
+
+### Patch Changes
+
+- 04c7425: docs: the "default = light" claim is false under @civitai/theme's dark base
+
+  Both packages document the unthemed default, and both descriptions become wrong
+  the moment `@civitai/theme@0.5.0` ships. They are consumer-facing in the strict
+  sense — `MARKUP.md` is `@civitai/components`' self-declared canonical contract,
+  `README.md` is its npm page, and the `@civitai/blocks-react` JSDoc ships inside
+  the published `.d.ts` — so leaving them would have published a default that
+  contradicts the one the tokens emit.
+
+  - `@civitai/components` `MARKUP.md` / `README.md`: the default is now the **dark**
+    palette and nothing consults the OS preference. Only `light` and `dark` select a
+    token block; any other value selects none and inherits the dark base. Both say
+    what the previous behaviour was, so a reader upgrading can tell which world
+    their own code was written for, and that an explicit `data-theme` added _only_
+    to defeat the OS can now be dropped.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: the JSDoc asserted the deleted
+    `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` as live
+    fact, and opened with a 🔴 warning that reading "no `data-theme`" as non-light
+    "is how the explicit attribute gets deleted" — exactly backwards once the base
+    is dark. Replaced, with the reversal stated rather than quietly rewritten.
+  - `@civitai/blocks-react` `src/ui/BlockGate.tsx`: `readDocumentTheme`'s doc called
+    the explicit wrapper attribute "load-bearing" because only it could stop the OS
+    deciding. That reason is gone. The attribute **stays**, and the doc now gives
+    the one difference that survives: the read is `document.documentElement`, while
+    inheritance takes the nearest `[data-theme]` ancestor — the same on a direct
+    load, but that is a property of the deployment, not of the code.
+
+  No behaviour change in either package; prose and JSDoc only. A patch release is
+  needed because the published artifacts _are_ these documents.
+
+- Updated dependencies [04c7425]
+  - @civitai/theme@0.5.0
+
+## 0.9.0
+
+### Minor Changes
+
+- c66ae73: `<civitai-image>` now passes `loading` and `decoding` through to its `<img>`.
+
+  The `<img>` is built inside the element's shadow root, so nothing in the
+  consuming page could reach those attributes — an app rendering a grid of tiles
+  had no way to say `loading="lazy"` and got an eager decode for every off-screen
+  one. Both are plain passthroughs: unset renders no attribute at all, so the
+  default stays HTML's and no existing markup changes behaviour.
+
+- 38d0907: `<civitai-menu>` is adoptable by an App Block: it works in a non-browser DOM, and
+  its items can sit in a container the consumer owns.
+
+  Two independent blockers, either of which alone stopped a real adoption (#485).
+
+  **It threw in every non-browser DOM.** The element read its own open state through
+  `:popover-open` and drove its panel with `showPopover()`. Neither exists in
+  `jsdom` or `happy-dom` at any version, so a consumer's own suite — the
+  `happy-dom` environment `@civitai/blocks-react/testing` is documented for — could
+  not mount a screen containing a menu, let alone open one. The panel's visibility
+  is now decided by a `data-open` attribute the element writes, which is true in
+  every DOM and assertable outside a browser. `showPopover()`/`hidePopover()` are
+  **still called wherever they exist**, so a real browser keeps the two things
+  popover was chosen for: escape from a clipping ancestor via the top layer, and
+  native light dismiss. One code path, not two — the attribute is the state, the
+  popover API is presentation.
+
+  **Its items could not be given an addressable hook.** `part="panel"` styles the
+  panel but is not a query target, and `document.querySelector` does not pierce a
+  shadow root, so a test id or analytics hook had nowhere to live. Wrapping the
+  items in a `<div>` of your own used to break the menu outright:
+  `assignedElements({ flatten: true })` returned the `<div>`, the `role="menuitem"`
+  filter yielded zero items, and `show()` focused nothing. The menu now descends
+  into assigned elements to collect items, in DOM order, so a consumer-owned
+  container is a **supported pattern** — several containers, and wrapped mixed with
+  unwrapped, included.
+
+  `@civitai/blocks-react/testing` gains **`installPopoverShim`** (plus
+  `PopoverShimHandle` and `PopoverShimOptions`) for consumers whose _own_ code calls
+  into the popover API. The components do not need it. It is inert in a real
+  browser, and it deliberately does not paper over the remaining limitation: under
+  `happy-dom` a click on slotted content never reaches a listener on the `<slot>`
+  Lit bound `@click` to, so a trigger click is silent. The shim measures that on
+  install, exposes it as `slottedClicksReachSlots`, and warns — drive overlay
+  elements with `show()`/`hide()` there.
+
+  Both READMEs document the environment, the `show()`-not-click constraint, and the
+  container pattern; `popover` previously appeared in no README in the repo.
+
+  Minor rather than major for `@civitai/components`: nothing a consumer can observe
+  from outside the shadow root changes. The `.panel` class name, `part="panel"`, and
+  `:popover-open` matching in a real browser are all unchanged; what changed is
+  which selector the element's _own_ rule keys on, plus strictly looser acceptance
+  of the markup you may put inside it.
+
 ## 0.8.1
 
 ### Patch Changes
@@ -793,10 +1038,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                  after    @civitai/theme       0.3.1                   — 1 copy
-                           @civitai/components  0.4.2                   — 1 copy
+                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                    after    @civitai/theme       0.3.1                   — 1 copy
+                                             @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

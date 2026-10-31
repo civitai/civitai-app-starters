@@ -40,11 +40,18 @@ export class BridgeError extends CivitaiError {
  * The messages this bridge already had report failure as the server's own
  * sentence — the host holds the tRPC code and drops it. Unmatched text is
  * `unavailable`; `message` still carries what the host said.
+ *
+ * Procedures that need the viewer's signed-in session can refuse with a bare
+ * `UNAUTHORIZED` (the session ended, e.g. signed out in another tab), which is
+ * `unauthenticated`, or with "…belongs to a different account; reload the page
+ * to continue" (the page's session changed account), which is `forbidden`:
+ * signing in again does not help, reloading the page does.
  */
 const HOST_FAILURES: ReadonlyArray<readonly [RegExp, BridgeFailureCode]> = [
   [/authenticated viewer|no block token/i, 'unauthenticated'],
+  [/^UNAUTHORIZED$/, 'unauthenticated'],
   [
-    /(requires|lacks) .+ scope|not approved|revoked|invalid block token|not enabled|review preview|^banned$/i,
+    /(requires|lacks) .+ scope|not approved|revoked|invalid block token|not enabled|review preview|belongs to a different account|^banned$/i,
     'forbidden',
   ],
   [/rate limit|^busy$/i, 'rate-limited'],

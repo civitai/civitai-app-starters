@@ -82,14 +82,19 @@ import * as testingNamespace from '../src/testing.js';
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * `./testing`'s ledger. Every VALUE the host-simulation subpath exports — four,
- * and every one has a measured consumer in the App Block fleet (#334).
+ * `./testing`'s ledger. Every VALUE the host-simulation subpath exports. The
+ * ones that predate #663 each had a measured consumer in the App Block fleet
+ * (#334); `fakeResourceSource` was added with the picker it feeds.
  * `createLiveHost` is ABSENT ON PURPOSE; that absence is #334's closing
  * condition, asserted structurally below rather than by name.
  */
 const TESTING_VALUES = [
   'Harness',
   'createMockHost',
+  // Canned results for `<WorkflowPicker>` / `<civitai-resource-picker>` (#663):
+  // the mock host has no catalog, so a picker under it needs a source.
+  'fakeResourceSource',
+  'installPopoverShim',
   'readMockHostUrlOptions',
   'resetTransport',
 ] as const;
@@ -104,6 +109,9 @@ const TESTING_VALUES = [
 const TESTING_TYPES = [
   'CannedPick',
   'CostSpec',
+  // `fakeResourceSource`'s argument and return type.
+  'FakeResourceCanned',
+  'FakeResourceSource',
   'HarnessProps',
   'ImageSpec',
   'MockBuzzBalance',
@@ -115,9 +123,22 @@ const TESTING_TYPES = [
   'MockHostFailMode',
   'MockHostOptions',
   'MockHostScenarioPatch',
+  // The type of `MockHostOptions.cannedMediaUploads`.
+  'MockMediaUploads',
+  // The value type of `MockHostOptions.reactionStates`.
+  'MockReactionSeed',
   'MockSharedScenario',
   'MockSharedSeed',
   'MockStorageScenario',
+  // The string values of `MockGenerationScenario.workflowUnpriced`.
+  'MockWorkflowQuoteFailure',
+  // The second argument of a `CostSpec` function for a `kind: 'workflow'` body.
+  'MockWorkflowStepInfo',
+  // `installPopoverShim`'s own two: the options bag it takes and the handle it
+  // returns. A consumer asserting `handle.slottedClicksReachSlots` in a helper of
+  // their own has to be able to name the handle's type.
+  'PopoverShimHandle',
+  'PopoverShimOptions',
 ] as const;
 
 /**

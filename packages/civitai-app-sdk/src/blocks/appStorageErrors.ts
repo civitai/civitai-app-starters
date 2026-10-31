@@ -36,20 +36,16 @@
  *      `PAYLOAD_TOO_LARGE` sites, so it missed the entire authorization family.
  *   2. **Draft 2 (RETRACTED)** kept the six, added a table of eight
  *      authorization messages "measured in the same read", and presented THAT
- *      as the surface. Also wrong. It missed, in the same file: `Apps are not
- *      enabled`, thrown from TWO different gates with one spelling — the
- *      `enforceAppBlocksFlag` middleware (defined `:249`, throws at `:255`
- *      query / `:257` mutation), which is `.use()`d on all five storage
- *      procedures at `:470`, `:509`, `:938`, `:1022`, `:1106` BEFORE their
- *      `.input()`, so it fires before anything else on every call; and
- *      `assertAppBlocksEnabledForTokenUser` (`:139-155`, throwing at `:153`),
- *      reached from `resolveStorageContext`. Grepping `enforceAppBlocksFlag`
- *      will NOT find `:153`. Also missed: `block token subject could
- *      not be resolved` (`:148`, called unconditionally from
- *      `resolveStorageContext`), `review token subject could not be resolved`
- *      (`:82`) and `Apps authoring is not enabled for this account` (`:89`).
- *      `Apps are not enabled` is a feature-flag kill switch — neither a ceiling
- *      nor an authorization failure, so it fit neither published table.
+ *      as the surface. Also wrong: it missed four more messages in the same
+ *      host file, one of which was neither a ceiling nor an authorization
+ *      failure and so fit neither of its published tables.
+ *
+ * 🔴 **Which messages those were, and which host code raises them, is
+ * deliberately NOT recorded here.** The retracted drafts spelled it out down to
+ * line numbers in the host's router — a citation nothing in this repository can
+ * check, and one that any unrelated edit upstream invalidates silently. Read it
+ * off the host when you need it (see "Re-deriving it" below); do not write the
+ * answer back into this comment.
  *
  * Each enumeration was wider than the last and each was still short; the
  * router carries **21** `throw new TRPCError` sites and **17** distinct
@@ -262,10 +258,9 @@ export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
  *
  *   - The bridge's catch arms are blanket, so every other rejection the host
  *     raises arrives on the SAME field and is absent here on purpose. `invalid
- *     block token`, `block instance revoked`, `Apps are not enabled` and the
- *     `storage … scope` template are examples of what that covers —
- *     **illustrations, not a bound.** See this file's header for why no list
- *     of them lives in this repository.
+ *     block token`, `block instance revoked` and the `storage … scope` template
+ *     are examples of what that covers — **illustrations, not a bound.** See
+ *     this file's header for why no list of them lives in this repository.
  *   - 🔴 The host also enforces **size ceilings zod-side** (`key` capped at 200
  *     characters on the `.input()` schema, and three more on `list`). Those
  *     throw no `TRPCError`, so they are invisible to the re-derivation recipe
@@ -351,9 +346,8 @@ export type AppStorageRejectionReason =
  *     failure.** The bridge's catch arms are blanket, so every other rejection
  *     the host raises arrives on the same field and classifies `null` — for
  *     example `invalid block token` (an expired token mid-session), `block
- *     instance revoked`, `storage set requires the apps:storage:write scope`,
- *     or `Apps are not enabled` (the feature flag, which fires before anything
- *     else on every storage call). 🔴 **Those are ILLUSTRATIONS, not the set**:
+ *     instance revoked`, or `storage set requires the apps:storage:write
+ *     scope`. 🔴 **Those are ILLUSTRATIONS, not the set**:
  *     see this module's header for why no list of them lives here.
  *   - 🔴 **and a zod INPUT-VALIDATION refusal, which never reaches a handler at
  *     all.** tRPC parses `.input()` before the procedure body, so a bound

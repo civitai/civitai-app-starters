@@ -3,7 +3,7 @@
 Framework-agnostic **design tokens**, derived at build time from civitai's real
 Mantine theme. Ships three forms of the same `--civitai-*` token contract:
 
-- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` + OS-preference stylesheet
+- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` stylesheet
   (`--civitai-*` custom properties; `<color>` tokens registered via `@property`).
 - typed JS — `import { tokens, darkTokens, tokenVars, tokensCss } from '@civitai/theme'`.
 - `dist/tokens.dtcg.json` — a W3C **Design Tokens Community Group** export
@@ -100,12 +100,56 @@ tokens.colorPrimary;     // "#228BE6"
 
 Theme by setting `data-theme="light" | "dark"` on any ancestor.
 
-Set nothing and the page follows the OS: the stylesheet carries the dark values
-under `@media (prefers-color-scheme: dark)`, scoped to `:root:not([data-theme])`.
-An app that sets the attribute — a block acting on the host's `THEME_CHANGE`, or
-its own theme switch — never matches that block and is unaffected. The attribute
-is the override, and it wins wherever it sits, because a nearer ancestor's tokens
-inherit over a farther one's.
+**Dark is the base, and nothing here consults the OS.** `:root` carries the dark
+palette plus `color-scheme: dark`, so an element with no `data-theme` above it is
+dark — on any machine, under any OS preference. `[data-theme='light']` is a full
+mirror of the light palette and is the only thing that puts light back;
+`[data-theme='dark']` restores dark inside a light subtree. The attribute is the
+override and it wins wherever it sits, because a nearer ancestor's tokens inherit
+over a farther one's.
+
+### Recolouring a token (brand overrides)
+
+🔴 **Put a token override on a SCOPE, never on `:root`.** This sheet carries no
+cascade layer, and its `:root` / `[data-theme='…']` blocks sit at specificity
+`0-1-0` — so a consumer's `:root { --civitai-color-primary: … }` does not
+outrank them, it **ties**, and the last stylesheet in the document wins.
+
+```css
+.my-block { --civitai-color-primary: #a259ff; }   /* ✅ wins in either order */
+:root     { --civitai-color-primary: #a259ff; }   /* ⚠️ wins only if this sheet loaded FIRST */
+```
+
+The same goes for an inline `style="--civitai-color-primary: …"`, and a scoped
+value reaches **inside** component shadow roots, because custom properties cross
+the boundary.
+
+⚠️ **The `:root` form fails silently in the order the framework produces.**
+`@civitai/blocks-react`'s `useBlocksStyles()` calls `injectTokens()` from a
+`useEffect`, so these tokens are appended **after** a bundler-injected app
+stylesheet. Measured in Chromium: a `:root` override in that order resolves to
+this theme's own value with no error — with or without `data-theme` present, so
+the theme attribute is not the cause. The full order × route matrix is pinned in
+`@civitai/components`' `test/token-override-order.browser.test.ts`.
+
+**What you cannot do:** define a theme of your own. This package exports token
+*values* and `injectTokens(doc?)`; the generator is internal, and only the
+literal strings `light` and `dark` select a token block — `data-theme="mybrand"`
+selects none and inherits the dark base. Recolour the token set; there is no
+named-theme API.
+
+There is deliberately **no** `@media (prefers-color-scheme: …)` block, in either
+direction. The browser must not decide a Civitai surface's theme: civitai.com is
+dark, and an App Block boots dark and takes light only from its host. ⚠️ Until
+`0.5.0` the opposite was true — `:root` was light and dark arrived via
+`@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` — so every
+surface that must not follow the OS had to set `data-theme` explicitly just to
+defeat it. If you added such an attribute for that reason alone, you can drop it.
+
+Note on the JS exports, which did **not** change: `tokens` is still the LIGHT
+map and `darkTokens` the dark one. So `tokens` no longer describes what `:root`
+emits — read it as "the `[data-theme='light']` values". That naming is kept
+deliberately, so this release breaks one thing (the CSS default) rather than two.
 
 ## Build
 

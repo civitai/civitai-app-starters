@@ -6,6 +6,7 @@ import {
 import type { ColorDomain } from '@civitai/app-sdk/blocks';
 
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useDomainMaturity} returns. An alias for the long-standing
@@ -107,6 +108,7 @@ export interface DomainMaturity {
  * const hiddenByYourSettings = effectiveBrowsingLevel !== maxBrowsingLevel;
  */
 export function useDomainMaturity(): UseDomainMaturity {
+  useTransportConnection();
   const snap = useTransportSnapshot();
   const maxBrowsingLevel = snap.maxBrowsingLevel;
   // The one number every gate below is computed from. `effectiveBrowsingCeiling`

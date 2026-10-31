@@ -49,6 +49,7 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.
 import { BlockManifestError } from '../blocks/manifestError.js';
 import { BLOCK_SCOPES } from '../blocks/scopes.js';
 import type { BlockManifest } from '../blocks/types.js';
+import { preferDiscriminatedBranch, type Discriminator } from './discriminatedBranch.js';
 
 /**
  * Rules `defineBlock` applies that the canonical schema does NOT express in
@@ -100,8 +101,9 @@ export const SCHEMA_DIVERGENCES = {
       'REVIEW IN THE OTHER DIRECTION: `allow-popups`, `allow-modals`, `allow-downloads` and any ' +
       'other token outside {allow-scripts, allow-forms} PASS HERE and may be refused at review. ' +
       'They are not rejected because the tier is assigned server-side during review and is ' +
-      'unknowable locally — `starters/civitai-block-starter` itself ships ' +
-      '"allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox". See ' +
+      'unknowable locally. Every shipped starter and example now declares exactly ' +
+      '"allow-scripts allow-forms", so none of them illustrates this gap any more — the looser ' +
+      'arm is pinned by the synthetic cases in test/manifest/divergences.test.ts instead. See ' +
       'KNOWN_GAPS["tier-dependent-sandbox-allowlist"].',
   },
   scopeJustifications: {
@@ -161,6 +163,14 @@ export const KNOWN_GAPS = {
     "civitai/civitai's `manifest-settings.meta.schema.ts` is not published at a URL and not " +
     'vendored here, so `settings` is the one surface still checked by a hand-written mirror. ' +
     'See SCHEMA_DIVERGENCES.settings.',
+  'storage-server-only-rules':
+    'The canonical `storage` description states rules it does not encode: declaring any ' +
+    'collection requires the `apps:storage` scope, a shared collection viewers write (`write` ' +
+    '"own" or "anyone") also requires `apps:storage:publish`, requesting either scope with no ' +
+    'collection for it to reach is rejected, a counter may not share a name with a mark, and the ' +
+    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `write` "anyone" / ' +
+    '"owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
+    'exactly; these are server-side.',
   'format-uri-not-enforced':
     '`assetBundleUrl` carries `format: "uri"` in addition to `pattern: "^https://"`. Ajv ignores ' +
     'unknown formats unless `ajv-formats` is installed, which would be a second optional peer for ' +
@@ -196,7 +206,11 @@ function canonicalValidator(): ValidateFunction {
   // scaffold. The gap is recorded in KNOWN_GAPS, not shouted at the author on
   // every boot. NOTE this silences Ajv's own diagnostics only; validation
   // errors are returned in `validate.errors`, never logged.
-  const ajv = new Ajv2020({ allErrors: true, strict: false, logger: false });
+  //
+  // `verbose: true` puts the failed keyword's own `schema` and the offending
+  // `data` on each error. `preferDiscriminatedBranch` reads both off a failed
+  // `oneOf` / `anyOf`; it changes which error is REPORTED, never the verdict.
+  const ajv = new Ajv2020({ allErrors: true, strict: false, logger: false, verbose: true });
   compiled = ajv.compile(loadCanonicalSchema());
   return compiled;
 }
@@ -218,12 +232,18 @@ function toDotPath(instancePath: string): string {
 const PASCAL_CASE_PATTERN = /^[A-Z][A-Za-z0-9]*$/;
 
 /**
- * Turns the FIRST Ajv error into a `BlockManifestError`. Ajv's own wording is
- * kept (it is derived from the schema, so it cannot drift); only the field path
- * is reshaped, and one case gets an extra hint because it is the mistake the
+ * Turns ONE Ajv error (the one {@link preferDiscriminatedBranch} picked) into a
+ * `BlockManifestError`. Ajv's own wording is kept (it is derived from the
+ * schema, so it cannot drift); only the field path is reshaped, and two cases
+ * get extra wording: an unknown key inside a discriminated branch says which
+ * branch, and a PascalCase scope gets a hint because it is the mistake the
  * docs see most.
  */
-function toManifestError(error: ErrorObject, manifest: unknown): BlockManifestError {
+function toManifestError(
+  error: ErrorObject,
+  manifest: unknown,
+  discriminator?: Discriminator,
+): BlockManifestError {
   const base = toDotPath(error.instancePath);
   if (error.keyword === 'required') {
     const missing = (error.params as { missingProperty: string }).missingProperty;
@@ -241,7 +261,10 @@ function toManifestError(error: ErrorObject, manifest: unknown): BlockManifestEr
   }
   if (error.keyword === 'additionalProperties') {
     const extra = (error.params as { additionalProperty: string }).additionalProperty;
-    message = `${shown}.${extra} is not a known property here`;
+    message = discriminator
+      ? `${shown}.${extra} is not a known property when \`${discriminator.key}\` is ` +
+        JSON.stringify(discriminator.value)
+      : `${shown}.${extra} is not a known property here`;
     return new BlockManifestError(message, field === '' ? extra : `${field}.${extra}`);
   }
 
@@ -318,11 +341,10 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
   // whatever Ajv rejects, this rejects.
   const validate = canonicalValidator();
   if (!validate(manifest)) {
-    const errors = validate.errors ?? [];
-    const first = errors[0];
+    const picked = preferDiscriminatedBranch(validate.errors ?? []);
     /* c8 ignore next */
-    if (!first) throw new BlockManifestError('manifest failed schema validation');
-    throw toManifestError(first, manifest);
+    if (!picked) throw new BlockManifestError('manifest failed schema validation');
+    throw toManifestError(picked.error, manifest, picked.discriminator);
   }
 
   // (2) The prose-only server rejections. Strictly additive, one per

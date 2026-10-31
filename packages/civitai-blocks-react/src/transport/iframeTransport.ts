@@ -24,6 +24,7 @@ import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
 import { isRoutableRequestId } from './requestId.js';
 import { payloadValidatorFor, projectInboundPayload } from './validate.js';
+import { VERSION } from '../version.generated.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
@@ -216,6 +217,19 @@ export class IframeTransport implements BlockTransport {
     this.initPromise = new Promise<BlockInitPayload>((resolve, reject) => {
       this.resolveInit = resolve;
       this.rejectInit = reject;
+    });
+    // 🔴 THE TRANSPORT HANDLES ITS OWN INIT TIMEOUT. Every hook connects the
+    // transport at mount, and most blocks never call `waitForInit()`, so without
+    // a handler here the 10s timeout is an UNHANDLED rejection. That fails the
+    // Vitest run of any block app whose tests mount a hook with no host. This
+    // handler makes the rejection handled and keeps the diagnostic (it names the
+    // configured and observed origins) on the console as a warning. It is a
+    // separate branch of the promise: `waitForInit()` still returns
+    // `initPromise` itself, so its callers still receive the rejection.
+    // Pinned by `test/initTimeoutUnhandled.test.tsx`.
+    this.initPromise.catch((err: unknown) => {
+      // eslint-disable-next-line no-console -- developer-facing diagnostic; the host shows its own fallback
+      console.warn(err instanceof Error ? err.message : err);
     });
     this.initTimeoutId = setTimeout(() => {
       if (!this.initResolved) {
@@ -731,7 +745,9 @@ export class IframeTransport implements BlockTransport {
         // block's root element mounts. Queued because the iframe's React
         // tree hasn't rendered yet at this point — the postMessage goes
         // out on the next microtask via the standard dispatch path.
-        this.dispatch('BLOCK_READY', { height: 0 });
+        // `sdkName`/`sdkVersion` are informational (the host counts versions
+        // in the wild); nothing is negotiated on them and older blocks omit them.
+        this.dispatch('BLOCK_READY', { height: 0, sdkName: 'blocks-react', sdkVersion: VERSION });
         this.resolveInit(data.payload);
       }
       return;
@@ -756,6 +772,22 @@ export class IframeTransport implements BlockTransport {
     // path seeded in the constructor.
     if (isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(data, 'THEME_CHANGE')) {
       this.applyThemeChange(data.payload.theme);
+      return;
+    }
+
+    // Host-pushed ROUTE change (the page's sub-path moved under the app root; no
+    // requestId). Same shape of handling as THEME_CHANGE: apply to the snapshot
+    // and emit, never matches a pending request.
+    //
+    // 🔴 THIS BRANCH IS THE FEATURE. Nothing in the type system requires it: the
+    // `never` bind in `payloadValidatorFor` forces a VALIDATOR for every union
+    // member, and the union member plus the validator together are enough to
+    // make `ROUTE_CHANGED` compile, be accepted at the boundary, and then reach
+    // the no-op tail. A declared type is not a code path — pinned by the
+    // mutation case in `useCivitaiRoute.test.tsx`, which deletes this branch and
+    // watches the subscriber's own assertion fail.
+    if (isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(data, 'ROUTE_CHANGED')) {
+      this.applyRouteChange(data.payload.subPath);
       return;
     }
 
@@ -871,6 +903,46 @@ export class IframeTransport implements BlockTransport {
     const next: BlockSnapshot = { ...this.snapshot, theme };
     if ('theme' in next.context) next.context = { ...next.context, theme };
     this.snapshot = next;
+    this.emit();
+  }
+
+  /**
+   * Apply a host-pushed `ROUTE_CHANGED` to the snapshot.
+   *
+   * Emits only when the value actually MOVED, for the same reason
+   * {@link IframeTransport.applyThemeChange} does: `useSyncExternalStore`
+   * re-renders on identity change, so an unconditional spread would re-render
+   * every subscriber on a redundant push.
+   *
+   * 🔴 ONE WRITER, ONE READER — the sub-path lives in `context` and NOWHERE
+   * else. Unlike the theme, which the host forwards twice (top-level and inside
+   * `context`), `subPath` is a `PageSlotContext` field only, so there is no
+   * second copy to keep in step and no top-level `BlockSnapshot.subPath` is
+   * introduced here. Adding one would create exactly the divergence the theme
+   * handler exists to avoid, in a package where only one of the two could be the
+   * value `BLOCK_INIT` delivered.
+   *
+   * ONLY EVER UPDATES A CONTEXT THAT ALREADY CARRIES THE KEY; never INTRODUCES
+   * it — the same rule, and the same reason, as the theme handler. A model slot
+   * has no route and the host's own effect lives in `PageBlockHost`, so a
+   * `subPath` synthesised onto a model (or unknown) context would be this
+   * package asserting a page context the host never sent.
+   *
+   * 🔴 THAT MAKES IT INIT-GATED IN EFFECT, WHICH IS A DIFFERENCE FROM
+   * `THEME_CHANGE` AND IS CORRECT HERE. `EMPTY_SNAPSHOT.context` is
+   * `{ slotId: '' }`, so a push that lands BEFORE `BLOCK_INIT` has no key to
+   * update and is dropped. It costs nothing: the host sends this message only
+   * after init (`initSentRef`), and `snapshotFromInit` replaces the whole
+   * snapshot with a `context` whose `subPath` is the host's own current value —
+   * so a pre-init push could only ever be older than the init that follows it.
+   * The theme is not gated because it has a pre-init writer (the URL fragment)
+   * and a top-level field to hold the value; this has neither.
+   */
+  private applyRouteChange(subPath: string): void {
+    const context = this.snapshot.context;
+    if (!('subPath' in context)) return;
+    if ((context as { subPath?: unknown }).subPath === subPath) return;
+    this.snapshot = { ...this.snapshot, context: { ...context, subPath } };
     this.emit();
   }
 

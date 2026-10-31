@@ -10,6 +10,7 @@ import {
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/transport/singleton.js';
+import { InvalidIdempotencyKeyError } from '../src/transport/transport.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -19,7 +20,22 @@ function buildInit(): BlockInitPayload {
     blockInstanceId: 'i',
     blockId: 'b',
     appId: 'app_test',
-    token: { raw: 'jwt', scopes: [], expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    // 🔴 THE MONEY SCOPE IS GRANTED HERE ON PURPOSE. Every test in this file is
+    // about the estimate/submit RESULT CONTRACT (#4159, #251) — which failure
+    // shapes reject and with what `code` — and none of them is about consent.
+    // Since `withConsentRetry` keys on "does the token still lack a scope this
+    // call needs", a fixture token with `scopes: []` would make EVERY deliberate
+    // failure below look consent-shaped: the hook would prompt, the hand-rolled
+    // parent here answers no `REQUEST_CONSENT`, and the assertion would sit
+    // behind a 60s silence instead of seeing its rejection. Granting the scope
+    // makes the consent path structurally inert and leaves these assertions
+    // measuring exactly what they were written to measure. The consent path has
+    // its own file: `test/withConsentRetry.test.tsx`.
+    token: {
+      raw: 'jwt',
+      scopes: ['ai:write:budgeted'],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
     context: { slotId: 's' },
     settings: { publisherSettings: {}, userSettings: {} },
     viewer: null,
@@ -382,8 +398,9 @@ describe('useBuzzWorkflow', () => {
   //
   // 🔴 THIS TEST WAS WRITTEN BEFORE THE FIX, AS A SCOPE PIN, AND IT SURVIVES THE
   // FIX UNCHANGED — that is the whole point of it. The budget-rejection arm MUST
-  // KEEP RESOLVING: a block recovers from it by opening a top-up flow, and
-  // turning it into a throw would break that recovery. The guard added for #251
+  // KEEP RESOLVING: it is a priced outcome the block reports (the run did not
+  // start, at this quoted price), and turning it into a throw would erase that.
+  // (It is not a top-up cue — buying Buzz raises none of these caps.) The guard added for #251
   // rejects only the OTHER producer (a caught server exception posted as
   // `failureSnapshot(err)`, which carries NO `cost`), so this arm is untouched.
   //
@@ -827,6 +844,56 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.status).toBe('failed');
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // `errorCode` — the machine-readable companion to `error` that the host sets
+  // on the refusal for a pass-through TRAINING step it could not price. These
+  // drive the WHOLE inbound path a real reply takes: `postMessage` → origin
+  // check → `isValidWorkflowReply` → `projectInboundPayload` → the hook → the
+  // rejected error's `.snapshot`. The fixtures are the host's real reply shape:
+  // no `cost`, the `'failed'` sentinel id, and the host's own sentences.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it.each([
+    ['training-quote-rejected', 'Training could not be priced: dataset entry 3 has no caption'],
+    ['training-quote-unavailable', 'Training needs a price quote and none could be obtained; try again.'],
+    ['training-quote-unpriced', 'Training needs a price quote and the orchestrator answered without one.'],
+  ])('estimate() delivers errorCode %s on the rejected error’s snapshot', async (errorCode, error) => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error, errorCode });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err).toBeInstanceOf(WorkflowEstimateError);
+    expect(err.snapshot.errorCode).toBe(errorCode);
+    expect(err.snapshot.error).toBe(error);
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.result?.errorCode).toBe(errorCode);
+  });
+
+  it('submit() delivers errorCode on the rejected error’s snapshot', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Training could not be priced: the learning rate is out of range',
+      errorCode: 'training-quote-rejected',
+    });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    expect(err).toBeInstanceOf(WorkflowSubmitError);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.errorCode).toBe('training-quote-rejected');
+  });
+
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
@@ -1011,6 +1078,64 @@ describe('useBuzzWorkflow', () => {
     await p2;
   });
 
+  /**
+   * 🔴 THE SEAM, not the helper. `resolveIdempotencyKey`'s own cases live in
+   * `transport-helpers.test.ts`; what THIS pins is that `submit()` is actually
+   * wired to it and that the refusal happens BEFORE the postMessage. Unwire the
+   * hook and the helper's tests stay green — this one does not.
+   *
+   * The production shape, verbatim: `sheetId:panelId:nonce`.
+   */
+  it('🔴 submit() REFUSES a malformed caller key BEFORE sending — postMessage is never called', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    postMessageMock.mockClear();
+    await expect(
+      result.current.submit(body, { idempotencyKey: 'sheet_42:panel_7:a1b2c3' }),
+    ).rejects.toThrow(InvalidIdempotencyKeyError);
+
+    // 🔴 THE LOAD-BEARING ASSERTION. "It rejected" is not the claim — "nothing
+    // was sent" is, and that is what licenses the error's "nothing was spent".
+    expect(postMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('🔴 that refusal is NOT a WorkflowSubmitError — the money contracts differ', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    let caught: unknown;
+    try {
+      await result.current.submit(body, { idempotencyKey: 'a:b' });
+    } catch (err) {
+      caught = err;
+    }
+    // `WorkflowSubmitError`'s own docs say its `'exception'` arm covers "a lost
+    // response or an in-progress idempotency conflict" — i.e. money MAY have
+    // moved. A key refused before the send is unambiguous, so it must not
+    // arrive as that class, or a caller branching on it would under-report.
+    expect(caught).toBeInstanceOf(InvalidIdempotencyKeyError);
+    expect(caught).not.toBeInstanceOf(WorkflowSubmitError);
+    expect((caught as Error).message).toContain('Nothing was sent and nothing was spent');
+  });
+
+  it('a VALID caller key still goes through — the guard is reachable, not a blanket deny', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    postMessageMock.mockClear();
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.submit(body, { idempotencyKey: 'sheet_42-panel_7-a1b2c3' });
+    });
+    const sent = postMessageMock.mock.calls[0]![0] as {
+      payload: { requestId: string; idempotencyKey?: unknown };
+    };
+    expect(sent.payload.idempotencyKey).toBe('sheet_42-panel_7-a1b2c3');
+    replySubmitted(sent.payload.requestId);
+    await p;
+  });
+
   it('two auto-keyed submits get DIFFERENT keys (each call is a new logical submit)', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
@@ -1064,6 +1189,90 @@ describe('useBuzzWorkflow', () => {
     await pollPromise;
     await waitFor(() => expect(result.current.status).toBe('done'));
     expect(result.current.result?.imageUrls).toEqual(['https://cdn/x.png']);
+  });
+
+  // The #524 fields + the training-publish pair, end to end through the REAL
+  // transport validator. Values are pairwise distinct so a field swapped for
+  // another cannot pass.
+  const FULL_HOST_FIELDS = {
+    modelSubstitutions: [{ requested: 101, applied: 202, reason: 'unrecognized' }],
+    textOutputs: ['first reply', 'second reply'],
+    textOutputWithheld: { reason: 'A response was withheld.' },
+    toolCalls: [{ id: 'call_7', type: 'function', function: { name: 'lookup', arguments: '{"q":3}' } }],
+    stepOutputs: [{ $type: 'someNewStep', output: { score: 0.42 } }],
+    trainedEpochs: [
+      { $type: 'training', epochNumber: 4 },
+      { $type: 'training', epochNumber: 9 },
+    ],
+    publishedModel: { modelId: 555, modelVersionId: 666, published: true },
+  };
+
+  function replyStatus(requestId: string, snapshot: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'WORKFLOW_STATUS', payload: { requestId, snapshot } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('poll() delivers every host snapshot field verbatim, readable without a cast', async () => {
+    // INVARIANT GUARD, not regression coverage: the inbound validator has never
+    // stripped unknown keys, so these values arrived before #524 too — what #524
+    // changed is that they now TYPE-check (the reads below have no cast; see
+    // `workflow-snapshot-fields.test-d.ts` in app-sdk). Pinned so a future
+    // validator that starts projecting the snapshot cannot silently drop them.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-full');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    replyStatus(sent.payload.requestId, { workflowId: 'wf-full', status: 'succeeded', ...FULL_HOST_FIELDS });
+
+    await pollPromise;
+    await waitFor(() => expect(result.current.status).toBe('done'));
+    const snap = result.current.result;
+    expect(snap?.modelSubstitutions).toEqual(FULL_HOST_FIELDS.modelSubstitutions);
+    expect(snap?.textOutputs).toEqual(FULL_HOST_FIELDS.textOutputs);
+    expect(snap?.textOutputWithheld).toEqual(FULL_HOST_FIELDS.textOutputWithheld);
+    expect(snap?.toolCalls).toEqual(FULL_HOST_FIELDS.toolCalls);
+    expect(snap?.stepOutputs).toEqual(FULL_HOST_FIELDS.stepOutputs);
+    expect(snap?.trainedEpochs).toEqual(FULL_HOST_FIELDS.trainedEpochs);
+    expect(snap?.publishedModel).toEqual(FULL_HOST_FIELDS.publishedModel);
+  });
+
+  it('poll() DROPS a snapshot whose new field is malformed, and settles on the next well-formed reply', async () => {
+    // Regression coverage: before the validator knew these fields, the
+    // malformed reply below was accepted and the block read `textOutputs` as a
+    // string where its type promises `string[]`.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-bad');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: 'not an array',
+      });
+      // Positive control on the SAME request id: a well-formed reply settles it.
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: ['ok'],
+      });
+      await pollPromise;
+      await waitFor(() => expect(result.current.status).toBe('done'));
+      expect(result.current.result?.textOutputs).toEqual(['ok']);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // -------------------------------------------------------------------------

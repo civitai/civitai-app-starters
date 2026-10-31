@@ -1,6 +1,7 @@
 import type { Theme } from '@civitai/app-sdk/blocks';
 
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useBlockTheme} returns. An alias — see `./returnTypeLedger.js` for why
@@ -45,5 +46,6 @@ export type UseBlockTheme = Theme;
  * return <div data-theme={theme}>…</div>;
  */
 export function useBlockTheme(): UseBlockTheme {
+  useTransportConnection();
   return useTransportSnapshot().theme;
 }

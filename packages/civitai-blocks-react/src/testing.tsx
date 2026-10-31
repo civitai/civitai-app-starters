@@ -29,6 +29,12 @@ import {
 export { __resetTransport as resetTransport };
 
 export {
+  installPopoverShim,
+  type PopoverShimHandle,
+  type PopoverShimOptions,
+} from './internal/popoverShim.js';
+
+export {
   createMockHost,
   readMockHostUrlOptions,
   // The transitive type closure of `createMockHost`/`MockHostOptions`: every
@@ -47,10 +53,22 @@ export {
   type MockSharedScenario,
   type MockSharedSeed,
   type MockCannedImageScan,
+  type MockWorkflowStepInfo,
+  type MockWorkflowQuoteFailure,
   type CostSpec,
   type ImageSpec,
   type CannedPick,
 } from './internal/mockHost.js';
+// The declared type of `MockHostOptions.cannedMediaUploads` (same closure rule).
+export { type MockMediaUploads } from './internal/mediaUploadBytes.js';
+
+export { type MockReactionSeed } from './internal/mockHostReactions.js';
+
+export {
+  fakeResourceSource,
+  type FakeResourceCanned,
+  type FakeResourceSource,
+} from './internal/fakeResourceSource.js';
 
 // 🔴 DO NOT RE-EXPORT `createLiveHost` HERE. It spends real Buzz and lives at
 // `@civitai/blocks-react/live` (`src/live.ts`) precisely so it cannot be reached

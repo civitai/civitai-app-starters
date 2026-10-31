@@ -101,6 +101,98 @@ describe('useCheckpointPicker', () => {
       expect(sent.payload).not.toHaveProperty('currentVersionId');
     });
 
+    // ── Unconstrained pick (baseModelGroup optional) ────────────────────────
+    //
+    // The host has always tolerated an absent baseModelGroup: its
+    // resolveCheckpointPickerRequest treats the field as optional, and an
+    // absent/unresolved group produces the bare `type = Checkpoint` clause —
+    // ALL generation-covered checkpoints, not none. Requiring it was an
+    // SDK-side restriction only, and it made every ecosystem but the caller's
+    // current one unreachable.
+    //
+    // 🔴 What the wire must NOT carry is a string. On the model-slot host
+    // (IframeHost) any string is passed straight through to
+    // `getBaseModelGroup`, which collapses an unrecognised value to the real
+    // ecosystem key 'Other' — so an empty string NARROWS the picker to that one
+    // family instead of widening it. On the PAGE host the resolver drops a
+    // zero-length value before that lookup, so `''` is already equivalent to
+    // omission there; a WHITESPACE-ONLY string narrows on both, since that guard
+    // is `length > 0`. Absence is the only spelling that means "unconstrained" on
+    // both surfaces.
+    //
+    // These cases assert the key is ABSENT rather than present-and-undefined.
+    // That is a wire-SHAPE contract, not a behavioural one: no host distinguishes
+    // the two (both hosts' branches are a `typeof … === 'string'` or truthiness
+    // test, which `undefined` fails either way), and the earlier claim that the
+    // distinction was load-bearing has been retracted.
+    it('omits baseModelGroup from the message when not provided (unconstrained pick)', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({}).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('OPEN_CHECKPOINT_PICKER');
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(typeof sent.payload.requestId).toBe('string');
+    });
+
+    it('omits baseModelGroup but keeps currentVersionId on an unconstrained pick', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ currentVersionId: 128078 }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(sent.payload.currentVersionId).toBe(128078);
+    });
+
+    it('treats an empty-string baseModelGroup as unconstrained — never puts "" on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
+    // 🔴 THE CASE THAT MAKES `.trim()` LOAD-BEARING. `''` alone cannot see it:
+    // an empty string is already falsy, so the conditional spread would drop it
+    // with or without the trim. A whitespace-only string is truthy — delete the
+    // `.trim()` and `'  '` reaches the wire, where `getBaseModelGroup('  ')`
+    // resolves to the real ecosystem key 'Other' and NARROWS the picker to the
+    // Other family: exactly the failure this whole change exists to remove,
+    // arrived at from the opposite direction. This is the spelling that narrows
+    // on BOTH hosts — the page host drops `''` for being zero-length, but `'  '`
+    // passes that guard — so it is the one case `.trim()` is the only defence for.
+    it('treats a whitespace-only baseModelGroup as unconstrained — never puts "  " on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '  ' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
+    it('still resolves with { selected } on an unconstrained pick', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let pick!: Promise<{ selected?: unknown }>;
+      act(() => {
+        pick = result.current.open({});
+      });
+      const sent = lastSent();
+      // A pick from a DIFFERENT family than the caller started in — the whole
+      // point of the unconstrained open.
+      const selected = {
+        versionId: 691639,
+        modelId: 618692,
+        baseModel: 'Flux.1 D',
+        modelName: 'FLUX',
+        versionName: 'dev',
+      };
+      reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, { selected });
+      await expect(pick).resolves.toEqual({ selected });
+    });
+
     it('resolves with { selected } on the matching CHECKPOINT_PICKER_RESULT', async () => {
       const { result } = renderHook(() => useCheckpointPicker());
       let pick!: Promise<{ selected?: unknown }>;

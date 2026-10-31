@@ -368,43 +368,66 @@ export function buildArtifacts(themeOverride: MantineThemeOverride = civitaiThem
   // @property initial-value, so registering them would make the browser drop
   // the whole rule — we skip them and rely on the plain custom-property
   // declaration (which applies identically). `font` is untyped.
+  // 🔴 DARK IS THE BASE. `baseValue` is the single place that decides what an
+  // UNTHEMED element gets, and it answers DARK wherever a dark value exists.
+  // Before this, `:root` carried the light palette and the dark one arrived via
+  // `@media (prefers-color-scheme: dark) { :root:not([data-theme]) }` — i.e. an
+  // element with no `data-theme` above it followed the OS. That is the opposite
+  // of what every Civitai surface wants: civitai.com is dark, App Blocks boot
+  // dark and take light only from the host, and the OS preference is not a
+  // signal either of them should consult. Under the old shape every surface
+  // spanning the two had to set `data-theme` EXPLICITLY just to stop the OS
+  // deciding; that workaround is what this flip removes.
+  const baseValue = (varName: string) => dark[varName] ?? root[varName];
+
   const propertyRules = meta
     .filter((m) => m.type === 'color')
     .map((m) => {
-      const initial = root[m.varName]!;
+      // The @property fallback is the no-information case, so it is dark too.
+      // ⚠️ CONSISTENCY WITH `:root`, NOT AN INDEPENDENTLY OBSERVABLE BEHAVIOUR —
+      // an earlier draft of this comment claimed it "matters for a shadow root
+      // that cannot see any ancestor's declaration", and nothing demonstrates
+      // that: @property rules are emitted for `type === 'color'` only, and the
+      // one shadow-root test case asserts `--civitai-card-border-width`, which
+      // has no @property rule at all and resolves by ordinary inheritance of the
+      // `:root` declaration. Leaving the initials light against a dark `:root`
+      // would be a real inconsistency; that is the reason, and it is the only
+      // one claimed here.
+      const initial = baseValue(m.varName)!;
       return `@property ${m.varName} {\n  syntax: '<color>';\n  inherits: true;\n  initial-value: ${initial};\n}`;
     })
     .join('\n');
 
-  const rootBlock = meta.map((m) => `  ${m.varName}: ${root[m.varName]};`).join('\n');
-  // Explicit light block mirrors the :root defaults so `[data-theme='light']`
-  // (used by @civitai/components) always wins over an ambient dark ancestor.
+  const rootBlock = meta.map((m) => `  ${m.varName}: ${baseValue(m.varName)};`).join('\n');
+  // The light block must be a FULL mirror, not a diff: it is the only thing that
+  // can put a light value back once `:root` carries dark, and it has to win over
+  // an ambient dark ancestor (`@civitai/components` relies on that).
   const lightBlock = meta.map((m) => `  ${m.varName}: ${root[m.varName]};`).join('\n');
+  // Still emitted, and still a diff against the shared values. It is NOT
+  // redundant now that `:root` is dark: it is what restores dark for a subtree
+  // nested inside a `[data-theme='light']` one.
   const darkDecls = meta
     .filter((m) => m.varName in dark)
     .map((m) => `${m.varName}: ${dark[m.varName]};`);
   const darkBlock = darkDecls.map((d) => `  ${d}`).join('\n');
-  const nestedDarkBlock = darkDecls.map((d) => `    ${d}`).join('\n');
 
   // Not a token: it tells the UA which scheme to paint NATIVE controls in.
   // Without it a number input's spinner, a select's caret and a scrollbar stay
   // light against a dark surface. It inherits, so it reaches shadow roots too.
   const scheme = (value: string) => `  color-scheme: ${value};`;
 
-  // `:not([data-theme])` is what keeps an explicit choice authoritative: a host
-  // that sets the attribute never matches, and a nested one wins by proximity.
-  const preferenceBlock =
-    `@media (prefers-color-scheme: dark) {\n` +
-    `  :root:not([data-theme]) {\n` +
-    `  ${scheme('dark')}\n${nestedDarkBlock}\n  }\n}\n`;
-
+  // 🔴 NO `@media (prefers-color-scheme: …)` BLOCK — deliberately, and do not
+  // add one in either direction. The stylesheet has exactly two answers now:
+  // the dark base, and whatever `[data-theme]` an ancestor declares. An OS-light
+  // block would reintroduce the behaviour this flip removed, and an OS-dark one
+  // is already the base. Pinned by `test/generation-parity.test.ts` and by the
+  // dark-base contract tests in `@civitai/components`.
   const tokensCss =
     `${AUTOGEN_BANNER}\n` +
     `${propertyRules}\n\n` +
-    `:root {\n${scheme('light')}\n${rootBlock}\n}\n\n` +
+    `:root {\n${scheme('dark')}\n${rootBlock}\n}\n\n` +
     `[data-theme='light'] {\n${scheme('light')}\n${lightBlock}\n}\n\n` +
-    `[data-theme='dark'] {\n${scheme('dark')}\n${darkBlock}\n}\n\n` +
-    preferenceBlock;
+    `[data-theme='dark'] {\n${scheme('dark')}\n${darkBlock}\n}\n`;
 
   // ---- tokens.dtcg.json (W3C DTCG 2025.10) ----
   const dtcg: Record<string, Record<string, unknown>> = {};

@@ -1,6 +1,7 @@
 import { BridgeError } from '../core/errors.js';
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
+import { LOCAL_PREVIEW_STORAGE_SCOPES } from '../doc-store/local-preview.js';
 import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
 
 import type {
@@ -9,6 +10,7 @@ import type {
   HostPushes,
   HostRequests,
   ImageScanResult,
+  NavigateScope,
   PickedResource,
   ResourcePickerType,
   SourceImage,
@@ -19,6 +21,7 @@ export type {
   ConsentRefusal,
   DownloadRequest,
   ImageScanResult,
+  NavigateScope,
   PickedResource,
   ResourcePickerType,
   SourceImage,
@@ -60,12 +63,32 @@ export interface Host {
   autoResize(element?: Element): () => void;
   /** `fatal` swaps the block for the host's fallback, for a block that cannot continue. */
   reportError(message: string, args?: { fatal?: boolean }): void;
-  /** Deep-links within this app's own sub-paths; the host refuses anything else. */
-  navigate(path: string, args?: { target?: 'current' | 'new_tab' }): void;
+  /**
+   * Asks the host to navigate. `scope` picks the space `path` is resolved in and
+   * DEFAULTS to `'app'` — this app's own sub-paths, which is all this method
+   * could reach before the field existed. Pass `scope: 'site'` to leave the app
+   * for a civitai.com page; the host grants that per-surface and refuses it
+   * elsewhere. Fire-and-forget either way: a refusal is silent.
+   */
+  navigate(path: string, args?: { scope?: NavigateScope; target?: 'current' | 'new_tab' }): void;
   /** Fires `false` when the page hides and `true` when it returns. */
   onVisibilityChange(handler: (visible: boolean) => void): () => void;
   /** Starts sign-in; the block re-initialises as a signed-in viewer. */
   requestSignIn(args?: { returnUrl?: string }): void;
+  /**
+   * Sends one custom event to the app's analytics. Fire-and-forget: no reply
+   * and no acknowledgement. The wire is `useBlockAnalytics().track`'s.
+   *
+   * 🔴 Only what the manifest DECLARES under `analytics.events` is recorded,
+   * against the approved manifest. An undeclared event is counted as dropped and
+   * its name is not stored. A declared event keeps only its declared
+   * properties, each only when the value has the declared type — `enum` (one of
+   * the declared strings), `number` or `boolean`; there is no free-text string.
+   * Each mount may send 10 events a second and 500 in all; an event over a
+   * limit is dropped in the browser and counted nowhere. Owners see aggregates
+   * in the app's analytics panel, never individual events.
+   */
+  track(eventName: string, properties?: Record<string, unknown>): void;
   /**
    * Saves to the viewer's device through the host, because a sandboxed frame
    * cannot. The host fetches only from origins it allowlists.
@@ -147,8 +170,17 @@ export function createHost(transport: BlockTransport): Host {
     },
     reportError: (message, args = {}) =>
       notify('BLOCK_ERROR', { message, fatal: args.fatal ?? false }, { transport }),
+    // `scope` is OMITTED rather than sent as `undefined` when the caller did not
+    // choose one. Absent and `'app'` mean the same thing to the host, so this is
+    // not a behaviour difference — it keeps the wire payload byte-identical to
+    // what every pre-`scope` build sends, which is the property the back-compat
+    // claim rests on and the one a host-side diff can actually check.
     navigate: (path, args = {}) =>
-      notify('NAVIGATE', { path, target: args.target ?? 'current' }, { transport }),
+      notify(
+        'NAVIGATE',
+        { path, ...(args.scope ? { scope: args.scope } : {}), target: args.target ?? 'current' },
+        { transport },
+      ),
     onVisibilityChange(handler) {
       const offSuspend = on(transport, 'SUSPEND', () => handler(false));
       const offResume = on(transport, 'RESUME', () => handler(true));
@@ -158,6 +190,15 @@ export function createHost(transport: BlockTransport): Host {
       };
     },
     requestSignIn: (args = {}) => notify('REQUEST_SIGN_IN', args, { transport }),
+    // `properties` is OMITTED when not given, so the payload is byte-identical
+    // to what `useBlockAnalytics().track(name)` sends after JSON drops the
+    // `undefined`.
+    track: (eventName, properties) =>
+      notify(
+        'TRACK_EVENT',
+        { eventName, ...(properties !== undefined ? { properties } : {}) },
+        { transport },
+      ),
     async download(request, opts = {}) {
       await call('SAVE_IMAGE', request, { ...opts, transport });
     },
@@ -174,10 +215,12 @@ export function createHost(transport: BlockTransport): Host {
         transport,
       });
       // The host spells "no failure" as `error: ''`, which the transport reads
-      // as a success — so a reply carrying neither the ids nor a message gets
-      // this far, and returning it would resolve `undefined` from a promise
-      // that says `number[]`. A caller reading that as "nothing published"
-      // would be guessing: images may well have been.
+      // as a success. A reply with no `result` at all is refused by the
+      // transport (the ledger says this reply nests under `result`), but one
+      // whose `result` lacks the ids gets this far, and returning it would
+      // resolve `undefined` from a promise that says `number[]`. A caller
+      // reading that as "nothing published" would be guessing: images may well
+      // have been.
       if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'number')) {
         throw new BridgeError(
           'malformed',
@@ -400,8 +443,20 @@ function asScanResult(value: unknown): ImageScanResult {
   return { status: 'error', ...(typeof v?.message === 'string' ? { message: v.message } : {}) };
 }
 
+export interface HostSessionOptions {
+  /**
+   * The document store is served by the in-tab local store (a dev-tunnel
+   * preview): the value `initialize()` latched from `isLocalPreviewStorage`.
+   * `requestGrants` then treats `LOCAL_PREVIEW_STORAGE_SCOPES` as held.
+   */
+  localPreviewStorage?: boolean;
+}
+
 /** The token the host minted for this block, kept current as the host rotates it. */
-export function createHostSession(transport: BlockTransport): Session {
+export function createHostSession(
+  transport: BlockTransport,
+  { localPreviewStorage = false }: HostSessionOptions = {},
+): Session {
   return {
     async getToken({ fresh, signal }: TokenOptions = {}) {
       if (!fresh) return transport.snapshot.get().token.raw;
@@ -409,7 +464,18 @@ export function createHostSession(transport: BlockTransport): Session {
       const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
       return tokenFromWrapped(token).raw;
     },
-    requestGrants: (scopes, opts = {}) => requestGrants(transport, scopes, opts),
+    requestGrants: (scopes, opts = {}) =>
+      requestGrants(
+        transport,
+        // A preview token never carries a document-store scope and no grant can
+        // add one, so asking the host for it could only be refused — and the
+        // refusal would take the rest of the request down with it. The local
+        // store serves them; ask only for the rest. Nothing on the token changes.
+        localPreviewStorage
+          ? scopes.filter((scope) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(scope))
+          : scopes,
+        opts,
+      ),
   };
 }
 

@@ -8,6 +8,7 @@ import {
 } from '../api/generationResources.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useGenerationResources} returns. */
 export interface UseGenerationResources {
@@ -45,6 +46,7 @@ const GENERATION_RESOURCES_TIMEOUT_MS = 30_000;
  * // resources[0].strength / .minStrength / .maxStrength / .trainedWords / .clipSkip
  */
 export function useGenerationResources(): UseGenerationResources {
+  useTransportConnection();
   const host = useHostOrigin();
   const { raw } = useBlockToken();
 

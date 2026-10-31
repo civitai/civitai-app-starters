@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isMessage } from '../../src/blocks/messages.js';
+import { BLOCK_TO_PARENT_MESSAGE_TYPES, isMessage } from '../../src/blocks/messages.js';
 import type {
   BlockInitPayload,
   BlockToParentMessage,
@@ -10,9 +10,14 @@ import type {
 } from '../../src/blocks/messages.js';
 import type {
   BlockGenerationSourceImageInfo,
+  BlockImagePickerSource,
   BlockImageScanResult,
+  BlockMediaKind,
+  BlockMediaUploadInfo,
   BlockPendingImageInfo,
+  BlockPickedImageInfo,
   BlockUploadedImageInfo,
+  PageSlotContext,
   WorkflowBody,
 } from '../../src/blocks/types.js';
 
@@ -162,6 +167,168 @@ describe('OPEN_IMAGE_UPLOAD / IMAGE_UPLOAD_RESULT message guards', () => {
     } else {
       expect.unreachable('sourceResult should narrow to IMAGE_UPLOAD_RESULT');
     }
+  });
+});
+
+describe('OPEN_IMAGE_PICKER / IMAGE_PICKER_RESULT message guards', () => {
+  const posted: BlockPickedImageInfo = {
+    source: 'posted',
+    url: 'https://image.civitai.com/x/original=true/posted.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 4242,
+  };
+  // A generator output that was never posted has no Image row, so no imageId.
+  const generated: BlockPickedImageInfo = {
+    source: 'generated',
+    url: 'https://image.civitai.com/x/original=true/generated.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  };
+  const request: BlockToParentMessage = {
+    type: 'OPEN_IMAGE_PICKER',
+    payload: { requestId: 'p-1' },
+  };
+
+  it('isMessage accepts OPEN_IMAGE_PICKER + IMAGE_PICKER_RESULT by discriminator', () => {
+    const picked: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-1', selected: posted },
+    };
+    const dismissed: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-1' },
+    };
+    expect(isMessage<BlockToParentMessage, 'OPEN_IMAGE_PICKER'>(request, 'OPEN_IMAGE_PICKER')).toBe(
+      true,
+    );
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(picked, 'IMAGE_PICKER_RESULT'),
+    ).toBe(true);
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(dismissed, 'IMAGE_PICKER_RESULT'),
+    ).toBe(true);
+    // The upload reply is a different message, not an alias of this one.
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(picked, 'IMAGE_UPLOAD_RESULT'),
+    ).toBe(false);
+  });
+
+  it('the request carries only a requestId by default; sources and multiple are optional', () => {
+    expect(request.payload).not.toHaveProperty('sources');
+    expect(request.payload).not.toHaveProperty('multiple');
+
+    const sources: BlockImagePickerSource[] = ['generated'];
+    const narrowed: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_PICKER',
+      payload: { requestId: 'p-2', sources, multiple: { max: 5 } },
+    };
+    if (isMessage<BlockToParentMessage, 'OPEN_IMAGE_PICKER'>(narrowed, 'OPEN_IMAGE_PICKER')) {
+      expect(narrowed.payload.sources).toEqual(['generated']);
+      expect(narrowed.payload.multiple).toEqual({ max: 5 });
+    } else {
+      expect.unreachable('narrowed should narrow to OPEN_IMAGE_PICKER');
+    }
+  });
+
+  it('a posted pick carries a numeric imageId and a generated pick carries none', () => {
+    expect(typeof posted.imageId).toBe('number');
+    expect(generated).not.toHaveProperty('imageId');
+    // Both are a valid generation source image as they stand.
+    const asSource: BlockGenerationSourceImageInfo = generated;
+    expect(asSource).toMatchObject({ width: 1024, height: 768 });
+  });
+
+  it('IMAGE_PICKER_RESULT carries a list for a multi pick and an error for a refusal', () => {
+    const many: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-3', selectedImages: [posted, generated] },
+    };
+    const refused: ParentToBlockMessage = {
+      type: 'IMAGE_PICKER_RESULT',
+      payload: { requestId: 'p-4', error: 'unsupported on this host' },
+    };
+    if (
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(many, 'IMAGE_PICKER_RESULT') &&
+      isMessage<ParentToBlockMessage, 'IMAGE_PICKER_RESULT'>(refused, 'IMAGE_PICKER_RESULT')
+    ) {
+      expect(many.payload.selectedImages?.map((image) => image.source)).toEqual([
+        'posted',
+        'generated',
+      ]);
+      expect(many.payload.selected).toBeUndefined();
+      expect(refused.payload.error).toBe('unsupported on this host');
+      expect(refused.payload.selected).toBeUndefined();
+    } else {
+      expect.unreachable('both should narrow to IMAGE_PICKER_RESULT');
+    }
+  });
+});
+
+describe('OPEN_MEDIA_UPLOAD / MEDIA_UPLOAD_RESULT message guards', () => {
+  const video: BlockMediaUploadInfo = {
+    url: 'https://media.example/generation-input/clip.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  // Audio has no dimensions.
+  const audio: BlockMediaUploadInfo = {
+    url: 'https://media.example/generation-input/voice.webm',
+    kind: 'audio',
+    mimeType: 'audio/webm',
+    sizeBytes: 96_000,
+  };
+
+  it('OPEN_MEDIA_UPLOAD is a declared block-to-parent message type', () => {
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES as readonly string[]).toContain('OPEN_MEDIA_UPLOAD');
+  });
+
+  it('a picker request carries kind + purpose and no bytes; a bytes request carries both', () => {
+    const kinds: BlockMediaKind[] = ['image', 'video', 'audio'];
+    for (const kind of kinds) {
+      const picker: BlockToParentMessage = {
+        type: 'OPEN_MEDIA_UPLOAD',
+        payload: { requestId: `m-${kind}`, kind, purpose: 'generationSource' },
+      };
+      expect(isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD'>(picker, 'OPEN_MEDIA_UPLOAD')).toBe(true);
+      expect(picker.payload).not.toHaveProperty('bytes');
+    }
+    const bytes = new ArrayBuffer(4);
+    const upload: BlockToParentMessage = {
+      type: 'OPEN_MEDIA_UPLOAD',
+      payload: { requestId: 'm-b', kind: 'audio', purpose: 'generationSource', bytes, mimeType: 'audio/webm' },
+    };
+    if (isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD'>(upload, 'OPEN_MEDIA_UPLOAD')) {
+      expect(upload.payload.bytes).toBe(bytes);
+      expect(upload.payload.mimeType).toBe('audio/webm');
+    } else {
+      expect.unreachable('upload should narrow to OPEN_MEDIA_UPLOAD');
+    }
+  });
+
+  it('MEDIA_UPLOAD_RESULT carries a selected file, an error, or nothing', () => {
+    const uploaded: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_RESULT',
+      payload: { requestId: 'm-1', selected: video },
+    };
+    const refused: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_RESULT',
+      payload: { requestId: 'm-2', error: 'busy' },
+    };
+    const dismissed: ParentToBlockMessage = { type: 'MEDIA_UPLOAD_RESULT', payload: { requestId: 'm-3' } };
+    for (const m of [uploaded, refused, dismissed]) {
+      expect(isMessage<ParentToBlockMessage, 'MEDIA_UPLOAD_RESULT'>(m, 'MEDIA_UPLOAD_RESULT')).toBe(true);
+      // A different message from the image upload reply, not an alias.
+      expect(isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(m, 'IMAGE_UPLOAD_RESULT')).toBe(false);
+    }
+    expect(audio).not.toHaveProperty('width');
+    expect(audio).not.toHaveProperty('height');
   });
 });
 
@@ -362,6 +529,74 @@ describe('THEME_CHANGE (host-pushed live site theme)', () => {
       expect.unreachable('msg should narrow to THEME_CHANGE');
     }
     expect(msg.payload.theme).toBe(fromInit);
+  });
+});
+
+/**
+ * 🔴 [invariant guard — green at base] EVERY CASE IN THIS BLOCK PASSED BEFORE
+ * `ROUTE_CHANGED` EXISTED, and that is not a defect in them — it is what a
+ * runtime test of a TYPE change can be. Measured: all four were copied onto the
+ * pre-change branch and the file ran 28/28 green against an SDK that modelled
+ * the message nowhere. Two reasons, both structural: `isMessage` is a
+ * DISCRIMINATOR-ONLY guard (it compares `.type` and knows nothing of the union),
+ * and `tsconfig.json` EXCLUDES `test/`, so the `: ParentToBlockMessage`
+ * annotations here are never compiled.
+ *
+ * They are kept because they document the RUNTIME contract a consumer relies on
+ * — narrowing works, there is no `requestId`, `''` is a value — in the same
+ * shape as the sibling `THEME_CHANGE` block. The instrument that actually goes
+ * red on the union is `route-changed.test-d.ts`, compiled by `test:types`.
+ * Do not read this block as the union's coverage.
+ */
+describe('ROUTE_CHANGED (host-pushed page sub-path)', () => {
+  it('is a parent→block message carrying only the new subPath, with NO requestId', () => {
+    const msg: ParentToBlockMessage = { type: 'ROUTE_CHANGED', payload: { subPath: 'compare/42' } };
+    expect(isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')).toBe(true);
+    if (isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect(msg.payload.subPath).toBe('compare/42');
+      // Host-INITIATED, like TOKEN_REFRESH / THEME_CHANGE: no correlation id, so
+      // a block must never try to match it to a pending request.
+      expect('requestId' in msg.payload).toBe(false);
+    } else {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+  });
+
+  it('carries the EMPTY sub-path — the app index is a route, not an absence', () => {
+    // 🔴 The one value a "non-empty string" payload rule would have broken, and
+    // the one a block reaches by navigating back to its own root. `''` is what
+    // `PageBlockHost.buildContext()` sends there, so it must be expressible here.
+    const msg: ParentToBlockMessage = { type: 'ROUTE_CHANGED', payload: { subPath: '' } };
+    if (!isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+    expect(msg.payload.subPath).toBe('');
+  });
+
+  it('is NOT a block→parent message (it never appears in the outbound union)', () => {
+    const msg = { type: 'ROUTE_CHANGED', payload: { subPath: 'x' } };
+    expect(isMessage<BlockToParentMessage, 'BLOCK_READY'>(msg, 'BLOCK_READY')).toBe(false);
+    expect(isMessage<BlockToParentMessage, 'NAVIGATE'>(msg, 'NAVIGATE')).toBe(false);
+  });
+
+  it('is assignable from the SAME field `BLOCK_INIT` seeds (one value, two carriers)', () => {
+    // The push updates `BLOCK_INIT.context.subPath`. If the two types ever
+    // diverge, a host could push a sub-path the init-seeded context cannot hold
+    // — which is the divergence `useCivitaiRoute` would then render.
+    const pageContext: PageSlotContext = {
+      slotId: 'app.page',
+      slug: 'seed-explorer',
+      subPath: 'compare/42',
+      viewerUserId: null,
+    };
+    const msg: ParentToBlockMessage = {
+      type: 'ROUTE_CHANGED',
+      payload: { subPath: pageContext.subPath },
+    };
+    if (!isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+    expect(msg.payload.subPath).toBe('compare/42');
   });
 });
 

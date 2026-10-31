@@ -8,14 +8,15 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 
 | Use this when… | Starter |
 |---|---|
-| Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` (scaffold with `civitai app init <name>` — the Go [`civitai` CLI](https://github.com/civitai/cli)) |
+| Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` — web components (`@civitai/sdk` + the `<civitai-*>` elements from `@civitai/components`), no UI framework |
+| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name>` scaffolds from its own embedded templates (`internal/scaffold/templates/`: `page-money` — the default, Vite + React + TS — `page-vite`, `static`), not from this repo. Or copy one of the React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |
 | Same as above but the team prefers Svelte | `starters/svelte-pwa` |
 | Unsure | `starters/next-app` |
 
-Civitai Apps are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`; a block on `@civitai/sdk` declares `"auth": "oauth"` in its manifest and receives a real OAuth access token instead. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the hooks.
+Civitai Apps are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`; a block on `@civitai/sdk` declares `"auth": "oauth"` in its manifest and receives a real OAuth access token instead. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract, [`packages/civitai-sdk/`](./packages/civitai-sdk/) for the framework-agnostic bridge the default starter uses, and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the React hooks.
 
 ## Cloning standalone
 
@@ -90,12 +91,16 @@ civitai-app-starters/
 │   ├── civitai-blocks-react/    # React hooks + iframe transport + the /ui pack
 │   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
 │   ├── civitai-components/      # attribute-driven component CSS + the <civitai-*> elements
-│   └── civitai-components-react/# React bindings for those elements (generated)
+│   ├── civitai-components-react/# React bindings for those elements (generated)
+│   ├── civitai-components-chat/ # <civitai-chat>: the assistant as one element (AI SDK + MCP, lazy)
+│   └── civitai-agent-runner/    # @civitai/agent-runner: the durable (DBOS + Postgres) runner behind its remote mode
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
     ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
-    └── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
+    ├── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
+    ├── civitai-block-starter/   # Civitai App: web components, no UI framework
+    └── examples/                # single-feature Civitai App examples (React)
 ```
 
 ## Releasing a new SDK version

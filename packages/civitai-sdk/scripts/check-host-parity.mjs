@@ -26,30 +26,62 @@ const sent = protocols.flatMap((file) => {
   return [...maps].flatMap(([, body]) => [...body.matchAll(/^ {2}([A-Z_]+):/gm)].map((m) => m[1]));
 });
 
-const table = readFileSync('src/core/transports/iframe-transport.ts', 'utf8').match(
-  /const LEGACY_REPLIES[^=]*= \{([\s\S]*?)^\};$/m,
-);
-if (!table) fail('LEGACY_REPLIES table not found in iframe-transport.ts — the shape changed.');
-const legacy = Object.fromEntries(
-  [...table[1].matchAll(/^ {2}([A-Z_]+): '([A-Z_]+)',$/gm)].map(([, type, reply]) => [type, reply]),
+// The transport's ledger: one JSON value per row, as gen-host-replies.mjs writes it.
+const LEDGER = 'src/core/transports/host-replies.generated.ts';
+const ledgerText = existsSync(LEDGER) ? readFileSync(LEDGER, 'utf8') : '';
+const table = ledgerText.match(/export const HOST_REPLIES[^=]*= \{\n([\s\S]*?)^\};$/m);
+if (!table) fail(`HOST_REPLIES not found in ${LEDGER} — run \`npm run gen:host-replies\`.`);
+const ledger = Object.fromEntries(
+  [...table[1].matchAll(/^ {2}("[A-Z_]+"): (\{.*\}),$/gm)].map(([, type, row]) => [
+    JSON.parse(type),
+    JSON.parse(row),
+  ]),
 );
 
 // A grep that silently matches nothing would pass everything.
 if (sent.length === 0) fail('no messages found in any src/*/protocol.ts — the shape changed.');
-if (Object.keys(legacy).length === 0) fail('LEGACY_REPLIES parsed empty — the shape changed.');
+if (Object.keys(ledger).length === 0) fail(`HOST_REPLIES parsed empty in ${LEDGER} — the shape changed.`);
 
 const answered = new Set([...Object.keys(host.messages), ...HANDSHAKE]);
 for (const type of sent) {
   if (!answered.has(type)) problems.push(`${type} is sent but no host handler answers it.`);
 }
 
-for (const [type, reply] of Object.entries(legacy)) {
-  const known = host.messages[type];
-  if (!known) {
-    problems.push(`${type} declares a legacy reply but the host has no such message.`);
-  } else if (known.reply !== reply) {
-    problems.push(`${type} expects ${reply}; the host answers ${known.reply}.`);
+// EVERY request the host answers, not only the ones a domain declares: a raw
+// `getTransport().request(type)` reaches all of them, and a type the transport
+// awaits under the wrong name hangs without an error.
+const hostRequests = Object.entries(host.messages).filter(([, m]) => m.request);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+for (const [type, known] of hostRequests) {
+  const ours = ledger[type];
+  if (!ours) {
+    problems.push(`${type}: the host answers it with ${known.reply}, but the transport refuses it.`);
+    continue;
   }
+  if (ours.reply !== known.reply) {
+    problems.push(`${type}: the transport awaits ${ours.reply}; the host answers ${known.reply}.`);
+  }
+  if (ours.framing !== known.framing) {
+    problems.push(`${type}: the transport reads a ${ours.framing} reply; the host sends ${known.framing}.`);
+  }
+  // The transport tells a failure from a success by a top-level `error` string, so
+  // an error reply the host declares without a REQUIRED `error` would resolve.
+  if (Array.isArray(known.errorKeys)) {
+    if (!known.errorKeys.includes('error') || (known.optionalErrorKeys ?? []).includes('error')) {
+      problems.push(`${type}: the host's error reply carries no required \`error\`, so the transport would resolve it.`);
+    }
+    if (ours.framing !== 'legacy') {
+      problems.push(`${type}: the host fails it with an \`error\` string, but the transport reads ${ours.framing} framing.`);
+    }
+  }
+  if (!same(ours.keys, known.replyKeys)) {
+    problems.push(
+      `${type}: the transport expects keys ${JSON.stringify(ours.keys)}; the host sends ${JSON.stringify(known.replyKeys)}.`,
+    );
+  }
+}
+for (const type of Object.keys(ledger)) {
+  if (!host.messages[type]?.request) problems.push(`${type} is in the transport's ledger but the host does not answer it.`);
 }
 
 const declared = readFileSync('src/session/index.ts', 'utf8').match(/export const SCOPES = \[([\s\S]*?)\] as const;/);
@@ -70,5 +102,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `host parity ok: ${sent.length} messages, ${ours.length} scopes (snapshot ${host.capturedFrom}).`,
+  `host parity ok: ${sent.length} sent, ${hostRequests.length} host requests answered, ${ours.length} scopes (snapshot ${host.capturedFrom}).`,
 );

@@ -4,6 +4,7 @@ import type { BlockGatedImage } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { BlockGatedImage };
 
@@ -76,6 +77,7 @@ export interface UseGatedImages {
  * }
  */
 export function useGatedImages(): UseGatedImages {
+  useTransportConnection();
   const getImages = useCallback(async (imageIds: number[]): Promise<BlockGatedImage[]> => {
     const reply = await sendTypedRequest(
       getTransport(),

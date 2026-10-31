@@ -63,7 +63,9 @@ describe('createMockHost — create post from app', () => {
 
     let r: unknown;
     await act(async () => {
-      r = await result.current.createPost({ sources: [{ kind: 'published', imageIds: [1] }] });
+      // A `workflow` source: a `published` id must have been issued by this mock
+      // first (mockHostImageUploadBytes.test.tsx pins that rule).
+      r = await result.current.createPost({ sources: [{ kind: 'workflow', workflowId: 'wf_1' }] });
     });
     expect(r).toEqual({ postId: 7, url: 'https://civitai.com/posts/7', imageIds: [1, 2, 3] });
   });
@@ -150,5 +152,27 @@ describe('createMockHost — create post from app', () => {
     });
     expect(caught).toBeInstanceOf(CreatePostError);
     expect((caught as CreatePostError).signInRequired).toBe(true);
+  });
+});
+
+describe('CreatePostError.signInRequired', () => {
+  it('is true for a session that ended (bare UNAUTHORIZED)', () => {
+    const err = new CreatePostError('UNAUTHORIZED');
+    expect(err.signInRequired).toBe(true);
+    // Not one of the host's closed refusal codes, so `.code` stays unset.
+    expect(err.code).toBeUndefined();
+  });
+
+  it('keeps `sign in to post` and nothing broader', () => {
+    expect(new CreatePostError('sign in to post').signInRequired).toBe(true);
+    for (const message of [
+      'this app session belongs to a different account; reload the page to continue',
+      'upstream said UNAUTHORIZED once',
+      'unauthorized',
+      'declined',
+      'no block token',
+    ]) {
+      expect(new CreatePostError(message).signInRequired, message).toBe(false);
+    }
   });
 });

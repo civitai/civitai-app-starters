@@ -3,11 +3,74 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <!--
+      DARK FIRST, and the OS preference is never consulted: civitai.com is dark,
+      and light engages only when the HOST says so — the URL fragment (the inline
+      script below, before first paint), then BLOCK_INIT and THEME_CHANGE (the
+      effect in src/App.tsx). `light dark` here would paint a white canvas on a
+      light-OS viewer while the host page is dark.
+    -->
+    <meta name="color-scheme" content="dark light" />
     <title>buzz-workflow — Civitai App Block</title>
+    <style>
+      /*
+        BOOT SKELETON. Paired with `"bootSkeleton": true` in block.manifest.json:
+        that key makes the host stand down its own loading veil, so this markup
+        is the only thing on screen until React mounts. Ship the two together.
+        Literal colours, because the --civitai-* tokens do not exist yet: they
+        are injected by src/main.tsx. Dark is the base; light only behind
+        html[data-theme='light'].
+      */
+      html {
+        background: #1a1b1e;
+      }
+      html[data-theme='light'] {
+        background: #ffffff;
+      }
+      [data-boot-skeleton] {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      [data-boot-skeleton] > span {
+        display: block;
+        height: 14px;
+        border-radius: 4px;
+        background: #2c2e33;
+      }
+      [data-boot-skeleton] > [data-line='card'] {
+        height: 72px;
+      }
+      html[data-theme='light'] [data-boot-skeleton] > span {
+        background: #e9ecef;
+      }
+    </style>
+    <script>
+      /*
+        THEME FAST PATH: synchronous, pre-paint. Only the host's own fragment
+        (`#civitai-block=v1&theme=…`) counts, and only `theme=light` leaves the
+        dark default. BLOCK_INIT stays authoritative: src/App.tsx overwrites this.
+      */
+      (function () {
+        try {
+          var params = new URLSearchParams(location.hash.slice(1));
+          if (params.get('civitai-block') !== 'v1') return;
+          document.documentElement.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+        } catch (e) {
+          /* a malformed fragment must never block the boot paint */
+        }
+      })();
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Inside #root on purpose: React's first render replaces it. -->
+      <div data-boot-skeleton aria-hidden="true">
+        <span style="width: 200px"></span>
+        <span data-line="card"></span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

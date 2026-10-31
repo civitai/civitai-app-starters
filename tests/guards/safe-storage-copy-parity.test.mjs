@@ -48,7 +48,7 @@
  *     artifacts are 156 normalised lines each and byte-identical. A tsconfig
  *     change on either side can end that silently. Widening this guard to
  *     `dist/` was considered and NOT done: `pnpm test:guards` runs in the
- *     required matrix job BEFORE `pnpm install`, so there is no `dist/` to read
+ *     required `starters` job BEFORE `pnpm install`, so there is no `dist/` to read
  *     — the choice would be a job that fails on every unbuilt tree or a test
  *     that skips itself. If the gap is ever closed, close it in the
  *     `public-types`-style post-build job, not here.

@@ -1,3 +1,8 @@
+import {
+  BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH,
+  BLOCK_IDEMPOTENCY_KEY_REGEX,
+  blockIdempotencyKeyRejection,
+} from '@civitai/app-sdk/blocks';
 import type {
   BlockContext,
   BlockInitPayload,
@@ -354,6 +359,86 @@ export function generateIdempotencyKey(): string {
   return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}-${Math.random()
     .toString(36)
     .slice(2, 12)}`;
+}
+
+/**
+ * A CALLER-SUPPLIED `idempotencyKey` that the host would reject. Thrown by
+ * `useBuzzWorkflow().submit`, `useTip().tip` and `useGoodPurchase().purchase`
+ * **before anything is sent**.
+ *
+ * 🔴 NOTHING WAS SENT AND NOTHING WAS SPENT — that is the whole reason this is a
+ * DISTINCT class rather than one of the existing money-path errors. Every other
+ * rejection on these hooks is money-AMBIGUOUS by design:
+ * `WorkflowSubmitError`'s own docs say its `'exception'` arm covers "a lost
+ * response or an in-progress idempotency conflict", and the abort/timeout
+ * rejections say in as many words that "the charge may or may not have landed".
+ * Reusing any of those for a key refused at the boundary would hand the caller
+ * an error whose documented contract is strictly weaker than the truth, and the
+ * repo's money rule runs the other way: never tell a caller money did not move
+ * unless you know it. Here we do know, structurally — the request never left the
+ * iframe — so the caller gets a type that says so.
+ *
+ * Two further reasons it is not a `WorkflowSubmitError`:
+ *   - that class REQUIRES a `snapshot`, which is the host's reply. There is no
+ *     reply. Synthesising one would be inventing a host message the host never
+ *     sent, and `workflowId: 'failed'` specifically means "the host had no
+ *     workflow to report" — a claim about the host we are not entitled to make.
+ *   - it is not a runtime OUTCOME at all. It is a defect in the calling block's
+ *     own code, in the same family as the existing
+ *     `'host origin not established yet'` throw: no retry fixes it, and the fix
+ *     is a source change.
+ *
+ * 🔴 THE KEY IS REFUSED, NEVER REWRITTEN. See `@civitai/app-sdk/blocks`'
+ * `idempotency.ts`: sanitising a caller's key would break the identity the key
+ * exists to carry — two distinct logical submits could collapse onto one slot,
+ * or a retry could be normalised differently from its first attempt and mint a
+ * SECOND reservation. A loud refusal is the only money-safe answer.
+ *
+ * Branch on `instanceof` or `name === 'InvalidIdempotencyKeyError'`; the
+ * `message` wording is developer-facing and is not a contract. Do NOT render it
+ * to a viewer — they cannot act on it.
+ */
+export class InvalidIdempotencyKeyError extends Error {
+  /** The rejected value, verbatim, for logging. The block's own construction. */
+  readonly idempotencyKey: unknown;
+  /** Which hook refused it, e.g. `'useBuzzWorkflow.submit'`. */
+  readonly source: string;
+  constructor(source: string, idempotencyKey: unknown, message: string) {
+    super(message);
+    this.name = 'InvalidIdempotencyKeyError';
+    this.source = source;
+    this.idempotencyKey = idempotencyKey;
+  }
+}
+
+/**
+ * Refuse a caller-supplied key, or mint one when the caller supplied none.
+ *
+ * 🔴 THE `undefined` CASE IS NOT VALIDATED, AND MUST NOT BE. `idempotencyKey` is
+ * optional on all three hooks; absent means "mint one for me", and the generated
+ * key conforms by construction. Routing `undefined` into the predicate would
+ * turn every ordinary keyless call into a refusal.
+ *
+ * Ordering is load-bearing: validation happens BEFORE the generator is consulted
+ * and before any transport/fetch work, so a bad key costs nothing and cannot
+ * race a send.
+ */
+export function resolveIdempotencyKey(source: string, supplied: string | undefined): string {
+  if (supplied === undefined) return generateIdempotencyKey();
+  const why = blockIdempotencyKeyRejection(supplied);
+  if (why !== null) {
+    throw new InvalidIdempotencyKeyError(
+      source,
+      supplied,
+      `${source}: refusing to send a malformed idempotencyKey — ${why}. ` +
+        `Nothing was sent and nothing was spent. The host requires ` +
+        `${String(BLOCK_IDEMPOTENCY_KEY_REGEX)} and rejects anything else with a 400; ` +
+        `the key is NOT sanitised for you, because rewriting an idempotency key would ` +
+        `break the identity it exists to carry. Compose the key from letters, digits, ` +
+        `underscore and hyphen only, at most ${BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH} characters.`,
+    );
+  }
+  return supplied;
 }
 
 /**
