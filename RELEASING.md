@@ -170,7 +170,7 @@ re-introducing the `workspace:` protocol into a tiged-consumed starter (the
 regression cannot come back as a silent drop in coverage.
 
 Both guards are unit-tested — `tests/guards/*.test.mjs`, run by `pnpm
-test:guards` and by the required `Starter` CI job.
+test:guards` and by the required `starters` CI job.
 
 ## Previewing what's pending
 

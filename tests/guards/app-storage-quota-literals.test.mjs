@@ -56,7 +56,7 @@
  * feature — upstream `apps-shared.router.ts` has `APP_QUOTA_BYTES = 50 * 1024 *
  * 1024` and `APP_ROW_LIMIT = 1_000_000` — and `useSharedStorage()` is
  * documented in the same README. So the ban collided with TRUE statements
- * inside its own scan, each of which failed the required `Starter` job in all
+ * inside its own scan, each of which failed the required `starters` job in all
  * five matrix legs. The four measured collisions are the negative controls in
  * `NEGATIVE CONTROL — statements about NEIGHBOURING subsystems`:
  *

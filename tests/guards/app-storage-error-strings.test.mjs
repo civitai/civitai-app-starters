@@ -232,7 +232,7 @@ function scannableFiles() {
 // ---------------------------------------------------------------------------
 // Loading the real module.
 //
-// `pnpm test:guards` runs in the required `Starter` job BEFORE `pnpm install`
+// `pnpm test:guards` runs in the required `starters` job BEFORE `pnpm install`
 // (.github/workflows/ci.yml), so there is no `node_modules` and no bundler.
 // Node strips the types itself; the only thing missing is TypeScript's
 // `./x.js` -> `./x.ts` specifier rewrite, which this resolve hook supplies in

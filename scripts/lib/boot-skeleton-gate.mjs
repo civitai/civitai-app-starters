@@ -21,7 +21,7 @@
  * BUILT entry document, because a bundler can rewrite it.
  *
  * NO DEPENDENCIES on purpose. Its caller (`tests/guards/boot-skeleton.test.mjs`)
- * runs in CI's `Starter` matrix job via `pnpm test:guards`, which executes
+ * runs in CI's `starters` job via `pnpm test:guards`, which executes
  * BEFORE `pnpm install` — so node stdlib only, hence the small HTML parser
  * below rather than a real one.
  */

@@ -21,7 +21,7 @@
  * FUTURE starter cannot declare the key without the markup either — the guard is
  * not pinned to the one starter that has it today.
  *
- * WHERE THIS RUNS: `pnpm test:guards`, in ci.yml's `Starter` matrix job. That
+ * WHERE THIS RUNS: `pnpm test:guards`, in ci.yml's `starters` job. That
  * job is `pull_request`-triggered and runs `test:guards` BEFORE `pnpm install`,
  * so this file may use node stdlib only. It executes once per matrix leg (5x) —
  * same as its sibling guards, deliberately, so renaming a matrix entry can never

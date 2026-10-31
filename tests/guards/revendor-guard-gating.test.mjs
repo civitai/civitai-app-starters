@@ -25,7 +25,7 @@
  * same argument `workflow-action-pins.test.mjs` makes about the same file.
  *
  * 🔴 NODE BUILT-INS ONLY, NO YAML LIBRARY, AND THAT IS NOT A STYLE CHOICE.
- * `pnpm test:guards` runs in the required `Starter` job BEFORE `pnpm install`
+ * `pnpm test:guards` runs in the required `starters` job BEFORE `pnpm install`
  * (`.github/workflows/ci.yml`), so a third-party import here fails to resolve and
  * the whole file reports `fail 1` / `pass 0` — caught exactly that way while
  * writing this. The line-and-indent walk below mirrors

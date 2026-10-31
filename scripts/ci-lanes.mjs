@@ -2,16 +2,17 @@
 /**
  * ci-lanes.mjs
  * ------------
- * The ONE place that decides which `.github/workflows/ci.yml` jobs a run needs.
- * The `lanes` job runs it and exposes one output per job id; every other job
- * carries the same job-level condition,
+ * The ONE place that decides which LANES of `.github/workflows/ci.yml` a run
+ * needs. A lane is one unit of checking (`JOBS` below); the lanes run as steps
+ * inside a few HOST jobs (`HOSTS`). The `lanes` job runs this script and
+ * exposes one output per lane, and every lane step carries
  *
- *     needs: lanes
- *     if: ${{ !cancelled() && needs.lanes.outputs.<job-id> != 'false' }}
+ *     if: ${{ !cancelled() && needs.lanes.outputs.<lane> != 'false' }}
  *
- * (the matrix job `starter` reads the same output from its steps instead; see
- * `STEP_GATED_JOBS`) so a job is skipped ONLY when this script positively wrote
- * the string `false` for it. Everything else runs the job: `lanes` failed, `lanes` was skipped, the
+ * while a host job carries `!cancelled()` AND-ed with its lanes' clauses OR-ed
+ * together (a one-lane host: that lane's clause; the step-gated `starters`
+ * host: the status function alone, see `STEP_GATED_JOBS`), so a lane is
+ * skipped ONLY when this script positively wrote the string `false` for it. Everything else runs the job: `lanes` failed, `lanes` was skipped, the
  * script crashed before writing, the output is missing or misspelt. That is the
  * FAIL-OPEN contract, and it is carried by the comparison (`!= 'false'`), not by
  * this file being correct.
@@ -25,13 +26,13 @@
  *   full       every `core` job, plus the `advisory` jobs whose inputs the PR
  *              touches. `push` (to main) and `workflow_dispatch` run everything,
  *              and so does any other event (there is no `schedule` trigger).
- *   only       a `workflow_dispatch` whose `only` input names one job id in
- *              `JOBS`: that job runs, every other job is `false`. `all`, an
+ *   only       a `workflow_dispatch` whose `only` input names one lane in
+ *              `JOBS`: that lane runs, every other lane is `false`. `all`, an
  *              empty value, or a name not in `JOBS` -> `full`. Exists so a manual
- *              re-check of one job does not queue every job on the org's shared
- *              runners. (`starter` still starts all five legs either way: it is
- *              step-gated, so for any other `only` its legs run the every-lane
- *              guards only, under `[only <job>] Starter (<name>)`.) It narrows
+ *              re-check of one lane does not queue every check on the org's
+ *              shared runners. (`starters` still starts either way: it is
+ *              step-gated, so for any other `only` it runs the every-lane
+ *              guards only, under `[only <lane>] Starters (all five)`.) It narrows
  *              ONLY after every page of open pull requests positively shows
  *              none has this commit as its head; an open one (fork PRs
  *              included), or a failed lookup, is the full lane (see
@@ -41,7 +42,7 @@
  *              only `version` and workspace-dependency versions (read from the
  *              two blobs, not from the path). Runs `RELEASE_LANE_JOBS`: the
  *              install + build + tarball check (`packaging`), the pin guard
- *              (`starter-pins`), and the `starter` legs' every-lane steps, which
+ *              (`starter-pins`), and the `starters` job's every-lane steps, which
  *              are `pnpm test:guards` and the workspace-override guard. Anything
  *              short of a clean positive classification -> `full`.
  *   tree-already-tested
@@ -51,16 +52,18 @@
  *              because they read live services and a PR run says nothing about
  *              those today. Anything short of a verified match -> `full`.
  *
- * The per-job outputs for core jobs and the `starter` matrix's step gating are
- * how the release lane (and the push-to-main tested-tree skip) turn core jobs
+ * The per-lane outputs for core lanes and the `starters` job's step gating are
+ * how the release lane (and the push-to-main tested-tree skip) turn core lanes
  * off. They are not dead code.
  *
- * ADVISORY jobs are the five non-required jobs that depend on something outside
+ * ADVISORY lanes are the five non-required lanes that depend on something outside
  * the tree at run time (a published schema, the npm registry, the orchestrator
  * spec, a live civitai/civitai checkout, three browser engines), so on a PR that
  * does not touch what the job reads its verdict is mostly a fact about that
  * outside thing, not the PR.
  * On a PR they run only when the diff touches their inputs (`RULES` below).
+ * (Lane ids keep the name of the job each one used to be, which is also what
+ * the `only` dispatch input offers.)
  *
  * 🔴 A PATH THE TABLE DOES NOT KNOW RUNS EVERY ADVISORY JOB. `RULES` classifies
  * positively in BOTH directions: a rule either names the jobs that read a path
@@ -81,10 +84,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * THE LEDGER: every job in ci.yml except `lanes` itself, and the kind that
- * decides its lane behaviour. `tests/guards/ci-lanes-ledger.test.mjs` fails when
- * ci.yml's job set and this map differ in EITHER direction, so a job cannot be
- * added, removed or renamed without deciding its lane here.
+ * THE LEDGER: every lane of ci.yml, and the kind that decides its behaviour.
+ * Each lane is hosted by exactly one job in `HOSTS`.
+ * `tests/guards/ci-lanes-ledger.test.mjs` fails when ci.yml's job set and
+ * `HOSTS` differ in EITHER direction, when a lane has no host or two, and when
+ * a host's steps and conditions do not match its lanes, so a lane cannot be
+ * added, removed or moved without deciding it here.
  *
  *   core      runs on every pull_request, push and workflow_dispatch (except a
  *             dispatch narrowed by `only` to another job).
@@ -109,44 +114,94 @@ export const JOBS = Object.freeze({
 });
 
 /**
- * Jobs whose lane output is read by their STEPS rather than by a job-level
- * `if:`. They always start, in every lane, and a `false` output turns off every
- * step outside `UNGATED_STEPS`.
+ * THE HOSTS: ci.yml job id -> the lanes whose steps it runs. One job per
+ * runner slot, which is the point: every lane used to be its own job, and each
+ * paid a slot, a checkout and (most of them) an install and a build.
  *
- * `starter` is the one such job, for two independent reasons. It is a matrix,
- * and a matrix job skipped at job level is never expanded, so it would report
- * one `Starter` context while the five required `Starter (<name>)` contexts
- * stayed pending. And it runs `pnpm test:guards`, which has to run on every
- * event and in every lane.
+ *   core      every core lane but `starter`: one install, one package build,
+ *             then each lane's steps. Required on `main`.
+ *   starters  the `starter` lane plus the every-lane guards. Required.
+ *   advisory  the four live drift lanes that need no container.
+ *   design-system-cross-browser
+ *             alone because it runs in the Playwright container image.
+ *
+ * A host holds lanes of ONE kind: a core lane in the advisory host would be
+ * path-scoped, and an advisory lane in a required host would let a live
+ * service fail the merge.
  */
-export const STEP_GATED_JOBS = Object.freeze(['starter']);
+export const HOSTS = Object.freeze({
+  core: Object.freeze([
+    'sdk',
+    'civitai-sdk',
+    'blocks-react',
+    'design-system',
+    'readme-snippets',
+    'examples',
+    'packaging',
+    'public-types',
+    'agent-runner',
+  ]),
+  starters: Object.freeze(['starter']),
+  advisory: Object.freeze(['schema-drift', 'starter-pins', 'orchestrator-catalog-drift', 'design-system-drift-guard']),
+  'design-system-cross-browser': Object.freeze(['design-system-cross-browser']),
+});
 
-/** The steps of a step-gated job that run in EVERY lane, matched on `uses:`/`run:`. */
-export const UNGATED_STEPS = Object.freeze([
-  'actions/checkout',
-  'pnpm/action-setup',
-  'actions/setup-node',
-  'pnpm test:guards',
-  'node scripts/check-starter-workspace-overrides.mjs',
-  'node scripts/check-generated-version.mjs',
-]);
+/**
+ * Hosts that ALWAYS start (job-level `if:` is the status function alone), so
+ * their lane outputs are read only by their steps.
+ *
+ * `starters` is the one such host: it runs `pnpm test:guards`, which has to
+ * run on every event and in every lane, so a `false` `starter` output turns
+ * off every step outside `UNGATED_STEPS.starters` and nothing else.
+ */
+export const STEP_GATED_JOBS = Object.freeze(['starters']);
+
+/**
+ * Per multi-step host, the steps that belong to NO lane and run whenever the
+ * host runs (matched on `uses:` without its ref, or the single-line `run:`).
+ * Every other step of the host carries exactly one lane's condition. For
+ * `starters` these are the every-lane steps; for `core` and `advisory` they
+ * are the shared setup the lanes used to repeat one job each.
+ */
+export const UNGATED_STEPS = Object.freeze({
+  core: Object.freeze([
+    'actions/checkout',
+    'pnpm/action-setup',
+    'actions/setup-node',
+    'pnpm install --frozen-lockfile',
+    'pnpm -r --filter "./packages/*" build',
+  ]),
+  starters: Object.freeze([
+    'actions/checkout',
+    'pnpm/action-setup',
+    'actions/setup-node',
+    'pnpm test:guards',
+    'node scripts/check-starter-workspace-overrides.mjs',
+    'node scripts/check-generated-version.mjs',
+  ]),
+  advisory: Object.freeze(['actions/checkout', 'pnpm/action-setup', 'actions/setup-node']),
+});
+
+/** The host job of a lane, or undefined. */
+export const hostOf = (lane) => Object.keys(HOSTS).find((h) => HOSTS[h].includes(lane));
 
 /** The head branch `changesets/action` (release.yml) force-pushes the Version Packages PR to. */
 export const RELEASE_BRANCH = 'changeset-release/main';
 
 /**
  * What runs on a release-lane PR, as a set: every other job's output is `false`.
- * `starter` is not here, so its heavy steps are off; its every-lane steps
- * (`UNGATED_STEPS`, which include both release guards) still run in all five legs.
+ * `starter` is not here, so its heavy steps are off; the `starters` job's
+ * every-lane steps (`UNGATED_STEPS.starters`, which include both release
+ * guards) still run.
  *
  * THE TRADE, AS IT ACTUALLY IS. A version bump does not change what any job
  * BUILDS against: the root `pnpm.overrides` pin every `@civitai/*` workspace
  * package to `workspace:*`, so the starters and packages resolve the same
  * local code whatever the carets say. It can still break a job that READS a
  * version. The one known case is a `version.generated.ts` left behind its
- * package.json, which `design-system` (off in this lane) is the only job to
+ * package.json, which `design-system` (off in this lane) is the only lane to
  * check; that check therefore also runs as an every-lane step
- * (`UNGATED_STEPS`). No other version-reading check in a dropped job is known,
+ * (`UNGATED_STEPS.starters`). No other version-reading check in a dropped job is known,
  * and none is covered here if one exists. What the lane drops beyond that is
  * the release PR RE-TESTING MAIN'S CODE right before a publish. `release.yml` publishes on
  * the merge push and does not wait for CI, so if main ever carries a red core
@@ -184,8 +239,8 @@ export const RELEASE_FILES = Object.freeze([
 
 /**
  * THE TESTED-TREE RECORD. ci.yml's `record-tree` job, on a pull_request run
- * whose `lanes` output was `full` and whose every CORE job ran its full step
- * set and succeeded, uploads an artifact named
+ * whose `lanes` output was `full` and whose every CORE lane ran its full step
+ * set in a host that succeeded, uploads an artifact named
  * `${RECORD_ARTIFACT_PREFIX}<tree sha>${RECORD_ARTIFACT_SUFFIX}`, where the tree
  * is the tested MERGE commit's (`refs/pull/<n>/merge`), i.e. what a squash
  * merge produces when main has not moved since.
@@ -229,20 +284,20 @@ export const TREE_LANE = 'tree-already-tested';
 export const ONLY_LANE = 'only';
 
 /**
- * The `lanes` output the `Starter` job's `name:` reads. Empty in every lane but
- * a narrowed dispatch (`only` naming a job other than `starter`), so on
- * pull_request, push, release, tree-skip and unnarrowed dispatch runs the five
- * legs keep their required names `Starter (<name>)` byte for byte. In a
- * narrowed run the legs do only their guards, and the prefix keeps that
- * success off the required contexts.
+ * The `lanes` output the `core` and `starters` jobs' `name:` reads. Empty in
+ * every lane but a narrowed dispatch (`only` naming a lane other than
+ * `starter`), so on pull_request, push, release, tree-skip and unnarrowed
+ * dispatch runs both keep their required names byte for byte. In a narrowed
+ * run each runs only part of its lanes, and the prefix keeps that success off
+ * the required contexts. (`only=starter` runs `starters` in full under its
+ * real name; `core` has no lane on then and is skipped.)
  *
- * Why only Starter is renamed: GitHub never evaluates a `name:` expression of
- * a job it skips (the check run shows the literal `${{ ... }}`), and the
- * release and tree-skip lanes skip required jobs, which must still report
- * `skipped` under their exact names. Starter is never skipped by its lane (it
- * is step-gated), so its name expression is always evaluated. The skipped jobs
- * of a narrowed run keep their names; `decide` refuses to narrow at the head of
- * an open pull request instead.
+ * GitHub never evaluates a `name:` expression of a job it SKIPS (the check run
+ * shows the literal `${{ ... }}`), so a required host may carry one only if no
+ * pull_request lane skips it: `starters` is step-gated and never skipped, and
+ * `core` has a lane on in the full and release lanes (`packaging`). The ledger
+ * test pins both. On a push the tree-skip lane does skip `core`, which is
+ * harmless: branch protection gates pull requests, not push runs.
  */
 export const NAME_PREFIX_OUTPUT = 'name-prefix';
 export const narrowedNamePrefix = (only) => `[only ${only}] `;
@@ -485,10 +540,10 @@ export function decide(input = {}) {
 
 function decideLane({ event, files, filesError, release, pushGate, only, openPrsAtSha, prLookupError } = {}) {
   if (event === 'workflow_dispatch' && typeof only === 'string' && Object.hasOwn(JOBS, only)) {
-    // A narrowed run writes check runs for this commit under the SAME names a
-    // full run does: the jobs it turns off come back `skipped` (branch
-    // protection counts that as passing), and the Starter legs succeed having
-    // run only their guards. At the head of an open pull request those would
+    // A narrowed run writes check runs for this commit: a host with every lane
+    // off comes back `skipped` under its required name (branch protection
+    // counts that as passing), and a host with some lanes on succeeds having
+    // run only those. At the head of an open pull request those would
     // become the newest results for its required contexts and could turn a
     // failed one green. So narrowing needs a POSITIVE "no open pull request
     // has this head"; an open one, or a lookup that failed, runs everything.
@@ -510,9 +565,9 @@ function decideLane({ event, files, filesError, release, pushGate, only, openPrs
       lane: ONLY_LANE,
       reason: `workflow_dispatch with only=${only}: ${only} runs, every other job is off`,
       jobs: Object.fromEntries(Object.keys(JOBS).map((id) => [id, id === only])),
-      // The Starter legs still run (step-gated), so give them names no required
-      // context matches. `only=starter` runs them in full: their real verdict
-      // under their real names.
+      // `core` and `starters` run partially, so give them names no required
+      // context matches. `only=starter` runs `starters` in full (its real
+      // verdict under its real name) and leaves `core` with no lane, skipped.
       namePrefix: only === 'starter' ? '' : narrowedNamePrefix(only),
     };
   }

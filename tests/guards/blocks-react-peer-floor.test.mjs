@@ -38,7 +38,7 @@
  *
  * 🔴 KNOWN LIMITS — read these before trusting a green.
  *   - OFFLINE AND TREE-LOCAL, on purpose. `pnpm test:guards` runs in the
- *     required `Starter` matrix BEFORE the install (`.github/workflows/ci.yml`),
+ *     required `starters` job BEFORE the install (`.github/workflows/ci.yml`),
  *     on an `actions/checkout` at depth 1. There is no registry access and no
  *     git history, so this cannot ask npm what a published tarball exports nor
  *     git what `origin/main` exported. Everything below is computed from the
@@ -1103,7 +1103,7 @@ test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports ev
   // add nothing this package imports. It went red on Version Packages #354 —
   // floor `>=0.47.0`, in-tree `0.48.0` after `changeset version`, nothing new
   // imported, nothing actually wrong — in all five legs of the required
-  // `Starter` matrix. A required gate that reds on every release is worse than
+  // `starters` job. A required gate that reds on every release is worse than
   // no gate: it teaches everyone to click through the one signal that matters.
   //
   // The rule below is version-agnostic by construction: it moves only when the

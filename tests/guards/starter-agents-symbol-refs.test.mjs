@@ -56,7 +56,7 @@
  *   - It reads the WORKSPACE sources, not the published tarball the starter's
  *     caret pin resolves to. `scripts/smoke-published-starters.mjs` owns that
  *     direction; this one runs offline, with no install, in the required
- *     `Starter (<name>)` matrix job.
+ *     `starters` job.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
