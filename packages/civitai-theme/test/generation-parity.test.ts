@@ -41,11 +41,157 @@ describe('generation parity', () => {
       new RegExp(`${selector} \\{([\\s\\S]*?)\\}`).exec(css)?.[1] ?? '';
 
     it.each([
-      [':root', 'light'],
+      // 🔴 `:root` is DARK. Changing this row is changing the design system's
+      // base scheme, not fixing a test.
+      [':root', 'dark'],
       ["\\[data-theme='light'\\]", 'light'],
       ["\\[data-theme='dark'\\]", 'dark'],
     ])('%s declares color-scheme: %s', (selector, scheme) => {
       expect(block(selector)).toContain(`color-scheme: ${scheme};`);
+    });
+  });
+
+  /*
+   * 🔴 THE DARK-BASE CONTRACT. Every assertion in this block is part of it —
+   * count them rather than trusting a number here; an earlier version said
+   * "these three" and was staled twice by assertions added below it, which
+   * invites a reader to conclude the surplus ones are not part of the contract
+   * and relax one. Each has a failure mode that is invisible in a rendered page
+   * until someone reports a light flash or a theme that follows the wrong
+   * thing.
+   *
+   * Pinned as the SHEET's text rather than a computed style on purpose: the
+   * absence of an at-rule cannot be observed from a computed value — a page
+   * under a dark OS looks identical whether the base is dark or the base is
+   * light with an OS-dark override. Only the source can tell them apart.
+   */
+  describe('dark base, and no OS preference anywhere', () => {
+    const css = artifacts['tokens.css'];
+
+    it('declares NO prefers-color-scheme block, in either direction', () => {
+      // The old shape was `@media (prefers-color-scheme: dark) {
+      // :root:not([data-theme]) { … } }`, which made an unthemed element follow
+      // the OS. An OS-LIGHT block would be the same defect mirrored.
+      expect(css).not.toContain('prefers-color-scheme');
+    });
+
+    /*
+     * 🔴 THIS SHEET CARRIES NO CASCADE LAYER, AND THAT IS LOAD-BEARING FOR
+     * CONSUMERS — it is why a consumer's `:root { --civitai-…: }` only TIES
+     * with the blocks below (both 0-1-0) and stylesheet order decides, which
+     * is the whole reason `@civitai/components`' MARKUP.md tells authors to
+     * SCOPE a token override instead.
+     *
+     * Asserted HERE because this is the defining property, in the package that
+     * owns it. `@civitai/components`' `test/token-override-order.browser.test.ts`
+     * pins the consumer-visible CONSEQUENCE at the chromium tier; a downstream
+     * consequence in another package is evidence, not a tripwire.
+     *
+     * 🔴 THERE ARE TWO WAYS TO MAKE AN UNLAYERED CONSUMER `:root` WIN, AND BOTH
+     * ARE PINNED, because an earlier version of this comment claimed one
+     * assertion covered both and it did not. A `@layer` wrap is caught by the
+     * substring check; giving the base block ZERO specificity (`:where(:root)`)
+     * is invisible to it — measured, that mutation left this assertion GREEN
+     * and instead emptied two unrelated `/:root \{/` regexes above, whose
+     * messages read as "the `:root` block lost its declarations" and invite
+     * someone to widen those regexes and ship the cascade change with this
+     * tripwire still green. So the selector shape is asserted too.
+     */
+    it('declares NO cascade layer — the tokens are unlayered on purpose', () => {
+      expect(css).not.toContain('@layer');
+    });
+
+    it('declares its base block on :root itself, at full specificity', () => {
+      // `:where(…)` anywhere in this sheet drops a block to 0-0-0 and hands
+      // consumers a different cascade.
+      expect(css).not.toContain(':where(');
+
+      /*
+       * 🔴 TWO PROPERTIES, AND BOTH ARE NEEDED — SPECIFICITY ALONE IS NOT THE
+       * CONTRACT. Consumers depend on the tokens being declared ON the root
+       * element at 0-1-0, so the selector-list MEMBERS are enumerated rather
+       * than merely anchored.
+       *
+       * The history, because two earlier versions were each wrong in a
+       * different direction and a third would otherwise be derived:
+       *   1. `toContain(':root {')` — reddened on `:root, :host { … }`, a change
+       *      that adds shadow-root support and alters nothing for consumers,
+       *      and reddened it under this test's name, misdiagnosing it as
+       *      zero-specificity.
+       *   2. the anchored form matching ":root starts a top-level selector" —
+       *      fixed that, but traded it for two FALSE NEGATIVES in the dangerous
+       *      direction, both measured green: `:root body { … }` and
+       *      `:root > * { … }`. Each keeps 0-1-0 specificity, so the property
+       *      the comment claimed held — yet the tokens move OFF the root
+       *      element, onto its children or behind the existence of a `<body>`.
+       *      `getComputedStyle(document.documentElement)` then carries none of
+       *      them, a shadow root attached above `<body>` inherits nothing, and
+       *      an unregistered token resolves to empty. It was also order-
+       *      sensitive: `:host, :root {` failed while `:root, :host {` passed.
+       *   3. enumerating members as `(:root|:host)` — fixed BOTH of those, and
+       *      introduced a third: it accepted `:host { … }` ALONE, measured
+       *      green. That is strictly worse than either shape in (2), because
+       *      `:host` matches only inside a shadow tree, so for
+       *      `injectTokens(document)` the tokens land on NOTHING. `:root` is
+       *      therefore a REQUIRED member, not one of two alternatives.
+       *
+       * Comments are stripped before matching, and that is load-bearing rather
+       * than tidy: the sheet opens with a banner, so an anchor admitting a
+       * comment's trailing slash admitted ANY slash, and a base block nested
+       * inside `@media` with a comment earlier in the file then satisfied it
+       * (measured). Stripping restores "top-level" to the `}`/start anchor and
+       * keeps the base-before-`@property` emission order passing.
+       */
+      expect(css.replace(/\/\*[\s\S]*?\*\//g, ' ')).toMatch(
+        /(^|\})\s*(:host\s*,\s*)*:root\s*(,\s*:host\s*)*\{/
+      );
+    });
+
+    it(":root carries the DARK value for every token that has one", () => {
+      const { root, dark } = resolveTokens();
+      const rootBlock = /:root \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+      expect(Object.keys(dark).length).toBeGreaterThan(10); // positive control
+      for (const [varName, value] of Object.entries(dark)) {
+        expect(rootBlock, `${varName} must be dark in :root`).toContain(`${varName}: ${value};`);
+      }
+      // And a token with no dark override keeps the shared value, so the base
+      // is not silently dropping anything.
+      const shared = Object.keys(root).filter((v) => !(v in dark));
+      expect(shared.length).toBeGreaterThan(5); // positive control
+      for (const varName of shared) {
+        expect(rootBlock).toContain(`${varName}: ${root[varName]};`);
+      }
+    });
+
+    /*
+     * ⚠️ INVARIANT GUARD, not regression coverage — stated so nobody counts it
+     * as the latter. Measured: this one assertion is GREEN against the
+     * pre-flip generator, because the light block was already a full mirror.
+     * What makes it worth keeping is that the flip changes its CONSEQUENCE:
+     * before, an omission here fell back to a light `:root` and was invisible;
+     * now it falls back to a dark one and shows.
+     *
+     * ⚠️ This used to add "The other three in this describe are red there", and
+     * that was wrong twice over — which is why no count appears now. It named
+     * three when the block has held two, three, four and five assertions at
+     * different points (it grew twice while this very PR was in review), and
+     * the claim is not true of all of them anyway: the `prefers-color-scheme`
+     * and dark-`:root` assertions are red against the pre-flip generator, while
+     * the `@layer` and base-selector ones are GREEN there — that generator had
+     * a bare `:root` and no layer. Count the block; do not trust a number about
+     * it. (The pre-flip red/green split is derived from the shape recorded in
+     * `src/generate.ts`, not measured — that generator no longer exists here.)
+     */
+    it("[data-theme='light'] is a FULL mirror, not a diff — it is the only way back to light", () => {
+      const { root, dark } = resolveTokens();
+      const lightBlock = /\[data-theme='light'\] \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+      // Every token :root sets dark must be restated here, or a light subtree
+      // inherits dark values for the ones that were omitted.
+      for (const varName of Object.keys(dark)) {
+        expect(lightBlock, `${varName} must be restated in the light block`).toContain(
+          `${varName}: ${root[varName]};`
+        );
+      }
     });
   });
 

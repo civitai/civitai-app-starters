@@ -1,9 +1,16 @@
 # `@civitai/components` — markup contract
 
 These components are **framework-agnostic**: the styling is driven entirely by
-`data-*` attributes, so any HTML that follows the contract below renders
-identically to the React bindings in `@civitai/components-react`. This document
-is the source of truth for external HTML authors.
+`data-*` attributes, so any HTML that follows the contract below picks up the
+design system without a framework. This document is the source of truth for
+external HTML authors.
+
+This sheet is one of **two independent** ways to consume the design system. The
+other is the `<civitai-*>` custom elements — self-styling in shadow DOM, so they
+need neither this sheet nor this contract — which are what
+`@civitai/components-react` binds for React. Use this document when you write
+the markup yourself; use the elements when you want the behaviour (keyboard
+handling, ARIA wiring, state) supplied for you.
 
 ## Setup
 
@@ -33,20 +40,185 @@ Or, from JS: `import { injectStyles } from '@civitai/components'; injectStyles()
 
 Set `data-theme="light"` or `data-theme="dark"` on any ancestor (typically
 `<html>` or the block root). All tokens re-resolve from that scope. Default
-(no attribute) is the light palette.
+(no attribute) is the **dark** palette, and nothing consults the OS preference:
+since `@civitai/theme@0.5.0` the dark values live on `:root` and the stylesheet
+declares no `prefers-color-scheme` block in either direction. Only `light` and
+`dark` select a token block — any other value selects none and inherits the dark
+base. ⚠️ Before that release the default was light-with-an-OS-dark-override; if
+you set `data-theme` only to stop the browser deciding, you can drop it.
 
 ## Cascade / overriding
 
 Every shipped rule lives in `@layer civitai.components`. Your own **unlayered**
-CSS always beats it — no `!important`, no specificity war. Override a token
-locally by redeclaring the custom property (e.g.
-`style="--civitai-color-primary: #a259ff"`).
+CSS always beats it — no `!important`, no specificity war.
+
+🔴 **That applies to this package's rules, NOT to the tokens — and the
+difference will cost you a rebrand if you miss it.** `@civitai/theme`'s token
+sheet carries no cascade layer: its `:root` and `[data-theme='…']` blocks are
+unlayered at specificity `0-1-0`. So an app's own `:root { --civitai-color-…: }`
+does not outrank them, it **ties** — and the winner is whichever stylesheet
+comes last.
+
+**Scope a token override; never declare one at `:root`.** Each of these was
+measured to win in **either** stylesheet order:
+
+```html
+<!-- on the element, or any ancestor of what you want recoloured -->
+<div style="--civitai-color-primary: #a259ff"> … </div>
+```
+```css
+/* or a class on your block root — not :root */
+.my-block { --civitai-color-primary: #a259ff; }
+```
+
+A scoped override reaches **inside** component shadow roots — custom properties
+cross the boundary — so `<civitai-button variant="filled">` repaints from it.
+
+⚠️ **Why `:root` is the trap rather than merely the weaker option: it fails
+SILENTLY, and it fails in the order the framework itself produces.**
+`@civitai/blocks-react`'s `useBlocksStyles()` injects the token sheet from a
+`useEffect`, so the tokens land **after** your bundler-injected CSS is already
+in `<head>`. Measured in Chromium: in that order a `:root` brand override
+resolves to civitai's own `#1971C2`, with no error and no warning — and it does
+so with or without `data-theme` present, so the host theme stamp is not the
+cause. Pinned in `test/token-override-order.browser.test.ts`, which asserts
+every route above in both orders.
 
 ---
 
 ## Components
 
 Legend: **bold** = required attribute/element for correct styling + a11y.
+
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. This is the one component that prescribes
+no element of its own — **you write the tag the meaning calls for** and this
+styles it:
+
+- Element: **`<h1>`–`<h6>`** for a heading, **`<p>`** for a paragraph,
+  **`<span>`** for inline text inside a sentence. A heading MUST be a real
+  heading element: that is what puts it in the document outline and in a screen
+  reader's heading list, and a styled `<div>` (or `<span>`) is not a substitute.
+- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+  `4xl` · `5xl`
+- `data-weight`: `normal` (default) · `medium` · `semibold` · `bold`
+- **Colour is a utility, not an attribute here** — `ci-muted` for secondary copy,
+  `ci-text-info` / `-success` / `-warning` / `-error` for the intent set,
+  `ci-text-default` for the body colour. `color` inherits, so these reach
+  `<civitai-text>`'s shadow content too. See *Not in this component* below.
+
+**Size and heading level are independent, on purpose.** `data-size` never
+changes what the element means, and the element never changes the size — so an
+`<h2>` can be the small print of a card (`data-size="xs"`) and a `<p>` can be the
+lede (`data-size="xl"`). Pick the level from the page's structure and the size
+from its design.
+
+**The scale — one scale, in two halves.** `xs`–`lg` is the UI ramp:
+`sm`/`md`/`lg` are the same three sizes Button uses, so a size name means one
+size across the pack. `xl`–`5xl` is the heading ramp, and **every value from
+`lg` up is one the `ci-fs-*` utilities already ship** — so the pack has one type
+scale under two spellings, not two that disagree:
+
+| `data-size` | `font-size` | `line-height` | same value as |
+|---|---|---|---|
+| `xs` | 12px | 1.5 | — |
+| `sm` | 13px | 1.5 | — |
+| `md` (default) | 14px | 1.5 | — |
+| `lg` | 16px | 1.5 | `ci-fs-6` |
+| `xl` | 20px | 1.25 | `ci-fs-5` |
+| `2xl` | 24px | 1.25 | `ci-fs-4` |
+| `3xl` | 28px | 1.25 | `ci-fs-3` |
+| `4xl` | 32px | 1.25 | `ci-fs-2` |
+| `5xl` | 40px | 1.25 | `ci-fs-1` |
+
+Two caveats worth knowing, both deliberate. **The names do not encode the
+`ci-fs-N` number, and the two sequences run in opposite directions** (`5xl` is
+`ci-fs-1`) — the right-hand column above is the mapping, and it is the price of
+keeping one naming convention across the whole ramp instead of switching to
+`fs-N` halfway up. **The unit differs**: this ramp is px (Button's unit),
+`ci-fs-*` is rem. They are equal at the default 16px root and diverge if a
+consumer changes it; mixing units inside one ramp would make it non-monotonic
+there, which is worse. Nothing above `ci-fs-1` (40px) is invented — that is the
+top of both ladders.
+
+**Margins are reset to `0`.** The browser's default heading/paragraph margins are
+em-relative, so they would move with every `data-size`; vertical rhythm in this
+pack belongs to `stack` / `group`. Space your text by wrapping it in one of those,
+not by relying on a UA margin.
+
+**Not in this component, deliberately** — each already has an implementation one
+layer down, and the same predicate decides all three:
+
+- **colour** → `ci-muted` (secondary copy), `ci-text-info` / `-success` /
+  `-warning` / `-error` (the intent set Alert / Badge / Toast share),
+  `ci-text-default` (the body colour). `color` inherits, so a utility on this
+  element — or on any ancestor — reaches `<civitai-text>`'s shadow content as
+  well; its inner element is `color: inherit`.
+  **Text sets `color: inherit`, not the text token**, on both tracks, and that is
+  what makes the ancestor half of the sentence above true: a *specified* value
+  beats an *inherited* one at any specificity, so a token on the element itself
+  would cancel every ancestor utility.
+
+  ⚠️ **THE TRADE, and it applies to pages that DO set a colour — not only to
+  pages that set none.** Text does not paint `--civitai-color-text` on its own,
+  so it renders in whatever colour it inherits: wherever an ancestor `color` and
+  the token disagree, Text follows the ancestor. An ancestor `color` is the
+  common case, not the exception. Measured on both tracks, on a
+  `[data-theme="dark"]` root carrying `color: #e6e6e6` — the shape this repo's
+  blocks had when the measurement was taken (none sets that colour today; see
+  below). Text computes `rgb(230, 230, 230)` — the root's colour — against a
+  dark token of `rgb(193, 194, 197)`. Restoring the removed declaration on that
+  same fixture puts both tracks back at `rgb(193, 194, 197)` while the plain
+  `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the trade. Dark is
+  where it reads, the token being a soft grey next to a near-white page
+  colour. Light theme behaves
+  the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
+  `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
+
+  In this repo the trade lands on four starters, which set their own colour on
+  `<body>` with Tailwind (`text-zinc-900 dark:text-zinc-100` —
+  `starters/next-app/src/app/globals.css`, `starters/react-pwa/index.html`,
+  `starters/svelte-pwa/index.html`, `starters/sveltekit-app/src/app.html`); none
+  of them renders Text today, so it would bite the first one that does. No page
+  here sets `#1a1a1a` / `#e6e6e6` any more. Every Civitai App page sets the
+  token itself instead — every `starters/examples/*/src/index.css` on `:root`,
+  and `starters/civitai-block-starter/src/index.css` on `body`, all as
+  `color: var(--civitai-color-text)` — as do the package's own `demo/` and
+  `playground/`. Those pages show the token in Text by inheriting it, not
+  because Text names it; of them, the block starter and the demo/playground
+  actually render Text. With no colour anywhere on the
+  page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
+  tokens only and sets no `color`.
+
+  Ask for the token explicitly with `ci-text-default`, the same utility route as
+  every other value — 🔴 **but that class lives in `utilities.css`, which is a
+  separate stylesheet this package does not inject.** `injectStyles()` ships the
+  tokens and `styles.css` and nothing else, and `@civitai/blocks-react`'s
+  `injectBlocksStyles()` — reached on mount by 20 of the 21 component modules in
+  that package's `/ui`, `SettingsForm` being the one exception and deliberately
+  unstyled — adds only its own interactive CSS on top. So on either of those
+  paths `ci-text-default`,
+  `ci-muted` and every `ci-text-*` is an **unknown class that silently does
+  nothing**. Measured: `<p data-civitai-ui="text" class="ci-text-default">`
+  under an ancestor `color: rgb(24, 24, 27)`, with `injectStyles()` alone,
+  computes `rgb(24, 24, 27)` — the class had no effect. Link or import
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour,
+  align or truncate text; `demo/index.html` links all three for this reason.
+- **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
+  `text-align` inherits, same as above.
+- **truncation** → `ci-truncate`. (This one does *not* reach shadow content —
+  `overflow` does not inherit — so truncation on the element track is a real
+  follow-up rather than an oversight.)
+
+A `data-color`, `data-align` or `data-truncate` here would be a second copy of a
+predicate that already exists. Adding any of them later is additive; taking one
+away would not be.
+
+```html
+<h2 data-civitai-ui="text" data-size="4xl" data-weight="bold">Generate an image</h2>
+<p data-civitai-ui="text">Pick a model, then press Generate.</p>
+<span data-civitai-ui="text" data-size="xs" class="ci-muted">Costs Buzz</span>
+```
 
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">` for links).
@@ -193,9 +365,9 @@ the flexbox spec.)
 `data-nowrap="true"` keeps the row on one line. Use it only where a single line
 is load-bearing, and expect overflow at narrow widths.
 
-Both are plain attributes, so `@civitai/components-react`'s `<Group>` — which
-renders exactly this markup and sets no inline `flex-wrap` — inherits the
-default and accepts `data-nowrap` as a passed-through prop.
+Both are plain attributes, so they are set the same way whoever writes the
+markup. The `<civitai-group>` element exposes the same choice as a `nowrap`
+property (reflected to the `nowrap` attribute), rather than `data-nowrap`.
 
 ### Alert — `data-civitai-ui="alert"`
 - **`role="alert"`** (or `role="status"` for non-urgent).
@@ -251,8 +423,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
   to the error token). Disabled is the native input state. When you render a
   formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
   on the input to that same string so screen readers announce it instead of the
-  raw `aria-valuenow` (the React binding sets this automatically from a
-  string/number `valueLabel`).
+  raw `aria-valuenow`. 🔴 Nothing does this for you on either track:
+  `<civitai-slider>`'s `show-value` renders a read-out of the RAW value and
+  sets no `aria-valuetext` (the attribute appears nowhere in this package's
+  element sources). The deleted React `<Slider>` DID set it, from its
+  `valueLabel` prop; that prop has no element equivalent, so a formatted
+  read-out now means setting `aria-valuetext` yourself.
 
 ```html
 <div data-civitai-ui="slider">
@@ -267,9 +443,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
 ### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
 A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
 in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
-MUST implement the keyboard behavior themselves (the `@civitai/components-react`
-`SegmentedControl` binding does it for you — prefer it for interactive use, and
-pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
+MUST implement the keyboard behavior themselves. Prefer an element for
+interactive use, which supplies it: `<civitai-segmented-control>` for the
+panel-less value switch (`radiogroup`/`radio`), and `<civitai-tabs>` when
+segments actually switch panels. They are two elements rather than one with a
+mode, because a `tab`'s `aria-controls` is an IDREF and an IDREF cannot reach a
+panel in the light DOM from inside a shadow root.
 
 **Common to both modes:**
 - Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
@@ -315,9 +494,11 @@ pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
 
 ### Toast — `data-civitai-ui="toast-region"` + `data-civitai-ui="toast"`
 An `aria-live` notification host (`toast-region`) plus the individual `toast`
-card. The React binding (`ToastProvider` + `useToast()`) owns the queue,
-auto-dismiss timers and portal; hand-HTML authors render into the region and add
-each toast so the live region announces it.
+card. `<civitai-toast-region>` owns the queue and auto-dismiss timers — call
+its `show(options)` method, which enqueues a toast and returns its id. (Until
+`@civitai/components-react@0.9.0` a React `ToastProvider` + `useToast()` pair
+did this; both were deleted with the hand-written layer.) Hand-HTML authors
+render into the region and add each toast so the live region announces it.
 - Host: **`<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">`**
   (fixed bottom-right stack). Use `aria-live="assertive"` for urgent errors.
 - Toast: **`<div data-civitai-ui="toast" role="status">`** (or `role="alert"` for
@@ -342,15 +523,15 @@ each toast so the live region announces it.
 
 ### Tooltip — `data-civitai-ui="tooltip"`
 A hover/focus tooltip: a positioned `role="tooltip"` bubble revealed when the
-wrapper is hovered or contains focus. The React binding also wires the trigger's
-`aria-describedby` to the bubble + Escape-to-dismiss.
+wrapper is hovered or contains focus. `<civitai-tooltip>` wires the trigger's
+`aria-describedby` to the bubble and Escape-to-dismiss for you.
 - Wrapper **`<span data-civitai-ui="tooltip">`** containing, in order:
   - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
   - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
     bubble. Revealed on `:hover`/`:focus-within`, or force-open with
     `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
     the hover/focus reveal, so Escape-to-dismiss works even while the pointer
-    still hovers / focus is still within (the React binding sets/clears this).
+    still hovers / focus is still within (`<civitai-tooltip>` sets/clears this).
 - A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
   keep the tooltip text short (it is supplementary, not the accessible name).
 
@@ -363,8 +544,11 @@ wrapper is hovered or contains focus. The React binding also wires the trigger's
 
 ### Image — `data-civitai-ui="image"`
 A media container with a token placeholder background (visible while loading),
-`object-fit` control, and a broken-image fallback. The React binding wires
-`onLoad`/`onError` to `data-status`; hand-HTML authors set it themselves.
+`object-fit` control, and a broken-image fallback. Hand-HTML authors set
+`data-status` themselves. (`<civitai-image>` tracks this from the native
+`load`/`error` events, but reflects it as **`status`**, not `data-status` —
+its CSS keys off `:host([status='loading'])`. The two tracks spell this one
+differently; see the components README.)
 - Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
   `aspect-ratio` inline or via your own class). `data-status`: `loading` ·
   `loaded` · `error` (omitted ⇒ the image shows).
@@ -382,9 +566,17 @@ A media container with a token placeholder background (visible while loading),
 
 ---
 
-## React parity
+## Relationship to the elements and to React
 
-`@civitai/components-react` renders exactly this markup. The
-`html-vs-react-parity` browser test asserts `getComputedStyle()` is identical
-between hand-written HTML (per this doc) and the React components, in both
-themes — so this contract is executable, not aspirational.
+`@civitai/components-react` binds the `<civitai-*>` custom elements, **not**
+this sheet: the elements style themselves in shadow DOM, so they do not consume
+the contract above and are not a second renderer of it. Consuming this document
+means writing the markup yourself, in whatever framework or none.
+
+Until `@civitai/components-react@0.9.0` that package also shipped a
+hand-written React layer which DID render this markup, and an
+`html-vs-react-parity` browser test asserted identical `getComputedStyle()`
+between the two arms. That layer was superseded by the elements and the test
+retired with it — there is no longer a second implementation to compare
+against. The contract here remains executable against the sheet itself: the
+`@civitai/components` suites assert the rules in `components.css` directly.

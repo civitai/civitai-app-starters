@@ -1,0 +1,279 @@
+import type { Workflow } from '@civitai/sdk';
+import { describe, expect, it, vi } from 'vitest';
+
+import { toolInfo } from '../orchestration/job.js';
+import { JobManager } from '../orchestration/jobs.js';
+import { controllable, flush, imageStep, toolResult, workflow } from '../test-support/fakes.js';
+import { PanelManager, type SavedPanel } from './panel.js';
+import { CLOSE_PANEL, OPEN_PANEL, UPDATE_PANEL, panelTools } from './tools.js';
+
+const RUN_STEP_SCHEMA = { properties: { stepType: {}, input: {}, whatif: {}, waitForCompletion: {}, tags: {}, metadataJson: {} } };
+
+const LOGO = {
+  title: 'Logo maker',
+  inputs: {
+    brand: { kind: 'text', label: 'Brand name', required: true },
+    style: { kind: 'choice', options: ['Minimal mark', 'Mascot'] },
+    seed: { kind: 'seed' },
+  },
+  run: { stepType: 'imageGen', input: { prompt: 'logo for {{brand}}, {{style}}', seed: '{{seed}}' } },
+};
+
+function setup({ refuse = false } = {}) {
+  const asked: { message: string; refs: string[] }[] = [];
+  const composed: { message: string; refs: string[] }[] = [];
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const feed = controllable<Workflow>();
+  const jobs = new JobManager({
+    api: { getWorkflow: vi.fn(), watchWorkflow: vi.fn(() => feed.iterate()), addTag: vi.fn(), updateWorkflow: vi.fn() } as never,
+    cancelWorkflow: vi.fn(),
+    mcp: {
+      callTool: vi.fn(async (name: string, args: Record<string, unknown>) => {
+        calls.push({ name, args });
+        if (refuse) return toolResult(undefined, 'input.prompt: required', true);
+        if (args.whatif) return toolResult({ cost: { total: 12, variable: false }, insufficientBuzz: false });
+        return toolResult({ workflowId: `7-${calls.length}` });
+      }),
+    },
+    resolveArgs: async (args) => args,
+    decide: () => 'confirm',
+    findWorkflows: vi.fn(async () => []),
+    hideMatureContent: () => true,
+  });
+  const saved: SavedPanel[] = [];
+  const panels = new PanelManager({
+    jobs,
+    toolInfo: (name) => (name === 'run_step' ? toolInfo(name, RUN_STEP_SCHEMA) : undefined),
+    save: (panel) => saved.push(panel),
+    ask: (message, refs) => asked.push({ message, refs }),
+    compose: (message, refs) => composed.push({ message, refs }),
+    random: () => 0.25,
+    newId: () => 'PANEL-ULID',
+  });
+  const tools = panelTools({ conversationId: 'C1', seq: 2, panels });
+  const call = (name: string, input: unknown, toolCallId = 'call_1') =>
+    (tools[name] as unknown as { execute: (input: unknown, opts: unknown) => Promise<Record<string, unknown>> }).execute(input, { toolCallId, messages: [] });
+  return { panels, jobs, calls, saved, call, feed, asked, composed };
+}
+
+describe('panels', () => {
+  it('tells the assistant to stop and talk to the user once a reply has failed to set up controls three times', async () => {
+    const { call } = setup();
+    const broken = { title: 'Broken', inputs: { prompt: { kind: 'text' } }, run: { stepType: 'imageGen', input: { prompt: '{{subject}}' } } };
+
+    const notes = [];
+    for (const id of ['call_1', 'call_2', 'call_3']) notes.push((await call(OPEN_PANEL, broken, id)).note);
+
+    expect(notes[0]).toContain('Fix the definition and call again');
+    expect(notes[2]).toContain('Do not call open_panel or update_panel again in this reply');
+  });
+
+  it("adds a model the viewer asked for beside the panel's own, from the settings the assistant copied", async () => {
+    const PICTURE = {
+      title: 'Your picture',
+      inputs: {
+        prompt: { kind: 'text', required: true },
+        model: {
+          kind: 'choice',
+          options: ['SDXL', 'Flux'],
+          map: { SDXL: { engine: 'sdcpp', ecosystem: 'sdxl', prompt: '{{prompt}}' }, Flux: { engine: 'flux2', prompt: '{{prompt}}' } },
+        },
+      },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    };
+    const { panels, calls, composed, call } = setup();
+    await call(OPEN_PANEL, { ...PICTURE, values: { prompt: 'a cat' } });
+    const panel = panels.get('p1')!;
+    expect(panels.context()).toContain('The selected model option puts: {"engine":"sdcpp","ecosystem":"sdxl","prompt":"{{prompt}}"}');
+
+    panel.promptForModel();
+    expect(composed.at(-1)?.message).toBe('Find another model for the "Your picture" panel (p1): ');
+
+    const catModel = { engine: 'sdcpp', ecosystem: 'sdxl', checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: '{{prompt}}' };
+    const result = await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Tower': catModel } }, values: { model: 'Cat Tower' } }, 'call_2');
+    expect(result).toMatchObject({ values: { model: 'Cat Tower' } });
+    expect(panel.spec.inputs.model).toMatchObject({ options: ['SDXL', 'Flux', 'Cat Tower'] });
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: 'a cat' }, whatif: true });
+
+    const longName = 'CAT - Citron Anime Treasure [Illustrious & NoobAI] for every cat';
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { [longName]: { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6' } } } }, 'call_long');
+    expect(calls.at(-1)?.args).toMatchObject({ input: { checkpointModel: 'urn:air:sdxl:checkpoint:civitai:5@6', prompt: 'a cat' } });
+
+    await call(UPDATE_PANEL, { panel: 'p1', addOptions: { model: { 'Cat Carrier': { ...catModel, checkpointModel: 'urn:air:sdxl:checkpoint:civitai:3@4' } } } }, 'call_3');
+    expect(panel.values.model).toBe('Cat Carrier');
+  });
+
+  it('closes the panels the assistant names, out of what it is told, and keeps them closed after a reload until changed', async () => {
+    const { panels, saved, call } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } }, 'call_1');
+    await call(OPEN_PANEL, { ...LOGO, title: 'Second logo', values: { brand: 'Owl' } }, 'call_2');
+
+    expect(await call(CLOSE_PANEL, { panels: ['p1', 'p2'] })).toMatchObject({ closed: ['p1', 'p2'] });
+    expect(panels.all().map((panel) => panel.closed)).toEqual([true, true]);
+    expect(panels.context()).toBeUndefined();
+
+    const reloaded = setup();
+    reloaded.panels.restore('C1', { p1: saved.filter((panel) => panel.handle === 'p1').at(-1)! }, new Map());
+    expect(reloaded.panels.get('p1')!.closed).toBe(true);
+
+    await reloaded.call(UPDATE_PANEL, { panel: 'p1', values: { brand: 'Lark' } }, 'call_3');
+    expect(reloaded.panels.get('p1')!.closed).toBe(false);
+    expect(reloaded.panels.context()).toContain('"brand":"Lark"');
+  });
+
+  it('opens a panel once a free price check accepts it, and tells the assistant its handle and price', async () => {
+    const { panels, calls, saved, call } = setup();
+    const result = await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } });
+
+    expect(calls).toEqual([{ name: 'run_step', args: { stepType: 'imageGen', input: { prompt: 'logo for Night Owl, Minimal mark', seed: 536870911 }, whatif: true } }]);
+    expect(result).toMatchObject({ panel: 'p1', version: 1, estimatedBuzz: 12, values: { brand: 'Night Owl', style: 'Minimal mark', seed: -1 } });
+    expect(panels.get('p1')?.toolCallId).toBe('call_1');
+    expect(saved.at(-1)).toMatchObject({ v: 1, id: 'PANEL-ULID', handle: 'p1', seq: 2, versions: [{ title: 'Logo maker' }], runs: [] });
+  });
+
+  it('shows nothing when the service refuses the run, and hands the reason back to the assistant', async () => {
+    const { panels, call } = setup({ refuse: true });
+    const result = await call(OPEN_PANEL, LOGO);
+    expect(result.error).toContain('input.prompt: required');
+    expect(panels.all()).toEqual([]);
+  });
+
+  it("runs the user's values straight through the orchestrator, tagged as the panel's, keeping the seed it used", async () => {
+    const { panels, calls, saved, call, feed } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl', style: 'Mascot' } });
+    const panel = panels.get('p1')!;
+
+    const job = await panel.run();
+    expect(job?.state).toBe('running');
+    const submit = calls.at(-1)!;
+    expect(submit.args).toMatchObject({ stepType: 'imageGen', input: { prompt: 'logo for Night Owl, Mascot', seed: 536870911 }, waitForCompletion: false, tags: ['chat-cvt', 'cvt:job', 'cvt:conv:C1'] });
+    expect(JSON.parse(submit.args.metadataJson as string)).toMatchObject({ job: 'p1-1', panel: 'p1', tool: 'run_step' });
+    expect(saved.at(-1)?.runs).toEqual([{ job: 'p1-1', version: 1, values: { brand: 'Night Owl', style: 'Mascot', seed: 536870911 } }]);
+
+    feed.push(workflow({ id: '7-3', status: 'succeeded', steps: [imageStep([{ id: 'i', url: 'https://x/logo.png' }])] as never }));
+    await flush();
+    expect(job?.results.map((r) => r.id)).toEqual(['p1-1-1']);
+    expect(panels.context()).toContain('p1-1 (version 1) succeeded → p1-1-1');
+    expect(panels.context()).toContain('Price per run with these values: about 12 Buzz, quoted by the service');
+  });
+
+  it('never runs at a price the viewer has not seen, and keeps their changes for a reload', async () => {
+    vi.useFakeTimers();
+    try {
+      const { panels, call, saved } = setup();
+      await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } });
+      const panel = panels.get('p1')!;
+      const savesBefore = saved.length;
+
+      panel.setValue('style', 'Mascot');
+      expect(panel.ready).toBe(false);
+      expect(await panel.run()).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(panel.ready).toBe(true);
+      expect(saved).toHaveLength(savesBefore + 1);
+      expect(saved.at(-1)?.values).toMatchObject({ brand: 'Night Owl', style: 'Mascot' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for required inputs before it can run', async () => {
+    const { panels, call } = setup();
+    await call(OPEN_PANEL, LOGO);
+    const panel = panels.get('p1')!;
+    expect(panel.missing).toEqual(['Brand name']);
+    expect(await panel.run()).toBeUndefined();
+    panel.setValue('brand', 'Crumbs');
+    expect(panel.canRun).toBe(true);
+  });
+
+  it('turns a change into a new version that keeps the values still fitting and moves the panel to that call', async () => {
+    const { panels, call } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl', style: 'Mascot' } });
+    const result = await call(
+      UPDATE_PANEL,
+      {
+        panel: 'p1',
+        inputs: { palette: { kind: 'choice', options: ['Warm', 'Cool'] } },
+        run: { stepType: 'imageGen', input: { prompt: 'logo for {{brand}}, {{style}}, {{palette}} colors', seed: '{{seed}}' } },
+        values: { palette: 'Cool' },
+      },
+      'call_2',
+    );
+
+    expect(result).toMatchObject({ panel: 'p1', version: 2, values: { brand: 'Night Owl', style: 'Mascot', palette: 'Cool' } });
+    expect(panels.get('p1')).toMatchObject({ toolCallId: 'call_2', version: 2 });
+  });
+
+  it('brings a panel and its runs back after a reload, watching a run still going', () => {
+    const { panels, jobs } = setup();
+    const saved: SavedPanel = {
+      v: 1,
+      id: 'PANEL-ULID',
+      handle: 'p1',
+      seq: 2,
+      toolCallId: 'call_1',
+      versions: [{ title: 'Logo maker', inputs: { brand: { kind: 'text' } }, run: { stepType: 'imageGen', input: { prompt: '{{brand}}' } } }],
+      values: { brand: 'Crumbs' },
+      runs: [
+        { job: 'p1-1', version: 1, values: { brand: 'Night Owl' } },
+        { job: 'p1-2', version: 1, values: { brand: 'Crumbs' } },
+      ],
+    };
+    panels.restore('C1', { p1: saved }, new Map([['p1-1', workflow({ id: '7-1', status: 'succeeded', steps: [imageStep([{ id: 'i', url: 'https://x/a.png' }])] as never })]]));
+
+    const panel = panels.get('p1')!;
+    expect(panel.jobs.map((job) => [job.id, job.state, job.args])).toEqual([
+      ['p1-1', 'succeeded', { stepType: 'imageGen', input: { prompt: 'Night Owl' } }],
+      ['p1-2', 'expired', { stepType: 'imageGen', input: { prompt: 'Crumbs' } }],
+    ]);
+    expect(jobs.get('p1-1')?.results[0]?.id).toBe('p1-1-1');
+    expect(panel.selected).toBe('p1-2');
+  });
+
+  it('names the panel the assistant opened or changed last as the one to show', async () => {
+    const { panels, call } = setup();
+    await call(OPEN_PANEL, { ...LOGO, values: { brand: 'A' } }, 'call_1');
+    await call(OPEN_PANEL, { ...LOGO, title: 'Second', values: { brand: 'B' } }, 'call_2');
+    expect(panels.latest?.handle).toBe('p2');
+    panels.get('p1')!.setValue('brand', 'C');
+    expect(panels.latest?.handle).toBe('p2');
+    await call(UPDATE_PANEL, { panel: 'p1', values: { brand: 'D' } }, 'call_3');
+    expect(panels.latest?.handle).toBe('p1');
+  });
+
+  it('opens a panel whose button asks the assistant: no price check, and pressing it sends the filled-in message', async () => {
+    const { panels, calls, call, asked, composed } = setup();
+    const result = await call(OPEN_PANEL, {
+      title: 'Post it',
+      inputs: { picture: { kind: 'image' }, title: { kind: 'text', label: 'Title' } },
+      run: { ask: 'Post {{picture}} to Civitai titled "{{title}}"' },
+      button: 'Post',
+      values: { picture: 'gen1-1-1', title: 'Cozy cabin' },
+    });
+    expect(calls).toEqual([]);
+    expect(result.note).toContain('its message comes to you as their next message');
+    const panel = panels.get('p1')!;
+    expect(panel.canRun).toBe(true);
+    expect(await panel.run()).toBeUndefined();
+    expect(asked).toEqual([{ message: 'Post gen1-1-1 to Civitai titled "Cozy cabin"', refs: ['gen1-1-1'] }]);
+    expect(composed).toEqual([]);
+    expect(panels.context()).toContain('Button "Post" sends you this message as the user');
+  });
+
+  it("puts a shared ask panel's message in the message box instead of sending what someone else wrote", async () => {
+    const { panels, asked, composed } = setup();
+    const panel = panels.open({
+      conversationId: 'C1',
+      seq: 1,
+      toolCallId: 'shared',
+      spec: { title: 'Post it', inputs: { title: { kind: 'text' } }, run: { ask: 'Post titled {{title}}' }, button: 'Post' },
+      values: { title: 'Hi' },
+      forkedFrom: { id: 'X', version: 1 },
+    });
+    await panel.run();
+    expect(asked).toEqual([]);
+    expect(composed).toEqual([{ message: 'Post titled Hi', refs: [] }]);
+  });
+});

@@ -113,14 +113,36 @@ export interface BlockInitPayload {
   maxBrowsingLevel?: number;
   /** The domain ceiling narrowed to this viewer. Always a subset of the above. */
   effectiveBrowsingLevel?: number;
+  /**
+   * `'local-preview'` when the host mounted this frame as a dev-tunnel preview,
+   * which has no server-side storage. The host sets it from the surface it
+   * mounted, never from the token or anything the block sent. Absent everywhere
+   * else, and from a host that predates it. Typed `unknown` on the wire: only
+   * the exact string switches anything — see {@link LOCAL_PREVIEW_STORAGE}.
+   */
+  storageMode?: unknown;
 }
 
-/** Host messages the transport itself acts on. Domains own everything else. */
+/** The one value of `BLOCK_INIT.storageMode` the SDK acts on. Compared exactly. */
+export const LOCAL_PREVIEW_STORAGE = 'local-preview';
+
+/**
+ * Host messages the transport itself acts on. Domains own everything else.
+ *
+ * `ROUTE_CHANGED` is here rather than in `HostPushes` for the same reason
+ * `THEME_CHANGE` is: it carries a value the snapshot already holds, so the
+ * transport folds it in and `client.context` / `client.onChange` are how a
+ * consumer observes it. A `HostPushes` row plus an `onRouteChange` method would
+ * publish a SECOND way to read one value, which is how `client.context.subPath`
+ * and a callback end up disagreeing. `SUSPEND`/`RESUME` are in `HostPushes`
+ * because they carry no state for the snapshot to hold.
+ */
 export type HostMessage =
   | { type: 'BLOCK_INIT'; payload: BlockInitPayload }
   | { type: 'TOKEN_REFRESH'; payload: { token: WrappedToken } }
   | { type: 'TOKEN_REFRESH_RESPONSE'; payload: { requestId: string; token: WrappedToken } }
-  | { type: 'THEME_CHANGE'; payload: { theme: Theme } };
+  | { type: 'THEME_CHANGE'; payload: { theme: Theme } }
+  | { type: 'ROUTE_CHANGED'; payload: { subPath: string } };
 
 /** Discriminator only — the payload is still unvalidated wire data. */
 export function isHostMessage<K extends HostMessage['type']>(

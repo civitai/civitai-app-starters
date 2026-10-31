@@ -2,9 +2,44 @@ import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 /**
- * `node` = source guards, `browser` = element behaviour on chromium, `contract`
- * = the cross-engine surface on all three engines. `prefers-dark` needs its own
- * project because the OS scheme is a browser-context option, not a page one.
+ * `node` = source guards, `dom` = the NON-BROWSER DOM consumers actually test
+ * in, `browser` = element behaviour on chromium, `contract` = the cross-engine
+ * surface on all three engines.
+ *
+ * 🔴 THERE IS DELIBERATELY NO DARK-OS PROJECT, AND ADDING ONE BACK IS A
+ * DECISION, NOT A FIX. One existed — the OS scheme is a browser-CONTEXT option
+ * rather than a page one, so it cannot share a project — and after the
+ * dark-base flip (`@civitai/theme@0.5.0`) every assertion in it passed
+ * identically with and without the change it was aimed at: a dark-OS context
+ * cannot tell "dark base" from "light base plus an OS-dark override", because
+ * both answer dark. The hazard it was left guarding — a `prefers-color-scheme`
+ * at-rule authored in THIS package's CSS — is now pinned at source in
+ * `test/css-integrity.test.ts`, over a wider surface and without a second
+ * browser launch. The discriminating RENDERED fixture is a LIGHT OS, which is
+ * what the `browser` project already reports; that is why
+ * `test/color-scheme.dark-base.browser.test.ts` lives there.
+ *
+ * ⚠️ If you DO add one back, it needs TWO edits, not one: the project block
+ * here, AND the matching `prefers-dark` glob back in the `node` project's
+ * `exclude` below. Without the second, `node` collects the file and it dies on
+ * `ReferenceError: document is not defined` rather than on anything it asserts.
+ * (Writing that glob literally in this comment is not possible: it contains the
+ * block-comment terminator.)
+ *
+ * 🔴 WHY `dom` EXISTS, AND WHAT IT IS NOT FOR (#485). Every element-behaviour
+ * project here is a real engine, so this package had no tier that could see a
+ * defect which only appears where the platform is INCOMPLETE — and that is the
+ * tier an App Block's own suite runs in (`@civitai/blocks-react/testing` is
+ * documented as letting a block "run in `vitest`/`happy-dom`", and both React
+ * packages' `unit` projects are happy-dom). `<civitai-menu>` threw
+ * `TypeError: panel.showPopover is not a function` there while 851 browser tests
+ * were green.
+ *
+ * It is NOT a second home for element behaviour. happy-dom does no layout, and
+ * — measured on 20.9.0 — does not deliver a click on slotted content to a
+ * listener on the `<slot>` it is assigned to, so trigger clicks are silent and
+ * anything positional is meaningless. Put behaviour in `browser`; put
+ * "this does not explode where a consumer runs it" here.
  */
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-dev-shm-usage'];
 
@@ -33,8 +68,18 @@ export default defineConfig({
             'node_modules',
             '**/*.browser.test.ts',
             '**/*.contract.test.ts',
-            '**/*.prefers-dark.test.ts',
+            // `node` has no DOM at all, so a `*.dom.test.ts` would fail there on
+            // `document` rather than on anything it asserts.
+            '**/*.dom.test.ts',
           ],
+        },
+      },
+      {
+        test: {
+          name: 'dom',
+          environment: 'happy-dom',
+          include: ['test/**/*.dom.test.ts'],
+          exclude: ['node_modules'],
         },
       },
       {
@@ -54,22 +99,6 @@ export default defineConfig({
                 ? { provider: playwright({ launchOptions: { args: CHROMIUM_ARGS, ...CONTRACT_EXECUTABLE } }) }
                 : {}),
             })),
-          },
-        },
-      },
-      {
-        test: {
-          name: 'prefers-dark',
-          include: ['test/**/*.prefers-dark.test.ts'],
-          browser: {
-            enabled: true,
-            headless: true,
-            screenshotFailures: false,
-            provider: playwright({
-              launchOptions: { args: CHROMIUM_ARGS, ...EXECUTABLE },
-              contextOptions: { colorScheme: 'dark' },
-            }),
-            instances: [{ browser: 'chromium' }],
           },
         },
       },

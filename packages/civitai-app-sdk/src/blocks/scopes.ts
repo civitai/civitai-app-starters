@@ -24,9 +24,21 @@ export const BLOCK_SCOPES = {
   // apps:storage:shared:* — the SHARED (app-global / cross-user) datastore. Same
   // no-OAuth-bit posture as apps:storage:*; the server gates them by presence in
   // the block's approved scope set (plus a min-trust gate + fail-closed flag).
-  // These are the SDK's only 4-segment scopes — see BLOCK_SCOPE_PATTERN below.
+  // 4-segment (as is `apps:store:items:write`) — see BLOCK_SCOPE_PATTERN below.
   APPS_STORAGE_SHARED_READ: 'apps:storage:shared:read',
   APPS_STORAGE_SHARED_WRITE: 'apps:storage:shared:write',
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE, declared per
+  // collection in the manifest's `storage` block, that succeeds the four
+  // scopes above (which stay live until apps migrate). Same no-OAuth-bit
+  // posture. `apps:storage` covers reads, the viewer's private collections,
+  // marks and counters, and is CONSENT-EXEMPT; any manifest declaring a
+  // collection must request it. `apps:storage:publish` writes documents in a
+  // SHARED collection under the viewer's identity — SENSITIVE (needs a
+  // `scopeJustifications` entry) and CONSENT-GATED. `apps:storage` is the one
+  // 2-segment scope — see BLOCK_SCOPE_PATTERN below. Server source:
+  // civitai/civitai `src/shared/constants/block-scope.constants.ts`.
+  APPS_STORAGE: 'apps:storage',
+  APPS_STORAGE_PUBLISH: 'apps:storage:publish',
   // collections:* — the App Blocks Collections surface. These have no OAuth bit
   // (they never touch the user's civitai resources via the OAuth surface); the
   // server gates them per-op server-side (collection visibility/ownership +
@@ -48,18 +60,57 @@ export const BLOCK_SCOPES = {
   // per-post confirm rendering the SERVER'S resolution of the request, and the
   // server re-runs every guard.
   POSTS_WRITE_SELF: 'posts:write:self',
+  // goods:* — the DIGITAL GOODS rail (civitai/civitai#5171): the platform sells
+  // a manifest-declared entitlement to the viewer for Buzz, on the app's behalf.
+  // These were live on the SERVER and in the canonical schema while absent here,
+  // so `defineBlock` rejected both and no app scaffolded from this repo could
+  // DECLARE them — the hooks that call them were unreachable. Found by the
+  // round-0 reachability question on app-starters#489.
+  //
+  // `goods:read:self` is CONSENT-EXEMPT by design: the read is scoped
+  // server-side to the calling app's own appBlockId, so it can only ever return
+  // what that app itself sold and there is no third-party data to consent to.
+  // `goods:purchase:self` is CONSENT-GATED — money out of the viewer's balance
+  // always needs an explicit grant. Do not collapse the two.
+  GOODS_READ_SELF: 'goods:read:self',
+  GOODS_PURCHASE_SELF: 'goods:purchase:self',
+  // apps:store:items:write — publish the VIEWER'S OWN app items into the App
+  // Store as sub-listing cards under the calling app (civitai/civitai#5511,
+  // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). No OAuth bit.
+  //
+  // SENSITIVE: it writes store cards every visitor sees, under the viewer's
+  // name, so a declaring manifest MUST carry a `scopeJustifications` entry or
+  // the server rejects it at submit (not mirrored by `defineBlock` — see
+  // KNOWN_GAPS in `../manifest/defineBlock.ts`).
+  //
+  // CONSENT-EXEMPT on the server, like `apps:storage:shared:write`: the real
+  // gates run per call (the parent's enable switch, the shared-write trust
+  // check, item authorship, text safety, rate limits, moderator approval), and
+  // a consent-gated scope would be dropped from tokens before any could run.
+  // Requires a signed-in (non-anonymous) subject. 4-segment, like the shared
+  // storage scopes — see BLOCK_SCOPE_PATTERN below.
+  APPS_STORE_ITEMS_WRITE: 'apps:store:items:write',
+  // social:react:self — set the VIEWER'S reaction on an image a block endpoint
+  // served the app (civitai/civitai#6144). SENSITIVE (a public, reward-paying
+  // reaction under the viewer's name, so a declaring manifest MUST carry a
+  // `scopeJustifications` entry) and CONSENT-GATED. The bridge is
+  // SET_ENTITY_REACTION / GET_ENTITY_REACTIONS (see `reactions.ts`), and
+  // `useReactions` in `@civitai/blocks-react` drives it. The server gates it
+  // behind a fail-closed flag as well as the grant.
+  SOCIAL_REACT_SELF: 'social:react:self',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
 export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
 
 /**
- * Format helper for the block-scope shape — 3 OR 4 colon-separated lowercase
- * segments (`domain:verb:target` or `domain:area:verb:target`).
+ * Format helper for the block-scope shape — 2, 3 OR 4 colon-separated
+ * lowercase segments (`domain:area`, `domain:verb:target` or
+ * `domain:area:verb:target`).
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
- * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 12 values in
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. exactly the values in
  * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
  * `BLOCK_SCOPES`; this pattern is kept only as a FORMAT HEURISTIC to give a
  * pointed error message (e.g. distinguishing a malformed/PascalCase scope from
@@ -68,11 +119,13 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  *
  * The 4th segment was added to mirror the server's 4-segment
  * `apps:storage:shared:read` / `apps:storage:shared:write` scopes (the SHARED
- * cross-user datastore). The SDK now tracks the server's 4-segment scopes
- * directly, so this is no longer a coordinated-major-bump situation — the
+ * cross-user datastore); `apps:store:items:write` is the same shape. The SDK
+ * now tracks the server's 4-segment scopes directly, so this is no longer a coordinated-major-bump situation — the
  * pattern just widened to accept the shapes the canonical enum already lists.
+ * It widened again, at the other end, for the 2-segment `apps:storage`
+ * (the document store's base scope).
  */
-export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+(?::[a-z]+)?$/;
+export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+(?::[a-z]+){0,2}$/;
 
 /**
  * Marketplace category taxonomy for the optional manifest `category` field —

@@ -9,7 +9,6 @@ import { describe, expect, it } from 'vitest';
 
 import { UTILITIES, SPACE } from '../src/utilities.spec.js';
 import { civitaiSheet, compatSheet, pkgRoot } from '../scripts/utilities.js';
-import { utilitiesCss } from '../src/utilities.generated.js';
 
 const read = (path: string): string => readFileSync(join(pkgRoot, path), 'utf8');
 
@@ -25,9 +24,14 @@ describe('the utility sheets', () => {
     );
   });
 
-  it('embeds the same bytes it writes, so the injectable form cannot drift', () => {
-    expect(utilitiesCss).toBe(civitaiSheet());
-  });
+  // There WAS a third assertion here — that `src/utilities.generated.ts`
+  // embedded the same bytes, "so the injectable form cannot drift". It is gone
+  // because its subject is: that module was the utility layer as a JS string,
+  // nothing imported it at runtime, and no `./utilities` export key ever made
+  // it reachable, so build-utilities.ts stopped emitting it. With no injectable
+  // form there is no second copy to drift, and the two rows above already pin
+  // the built CSS against a fresh generation. Deliberately NOT replaced with a
+  // different assertion: the guard lost its subject rather than its wording.
 });
 
 describe('the utility spec', () => {

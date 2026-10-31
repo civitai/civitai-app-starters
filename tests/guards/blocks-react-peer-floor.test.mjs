@@ -38,7 +38,7 @@
  *
  * 🔴 KNOWN LIMITS — read these before trusting a green.
  *   - OFFLINE AND TREE-LOCAL, on purpose. `pnpm test:guards` runs in the
- *     required `Starter` matrix BEFORE the install (`.github/workflows/ci.yml`),
+ *     required `starters` job BEFORE the install (`.github/workflows/ci.yml`),
  *     on an `actions/checkout` at depth 1. There is no registry access and no
  *     git history, so this cannot ask npm what a published tarball exports nor
  *     git what `origin/main` exported. Everything below is computed from the
@@ -155,8 +155,10 @@ const PEER_VALUE_SYMBOL_SINCE = {
   // ledger states, established from BOTH sides rather than assumed:
   //   - 0.48.0 exports NONE of the four (29 symbols on `./blocks`), so the run
   //     cannot start lower and the floor is EXACT, not merely sufficient;
-  //   - 0.49.0 exports ALL four (34 symbols) and is the newest published
-  //     version, so the run is unbroken to the top.
+  //   - 0.49.0 exports ALL four (34 symbols) and WAS the newest published
+  //     version on 2026-09-21, so the run was unbroken to the top as of that
+  //     reading. "Newest" is not a property of a tarball and goes stale on the
+  //     next publish; the per-version readings above do not.
   // Controls, run before these numbers were believed:
   //   - POSITIVE: the 29 → 34 export-count delta across the two tarballs is the
   //     probe moving. A reading identical on both versions would be
@@ -193,8 +195,138 @@ const PEER_VALUE_SYMBOL_SINCE = {
   isLevelAllowed: '0.13.0',
   isMessage: '0.6.0',
   isSfwCeiling: '0.13.0',
+  // MEASURED 2026-09-28 against the REAL published tarballs, same instrument and
+  // same recipe as the sweep above (`npm pack @civitai/app-sdk@V`, untar,
+  // resolve `exports['./blocks']` out of that tarball's own package.json,
+  // `import()` it, test `'isSignedIn' in mod`). Nine versions probed:
+  // 0.45.0 … 0.51.2, where 0.51.2 was `npm view @civitai/app-sdk version` on
+  // the day. Reached for by `src/hooks/useEntitlements.ts`, which derives its
+  // `unauthenticated` flag from the viewer rather than from a 403.
+  //
+  // 🔴 The run is EXACTLY 0.47.0-and-up, established from BOTH sides so the
+  // entry is the start of an unbroken run and not a first sighting:
+  //   - 0.46.0 and 0.45.0 do NOT export it (26 symbols on `./blocks` each), so
+  //     the run cannot start lower;
+  //   - 0.47.0 (30), 0.48.0 (29), 0.49.0/0.50.0/0.51.0/0.51.1/0.51.2 (34 each)
+  //     all DO, unbroken to the newest version published on 2026-09-28.
+  // Note 0.48.0's count DROPS to 29 — that is the `defineBlock`/
+  // `BlockManifestError` move (#352) the docblock above warns about, and it is
+  // why presence was checked per version rather than inferred from the counts.
+  // Controls, run before these numbers were believed:
+  //   - POSITIVE: the export count MOVES across the probed tarballs
+  //     (26 → 30 → 29 → 34). A reading identical everywhere would be
+  //     indistinguishable from a probe wired to one tarball nine times.
+  //   - NEGATIVE: an impossible symbol (`__THIS_SYMBOL_CANNOT_EXIST_ff3a9c__`)
+  //     read ABSENT in 9 of 9 — the probe can say "no", so PRESENT is not its
+  //     only answer.
+  //   - CROSS-CHECK: `isSignedIn` is a VALUE export of the in-tree
+  //     `blocks/index.ts:144`, which the INVARIANT GUARD below independently
+  //     re-derives.
+  // 0.47.0 is BELOW the declared floor `>=0.49.0`, so this entry does not move
+  // it — every version the range admits exports the symbol.
+  isSignedIn: '0.47.0',
   parseBlockInitFragment: '0.31.0',
   stripBlockInitFragment: '0.31.0',
+  // ✅ MEASUREMENTS. These three were PREDICTIONS while the idempotency-key
+  // change was in flight — 0.55.0 did not exist, so they could not be read off
+  // a tarball. It published, and the conversion completed: see the
+  // RETIRED / CONVERSION COMPLETE note on
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` below, which records re-reading all
+  // three off the real 0.55.0 tarball with 0.54.0 as the ABSENT control. They
+  // are ordinary measured entries now, and nothing is owed.
+  //
+  // Same instrument and recipe as the sweeps above (`npm pack
+  // @civitai/app-sdk@V`, untar, `grep -rl <symbol> package/dist`), with the
+  // registry asked first. 🔴 EACH ROW CARRIES THE DATE IT WAS READ, because
+  // only the last one was read on 2026-10-04 — the first three are the
+  // 2026-10-03 readings carried forward and were NOT re-run:
+  //
+  //   0.54.0   2026-10-03   all three ABSENT (0 files)  ← cannot start lower
+  //   0.55.0   2026-10-03   all three PRESENT (4 files) ← the run starts here
+  //   0.56.0   2026-10-03   all three PRESENT (4 files)
+  //   0.56.1   2026-10-04   all three PRESENT (4 files) ← top of the line
+  //                                                       on that date;
+  //   `npm view @civitai/app-sdk versions` listed 59 versions, 0.56.1 having
+  //   published 2026-10-03T23:43:58Z.
+  //
+  // ⚠ The 2026-10-03 revision of this block stopped at 0.56.0 and called it
+  // "the newest published". That went false the same night. The per-version
+  // rows are permanent readings; only the "newest" label decays, so it now
+  // carries the date it was read.
+  //
+  // So 0.55.0 is EXACT, not merely sufficient. Controls, run before those
+  // readings were believed:
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on every tarball
+  //     probed — the probe can see this package's shipped code at all, so an
+  //     ABSENT is a real absence rather than a probe wired to nothing.
+  //   - NEGATIVE: an impossible symbol (`__NOPE_7f3a__`) read ABSENT (0 files)
+  //     on every tarball probed — the probe can say "no", so PRESENT is not its
+  //     only answer.
+  //
+  // ⚠ This block carried "🔴 PREDICTIONS, NOT MEASUREMENTS" and "🔴 RE-MEASURE
+  // AND RETIRE after the release publishes" until 2026-10-03, a day after the
+  // conversion below completed. Keeping a measurement labelled as a prediction
+  // destroys the ONE distinction this mechanism exists to keep
+  // machine-readable, and in the dangerous direction: the next reader discounts
+  // a number that was in fact read off a tarball.
+  BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH: '0.55.0',
+  BLOCK_IDEMPOTENCY_KEY_REGEX: '0.55.0',
+  blockIdempotencyKeyRejection: '0.55.0',
+
+  // 🔴 A PREDICTION, pinned as one — see
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` below. `fetchNestedDocument` is the
+  // `srcdoc` nested-document helper (#532), new module
+  // `src/blocks/nestedDocument.ts`, value-imported by
+  // `src/hooks/useNestedDocument.ts`. It ships for the FIRST time in the
+  // app-sdk minor this branch's own changeset produces, so there is no tarball
+  // to probe for a PRESENT reading.
+  //
+  // Derived from the release plan, not guessed: in-tree app-sdk `0.56.0`; this
+  // branch's changeset bumps app-sdk `minor`; `pnpm exec changeset status
+  // --verbose` prints `@civitai/app-sdk 0.57.0`. 🔴 The registry's own newest
+  // version is deliberately NOT part of this derivation — `changeset status`
+  // reads the TREE — and an earlier revision cited it anyway ("which is also
+  // `npm view @civitai/app-sdk version`"), which went false when 0.56.1
+  // published 2026-10-03T23:43:58Z, ~71 min before this branch's head commit.
+  // Re-run after that publish, the printed answer was unchanged: 0.57.0.
+  //
+  // MEASURED — the half that CAN be measured: the symbol is absent from every
+  // published version, so the run cannot start lower. `npm pack` of each
+  // tarball, untarred, `grep -rl <symbol> package/dist`. Per-row read dates,
+  // because only the first was probed on 2026-10-04:
+  //
+  //   0.56.1 (top of the line on that date)  2026-10-04  0 files
+  //   0.56.0                                 2026-10-03  0 files
+  //   0.55.0 (the old floor)                 2026-10-03  0 files
+  //
+  // 🔴 The stronger claim — that NO published version can contain it — does
+  // not rest on those three rows, which are a sample. It rests on the git
+  // history: `src/blocks/nestedDocument.ts` is ADDED by this branch, so no
+  // version published before that commit can carry the symbol. The tarball
+  // rows cross-check that reasoning.
+  //
+  // Controls, run before each zero was believed:
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on every tarball
+  //     probed — the probe can see this surface at all, so a 0 is a real
+  //     absence rather than a probe wired to nothing.
+  //   - NEGATIVE: an impossible symbol (`__NOPE_7f3a__`) read ABSENT (0 files)
+  //     on every tarball probed — the probe can answer "no", so PRESENT is not
+  //     its only answer.
+  //
+  // `injectBaseHref` and `NestedDocumentError` ship in the same module and are
+  // deliberately NOT ledgered: `blocks-react/src` does not value-import them
+  // (only the app-sdk's own tests and documentation do), and the `DERIVED
+  // FLOOR` test below rejects an entry for a symbol this package does not
+  // import. Both read 0 files on the same tarballs. `injectBaseHref` is
+  // additionally not exported from `./blocks` at all — module-internal, so no
+  // consumer can import it and it could never be a peer symbol.
+  //
+  // 🔴 RE-MEASURE AND RETIRE after the release publishes: empty
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read this entry off the real
+  // 0.57.0 tarball with the newest version published BELOW it as the ABSENT
+  // control (0.56.1 on 2026-10-04 — read the registry rather than trusting
+  // that), and record both here.
+  fetchNestedDocument: '0.57.0',
 };
 
 /**
@@ -234,6 +366,105 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // This list stays EMPTY unless a branch again ledgers a symbol against a version
 // it is itself about to publish; see the docblock above for what declaring one
 // buys you.
+//
+// RE-POPULATED 2026-10-02 — the second real occasion. The idempotency-key format
+// rule is vendored into `@civitai/app-sdk/blocks` (new module
+// `src/blocks/idempotency.ts`) and value-imported by `blocks-react`'s transport,
+// so these three first exist in the app-sdk release THIS branch publishes. The
+// measurement that they are absent from every PUBLISHED version — including
+// 0.54.0, the newest — plus its positive and negative controls, is recorded at
+// the entries themselves in `PEER_VALUE_SYMBOL_SINCE`.
+//
+// `isValidBlockIdempotencyKey` is deliberately NOT listed: it ships in the same
+// module, but `blocks-react/src` does not value-import it (only tests do, and
+// those resolve the workspace copy), and the `DERIVED FLOOR` test below rejects
+// a ledger entry for a symbol the package does not import.
+//
+// RETIRED 2026-10-02 on the Version Packages PR (#515) that releases app-sdk
+// 0.55.0 — which is what `PREDICTION HAS COME TRUE` fires on, and it did, on its
+// SECOND real occasion. Retired per that assertion's own steps 1 and 2: the list
+// is emptied and THE FLOOR IS LEFT WHERE IT IS (`>=0.49.0`). The three
+// `BLOCK_IDEMPOTENCY_KEY_*` / `blockIdempotencyKeyRejection` entries in
+// `PEER_VALUE_SYMBOL_SINCE` stay at `0.55.0`: that release genuinely exports
+// them, so raising either the entries or the floor would exclude a good release
+// — the #309/#317/#344 family with the sign flipped, which this file exists to
+// police.
+//
+// CONVERSION COMPLETE 2026-10-02: #515 merged (`70ec100`), the release job
+// published app-sdk 0.55.0 — resolvable (`npm install --dry-run` rc=0, no
+// ETARGET), `_npmUser = GitHub Actions <npm-oidc-no-reply@github.com>`,
+// `dist.attestations` present — and all three entries were then re-read off
+// THAT tarball (`npm pack @civitai/app-sdk@0.55.0`), not off the workspace copy:
+//
+//   BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH   PRESENT, 4 files
+//   BLOCK_IDEMPOTENCY_KEY_REGEX        PRESENT, 4 files
+//   blockIdempotencyKeyRejection       PRESENT, 4 files
+//
+// NEGATIVE CONTROL — the same probe over the 0.54.0 tarball answers ABSENT (0
+// files) for both greppable entries, which is what makes the PRESENT readings
+// above mean something rather than being a grep that matches anything.
+// POSITIVE CONTROL for that control — `BLOCK_SCOPES` is PRESENT in 0.54.0 (7
+// files), so the ABSENT pair is a real absence and not an extraction that
+// silently read nothing out of that tarball.
+//
+// The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` is left at `0.55.0`
+// and the floor is left untouched — the assertion's step 4 ("leave it alone if
+// the measurement agrees"). These three are no longer exempt from the
+// measurement rule, and nothing here is owed.
+//
+// ⚠ CORRECTION — this note said "the floor stays `>=0.49.0`" and that was FALSE.
+// The declared floor is `>=0.55.0 <1.0.0`, raised by #517 in the same change that
+// added the value-imports, and the published 0.63.0 carries exactly that. The
+// wrong number was copied from the 2026-09-21 note ~50 lines above, which says
+// `>=0.49.0` correctly about ITS OWN conversion — a different release. Measured,
+// not reasoned: `npm view @civitai/blocks-react@0.63.0 peerDependencies`. The
+// lesson is the one this file keeps relearning: a number lifted from an adjacent
+// comment is not a measurement, and a floor is the single value every consumer's
+// install resolves against, so a wrong one here reads as authoritative. Had it
+// been believed in the direction it pointed — floor 0.49.0 against imports that
+// first exist in 0.55.0 — it describes precisely the satisfied-but-wrong peer
+// range this whole file exists to prevent (#309/#317/#344).
+//
+// This list stays EMPTY unless a branch again ledgers a symbol against a version
+// it is itself about to publish; see the docblock above for what declaring one
+// buys you.
+//
+// RE-POPULATED 2026-10-03 — the THIRD real occasion. `fetchNestedDocument`, the
+// `srcdoc` nested-document helper (#532), is a new `@civitai/app-sdk/blocks`
+// module (`src/blocks/nestedDocument.ts`) value-imported by `blocks-react`'s
+// `src/hooks/useNestedDocument.ts`, so it first exists in the app-sdk release
+// THIS branch publishes (0.57.0 — `changeset status --verbose`). The
+// measurement that it is absent from every PUBLISHED version, including the
+// newest at the time of the reading (0.56.1 on 2026-10-04), plus its positive
+// and negative controls, is recorded at the entry itself in
+// `PEER_VALUE_SYMBOL_SINCE`.
+//
+// `injectBaseHref` and `NestedDocumentError` are deliberately NOT listed: they
+// ship in the same module, but `blocks-react/src` does not value-import them,
+// and the `DERIVED FLOOR` test rejects a ledger entry for a symbol the package
+// does not import. Same reasoning as `isValidBlockIdempotencyKey` above —
+// and `injectBaseHref` is not even exported from `./blocks` (module-internal).
+//
+// RETIRED 2026-10-06 on the Version Packages PR (#535) that releases app-sdk
+// 0.57.0 — the THIRD time `PREDICTION HAS COME TRUE` fired. Retired per that
+// assertion's steps 1 and 2: the list is emptied and THE FLOOR IS LEFT WHERE IT
+// IS (`>=0.57.0`). The `fetchNestedDocument` entry in `PEER_VALUE_SYMBOL_SINCE`
+// stays at `0.57.0`.
+//
+// CONVERSION COMPLETE 2026-10-06: #535 merged (`5168275`), the release job
+// (run 37416428817) published app-sdk 0.57.0 — `_npmUser = GitHub Actions`,
+// `dist.attestations` present — and the entry was re-read off THAT tarball
+// (`npm pack @civitai/app-sdk@0.57.0`, `grep -rl <symbol> package/dist`):
+//
+//   fetchNestedDocument   0.57.0: PRESENT, 4 files    0.56.1: ABSENT, 0 files
+//
+// POSITIVE CONTROL — `BLOCK_SCOPES` is PRESENT in both tarballs (7 files each),
+// so the 0.56.1 ABSENT is a real absence, not an extraction that read nothing.
+// NEGATIVE CONTROL — `__NOPE_7f3a__` is ABSENT from both (0 files).
+//
+// The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` stays at `0.57.0`
+// and the floor stays at `>=0.57.0` — step 4, "leave it alone if the
+// measurement agrees". Nothing here is owed.
 const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
@@ -872,7 +1103,7 @@ test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports ev
   // add nothing this package imports. It went red on Version Packages #354 —
   // floor `>=0.47.0`, in-tree `0.48.0` after `changeset version`, nothing new
   // imported, nothing actually wrong — in all five legs of the required
-  // `Starter` matrix. A required gate that reds on every release is worse than
+  // `starters` job. A required gate that reds on every release is worse than
   // no gate: it teaches everyone to click through the one signal that matters.
   //
   // The rule below is version-agnostic by construction: it moves only when the

@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { UTILITIES, type Utility } from '../src/utilities.spec.js';
 import { injectTokens } from '@civitai/theme';
-import { utilitiesCss } from '../src/utilities.generated.js';
+import utilitiesCss from '../dist/utilities.css?raw';
 // The shipped shim, not a reconstruction: this is the file consumers get.
 import compatCss from '../dist/bootstrap-compat.css?raw';
 

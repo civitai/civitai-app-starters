@@ -3,8 +3,10 @@
  * typecheck-readme-snippets.mjs
  * -----------------------------
  * Extracts ```ts / ```tsx fenced code blocks from the published packages'
- * READMEs (and the root docs guide) and runs `tsc --noEmit` against each one,
- * with the SDK packages' built `.d.ts` resolved via tsconfig `paths`. This
+ * READMEs (and the root docs guide) and typechecks each one as its own
+ * `noEmit` TypeScript program (in-process, through the compiler API — see
+ * `compileSnippet`), with the SDK packages' built `.d.ts` resolved via tsconfig
+ * `paths`. This
  * keeps the README examples from rotting: if a documented import disappears or
  * a call signature changes, this fails in CI.
  *
@@ -77,7 +79,6 @@
  *     pnpm --filter @civitai/blocks-react build
  */
 
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -152,6 +153,116 @@ const ENTRYPOINTS = [
 ];
 
 /**
+ * The TypeScript this gate compiles with — the SAME install the `tsc` binary it
+ * used to spawn came from (`packages/civitai-app-sdk/node_modules`), loaded as
+ * a library instead.
+ *
+ * 🔴 NO COMPILER IS AN ERROR, NOT A DEGRADED RUN. This used to fall back twice:
+ * the export map to "no auto-import", and the compile step to whatever `tsc`
+ * was on `PATH`. The second fallback had no floor under it — a `tsc` that could
+ * not be spawned produced no output, no output contains no `error TS…` line,
+ * and a snippet with no hard-error line PASSES. Measured on the spawning gate
+ * with its `tsc` path pointed at nothing: `const n: number = "…"` scored
+ * `1 found · 1 passed · 0 failed`, exit 0. A gate that cannot compile now says
+ * so and exits 2.
+ */
+function loadTypeScript() {
+  for (const from of [join(SDK_PKG, 'package.json'), join(repoRoot, 'package.json')]) {
+    try {
+      return createRequire(from)('typescript');
+    } catch {
+      // try the next location
+    }
+  }
+  console.error(
+    'ERROR: cannot load `typescript` from packages/civitai-app-sdk or the repo root.\n' +
+      '  pnpm install --frozen-lockfile',
+  );
+  process.exit(2);
+}
+const ts = loadTypeScript();
+
+// Snippet temp dirs live INSIDE the blocks-react package so Node-style module
+// resolution climbs into its node_modules — which already has `react`,
+// `react-dom`, `@types/react`, `@types/node`, and the symlinked
+// `@civitai/app-sdk` (+ its `/schemas/*` subpath via the exports map). The only
+// import that can't resolve that way is the blocks-react SELF import (a package
+// has no self-symlink), so we map just that via tsconfig `paths`.
+const BLOCKS_PKG = join(repoRoot, 'packages/civitai-blocks-react');
+const TMP_PARENT = join(BLOCKS_PKG, '.readme-snippets-tmp');
+
+/**
+ * 🔴 ONE PROGRAM PER SNIPPET, IN THIS PROCESS — NOT ONE PROGRAM FOR ALL OF THEM.
+ *
+ * This gate used to spawn `tsc -p` once per snippet per pass: 159 processes for
+ * 91 snippets, each of which started node, loaded the compiler, and re-read and
+ * re-parsed the same few hundred declaration files (`lib.dom.d.ts`,
+ * `@types/react`, `@types/node`, the SDKs' own `dist`) to check a ten-line file.
+ * That start-up, not the checking, was the run.
+ *
+ * What is shared now is ONLY what cannot differ between two snippets: the bytes
+ * and the parse of a file on disk OUTSIDE the scratch dir. What is NOT shared is
+ * the `Program`. Every snippet, on every pass, still gets its own — rooted at
+ * its own `snippet.ts(x)`, configured by its own `tsconfig.json` on disk, seeing
+ * its own imports and nothing else — exactly the unit `tsc -p <dir>` compiled.
+ *
+ * Putting all the snippets in ONE program was the faster design and was not
+ * taken, because the isolation is load-bearing rather than incidental:
+ *   - a snippet may `declare global { … }` or `declare module '…' { … }`. In a
+ *     shared program that augmentation is visible to every other snippet, so a
+ *     snippet that only compiles BECAUSE of a neighbour's declaration passes;
+ *   - `jsx` is a per-snippet compiler option (`tsx` fences only), and one
+ *     program has one option set;
+ *   - a syntax error anywhere suppresses SEMANTIC diagnostics everywhere (see
+ *     `compileSnippet`), so one malformed snippet would hide type errors in the
+ *     other ninety.
+ *
+ * The parse cache is keyed by `bucket` as well as by path because a
+ * `SourceFile` is parsed FOR a set of options (`target`, module detection):
+ * `ts` fences, `tsx` fences and the export-map programs each get their own
+ * parse of a shared file. The file-system answers are option-independent and
+ * shared outright.
+ *
+ * ⚠ THE `ts`/`tsx` SPLIT IS NOT LOAD-BEARING TODAY, AND THAT WAS MEASURED.
+ * Collapsing both into one bucket left the old-vs-new parity corpus byte-
+ * identical (23/23) and the self-test green: the two `makeTsconfig` variants
+ * differ only in `jsx`, which does not change how a `.d.ts` or an on-disk `.ts`
+ * file parses, and the snippet files themselves are never cached. It is kept so
+ * that a future per-fence option that DOES affect parsing cannot silently
+ * reuse a parse made for the other kind; it is not evidence of a known case.
+ *
+ * 🔴 Nothing under `TMP_PARENT` is ever cached. The retry loop in `checkBlock`
+ * REWRITES `snippet.ts(x)` in place between passes; a cached read of it would
+ * hand pass 2 the source of pass 1.
+ */
+const fsCache = { fileExists: new Map(), directoryExists: new Map(), readFile: new Map(), realpath: new Map(), getDirectories: new Map() };
+const sourceFileCache = new Map();
+const cacheable = (path) => !path.startsWith(TMP_PARENT);
+
+function memo(map, key, path, compute) {
+  if (!cacheable(path)) return compute();
+  if (!map.has(key)) map.set(key, compute());
+  return map.get(key);
+}
+
+/** A compiler host that reads through the caches above. `cwd` is the
+ *  directory the spawned `tsc` used to run in (`cwd: dir`), and is what
+ *  diagnostics' paths are made relative to. */
+function cachingHost(options, bucket, cwd) {
+  const host = ts.createCompilerHost(options);
+  const disk = { ...host };
+  if (cwd) host.getCurrentDirectory = () => cwd;
+  for (const fn of ['fileExists', 'directoryExists', 'readFile', 'realpath', 'getDirectories']) {
+    host[fn] = (path) => memo(fsCache[fn], path, path, () => disk[fn](path));
+  }
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) =>
+    memo(sourceFileCache, `${bucket}\0${fileName}`, fileName, () =>
+      disk.getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile),
+    );
+  return host;
+}
+
+/**
  * Build TWO `identifier -> import-module` maps across the published
  * entrypoints, using the TypeScript compiler API (resolves nested
  * `export * from` re-exports that a regex can't):
@@ -178,15 +289,6 @@ const ENTRYPOINTS = [
 function buildExportMap() {
   const map = new Map();
   const typeMap = new Map();
-  let ts;
-  try {
-    const req = createRequire(join(SDK_PKG, 'package.json'));
-    ts = req('typescript');
-  } catch {
-    // No local typescript — fall back to no auto-import (snippets still get the
-    // `any`-shim path, so the runner degrades gracefully rather than crashing).
-    return { values: map, types: typeMap };
-  }
   const opts = {
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     module: ts.ModuleKind.ESNext,
@@ -197,7 +299,13 @@ function buildExportMap() {
   };
   for (const { module, dts } of ENTRYPOINTS) {
     if (!existsSync(dts)) continue;
-    const prog = ts.createProgram([dts], opts);
+    // Still one program per entrypoint; only the parse of what they share
+    // (the default lib, each other's re-exported chunks) is reused.
+    const prog = ts.createProgram({
+      rootNames: [dts],
+      options: opts,
+      host: cachingHost(opts, 'exports'),
+    });
     const checker = prog.getTypeChecker();
     const sf = prog.getSourceFile(dts);
     const sym = sf && checker.getSymbolAtLocation(sf);
@@ -243,15 +351,6 @@ function buildExportMap() {
   return { values: map, types: typeMap };
 }
 
-// Snippet temp dirs live INSIDE the blocks-react package so Node-style module
-// resolution climbs into its node_modules — which already has `react`,
-// `react-dom`, `@types/react`, `@types/node`, and the symlinked
-// `@civitai/app-sdk` (+ its `/schemas/*` subpath via the exports map). The only
-// import that can't resolve that way is the blocks-react SELF import (a package
-// has no self-symlink), so we map just that via tsconfig `paths`.
-const BLOCKS_PKG = join(repoRoot, 'packages/civitai-blocks-react');
-const TMP_PARENT = join(BLOCKS_PKG, '.readme-snippets-tmp');
-
 // Docs whose ts/tsx fences we typecheck. Add to this list to cover more docs.
 const DEFAULT_DOCS = [
   'packages/civitai-app-sdk/README.md',
@@ -270,7 +369,7 @@ const DEFAULT_DOCS = [
  * controls must run the gate over a DELIBERATELY BROKEN doc. Without the
  * override the only way to do that was to mutate a tracked doc in place and
  * restore it in a `finally` — and `finally` does not run on SIGINT, so Ctrl-C
- * during the (multi-minute) self-test left `packages/civitai-blocks-react/
+ * during the (then multi-minute) self-test left `packages/civitai-blocks-react/
  * README.md` modified with a bogus identifier and the script's own
  * "could not restore" guard never printed. Measured, not assumed: `kill -INT`
  * mid-run left 3 occurrences of the bogus name in the tracked file.
@@ -430,26 +529,70 @@ function makeTsconfig(dir, isTsx) {
   writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify(cfg, null, 2));
 }
 
-/** Resolve the workspace's local tsc binary. */
-function tscBin() {
-  const bin = join(repoRoot, 'packages/civitai-app-sdk/node_modules/.bin/tsc');
-  if (existsSync(bin)) return bin;
-  const root = join(repoRoot, 'node_modules/.bin/tsc');
-  if (existsSync(root)) return root;
-  return 'tsc';
-}
+/**
+ * Compile the project in `dir` and return what `tsc -p <dir>/tsconfig.json`
+ * returned: `ok` for exit 0, `out` for everything it printed.
+ *
+ * 🔴 `out` IS A FORMAT OTHER CODE PARSES, AND IT IS REPRODUCED, NOT REDESIGNED.
+ * `collectMissingNames` and `hardErrorLines` below read `error TS1234: …` lines
+ * out of it, and a failing snippet's `out` is printed verbatim under
+ * `--- failures ---`. So this is `tsc`'s own sequence, taken from the compiler's
+ * `emitFilesAndReportErrors`, in its own order:
+ *
+ *   config-file diagnostics, then SYNTACTIC ones;
+ *   only if there were no syntactic ones — options, then global diagnostics;
+ *   only if there are STILL none — semantic diagnostics;
+ *   then `emit()` (a no-op under `noEmit`, kept so an emit-time option error
+ *   would still surface), sort + de-duplicate, and print with paths relative to
+ *   the snippet's own directory, as the spawned `tsc` printed them.
+ *
+ * The two "only if" gates are not an optimisation to tidy away: they are why a
+ * snippet with a syntax error reports ONLY that, and the retry loop's notion of
+ * "no new free names" depends on it.
+ *
+ * A compiler exception is deliberately NOT caught: it crashes the run. In the
+ * spawning gate a crashed `tsc` arrived as a failed spawn whose output was only
+ * scanned for `error TS…` lines, so a crash with none was scored as a PASS
+ * (the unspawnable-`tsc` measurement above is that path).
+ */
+function compileSnippet(dir, bucket) {
+  const configPath = join(dir, 'tsconfig.json');
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    configPath,
+    {},
+    {
+      ...ts.sys,
+      getCurrentDirectory: () => dir,
+      onUnRecoverableConfigFileDiagnostic: (d) => {
+        throw new Error(ts.flattenDiagnosticMessageText(d.messageText, '\n'));
+      },
+    },
+  );
+  const program = ts.createProgram({
+    rootNames: parsed.fileNames,
+    options: parsed.options,
+    projectReferences: parsed.projectReferences,
+    host: cachingHost(parsed.options, bucket, dir),
+    configFileParsingDiagnostics: ts.getConfigFileParsingDiagnostics(parsed),
+  });
 
-function runTsc(dir) {
-  try {
-    execFileSync(tscBin(), ['-p', join(dir, 'tsconfig.json')], {
-      cwd: dir,
-      stdio: 'pipe',
-      encoding: 'utf8',
-    });
-    return { ok: true, out: '' };
-  } catch (err) {
-    return { ok: false, out: (err.stdout ?? '') + (err.stderr ?? '') };
+  const all = program.getConfigFileParsingDiagnostics().slice();
+  const configCount = all.length;
+  all.push(...program.getSyntacticDiagnostics());
+  if (all.length === configCount) {
+    all.push(...program.getOptionsDiagnostics());
+    all.push(...program.getGlobalDiagnostics());
+    if (all.length === configCount) all.push(...program.getSemanticDiagnostics());
   }
+  all.push(...program.emit().diagnostics);
+
+  const diagnostics = ts.sortAndDeduplicateDiagnostics(all);
+  const out = ts.formatDiagnostics(diagnostics, {
+    getCurrentDirectory: () => dir,
+    getCanonicalFileName: (f) => (ts.sys.useCaseSensitiveFileNames ? f : f.toLowerCase()),
+    getNewLine: () => ts.sys.newLine,
+  });
+  return { ok: diagnostics.length === 0, out };
 }
 
 /**
@@ -556,7 +699,7 @@ function checkBlock(block, exportMap) {
         .join('\n');
       const src = buildSource({ imports, body }, { autoImports, declares });
       writeFileSync(join(dir, fileName), src);
-      const { ok, out } = runTsc(dir);
+      const { ok, out } = compileSnippet(dir, block.lang);
       if (ok) return { ok: true };
       lastOut = out;
       const missing = collectMissingNames(out);

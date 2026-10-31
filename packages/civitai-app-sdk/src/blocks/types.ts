@@ -279,8 +279,40 @@ export type BlockImageScanResult =
  *    UNSCANNED — the orchestrator scans it at generation time — so the host
  *    returns ONLY the source shape ({@link BlockGenerationSourceImageInfo}); no
  *    `imageId`/`nsfwLevel`/`contentRating` crosses back into the block.
+ *  - `'trainingData'`: PRIVATE training images for a `kind: 'training'` run
+ *    (civitai/civitai#6461). The viewer picks up to
+ *    {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} PNG, JPEG or WebP files in a host
+ *    modal; each is uploaded as a consumer blob, as Civitai's own training form
+ *    does. ONE reply carries every image that uploaded
+ *    ({@link BlockTrainingDataUploadResult}), and the host remembers each key it
+ *    uploaded for this block — `RUN_TRAINING` refuses a quote naming any other.
+ *    Page apps only. A host that predates the purpose normalises it to
+ *    `'display'` and answers with ONE moderated image instead.
  */
-export type BlockUploadPurpose = 'display' | 'generationSource';
+export type BlockUploadPurpose = 'display' | 'generationSource' | 'trainingData';
+
+/**
+ * Which SPACE a `NAVIGATE` path is resolved in. Mirrors the host's
+ * `NavigateScope` in civitai/civitai's `pageBlockHostLogic.ts`. Keep in lockstep.
+ *
+ *  - `'app'` (DEFAULT): the path is resolved under the block's OWN route
+ *    (`<base>/<slug>/<path>`) and pushed shallowly, so the page stays mounted.
+ *  - `'site'`: the path is resolved at the SITE root, non-shallow, and the viewer
+ *    leaves the app. Granted per-surface — the host refuses it outright on a
+ *    surface that does not hold the capability — and `/api/*` is refused in this
+ *    scope regardless.
+ *
+ * 🔴 ABSENT IS `'app'`, and the host compares against the literal `'site'` rather
+ * than validating against this union, so an UNKNOWN value fails CLOSED onto
+ * `'app'` too. That is what makes the field additive: a block built against an
+ * SDK that predates `scope` sends nothing and keeps the behaviour it always had.
+ *
+ * 🔴 A LEADING SLASH CARRIES NO MEANING. `scope` selects the space and `path` is a
+ * path WITHIN it, so the host normalises leading slashes away:
+ * `{ scope: 'app', path: '/settings' }` and `{ scope: 'app', path: 'settings' }`
+ * are one request. Do not reintroduce punctuation semantics.
+ */
+export type BlockNavigateScope = 'app' | 'site';
 
 /**
  * The source-image result the host returns from `OPEN_IMAGE_UPLOAD` when the
@@ -298,6 +330,159 @@ export type BlockUploadPurpose = 'display' | 'generationSource';
  * lockstep.
  */
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
+
+/**
+ * One image an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded — an
+ * element of {@link BlockTrainingDataUploadResult.images}. Mirrors the host's
+ * `TrainingDataUpload` in civitai/civitai's
+ * `src/components/AppBlocks/trainingDataUpload.ts` (civitai/civitai#6461).
+ *
+ * The image is PRIVATE training data: it is not published, scanned or given an
+ * `Image` row, so there is no `imageId`.
+ */
+export interface BlockTrainingDataImage {
+  /** The uploaded blob's url. Show it as the thumbnail; it is also accepted as an item's `air`. */
+  url: string;
+  /**
+   * The consumer-blob key — pass it as {@link BlockTrainingDatasetItem.air}.
+   * Opaque. The host compares keys case-insensitively.
+   */
+  air: string;
+}
+
+/**
+ * `IMAGE_UPLOAD_RESULT.selected` for `purpose: 'trainingData'`: every image that
+ * uploaded, in one reply. The viewer may finish with fewer than they picked when
+ * some failed to upload; a cancel is a reply with NO `selected`.
+ */
+export interface BlockTrainingDataUploadResult {
+  images: BlockTrainingDataImage[];
+}
+
+/**
+ * Which of the viewer's own image libraries `OPEN_IMAGE_PICKER` (via
+ * `useImagePicker`) offers:
+ *  - `'posted'` — images the viewer has posted to Civitai.
+ *  - `'generated'` — outputs the viewer made with the Civitai generator.
+ *
+ * The request's `sources` narrows the picker to one of them; omitting it offers
+ * both. Images only — neither library offers video through this picker.
+ *
+ * The request's `publicOnly: true` further narrows `'posted'` to images whose
+ * post is published and not `Private` (for a public-facing pick such as an App
+ * Store sub-listing card image); it does not change `'generated'`. A host that
+ * predates `publicOnly` ignores it.
+ */
+export type BlockImagePickerSource = 'posted' | 'generated';
+
+/**
+ * One image the viewer picked from their own Civitai images
+ * (`IMAGE_PICKER_RESULT.selected` / `.selectedImages`, via `useImagePicker`).
+ * The host lists and filters the library in its own chrome; the block receives
+ * only what the viewer picked.
+ *
+ * WHAT IS PICKABLE is decided by the host, never by the block:
+ *  - `'posted'`: the viewer's own images that are in a published post, fully
+ *    scanned, not flagged, and rated. A `Private` post counts as published
+ *    here unless the request set `publicOnly: true`, which leaves those out.
+ *  - `'generated'`: the viewer's own succeeded generator outputs that carry a
+ *    rating the host recognises.
+ *  - Either way the image's rating has to be one the VIEWER'S OWN browsing
+ *    level on the site allows: the viewer is offered what they can already
+ *    browse. An unrated image is never pickable.
+ *
+ * 🔴 A PICK CAN BE A MATURE IMAGE. `nsfwLevel` is the image's rating and is
+ * never 0. The pick was offered to this viewer under this viewer's settings;
+ * nothing about it says anyone else may see it. An app that shows a pick to
+ * anybody other than the viewer who picked it has to gate that on `nsfwLevel`
+ * itself.
+ *
+ * WHAT `url`, `width` AND `height` ARE differs by library:
+ *  - `'posted'`: `url` is a RESIZED RENDITION of the image, not the original
+ *    file. `width` / `height` are the size that rendition is requested at, and
+ *    the host picks one with both sides within 64–2048 (a small original is
+ *    upscaled). The image CDN normally serves exactly that size; it can serve
+ *    the original instead while a rendition is still being produced. A posted
+ *    image with no rendition in that range (an extreme aspect ratio) is not
+ *    pickable.
+ *  - `'generated'`: `url` is the generator's own output URL, and `width` /
+ *    `height` are the output's own size, which can exceed 2048. 🔴 That URL
+ *    may be time-limited: use it promptly and do not store it.
+ *
+ * AS A GENERATION SOURCE: `url` is Civitai-hosted, so `{ url, width, height }`
+ * has the shape of a {@link BlockSourceImage} and passes the generation body's
+ * source-image URL check. That is all this type promises. The generation body
+ * still applies its own rules, including 64–2048 per side, which a generated
+ * pick can exceed.
+ */
+export interface BlockPickedImageInfo {
+  /** Which library the viewer picked it from. */
+  source: BlockImagePickerSource;
+  /** Civitai-hosted image URL. What it points at differs by `source`; see above. */
+  url: string;
+  /** Pixel width that goes with `url`; see above for each `source`. */
+  width: number;
+  /** Pixel height that goes with `url`; see above for each `source`. */
+  height: number;
+  /**
+   * The image's NSFW-level bitmask value (same scale as
+   * {@link BlockUploadedImageInfo.nsfwLevel}). Can be a mature level; never 0.
+   */
+  nsfwLevel: number;
+  /**
+   * The `Image` row id. Present for `source: 'posted'`; ABSENT for
+   * `source: 'generated'` (a generator output that was never posted has no
+   * `Image` row).
+   */
+  imageId?: number;
+}
+
+/**
+ * What kind of media `OPEN_MEDIA_UPLOAD` (via `useMediaUpload`) uploads. The
+ * host decides the file's real type from its MAGIC BYTES, never from a declared
+ * MIME type, and accepts per kind:
+ *  - `'image'`: PNG, JPEG or WebP;
+ *  - `'video'`: MP4 or WebM;
+ *  - `'audio'`: MP3, WAV or WebM.
+ */
+export type BlockMediaKind = 'image' | 'video' | 'audio';
+
+/**
+ * One media file the host uploaded for the block as a GENERATION INPUT
+ * (`MEDIA_UPLOAD_RESULT.selected`, via `useMediaUpload`).
+ *
+ * `url` is a PRIVATE generation-input URL: pass it into a workflow step input
+ * (an image, video or audio input). It is not a public Civitai image and has no
+ * `imageId`. The host refuses data URIs and inline
+ * base64 in step inputs, so this is how a block gets media it holds (a picked
+ * file, a canvas, a recording) into a step.
+ *
+ * Per kind:
+ *  - `'image'`: the host RESIZES the picture so both sides are within 64–2048
+ *    pixels and RE-ENCODES it as JPEG. `mimeType` is always `'image/jpeg'`,
+ *    and `sizeBytes`, `width` and `height` describe that JPEG.
+ *  - `'video'`: uploaded as sent. `width` / `height` are always set (the host
+ *    refuses a file with no video track); `durationMs` is set when the browser
+ *    reports a finite duration.
+ *  - `'audio'`: uploaded as sent. No `width` / `height`; `durationMs` as for
+ *    video. A `MediaRecorder` WebM can report no duration, so do not rely on it.
+ */
+export interface BlockMediaUploadInfo {
+  /** The private generation-input URL. Pass it into a step input. */
+  url: string;
+  /** The kind that was requested. */
+  kind: BlockMediaKind;
+  /** The type actually uploaded. Always `'image/jpeg'` for `'image'`. */
+  mimeType: string;
+  /** Bytes actually uploaded (for `'image'`, the re-encoded JPEG's size). */
+  sizeBytes: number;
+  /** Pixel width. Always set for `'image'` and `'video'`; absent for `'audio'`. */
+  width?: number;
+  /** Pixel height. Always set for `'image'` and `'video'`; absent for `'audio'`. */
+  height?: number;
+  /** Duration in milliseconds, for `'video'` / `'audio'` when known. Never set for `'image'`. */
+  durationMs?: number;
+}
 
 /**
  * One of the model version's curated preview images, with the standard
@@ -583,14 +768,17 @@ export interface ViewerInfo {
    */
   signedIn?: true;
   /**
-   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
-   * for the viewer id — it is scope-gated and audited per call. Still sent;
-   * scheduled for removal once block adoption of `useViewer()` is measured.
+   * @deprecated Init-time identity disclosure. For the viewer id use
+   * `useViewer()` (`GET_VIEWER`) in React, or `app.site.get('blocks/me')` from
+   * `@civitai/sdk` anywhere else — both are scope-gated and audited per call.
+   * Still sent; scheduled for removal once block adoption of `useViewer()` is
+   * measured.
    */
   id: number;
   /**
-   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
-   * for the username. Still sent; scheduled for removal alongside `id`.
+   * @deprecated Init-time identity disclosure. For the username use
+   * `useViewer()` (`GET_VIEWER`) in React, or `app.site.get('blocks/me')` from
+   * `@civitai/sdk` anywhere else. Still sent; scheduled for removal alongside `id`.
    */
   username: string | null;
   /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */
@@ -903,6 +1091,25 @@ export type WorkflowBodyCustomComfyRecipe = {
 };
 
 /**
+ * The most nodes an inline `customComfy` graph may carry. Mirrors civitai's
+ * `INLINE_GRAPH_NODES_MAX` (`src/server/schema/blocks/workflow.schema.ts`); the
+ * host refuses a larger graph before any spend.
+ */
+export const BLOCK_INLINE_COMFY_MAX_NODES = 300;
+
+/**
+ * The largest an inline `customComfy` graph may be, as `JSON.stringify(workflow)
+ * .length`. Mirrors civitai's `INLINE_GRAPH_BYTES_MAX` (256 KiB, same file). The
+ * host counts UTF-16 code units (its `jsonLengthWithin` default), which equals
+ * bytes for an ASCII graph. Calling the REST routes
+ * `POST /api/v1/blocks/workflows/estimate` / `submit` directly with a block
+ * token also caps the WHOLE request body at 256 KiB, so on that path the real
+ * room for the graph is a little less than this. A page app using the hooks
+ * goes through the host bridge, which has no such 256 KiB request cap.
+ */
+export const BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES = 262144;
+
+/**
  * One node of a ComfyUI `/prompt` graph, as it travels on the wire.
  *
  * Mirrors the host's `inlineComfyNodeSchema`, which is `.strict()` with exactly
@@ -1204,17 +1411,33 @@ export type WorkflowBodyStep = {
  *  3. **No resource policy / `urn:air:` scan.** AIR resources are ALLOWED here.
  *     Spend, not entitlement, is the binding control.
  *  4. **No `billingMode` and no load-time price invariant.** {@link maxBuzz}
- *     replaces them, exactly as on {@link WorkflowBodyCustomComfyInline}.
+ *     and a per-request orchestrator `whatif` quote replace them — see
+ *     `maxBuzz` below for how the two combine.
  *
  * WHAT STILL BOUNDS IT, all server-side:
  *  - A **denylist** of platform-internal `$type`s (scanners, moderation
  *    classifiers, hashing/model-ingestion, web egress) is refused by the host
  *    router before any spend reservation or orchestrator call. It is a DENYLIST,
  *    not an allowlist: a `$type` the host has never heard of is allowed through
- *    by construction, which is the point of this arm.
+ *    by construction, which is the point of this arm. `training` and
+ *    `imageResourceTraining` are deliberately NOT on it (a host operator
+ *    decision): both may be submitted here, on the same terms as every other
+ *    `$type`. If the orchestrator quotes the run, the host reserves the quote
+ *    (or `maxBuzz`, if larger), gated by the token's per-call budget, and
+ *    stamps no timeout; if it does
+ *    not, `maxBuzz` is both the reservation and the timeout — see `maxBuzz`
+ *    below. Whether a given training input is quoted, and at what price, is
+ *    the orchestrator's answer, not this package's: read it from `estimate`.
+ *    A host that supports it reports the trained epochs on
+ *    {@link BlockWorkflowSnapshot.trainedEpochs} without exposing the
+ *    checkpoint itself.
  *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
  *    (256 KB) serialized. Both REJECT; neither truncates.
- *  - `maxBuzz` is the single spend knob — see its own note below.
+ *  - **`repeat` is refused on this arm**, outright: a `repeat` may only
+ *    iterate an array in a body's own `arguments`, and this arm has none. Use
+ *    a `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) to repeat a step.
+ *  - `maxBuzz` is the app's spend knob, and the host's quote can raise the
+ *    reservation above it — see its own note below.
  *
  * @example A pass-through body for an orchestrator step the registry does not
  * carry. Note there is no `step` key.
@@ -1258,31 +1481,520 @@ export type WorkflowBodyPassThroughStep = {
    *
    * Consequently the orchestrator's per-`$type` schema is the ONLY authority for
    * what a given `$type` accepts; nothing in this package or on the host mirrors
-   * it. Bounded only by size: at most **262144 bytes** (256 KB) serialized, which
-   * is a payload-DoS bound and not a shape gate.
+   * it. Its shape is not checked; its size is: at most **262144 bytes** (256 KB)
+   * serialized, which is a payload-DoS bound and not a shape gate.
+   *
+   * 🔴 **No inline media.** The host refuses a `data:image|video|audio` URI or a
+   * long raw base64 string anywhere in here: upload the image, video or audio
+   * with `useMediaUpload()` (an image also works with
+   * `useImageUpload({ purpose: 'generationSource' })` or `useImagePicker()`)
+   * and pass the returned `url`.
    */
   input: Record<string, unknown>;
   /**
-   * The per-job Buzz ceiling. Required, an integer in **1…250**.
+   * The app's declared per-job Buzz amount: the least the host reserves, and —
+   * only when unquoted — the step timeout in seconds. NOT a spend ceiling (see
+   * below). Required, an integer in **1…250**.
    *
-   * 🔴 **IT IS ALSO THE STEP TIMEOUT, IN SECONDS** — identical mechanism to
-   * {@link WorkflowBodyCustomComfyInline.maxBuzz}. The host stamps
-   * `stepTimeoutSeconds = maxBuzz`; there is only one number, which is what makes
-   * the ceiling physically enforceable rather than merely asserted. So
-   * `maxBuzz: 10` does not buy a cheap job; it buys one that is KILLED after 10
-   * seconds and comes back `expired`. Size it to the wall-clock time the step
-   * actually needs.
+   * 🔴 **WHAT IT BOUNDS DEPENDS ON WHETHER THE HOST GOT A QUOTE** — this is NOT
+   * the mechanism of {@link WorkflowBodyCustomComfyInline.maxBuzz}, which is
+   * always the timeout. On both `estimate` and `submit` the host first asks the
+   * orchestrator for a `whatif` quote of this exact step, then:
+   *  - **Quoted** — the host reserves `max(maxBuzz, quote)` and stamps NO step
+   *    timeout. That reservation can exceed 250: it is gated against the token's
+   *    per-call budget (`token.buzzBudget` — the app's per-generation budget,
+   *    i.e. `page.buzzBudgetPerGen` for a page app: a platform default when
+   *    nothing declares one, and clamped to a platform cap on every mint), and
+   *    a submit whose reservation exceeds that budget comes back `failed` with
+   *    an `insufficient buzz budget` error before any Buzz is reserved. The
+   *    current default and cap are in the pinned limits table,
+   *    https://developer.civitai.com/apps/guide/text-to-image.md#limits-table.
+   *  - **Unquoted** (the orchestrator returned no price, or the quote could not
+   *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
+   *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10
+   *    seconds and comes back `expired`, so size it to the wall-clock time the
+   *    step actually needs. The same per-call budget gate applies. The timeout
+   *    bounds wall-clock time; it bounds spend only for a step billed by
+   *    compute time. A step priced per unit can bill ABOVE `maxBuzz`.
    *
-   * You are billed the REAL cost: post-paid against measured GPU seconds,
-   * refunding the unused remainder of the ceiling, so a generous `maxBuzz` costs
-   * nothing extra when the job finishes early. `estimate` on a pass-through body
-   * echoes this number back as `cost.total` — an upper bound, not a price;
-   * surface it as "up to N Buzz".
-   *
-   * The host additionally requires `maxBuzz <= token.buzzBudget` before submit.
+   * `estimate` on a pass-through body returns, as `cost.total`, the number the
+   * submit would reserve: `max(maxBuzz, quote)`, or `maxBuzz` when unquoted.
+   * It is a reservation, NOT a guaranteed ceiling: the terminal settle refunds
+   * any unused remainder, but nothing on this arm stops a job billing above
+   * the reservation (see the unquoted case above). Do not present it to the
+   * viewer as a maximum.
    */
   maxBuzz: number;
+  /**
+   * The viewer-confirmable quote this job is charged against —
+   * {@link BlockStepQuote.quoteId} from this body's own estimate
+   * (`sq_` + 32 lowercase hex characters, {@link BLOCK_STEP_QUOTE_ID_REGEX}).
+   *
+   * OMIT it everywhere except a CONFIRMED run: an estimate never carries it,
+   * and neither does an ordinary submit. It is REQUIRED on
+   * `RUN_CONFIRMED_STEP` (`useRunConfirmedStep()` in `@civitai/blocks-react`),
+   * the only message that can run a job priced above the token's per-call
+   * budget — see {@link BlockWorkflowSnapshot.stepQuote} for the flow.
+   *
+   * 🔴 A body carrying it is NOT runnable through `SUBMIT_WORKFLOW`. The server
+   * charges a confirmed job only against a quote the viewer confirmed in
+   * Civitai's own dialog from a signed-in session, so the same body sent as a
+   * plain submit is refused. Change nothing else in the body between the
+   * estimate and the run: the server checks it against the quoted one
+   * (`quoteId` itself is excluded from that comparison).
+   */
+  quoteId?: string;
 };
+
+// ============================================================
+// Confirmed steps (a pass-through job above the per-call budget)
+// ============================================================
+
+/**
+ * Ceiling on what ONE viewer-confirmed pass-through job may cost, in Buzz. Host
+ * constant `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`. A fixed price above it gets
+ * no {@link BlockWorkflowSnapshot.stepQuote} and cannot be run from an app.
+ */
+export const BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+
+/**
+ * The shape of a confirmed-step quote id ({@link BlockStepQuote.quoteId}): `sq_`
+ * followed by 32 lowercase hex characters. Host constant
+ * `BLOCK_STEP_QUOTE_ID_REGEX`. Disjoint from the training quote's `tq_` shape,
+ * so neither kind's id can name the other's quote.
+ */
+export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
+
+// ============================================================
+// App Blocks MULTI-STEP kind (`kind: 'workflow'`)
+// ============================================================
+
+/**
+ * The most steps one `kind: 'workflow'` body may carry. The host refuses a
+ * longer list with `errorCode: 'workflow_too_many_steps'`; an empty list is
+ * refused too.
+ */
+export const BLOCK_WORKFLOW_MAX_STEPS = 8;
+
+/**
+ * The most times one top-level `repeat` step of a `kind: 'workflow'` body may
+ * run its template, NESTED REPEATS MULTIPLIED (a 4-item repeat inside a 4-item
+ * repeat is 16). The host refuses more with
+ * `errorCode: 'workflow_repeat_unbounded'`.
+ */
+export const BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS = 16;
+
+/**
+ * A REFERENCE inside a `kind: 'workflow'` step's `input` — the orchestrator's
+ * own mechanism for feeding one step's result into a later step. Put it
+ * anywhere a value would go, at any depth.
+ *
+ * `$ref` names where the value comes from:
+ *  - `'$arguments'` — the body's own {@link WorkflowBodyWorkflow.arguments};
+ *  - the `name` of an EARLIER step in the same body;
+ *  - `'$<index>'` — an EARLIER step you did NOT name, by its zero-based
+ *    position (`'$0'` is the first step). A step that has a `name` is
+ *    referenced by that name only.
+ *
+ * An object counts as a reference only when it has BOTH `$ref` and `path` and
+ * no key other than `default` / `format`; anything else is ordinary input.
+ *
+ * `path` selects the value inside that source, e.g. `'output.images[0].url'`
+ * for a step, or `'prompt'` for `$arguments`. The orchestrator resolves it; the
+ * path is not checked by this package or by the host.
+ *
+ * 🔴 A reference may only point BACKWARDS. A step that names itself, a later
+ * step, or a step that does not exist is refused by the host with
+ * `errorCode: 'workflow_ref_invalid'` before anything is priced or reserved.
+ * A body may hold at most 64 references, in inputs nested at most 32 levels.
+ *
+ * `default` is the value used when the path resolves to nothing; `format` is a
+ * template applied to the resolved value. Both are passed to the orchestrator
+ * unmodified.
+ */
+export type WorkflowStepRef = {
+  $ref: '$arguments' | `$${number}` | (string & {});
+  path: string;
+  default?: unknown;
+  format?: string;
+};
+
+/**
+ * `T` with a {@link WorkflowStepRef} allowed in place of any value, at any
+ * depth. Use it to keep a step input typed while still wiring references in:
+ *
+ * ```ts
+ * type CutoutInput = { image: string; format?: 'png' | 'webp' };
+ * const input: WithWorkflowStepRefs<CutoutInput> = {
+ *   image: { $ref: 'draw', path: 'output.images[0].url' },
+ *   format: 'png',
+ * };
+ * ```
+ */
+export type WithWorkflowStepRefs<T> =
+  | WorkflowStepRef
+  | (T extends ReadonlyArray<infer U>
+      ? Array<WithWorkflowStepRefs<U>>
+      : T extends object
+        ? { [K in keyof T]: WithWorkflowStepRefs<T[K]> }
+        : T);
+
+/** One step of a {@link WorkflowBodyWorkflow}. */
+export type WorkflowBodyWorkflowStep = {
+  /**
+   * What later steps call this one in a {@link WorkflowStepRef}, and the `name`
+   * it reports under on {@link BlockWorkflowSnapshot.steps}. Optional: an
+   * unnamed step is named by its position (`'$0'`, `'$1'`, …).
+   *
+   * A lowercase letter followed by up to 31 of `a-z`, `0-9`, `_` or `-`
+   * (`/^[a-z][a-z0-9_-]{0,31}$/`), unique within the body, and not
+   * `'block-step'`, which is reserved. A name that breaks a rule is refused
+   * with `errorCode: 'workflow_ref_invalid'`.
+   */
+  name?: string;
+  /**
+   * The ORCHESTRATOR step type to run, verbatim — e.g. `'imageGen'`. Not
+   * resolved against any allowlist: it is refused only when it names a
+   * platform-internal type (scanners, moderation classifiers, hashing, web
+   * scrape/search, and the retired `textToImage` step type), with
+   * `errorCode: 'workflow_step_denied'`. 1…64 characters.
+   *
+   * Two step types are read by shape, because they name their sources outside
+   * a {@link WorkflowStepRef}:
+   *  - **`repeat` — over `arguments` only, at most
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} iterations.** Its input must
+   *    be exactly `{ for: { $ref, path, as }, template: { $type, name?, input? } }`
+   *    with `for.$ref === '$arguments'` and `path` naming an ARRAY in the body's
+   *    `arguments`; its length is the iteration count, nested repeats
+   *    multiplied. A repeat over another step's output, a missing or non-array
+   *    path, or too many iterations is refused with
+   *    `errorCode: 'workflow_repeat_unbounded'`; a wrong shape, or repeats nested
+   *    more than 4 deep, with `workflow_ref_invalid`. Inside the template the
+   *    `as` name is a source a reference may name; it may not equal a step name.
+   *    The template's `$type` is held to the denylist too.
+   *  - **`merge`** — every entry of `input.fields` needs a string `$ref` and a
+   *    `reduce`, and each `$ref` must name `$arguments` or an EARLIER step,
+   *    never a repeat variable. Each counts toward the 64-reference cap.
+   *    Otherwise `workflow_ref_invalid`.
+   */
+  $type: string;
+  /**
+   * The step's own input object. Any value in it, at any depth, may be a
+   * {@link WorkflowStepRef}. The orchestrator's per-`$type` schema is the only
+   * authority for what a given `$type` accepts. Every step's `input` plus the
+   * body's `arguments` may total at most 262144 bytes (256 KB) serialized.
+   */
+  input: Record<string, unknown>;
+  /**
+   * `true` marks an INTERMEDIATE step: its blobs are not surfaced, neither on
+   * its own {@link BlockWorkflowStepSnapshot.imageUrls} nor in the top-level
+   * {@link BlockWorkflowSnapshot.imageUrls}. The step still runs and is still
+   * charged.
+   */
+  suppressOutput?: boolean;
+};
+
+/**
+ * The `workflow` member of {@link WorkflowBody} — SEVERAL orchestrator steps
+ * submitted as ONE workflow, where a later step can consume an earlier step's
+ * result through a {@link WorkflowStepRef}. It travels through the same
+ * messages and hooks as every other kind (`estimate`, `submit`, `watch`,
+ * `cancel`, a batch-estimate cell, `useWorkflowBatch`).
+ *
+ * Between 1 and {@link BLOCK_WORKFLOW_MAX_STEPS} steps. There is no `maxBuzz`:
+ * the spend ceiling is the app's per-generation budget × the number of steps,
+ * enforced by the host. The host's schema is strict: an unknown key on the
+ * body or on a step is rejected, not dropped.
+ *
+ * 🔴 THREE THINGS ABOUT THE PRICE, all of them different from a single-step
+ * body:
+ *  1. **The estimate is NOT a maximum.** When a step's input references an
+ *     earlier step, the orchestrator re-prices that step once the referenced
+ *     values are known and charges the difference. Show the estimate as an
+ *     estimate; never as "you will pay at most".
+ *  2. **A workflow the host cannot price has no estimate, but its submit still
+ *     proceeds.** `estimate()` (and that body's cell in a batch estimate) FAILS
+ *     with no `cost` and `errorCode` `'workflow_quote_rejected'`,
+ *     `'workflow_quote_unavailable'` or `'workflow_quote_unpriced'` — see
+ *     {@link BlockWorkflowSnapshot.errorCode} for which of them a retry can
+ *     clear. `submit()` of the same body is NOT refused: it is reserved at the
+ *     ceiling above instead of at a quote. So a failed estimate does not predict
+ *     a refused submit. Two exceptions are refused on BOTH, before any
+ *     reservation: a workflow containing a training step, exactly as on the
+ *     single-step arm (a `training-quote-*` `errorCode`), and one with a
+ *     `repeat` step at any depth (`errorCode: 'workflow_repeat_unbounded'`).
+ *     Their `error` states the cause; only "none could be obtained; try again"
+ *     is one a retry of the same body can clear.
+ *     (An OLDER host returns the ceiling as the estimate's `cost.total` instead
+ *     of failing, so there a total equal to the ceiling may be unpriced.)
+ *  3. **One author fee per workflow**, not one per step, computed on the
+ *     QUOTED base. The estimate's `cost.authorFee` is that single fee, already
+ *     inside `cost.total`. If the workflow bills more than the quote, the fee
+ *     charged is held to the fee shown. A workflow that does not succeed has
+ *     its WHOLE fee reversed, even when earlier steps delivered output.
+ *
+ * The app's velocity limit counts one unit per step, and a `repeat` step one
+ * per iteration (nested repeats multiplied) instead of one.
+ *
+ * 🔴 A FAILED WORKFLOW CAN STILL HAVE COST AND IMAGES. Steps that succeeded
+ * before the failing one stay charged, so a `failed` snapshot can carry
+ * `cost.total > 0` and usable `imageUrls`. See {@link BlockWorkflowSnapshot.steps}.
+ *
+ * 🔴 REQUIRES A HOST THAT KNOWS THIS KIND. An older host refuses the body.
+ *
+ * @example An image step whose output a second step consumes.
+ * ```ts
+ * const body: WorkflowBody = {
+ *   kind: 'workflow',
+ *   arguments: { prompt: 'a lighthouse at dusk' },
+ *   steps: [
+ *     {
+ *       name: 'draw',
+ *       $type: 'imageGen',
+ *       input: {
+ *         engine: 'google',
+ *         model: 'nano-banana-2',
+ *         prompt: { $ref: '$arguments', path: 'prompt' },
+ *       },
+ *       suppressOutput: true,
+ *     },
+ *     {
+ *       name: 'cutout',
+ *       $type: 'imageBackgroundRemoval',
+ *       input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+ *     },
+ *   ],
+ * };
+ * ```
+ */
+export type WorkflowBodyWorkflow = {
+  kind: 'workflow';
+  /** The steps, in order. 1…{@link BLOCK_WORKFLOW_MAX_STEPS}. */
+  steps: WorkflowBodyWorkflowStep[];
+  /**
+   * Values the steps can read through `{ $ref: '$arguments', path }` — one
+   * place to put a prompt or a seed that several steps share.
+   */
+  arguments?: Record<string, unknown>;
+};
+
+// ============================================================
+// App Blocks TRAINING kind (`kind: 'training'`)
+// ============================================================
+//
+// 🔴 MIRRORED FROM THE HOST, NOT DESIGNED HERE. Every type in this section copies
+// civitai/civitai's zod as of civitai/civitai#6461 (head `05f1d1fa8f`):
+// `blockTrainingBodySchema` in `src/server/schema/blocks/workflow.schema.ts`,
+// `blockTrainingDatasetItemsSchema` in
+// `src/server/schema/blocks/training-dataset.schema.ts` for `items`, and
+// `aiToolkitTrainingParamsSchema` in `src/server/schema/orchestrator/training.schema.ts`
+// for `params`. The host's zod is the definition; this is the copy. A field the
+// host adds is invisible here until this file is updated, and the host rejects a
+// body that does not parse — so a mismatch shows up as a refused estimate, never
+// as a silently different run.
+
+/** Ceiling on what ONE confirmed `kind: 'training'` run may cost, in Buzz. Host constant `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`. */
+export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
+/**
+ * Max images in one training dataset ({@link WorkflowBodyTraining.items}), and in
+ * one `trainingData` upload. Host constant `BLOCK_TRAINING_DATASET_MAX_ITEMS`.
+ */
+export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
+/** Max characters of one dataset caption. Host constant `BLOCK_TRAINING_CAPTION_MAX_CHARS`. */
+export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 8192;
+/** Max sample prompts on a training body. Host constant `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`. */
+export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
+/** Max characters of one sample prompt. Host constant `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`. */
+export const BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS = 1000;
+/** Max characters of the trigger word. Host constant `BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS`. */
+export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
+/** Max characters of the base-model key. Host constant `BLOCK_TRAINING_MODEL_KEY_MAX_CHARS`. */
+export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
+
+/** `lrScheduler` values the host's ai-toolkit schema accepts. */
+export type AiToolkitLrScheduler =
+  | 'constant'
+  | 'constant_with_warmup'
+  | 'cosine'
+  | 'linear'
+  | 'step';
+
+/** `optimizerType` values the host's ai-toolkit schema accepts. */
+export type AiToolkitOptimizerType =
+  | 'adamw'
+  | 'adamw8bit'
+  | 'adam8bit'
+  | 'lion'
+  | 'lion8bit'
+  | 'adafactor'
+  | 'adagrad'
+  | 'prodigy'
+  | 'prodigy8bit'
+  | 'automagic';
+
+/** The fields every ai-toolkit ecosystem shares (`aiToolkitBaseParams` on the host). */
+export interface AiToolkitTrainingParamsBase {
+  engine: 'ai-toolkit';
+  /** Saved checkpoint count, integer 1…50. With `steps` absent it is also the length knob. */
+  epochs?: number;
+  /** Total training steps, integer ≥ 1 — the primary length (and price) knob. */
+  steps?: number;
+  /** Integer ≥ 1. Exactly `1` on the `qwen21` / `ming` / `yue2` ecosystems. */
+  batchSize?: number;
+  sampleCfgScale?: number;
+  sampleStrength?: number;
+  continueFrom?: string;
+  resolution: number | null;
+  /**
+   * Learning rate. 🔴 Must be BELOW `0.1` unless `optimizerType` is `prodigy` or
+   * `prodigy8bit` — a host refinement this type cannot express; a body that
+   * breaks it is refused at estimate.
+   */
+  lr: number;
+  textEncoderLr: number | null;
+  trainTextEncoder: boolean;
+  lrScheduler: AiToolkitLrScheduler;
+  optimizerType: AiToolkitOptimizerType;
+  networkDim: number | null;
+  networkAlpha: number | null;
+  noiseOffset: number | null;
+  minSnrGamma: number | null;
+  flipAugmentation: boolean;
+  shuffleTokens: boolean;
+  keepTokens: number;
+  numRepeats?: number;
+}
+
+/**
+ * The ai-toolkit ecosystems that take NO `modelVariant` — send the key absent.
+ * (`qwen21` / `ming` / `yue2` also take none; they live on their own arm of
+ * {@link AiToolkitTrainingParams} because they pin `batchSize` to `1`.)
+ */
+export type AiToolkitPlainEcosystem =
+  | 'sd1'
+  | 'sdxl'
+  | 'chroma'
+  | 'qwen'
+  | 'zimageturbo'
+  | 'zimagebase'
+  | 'ltx2'
+  | 'ltx23'
+  | 'ltx25'
+  | 'minimaxh3'
+  | 'ernie'
+  | 'anima'
+  | 'boogu'
+  | 'krea2'
+  | 'mageflow'
+  | 'ideogram4'
+  | 'ace_step_15';
+
+/**
+ * `params` of a {@link WorkflowBodyTraining} — the host's
+ * `aiToolkitTrainingParamsSchema`, the same schema Civitai's own training form
+ * validates against, discriminated on `ecosystem`.
+ *
+ * ⚠️ THE ECOSYSTEM LIST IS CLOSED HERE AND OPEN ON THE HOST. The host adds
+ * ecosystems over time; until this package mirrors one, a body naming it does not
+ * type-check. That is the cost of a typed copy, paid deliberately: a free
+ * `string` would let a typo through to a refused estimate.
+ */
+export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
+  (
+    | { ecosystem: AiToolkitPlainEcosystem; modelVariant?: undefined }
+    | { ecosystem: 'sd3'; modelVariant: 'large' | 'medium' }
+    | { ecosystem: 'flux1'; modelVariant: 'dev' | 'schnell' }
+    | { ecosystem: 'wan'; modelVariant: '2.1' | '2.2' }
+    | { ecosystem: 'flux2klein'; modelVariant: '4b' | '9b' }
+    | { ecosystem: 'qwen21' | 'ming' | 'yue2'; modelVariant?: undefined; batchSize?: 1 }
+    | { ecosystem: 'ace_step_15_xl'; modelVariant: 'base' | 'sft' }
+  );
+
+/**
+ * Train a LoRA with the ai-toolkit engine on images the VIEWER uploaded through
+ * the host — the App Blocks `kind: 'training'` workflow body.
+ *
+ * ## Availability — read before building on it
+ *
+ *  - 🔴 Behind the host flag **`app-blocks-training-kind`**, which ships OFF and is
+ *    evaluated per viewer. Where it is off, every training call is refused
+ *    (`training from apps is not enabled`).
+ *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers
+ *    `RUN_TRAINING` with an error, and the server refuses a non-page token.
+ *  - The manifest must declare **`ai:write:budgeted`** and the viewer must have
+ *    granted it; the viewer must be signed in.
+ *  - **Not from a development or review session**: dev tokens (`dev:live`, dev
+ *    tunnel) and review-sandbox tokens are refused, run-for-real included. Use the
+ *    mock host (`createMockHost` / `Harness`) to build the flow.
+ *
+ * ## The flow
+ *
+ *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
+ *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
+ *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
+ *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
+ *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
+ *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the
+ *     orchestrator's own price for exactly this run, stored server-side.
+ *  3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })`
+ *     (`RUN_TRAINING`). Civitai shows the viewer a consent dialog in ITS chrome —
+ *     price, base model, length, dataset size, all read back from the server,
+ *     never from your body, with the host's own copies of the uploads as
+ *     thumbnails — and submits only on their click. A quote naming an image this
+ *     host did not upload for the block is refused with no dialog
+ *     (`training data not uploaded here`) — upload in the same page session as the
+ *     run; a reload forgets the uploads.
+ *  4. **Follow** — `useBuzzWorkflow().watch(snapshot.workflowId)`.
+ *
+ * 🔴 `useBuzzWorkflow().submit()` REFUSES THIS BODY before sending it. The server
+ * charges a training run only against a quote the viewer confirmed from a
+ * signed-in session, which only `RUN_TRAINING`'s dialog can record.
+ *
+ * ## Money
+ *
+ * There is no `maxBuzz` and no timeout knob, on purpose: the price is the quote.
+ * A run may cost more than the token's per-call `buzzBudget` (the viewer confirms
+ * the exact price), up to {@link BLOCK_TRAINING_MAX_BUZZ_PER_RUN} (5,000 Buzz);
+ * an estimate above that is refused.
+ */
+export interface WorkflowBodyTraining {
+  kind: 'training';
+  /**
+   * The dataset: 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images this host
+   * uploaded for the viewer, each with its caption — see
+   * {@link BlockTrainingDatasetItem}. One blob may appear once.
+   */
+  items: BlockTrainingDatasetItem[];
+  /** The only engine accepted. */
+  engine: 'ai-toolkit';
+  /**
+   * A base-model key from Civitai's training catalog (1…64 characters), resolved
+   * and gated server-side. Custom AIRs are not accepted.
+   */
+  model: string;
+  params: AiToolkitTrainingParams;
+  /**
+   * At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. The host runs
+   * it through the same trigger-word check Civitai's trainer and Training Studio
+   * use, at the estimate and again at the submit, before anything is reserved; a
+   * refused trigger word fails the estimate.
+   */
+  triggerWord: string;
+  /**
+   * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
+   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Checked for
+   * those bounds only, as in the Training Studio.
+   */
+  samplePrompts: string[];
+  /**
+   * The quote this run is charged against — {@link BlockTrainingQuote.quoteId}
+   * from the estimate (`tq_` + 32 hex characters). OMIT it on the estimate;
+   * REQUIRED on `RUN_TRAINING`. The server checks the rest of the body against
+   * the body that was quoted, so change nothing else between the two.
+   */
+  quoteId?: string;
+}
 
 /**
  * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
@@ -1302,6 +2014,14 @@ export type WorkflowBodyPassThroughStep = {
  *    an orchestrator `$type` directly and has the host forward `input`
  *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
  *    by a registry.
+ *  - {@link WorkflowBodyTraining} (`kind: 'training'`) — an ai-toolkit LoRA run
+ *    on images the viewer uploaded through the host. ESTIMATE ONLY
+ *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
+ *    host-chrome consent dialog is the only way to confirm its quote.
+ *  - {@link WorkflowBodyWorkflow} (`kind: 'workflow'`) — up to
+ *    {@link BLOCK_WORKFLOW_MAX_STEPS} orchestrator steps submitted as one
+ *    workflow, a later step consuming an earlier one's result through a
+ *    {@link WorkflowStepRef}. Its estimate is not a maximum — read its doc.
  *
  * `kind: 'step'` is therefore itself a union, discriminated on the PRESENCE of
  * `step` — the same nesting {@link WorkflowBodyCustomComfy} has on `mode`.
@@ -1322,7 +2042,9 @@ export type WorkflowBody =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
-  | WorkflowBodyPassThroughStep;
+  | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining
+  | WorkflowBodyWorkflow;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block
@@ -1343,9 +2065,137 @@ export type WorkflowBody =
 export interface BlockWorkflowSnapshot {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
-  cost?: { total: number };
+  cost?: {
+    /** Whole Buzz. Includes {@link authorFee} whenever that field is present. */
+    total: number;
+    /**
+     * The part of `total` that is the app author's per-generation fee, in whole
+     * Buzz — so `total - authorFee` is the generation's own price. Display only:
+     * it is the amount the host added into `total` for this reply.
+     *
+     * - **A number** wherever `total` was built from a fee quote: the
+     *   `estimate()` result for a `textToImage` or registered-`step` body, and
+     *   the refusal `submit()` resolves for those kinds when a budget, spend cap
+     *   or rate limit refuses the quoted price. **`0` means a fee was looked up
+     *   and none applies** to this request.
+     * - **Absent** when the total is not itemised: a host that predates the
+     *   field; every snapshot of a submitted workflow (`submit` success, `poll`,
+     *   `cancel` — its total is the realized generation cost and the fee is a
+     *   separate charge); the registered-`step` `submit()` refusal for a missing
+     *   orchestrator price quote, which refuses before any fee is looked up; and
+     *   the kinds that price no fee (`customComfy`, pass-through `step`,
+     *   `training`). **Do not read absent as `0`** — show `total` on its own.
+     *
+     * A `kind: 'workflow'` estimate itemises it too, and it is ONE fee for the
+     * whole workflow however many steps it has.
+     */
+    authorFee?: number;
+  };
   imageUrls?: string[];
   error?: string;
+  /**
+   * A stable, machine-readable companion to {@link error}, for a block to
+   * branch on instead of matching the prose. OPTIONAL: set only on the refusals
+   * that define a code, absent everywhere else (and on every reply from a host
+   * that predates the field).
+   *
+   * WHERE IT APPEARS today: the refusal for a pass-through `step` body
+   * ({@link WorkflowBodyPassThroughStep}) whose `$type` is a training type
+   * (`'training'` or `'imageResourceTraining'`, in any casing — the host
+   * compares `$type` case-insensitively) when the host could not get a
+   * price quote for it. That refusal is `{ workflowId: 'failed', status:
+   * 'failed', error, errorCode }` with no `cost`, and it is the reply to
+   * `estimate()` (which rejects with `WorkflowEstimateError`), to `submit()`
+   * (which rejects with `WorkflowSubmitError`, before anything is reserved or
+   * charged), and to that body's cell in a batch estimate. Read it from the
+   * error's `.snapshot.errorCode`. A `kind: 'training'` ESTIMATE does not set
+   * it. The confirmed SUBMIT of a training run or a confirmed step can — see
+   * `'daily-limit-exceeded'` below.
+   * A refused `kind: 'workflow'` body ({@link WorkflowBodyWorkflow}) sets it in
+   * the same shape, on the same three replies — except the three
+   * `workflow_quote_*` codes, which are ESTIMATE-ONLY (`estimate()` and a
+   * batch-estimate cell): `submit()` of the same body defines no such refusal
+   * and proceeds, reserved at the ceiling.
+   * A REGISTERED `step` body ({@link WorkflowBodyStep}) the host has no price
+   * quote for gets one of the three `step_quote_*` codes, also ESTIMATE-ONLY
+   * (`estimate()` and a batch-estimate cell); its `submit()` is unchanged. The
+   * pass-through `step` arm does not set them.
+   *
+   * The values the host sends today ({@link KnownBlockWorkflowErrorCode}):
+   *  - `'training-quote-rejected'` — the orchestrator refused the request
+   *    itself; resending the same body will not help. `error` then reads
+   *    `Training could not be priced: <reason>` when the reason is safe to show.
+   *  - `'training-quote-unavailable'` — no usable answer (an outage, a timeout,
+   *    a rate limit, insufficient funds, …). Retrying later may succeed.
+   *  - `'training-quote-unpriced'` — the orchestrator answered without a price.
+   *  - `'daily-limit-exceeded'` — a viewer-confirmed job (a `kind: 'training'`
+   *    run or a confirmed step) would exceed what remains today of the daily
+   *    Buzz limit THE VIEWER set for this app. Nothing was charged and no job
+   *    was started; the confirm cannot override it, and only the viewer can
+   *    raise the limit. This one arrives on the failed snapshot a confirmed
+   *    SUBMIT resolves (`{ workflowId: 'failed', status: 'failed', cost, error,
+   *    errorCode }`), not on an estimate. On a confirmed step the host also
+   *    reports it as the `error` code of `CONFIRMED_STEP_RESULT` — see
+   *    {@link BlockRunConfirmedStepHostError}.
+   *  - `'workflow_step_denied'` — a step of a `kind: 'workflow'` body names a
+   *    platform-internal `$type`. Remove or replace that step.
+   *  - `'workflow_ref_invalid'` — a {@link WorkflowStepRef} in a step's `input`
+   *    points at the step itself, a later step, or nothing; or a step `name`
+   *    breaks the naming rules (see {@link WorkflowBodyWorkflowStep.name}).
+   *    `error` names the step by its position.
+   *  - `'workflow_too_many_steps'` — more than
+   *    {@link BLOCK_WORKFLOW_MAX_STEPS} steps.
+   *  - `'workflow_repeat_unbounded'` — a `repeat` step iterates something other
+   *    than an array in the body's `arguments`, or more than
+   *    {@link BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS} times, nested repeats
+   *    multiplied; or the workflow has a `repeat` and the host has no price
+   *    quote for it. `error` then reads `workflow step N: a workflow with a
+   *    repeat needs a price quote and <cause>`, where `<cause>` is one of the
+   *    three in the `workflow_quote_*` messages below. A retry of the same body
+   *    can succeed only when the cause is `none could be obtained; try again`;
+   *    otherwise the body is what has to change.
+   *  - `'workflow_quote_rejected'` — ESTIMATE only. The orchestrator refused
+   *    the body, so there is no price to show; resending the same body will not
+   *    help. `error` reads `No price quote for this workflow: the orchestrator
+   *    rejected the request: <reason>` when the reason is safe to show, else
+   *    `No price quote for this workflow: the orchestrator rejected the request;
+   *    check the step inputs and references (retrying the same body will not
+   *    help)`.
+   *  - `'workflow_quote_unavailable'` — ESTIMATE only. No usable answer (an
+   *    outage, a timeout, a rate limit, …). The one `workflow_quote_*` code a
+   *    retry of the same body can clear. `error` reads `No price quote for this
+   *    workflow: none could be obtained; try again`.
+   *  - `'workflow_quote_unpriced'` — ESTIMATE only. The orchestrator answered
+   *    without a price. `error` reads `No price quote for this workflow: the
+   *    orchestrator answered without one`.
+   *
+   * Each `workflow_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
+   * error, errorCode }` with NO `cost`. A host that predates these codes
+   * resolves the estimate instead, with the spend ceiling as `cost.total`.
+   *  - `'step_quote_rejected'` — ESTIMATE only, registered `step` body. The
+   *    orchestrator refused the request; resending the same body will not help.
+   *    `error` reads `No price quote for this step: the orchestrator rejected
+   *    the request: <reason>` when the reason is safe to show, else `No price
+   *    quote for this step: the orchestrator rejected the request; check the
+   *    step inputs and references (retrying the same body will not help)`.
+   *  - `'step_quote_unavailable'` — ESTIMATE only, registered `step` body. No
+   *    usable answer (an outage, a timeout, a rate limit, …). The one
+   *    `step_quote_*` code a retry of the same body can clear. `error` reads
+   *    `No price quote for this step: none could be obtained; try again`.
+   *  - `'step_quote_unpriced'` — ESTIMATE only, registered `step` body. The
+   *    orchestrator answered without a price. `error` reads `No price quote for
+   *    this step: the orchestrator answered without one`.
+   *
+   * Each `step_quote_*` reply is `{ workflowId: 'failed', status: 'failed',
+   * error, errorCode }` with NO `cost`. A host that predates these codes
+   * resolves the estimate instead, priced at the step's declared estimate, so
+   * there a registered-step estimate may not be a quote.
+   *
+   * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
+   * inbound validator accepts any string here. Handle an unrecognised code as a
+   * generic failure and show `error`.
+   */
+  errorCode?: KnownBlockWorkflowErrorCode | (string & {});
   /**
    * The Buzz pool that was the PRIMARY FUNDER of this generation — i.e. the
    * account with the LARGEST debit, which the host stamps onto the workflow
@@ -1372,6 +2222,460 @@ export interface BlockWorkflowSnapshot {
     amount: number;
     accountType: 'yellow' | 'blue' | 'red' | 'green';
   };
+  /**
+   * Checkpoint versions the host SILENTLY replaced before running the
+   * generation. `requested` is the version id the block asked for, `applied` is
+   * the one that actually ran (and was billed).
+   *
+   * On an ecosystem whose model is locked to a workflow, the host swaps a
+   * version id that is not offered for the current workflow for that workflow's
+   * default and still succeeds — graceful degradation that keeps an app pinned
+   * to a since-retired version working. This field only REPORTS the swap; the
+   * behaviour is unchanged.
+   *
+   * WHERE IT APPEARS: on the `kind: 'textToImage'` path only — the submit reply,
+   * the estimate reply, every submit reply that quotes a cost without
+   * submitting, and every later poll/cancel of that workflow (the record is
+   * persisted with it, so it sits next to the `imageUrls` it describes). An
+   * estimate creates no persisted workflow, so there it exists only on that
+   * reply. It does NOT appear for `customComfy` or `step` bodies: neither
+   * resolves a checkpoint, so there is nothing to substitute.
+   *
+   * OMITTED entirely when nothing was substituted. Absent on hosts that predate
+   * it.
+   */
+  modelSubstitutions?: BlockModelSubstitution[];
+  /**
+   * Generated FREE TEXT produced by a registered text-output step (e.g.
+   * `chat-completion`) — every string here has PASSED the host's output
+   * moderation scan.
+   *
+   * WHERE IT APPEARS: the poll and cancel replies (`poll()` / `cancel()` /
+   * `watch()` on `useBuzzWorkflow`). NOT on the submit reply — a submit returns
+   * a freshly-queued workflow with no output yet, so poll for the text. Also
+   * never on {@link AppWorkflow}, which has no text field.
+   *
+   * OMITTED entirely when there is no text. Independent of
+   * {@link BlockWorkflowSnapshot.textOutputWithheld}: a workflow with two text
+   * steps can release one and withhold the other, and both fields then appear.
+   */
+  textOutputs?: string[];
+  /**
+   * Set when a text-output step produced nothing the block can be given, with a
+   * user-facing sentence saying why. TWO distinct causes land here:
+   *
+   *   1. WITHHELD — text WAS produced and is being kept back: a content-policy
+   *      hit, or any other fail-CLOSED scan outcome (scanner error or timeout,
+   *      no verdict at all, an over-cap payload, or requested labels that came
+   *      back missing or errored). Every one of those paths returns the SAME
+   *      message, so this cause is one string with several origins.
+   *   2. UNPUBLISHABLE — the step SUCCEEDED and the scan RELEASED, but none of
+   *      what came back could be published (e.g. a provider tool-call `id`
+   *      outside the published charset). Nothing was moderated in this case,
+   *      and the message says so explicitly.
+   *
+   * `reason` is deliberately generic: it does not name the labels that
+   * triggered.
+   *
+   * 🔴 THE TWO CAUSES ARE NOT MACHINE-SEPARABLE without matching on the string,
+   * which is NOT a contract. Do not branch on the text of `reason`.
+   *
+   * 🔴 ONLY CAUSE 2 IS STATUS-GATED, and that gate reads the STEP's own
+   * `succeeded` status — never the workflow's. Cause 1 is not gated at all, so a
+   * CANCELLED generation CAN still set this field: the orchestrator returns
+   * whatever text it had already produced, that text is still scanned, and a
+   * hit still withholds it. A block that skips rendering `reason` on cancel
+   * would suppress a real content-policy explanation.
+   *
+   * A block polling a healthy in-flight generation sees the field absent — not
+   * because of its status, but because a step that has produced no text yet can
+   * reach neither cause.
+   *
+   * Independent of {@link BlockWorkflowSnapshot.textOutputs} rather than
+   * mutually exclusive, so `reason` is scoped to "a step in this response",
+   * never to the response as a whole. Same appearance rules as `textOutputs`.
+   */
+  textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested on a registered text-output step
+   * (e.g. `chat-completion` with tools), which have PASSED the same output
+   * moderation scan as {@link BlockWorkflowSnapshot.textOutputs}: every
+   * `arguments` string here was part of the text the scan released. The tool
+   * `name` is restricted to `[A-Za-z0-9_-]`, so it cannot carry prose.
+   *
+   * Each entry is fully populated — the host drops a call it cannot fill
+   * completely rather than publishing a partial one.
+   *
+   * Same appearance rules as `textOutputs` (poll and cancel replies only).
+   * OMITTED entirely when there are none.
+   */
+  toolCalls?: BlockStepToolCall[];
+  /**
+   * The raw orchestrator output of each PASS-THROUGH step
+   * ({@link WorkflowBodyPassThroughStep}: `kind: 'step'` with a `$type`), as
+   * `{ $type, output }`, forwarded as-is — minus its blobs.
+   *
+   * Blob-SHAPED values are removed from `output`; their available urls go to
+   * {@link BlockWorkflowSnapshot.imageUrls} (and to {@link AppWorkflow.images})
+   * instead, so a pass-through step does not open a second image channel.
+   * "Blob-shaped" is the exact scope of that: a url held in a plain string
+   * field of the output is not a blob and can still appear here.
+   *
+   * 🔴 UNSCANNED. Unlike `textOutputs`, no moderation scan runs over this
+   * field; moderation for the pass-through arm happens at the publish boundary.
+   * Treat any text in it accordingly.
+   *
+   * 🔴 A `$type` that is ALSO a registered step's orchestrator type (e.g.
+   * `chatCompletion`, which `chat-completion` uses) is handled by that
+   * registered step instead — its text arrives on `textOutputs`, scanned, and
+   * it does not appear here. Which channel a pass-through `$type` lands on can
+   * therefore change the day the host registers a step for it.
+   *
+   * `output` is `unknown`: its shape is whatever the orchestrator returns for
+   * that `$type`. OMITTED entirely when the workflow has no pass-through step
+   * with an unregistered `$type`.
+   */
+  stepOutputs?: Array<{ $type: string; output: unknown }>;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step
+   * (see {@link WorkflowBodyPassThroughStep}) that PRODUCED A CHECKPOINT — one
+   * entry per epoch, each naming the step's `$type` and its `epochNumber`.
+   * Only runs whose training moderation status is approved are listed; an
+   * unmoderated or refused run reports no epochs.
+   *
+   * 🔴 THE CHECKPOINT ITSELF IS DELIBERATELY NOT EXPOSED — this field carries
+   * no download url. (An older host may still surface checkpoint urls in
+   * `imageUrls` or `stepOutputs` for a training step; that is a host defect,
+   * not a contract — never treat an `imageUrls` entry as a checkpoint.) To
+   * publish a trained epoch, navigate the viewer to Civitai's own model wizard:
+   *
+   * ```ts
+   * const { navigate } = useCivitaiNavigate();
+   * navigate(
+   *   `models/train/from-orchestrator?workflowId=${snapshot.workflowId}&epoch=${epoch.epochNumber}`,
+   *   { scope: 'site' },
+   * );
+   * ```
+   *
+   * The viewer completes (or abandons) the publish there, on Civitai's surface;
+   * {@link BlockWorkflowSnapshot.publishedModel} then reports the result.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
+   * absence as "unknown", not as "no checkpoint". The run's spend and timeout
+   * follow the pass-through arm's rules — see
+   * {@link WorkflowBodyPassThroughStep.maxBuzz}.
+   */
+  trainedEpochs?: BlockTrainedEpoch[];
+  /**
+   * The Civitai model this run has been published as — present once the viewer
+   * has STARTED or FINISHED publishing it through the model wizard reached from
+   * {@link BlockWorkflowSnapshot.trainedEpochs}. `published` is `false` while the
+   * model is still a draft and `true` once it is published.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and absent
+   * on any run nobody has started publishing.
+   */
+  publishedModel?: BlockPublishedModel;
+  /**
+   * The quote a {@link WorkflowBodyTraining} ESTIMATE produced — the orchestrator's
+   * own price for exactly that run, stored server-side. Pass
+   * `trainingQuote.quoteId` back as the body's `quoteId` on
+   * `useRunTraining().runTraining()`; the consent dialog then shows the viewer
+   * this price, read back from the server.
+   *
+   * `cost.total` on the same snapshot equals `trainingQuote.total`.
+   * `expiresAt` is an ISO-8601 timestamp: after it the run is refused and you
+   * estimate again. `imageCount` is the size of the dataset the server quoted
+   * (`items.length`).
+   *
+   * Present ONLY on the reply to a `kind: 'training'` estimate. Absent on hosts
+   * that predate civitai/civitai#5434.
+   */
+  trainingQuote?: BlockTrainingQuote;
+  /**
+   * The viewer-confirmable quote a pass-through `step` ESTIMATE
+   * ({@link WorkflowBodyPassThroughStep}) produced, when the job costs more than
+   * the app may spend without asking. Its presence means: this job cannot run
+   * through `submit()`, and CAN run through `useRunConfirmedStep()` once the
+   * viewer confirms `stepQuote.total` in Civitai's own dialog.
+   *
+   * THE FLOW, mirroring a training run's:
+   *  1. `useBuzzWorkflow().estimate(body)` — the reply carries `stepQuote`.
+   *  2. `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId:
+   *     stepQuote.quoteId })` — Civitai shows the viewer the price (read back
+   *     from the server, never from the body) and submits on their confirm.
+   *  3. `useBuzzWorkflow().watch(snapshot.workflowId)`.
+   *
+   * WHEN THE HOST SENDS IT — all of these, decided server-side:
+   *  - the orchestrator quoted a **FIXED** price for exactly this step:
+   *    positive, and not a variable or metered one. The viewer confirms what
+   *    they are charged, so a price that may move is never confirmable;
+   *  - that price is ABOVE the token's per-call budget and at most
+   *    {@link BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB} (5,000 Buzz);
+   *  - the block runs in a page app for a signed-in viewer on an ordinary
+   *    token. Development, dev-tunnel and review sessions never get one, and
+   *    neither does the model slot.
+   * Everywhere else the field is ABSENT and the estimate is exactly what it was.
+   * Absent is therefore not an error — it is also what every host that
+   * predates civitai/civitai#5786 sends.
+   *
+   * 🔴 ONLY A SINGLE ESTIMATE CARRIES IT. A batch estimate
+   * (`ESTIMATE_WORKFLOW_BATCH`, `useBatchEstimate()`) stores nothing, so its
+   * cells never have a `stepQuote`, whatever they cost. Price a grid in a batch,
+   * then estimate the one body you want to run on its own.
+   *
+   * 🔴 TWO BODIES MAKE THAT ESTIMATE FAIL INSTEAD OF RETURNING A PRICE — only
+   * where a quote would otherwise have been granted (so not below the budget,
+   * and not in a batch). The reply is the failure snapshot `{ workflowId:
+   * 'failed', status: 'failed', error }`, which `estimate()` rejects with; the
+   * same text arrives as `CONFIRMED_STEP_RESULT`'s `error` if such a body is
+   * run. Neither has an {@link BlockWorkflowSnapshot.errorCode}; they are
+   * server messages, so match on the text and keep a generic branch:
+   *  - `a training step type cannot run as a confirmed step — use
+   *    kind:'training'` — `$type` is `training` or `imageResourceTraining`, in
+   *    any casing.
+   *    Training has its own kind ({@link WorkflowBodyTraining}).
+   *  - `a confirmed step needs plain JSON input (objects, arrays, strings,
+   *    finite numbers, booleans, null) — <path> is <what>` — `input` holds a
+   *    `Date`, `Map`, `Set`, class instance, `BigInt`, `NaN`/`Infinity`, an
+   *    `undefined` array element or an empty slot in a sparse array
+   *    (`… — body.input.list[1] is an empty array slot`). The quote is bound to the exact body, so the
+   *    body must be exactly representable. The part after the dash names the
+   *    offending path (`body.input.when is a Date`) and varies: match on the
+   *    text BEFORE the dash.
+   *
+   * `total` is the price the viewer confirms and is charged. 🔴 It can differ
+   * from `cost.total` on the same snapshot, which stays what an UNCONFIRMED
+   * submit would reserve (`max(maxBuzz, quote)`); show `stepQuote.total` on a
+   * confirm button. `expiresAt` is an ISO-8601 timestamp 15 minutes out; after
+   * it the run is refused and you estimate again. A quote is single-use.
+   */
+  stepQuote?: BlockStepQuote;
+  /**
+   * What each 3D model in {@link BlockWorkflowSnapshot.imageUrls} IS — one label
+   * per model a pass-through step produced (e.g. `polyGen`).
+   *
+   * Every model url is still listed in `imageUrls`, unchanged and in the same
+   * order as before the field existed; this only says which entry is which.
+   * Match on `url`:
+   *
+   * ```ts
+   * const glb = snapshot.model3dOutputs?.find(
+   *   (m) => m.format === 'glb' && m.variant === 'model',
+   * );
+   * if (glb) viewer.load(glb.url);
+   * ```
+   *
+   * OMITTED when the workflow produced no 3D model, and on hosts that predate
+   * civitai/civitai#5786 — in which case `imageUrls` is all there is.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * The steps of a `kind: 'workflow'` run ({@link WorkflowBodyWorkflow}), in
+   * the orchestrator's order, each with its own status and results. The steps a
+   * `repeat` step generates follow it, named `<repeat name>.<n>`, so the list
+   * can be longer than the body's.
+   *
+   * The top-level fields keep their meaning: `status` is the workflow's,
+   * `imageUrls` is the union of every step that did NOT set `suppressOutput`,
+   * and `cost` is the whole workflow's.
+   *
+   * 🔴 A `failed` WORKFLOW IS NOT AN EMPTY ONE. Steps that succeeded before the
+   * failing step stay charged and keep their results, so a snapshot with
+   * `status: 'failed'` can carry `cost.total > 0` and usable `imageUrls`. Read
+   * `steps` to see which step failed (`status: 'failed'`, with its `error`)
+   * and which finished.
+   *
+   * Read it from the poll and cancel replies of a `kind: 'workflow'` run; do
+   * not rely on it being on the submit reply. ABSENT for every other kind, on
+   * an estimate (which creates no workflow) and on a host that predates it.
+   */
+  steps?: BlockWorkflowStepSnapshot[];
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.steps}. */
+export interface BlockWorkflowStepSnapshot {
+  /** The step's `name` from the body, or the name the host gave an unnamed step. */
+  name: string;
+  /** The orchestrator step type that ran. */
+  $type: string;
+  status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
+  /**
+   * This step's own image urls. Omitted when it has none, and always omitted
+   * for a step submitted with `suppressOutput: true`.
+   */
+  imageUrls?: string[];
+  /**
+   * The step's raw orchestrator output, minus its blobs — the same treatment
+   * and the same caveats as {@link BlockWorkflowSnapshot.stepOutputs}: its shape
+   * is whatever the orchestrator returns for that `$type`, and it is UNSCANNED.
+   */
+  output?: unknown;
+  /** Why this step failed. Diagnostic text; do not render it verbatim. */
+  error?: string;
+}
+
+/**
+ * The run total a BATCH estimate reports beside its per-cell snapshots
+ * (`ESTIMATE_BATCH_RESULT`, sent in reply to `ESTIMATE_WORKFLOW_BATCH`).
+ *
+ * `total` is the sum of `cost.total` over the cells that PRICED: a snapshot that
+ * is not `'failed'` and carries a numeric `cost.total`, the same rule one
+ * estimate is held to. It is the total for the whole list only when
+ * `pricedCells === cellCount`. Otherwise it is a partial sum; show it as one.
+ *
+ * 🔴 IT IS A QUOTE, NOT A LOCK, exactly as each cell is. Nothing reserves it. The
+ * host creates no workflow and no batch for the list, and each cell is priced
+ * again when the app submits it.
+ */
+export interface BlockEstimateBatchAggregate {
+  /** Sum of `cost.total` over the priced cells, in Buzz. `0` when none priced. */
+  total: number;
+  /** How many cells priced and are therefore in `total`. */
+  pricedCells: number;
+  /** How many cells the host answered — the length of the list it was sent. */
+  cellCount: number;
+}
+
+/** {@link BlockWorkflowSnapshot.trainingQuote}. */
+export interface BlockTrainingQuote {
+  /** `tq_` + 32 hex characters. Opaque — pass it back verbatim. */
+  quoteId: string;
+  /** The quoted price, in Buzz. */
+  total: number;
+  /** How many images the quoted dataset holds. */
+  imageCount: number;
+  /** ISO-8601. The quote cannot be run after this. */
+  expiresAt: string;
+}
+
+/** {@link BlockWorkflowSnapshot.stepQuote}. */
+export interface BlockStepQuote {
+  /**
+   * `sq_` + 32 lowercase hex characters ({@link BLOCK_STEP_QUOTE_ID_REGEX}).
+   * Opaque — pass it back verbatim as the body's `quoteId`.
+   */
+  quoteId: string;
+  /** The exact price the viewer confirms and is charged, in Buzz. */
+  total: number;
+  /** The orchestrator `$type` that was priced — the body's own `$type`. */
+  stepType: string;
+  /** ISO-8601. The quote cannot be run after this. */
+  expiresAt: string;
+}
+
+/**
+ * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
+ * {@link AppWorkflow.model3dOutputs} — the label for one 3D model url.
+ */
+export interface BlockModel3dOutput {
+  /** The model's url. Also present in the snapshot's `imageUrls` (an `AppWorkflow`'s `images`). */
+  url: string;
+  /**
+   * The model's own file format as the orchestrator reports it — `'glb'`,
+   * `'fbx'`, …. An open set: compare against the formats your viewer loads and
+   * ignore the rest.
+   */
+  format: string;
+  /**
+   * Which output of the step this model is: the output field it came from,
+   * dot-joined when nested — `'model'`, `'riggedFbxModel'`,
+   * `'basicAnimations.walkingModel'`, …. An array index is a segment
+   * (`'models.0'`), and it is `''` when the step's whole output is the model.
+   * The names are the orchestrator's, per `$type`; nothing here lists them.
+   */
+  variant: string;
+}
+
+/**
+ * Why the host substituted a checkpoint version — see
+ * {@link BlockWorkflowSnapshot.modelSubstitutions}.
+ *
+ *  - `'wrong-workflow'` — the id IS one of this ecosystem's workflow-scoped
+ *    versions, but for a DIFFERENT workflow (e.g. an edit-only version sent to
+ *    text-to-image).
+ *  - `'unrecognized'` — the id is in no scoped list for this ecosystem: a
+ *    community checkpoint, or a version retired since the app shipped.
+ *  - `'gated'` — the id IS offered for this workflow, but a gate rule hid it
+ *    from THIS viewer. The app is not wrong; the viewer may not use it.
+ *
+ * The host may add a reason in a later version, and the SDK's inbound
+ * validator does not reject an unrecognised one — handle an unknown value as a
+ * generic substitution rather than assuming the list is closed.
+ */
+export type ModelSubstitutionReason = 'wrong-workflow' | 'unrecognized' | 'gated';
+
+/**
+ * The {@link BlockWorkflowSnapshot.errorCode} values the host sends today — see
+ * that field for what each means and which replies carry it.
+ *
+ * NOT a closed list: the field itself is typed `KnownBlockWorkflowErrorCode |
+ * (string & {})` (the union is an autocomplete nudge), the host may add codes,
+ * and the SDK's inbound validator accepts any string. Handle an unrecognised
+ * code as a generic failure.
+ */
+export type KnownBlockWorkflowErrorCode =
+  | 'training-quote-rejected'
+  | 'training-quote-unavailable'
+  | 'training-quote-unpriced'
+  | 'daily-limit-exceeded'
+  | 'workflow_step_denied'
+  | 'workflow_ref_invalid'
+  | 'workflow_too_many_steps'
+  | 'workflow_repeat_unbounded'
+  | 'workflow_quote_rejected'
+  | 'workflow_quote_unavailable'
+  | 'workflow_quote_unpriced'
+  | 'step_quote_rejected'
+  | 'step_quote_unavailable'
+  | 'step_quote_unpriced';
+
+/** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
+export interface BlockModelSubstitution {
+  /** The checkpoint version id the block asked for. */
+  requested: number;
+  /** The checkpoint version id that actually ran. */
+  applied: number;
+  reason: ModelSubstitutionReason;
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.toolCalls}. */
+export interface BlockStepToolCall {
+  id: string;
+  /**
+   * The SDK's inbound validator checks only that it is a string, so a value
+   * the host adds later can arrive — do not assume `'function'` exhaustively.
+   */
+  type: 'function';
+  function: {
+    /** Restricted to `[A-Za-z0-9_-]`. */
+    name: string;
+    /** The model's arguments, as the JSON string it produced. Scanned. */
+    arguments: string;
+  };
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.trainedEpochs} / {@link AppWorkflow.trainedEpochs}. */
+export interface BlockTrainedEpoch {
+  /**
+   * Which pass-through training `$type` produced this epoch. The SDK's inbound
+   * validator checks only that it is a string, so a value the host adds later
+   * can arrive — give an exhaustive `switch` a default branch.
+   */
+  $type: 'training' | 'imageResourceTraining';
+  /** Pass as `epoch` to the `/models/train/from-orchestrator` wizard route. */
+  epochNumber: number;
+}
+
+/**
+ * The model a training run was published as —
+ * {@link BlockWorkflowSnapshot.publishedModel} / {@link AppWorkflow.publishedModel}.
+ */
+export interface BlockPublishedModel {
+  modelId: number;
+  modelVersionId: number;
+  /** `false` while the model is still a draft in the wizard; `true` once published. */
+  published: boolean;
 }
 
 // ============================================================
@@ -1515,6 +2819,277 @@ export interface ManifestPreview {
 }
 
 /**
+ * One declared property of a custom event — see {@link BlockManifestV1.analytics}.
+ *
+ * Exactly three types, and deliberately NO free-text string:
+ *
+ * - `enum` — a string drawn from `values`: 1 to 50 distinct, non-empty strings of
+ *   at most 64 characters (Unicode code points) each. A string that is not one of
+ *   the declared values will never be recorded.
+ * - `number` — not range-limited, so do not use one to carry an identifier.
+ * - `boolean`.
+ *
+ * No other key is allowed on a declaration (`values` only on an `enum`).
+ * Mirrors the canonical schema's `analytics.events.*.properties.*`.
+ */
+export type BlockAnalyticsPropertyDeclaration =
+  | { type: 'enum'; values: string[] }
+  | { type: 'number' }
+  | { type: 'boolean' };
+
+/**
+ * One declared custom event — see {@link BlockManifestV1.analytics}. Mirrors the
+ * canonical schema's `analytics.events.*`.
+ */
+export interface BlockAnalyticsEventDeclaration {
+  /**
+   * Optional human-readable meaning of the event, shown to reviewers and in
+   * your analytics. At most 200 characters (Unicode code points).
+   */
+  description?: string;
+  /**
+   * Property name → declaration. At most 10 properties per event. A property
+   * name follows the same rule as an event name: lowercase snake_case, a letter
+   * then up to 63 of `a-z`, `0-9` or `_` (`^[a-z][a-z0-9_]{0,63}$`).
+   */
+  properties?: Record<string, BlockAnalyticsPropertyDeclaration>;
+}
+
+/**
+ * The manifest's `analytics` object — see {@link BlockManifestV1.analytics}.
+ * Mirrors the canonical schema's `analytics`; no other key is allowed.
+ */
+export interface BlockAnalyticsDeclaration {
+  /**
+   * Event name → declaration. At most 50 events. An event name is lowercase
+   * snake_case: a letter, then up to 63 of `a-z`, `0-9` or `_`
+   * (`^[a-z][a-z0-9_]{0,63}$`).
+   */
+  events?: Record<string, BlockAnalyticsEventDeclaration>;
+}
+
+/**
+ * The type of one storage index — see {@link BlockStorageIndexes}. A `string`
+ * index holds values of at most 128 bytes. Mirrors the canonical schema's
+ * `storage.collections.*.indexes.*` enum.
+ */
+export type BlockStorageIndexType = 'string' | 'number' | 'boolean' | 'time';
+
+/**
+ * A collection's `indexes`: fields of a document's `data` the app can filter and
+ * sort by, as a map of field PATH → {@link BlockStorageIndexType}. At most 4.
+ * A path is 1 to 3 segments joined by `.` (`status`, `datasetId`,
+ * `meta.round`), each a letter followed by up to 31 letters, digits or `_`; a
+ * field whose own name contains `.` cannot be indexed. Changing an index's
+ * type is not supported: remove it and add one under a new name.
+ *
+ * `key`, `createdAt` and `updatedAt` are built-in sort keys and cannot be index
+ * names — the canonical declares each as `false`, and they are typed `never`
+ * here so declaring one is a compile error. (That is also why the index
+ * signature admits `undefined`: TypeScript requires an optional property to be
+ * assignable to the signature.) Mirrors the canonical schema's
+ * `storage.collections.*.indexes`.
+ */
+export interface BlockStorageIndexes {
+  [path: string]: BlockStorageIndexType | undefined;
+  key?: never;
+  createdAt?: never;
+  updatedAt?: never;
+}
+
+/**
+ * A PRIVATE collection — a separate key space per viewer, read and written
+ * only by that viewer. Carries none of the shared-only fields (`write`,
+ * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
+ * `ownedModelVersions`); the canonical
+ * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
+ * the fields both kinds share.
+ */
+export interface BlockStoragePrivateCollectionDeclaration {
+  /** See {@link BlockStorageSharedCollectionDeclaration.kind}. */
+  kind?: 'docs' | 'log';
+  /** Cannot be changed later: declare a new collection instead. */
+  visibility: 'private';
+  /** See {@link BlockStorageIndexes}. */
+  indexes?: BlockStorageIndexes;
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.ttlSeconds}. */
+  ttlSeconds?: number;
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.maxEntries}. */
+  maxEntries?: number;
+}
+
+/**
+ * A SHARED collection — one key space for the whole app, read by every viewer
+ * of the app, signed-out viewers included. `write` is REQUIRED on it.
+ */
+export interface BlockStorageSharedCollectionDeclaration {
+  /**
+   * `'docs'` (the default): documents with app-chosen or server-assigned keys
+   * that can be updated in place. `'log'`: append-only entries, trimmed to
+   * `maxEntries` per key space. RESERVED: civitai.com refuses `'log'` until log
+   * collections are enabled, so declare `'docs'` or omit it.
+   */
+  kind?: 'docs' | 'log';
+  /** Cannot be changed later: declare a new collection instead. */
+  visibility: 'shared';
+  /**
+   * Who may create, update and delete documents.
+   *
+   * - `'own'` — eligible signed-in viewers create documents; only a document's
+   *   author updates or deletes it.
+   * - `'none'` — nobody writes documents; viewers only increment the declared
+   *   `counters` and set the declared `marks`. Must declare at least one
+   *   counter or mark.
+   * - `'anyone'` — RESERVED (refused at submit until enabled): eligible
+   *   signed-in viewers update or delete any document.
+   * - `'owner'` — RESERVED (refused at submit until enabled): only the app
+   *   owner writes documents; viewers can still mark and count.
+   *
+   * `'own'` and `'anyone'` require the `apps:storage:publish` scope.
+   */
+  write: 'own' | 'anyone' | 'owner' | 'none';
+  /**
+   * Names of the atomic counters each document carries (for example `plays`).
+   * At most 8 distinct lowercase snake_case names (`^[a-z][a-z0-9_]{0,31}$`),
+   * never `report`, and never a name also used by a mark.
+   */
+  counters?: string[];
+  /**
+   * Names of the per-viewer marks a viewer can set on a document (for example
+   * `vote`), at most one of each per viewer per document. A reader sees each
+   * mark's count and whether THEY set it, never who else did. At most 8
+   * distinct lowercase snake_case names. `report` is built in on every shared
+   * collection and must NOT be declared.
+   */
+  marks?: string[];
+  /** See {@link BlockStorageIndexes}. */
+  indexes?: BlockStorageIndexes;
+  /**
+   * When true, readers see each viewer-authored document's author USERNAME.
+   * Default false. The numeric user id is never exposed either way.
+   */
+  showAuthor?: boolean;
+  /**
+   * RESERVED — refused at submit until expiring documents are enabled. The
+   * default document lifetime in seconds, 60 to 31536000 (provisional bounds).
+   */
+  ttlSeconds?: number;
+  /**
+   * RESERVED — log collections are refused at submit. For `kind: 'log'` only:
+   * the most entries kept per key space, 1 to 10000 (omitted means 10000).
+   */
+  maxEntries?: number;
+  /**
+   * RESERVED — refused at submit until per-collection write budgets are
+   * enabled. The per-viewer daily create/update budget, 1 to 1000, for a
+   * collection viewers write (`write` `'own'` or `'anyone'` only).
+   */
+  dailyWritesPerAuthor?: number;
+  /**
+   * `write` `'own'` collections only — the canonical refuses it under
+   * `'anyone'`, `'owner'` and `'none'`, and on private collections. Fields of a
+   * document's `data` that, when present, must hold the id of a Civitai model
+   * version owned by the viewer writing the document — for example
+   * `['/workflow/modelVersionId']` for a collection where viewers publish their
+   * own workflows.
+   *
+   * 1 to 4 distinct pointers, each 1 to 4 segments of `/` then a letter or `_`
+   * followed by up to 63 letters, digits or `_` (pattern
+   * `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`). A pointer names one field of
+   * nested objects: it never indexes into an array, and a step through an
+   * array or any other non-object finds nothing.
+   *
+   * On every create and update the server resolves each pointer in the new
+   * `data`. An absent field is allowed. A present one must be a positive
+   * integer naming a model version whose model the writer owns; anything else
+   * — someone else's version, a missing or deleted one, a value that is not a
+   * positive integer — is refused 403 `resource_not_owned`, with
+   * `details.pointer` naming the field, before moderation and before any
+   * write budget is spent. If the ownership lookup itself fails, the write is
+   * refused 503 `service_unavailable` (retryable). Ownership is checked only
+   * when a document is written: documents already stored keep the id if the
+   * model later changes hands or is deleted.
+   */
+  ownedModelVersions?: string[];
+}
+
+/**
+ * One collection declaration — see {@link BlockManifestV1.storage}.
+ * Discriminated on `visibility`, mirroring the canonical's `if visibility is
+ * "shared" then write is required, else no shared-only field` rule. Mirrors the
+ * canonical schema's `storage.collections.*`.
+ */
+export type BlockStorageCollectionDeclaration =
+  | BlockStoragePrivateCollectionDeclaration
+  | BlockStorageSharedCollectionDeclaration;
+
+/**
+ * The manifest's `storage` object — see {@link BlockManifestV1.storage}.
+ * Mirrors the canonical schema's `storage`; no other key is allowed.
+ */
+export interface BlockStorageDeclaration {
+  /**
+   * Collection name → declaration. At least 1 and at most 16 collections. A
+   * collection name is lowercase snake_case: a letter, then up to 31 of `a-z`,
+   * `0-9` or `_` (`^[a-z][a-z0-9_]{0,31}$`). Renaming a collection, or changing
+   * its visibility, is a NEW collection: the old one's documents are not
+   * carried over.
+   */
+  collections: Record<string, BlockStorageCollectionDeclaration>;
+}
+
+/**
+ * One entry of a manifest's `goods[]`. Mirrors the canonical schema exactly;
+ * `id`, `title` and `priceBuzz` are required there and so are they here.
+ *
+ * 🔴 DECLARED BEFORE `BlockManifestV1`'S DOCBLOCK ON PURPOSE. Inserting an
+ * interface BETWEEN a docblock and the declaration it documents does not just
+ * look untidy — `tsc` emits both comments onto THIS interface in
+ * `dist/blocks/types.d.ts` and leaves `BlockManifestV1` undocumented, so the
+ * published types told a reader that "only `blockId`, `version`, `name`,
+ * `contentRating` and `scopes` are required" about a type with three fields and
+ * different requirements. Keep any new sibling above this comment or below
+ * `BlockManifestV1`.
+ */
+export interface BlockManifestGood {
+  /** Lowercase alphanumeric with `-`/`_`, at most 64 chars. Colon-free, because it is composed into a redis key and a ledger external id. */
+  id: string;
+  /** At most 80 chars. */
+  title: string;
+  /** At most 500 chars. */
+  description?: string;
+  /**
+   * Whole Buzz, minimum 2 — at a price of 1 the owner's floored 70% share is
+   * ZERO, so the app would sell an item and earn nothing from it, permanently.
+   */
+  priceBuzz: number;
+  /**
+   * What the entitlement grants. `app_unlock` marks a one-time unlock of the app
+   * itself; it is RECORDED identically today and the platform does not yet act
+   * on it, so declaring it buys nothing unless you intend that later behaviour.
+   *
+   * 🔴 `app_unlock` carries THREE extra rules the platform validator enforces and
+   * this schema does not express: `priceBuzz` at most 5000 (not the 50000 the
+   * `priceBuzz` bound allows), at most ONE `app_unlock` good per manifest, and a
+   * mandatory `justification`. Local validation passing is necessary, not
+   * sufficient — see the canonical schema's `kind` description.
+   */
+  kind?: 'good' | 'app_unlock';
+  /**
+   * Why this good exists, shown to the moderator at review and never to the
+   * viewer. REQUIRED when `kind` is `'app_unlock'`: adding an unlock turns a free
+   * app into a paid one, and because an unlock does not require the sensitive
+   * `goods:purchase:self` scope, this is what makes that a reviewed decision
+   * rather than a diff nobody was pointed at. Optional for an ordinary good.
+   * Review metadata only — unlike `payload` it is never copied onto an
+   * entitlement, and the platform does not verify the claim. At most 500 chars.
+   */
+  justification?: string;
+  /** Opaque app payload, carried verbatim onto the entitlement. Never interpreted by the platform. */
+  payload?: Record<string, unknown>;
+}
+
+/**
  * v1 manifest shape. Mirrors `schemas/app-block/v1.json` — keep them in sync.
  *
  * REQUIRED HERE = REQUIRED THERE. Only `blockId`, `version`, `name`,
@@ -1538,11 +3113,13 @@ export interface BlockManifestV1 {
    */
   $schema?: 'https://civitai.com/schemas/app-block/v1.json' | (string & {});
   /**
-   * NOT a canonical manifest property, and NOT validated. Your app id lives in
-   * `civitai.app.json` (`{"appId": "..."}`), which is what the `civitai` CLI
-   * reads. The canonical does not forbid extra top-level keys, so the server
-   * ignores this one; the scaffolds still carry `"app_REPLACE_ME"` and it is
-   * inert.
+   * NOT a canonical manifest property, and NOT validated. Nothing reads it: the
+   * canonical does not forbid extra top-level keys, so the server ignores this
+   * one, and the Go `civitai` CLI identifies an app by the manifest's
+   * `blockId` (its `app submit` keys the submission on it). There is no
+   * separate app-id file either — an earlier version of this comment pointed at
+   * a `civitai.app.json`, which no current tool reads. Scaffolds that still
+   * carry `"app_REPLACE_ME"` here are carrying an inert key.
    */
   appId?: string;
   blockId: string;
@@ -1564,6 +3141,63 @@ export interface BlockManifestV1 {
    * with the canonical schema's `scopeJustifications` (civitai #3195).
    */
   scopeJustifications?: Record<string, string>;
+  /**
+   * Optional DIGITAL GOODS catalog — entitlements the platform sells to a viewer
+   * for Buzz on this app's behalf. Manifest-governed and REVIEW-GATED: the
+   * catalog a moderator approves is the catalog that can be sold, and changing a
+   * price means shipping a new version and being re-reviewed.
+   *
+   * Declaring goods is not by itself permission to sell — the manifest must also
+   * carry `goods:purchase:self` in `scopes`.
+   *
+   * 🔴 THE TYPE WAS ABSENT WHILE THE SCHEMA PROPERTY EXISTED, so `defineBlock`'s
+   * documented inline-literal form rejected a `goods` declaration with TS2353
+   * even though Ajv accepted the same manifest from a JSON file. Nothing could
+   * catch that: there is a vendored-schema↔`BLOCK_SCOPES` cross-check but no
+   * schema-properties↔interface-keys check, and the repo's manifest tests cast.
+   * Kept in lockstep with the canonical schema's `goods`.
+   */
+  goods?: BlockManifestGood[];
+  /**
+   * Optional CUSTOM EVENTS declaration. `events` names every event the app may
+   * send and the properties each event may carry. Manifest-governed and
+   * REVIEW-GATED: the declaration a moderator approves is the only one the
+   * platform accepts events against, so a reviewer can see what the app tracks.
+   *
+   * Properties are typed `enum` (a declared list of string values), `number` or
+   * `boolean` ONLY — free-text strings are deliberately not supported, so a
+   * string that is not one of an enum's declared values will never be recorded.
+   * That is what keeps prompts, emails and usernames out of string properties.
+   * Owners see aggregates only, never individual events.
+   *
+   * Limits (the canonical schema's, which this type cannot express): event and
+   * property names match `^[a-z][a-z0-9_]{0,63}$`; at most 50 events and 10
+   * properties per event; an enum declares 1 to 50 distinct non-empty values of
+   * at most 64 code points; a `description` is at most 200 code points. The
+   * platform's manifest validator is authoritative. Kept in lockstep with the
+   * canonical schema's `analytics`.
+   */
+  analytics?: BlockAnalyticsDeclaration;
+  /**
+   * Optional APP STORAGE declaration — every collection of JSON documents the
+   * app keeps, and who may read and write each one. Manifest-governed and
+   * REVIEW-GATED: a collection not declared here does not exist at runtime.
+   *
+   * Declaring any collection requires the `apps:storage` scope; a shared
+   * collection viewers write (`write` `'own'` or `'anyone'`) also requires the
+   * sensitive, consent-gated `apps:storage:publish` scope with a
+   * `scopeJustifications` entry; and requesting either scope with nothing here
+   * for it to reach is rejected. Those couplings, and the RESERVED features
+   * (`kind: 'log'`, `ttlSeconds`, `dailyWritesPerAuthor`, `write` `'anyone'` /
+   * `'owner'`), are enforced by the platform's manifest validator at submit,
+   * not by `defineBlock` — see `KNOWN_GAPS['storage-server-only-rules']`.
+   *
+   * This TYPES the declaration only. Storage is not yet enabled on civitai.com
+   * (its routes answer `503 storage_disabled`); the published schema and the Go
+   * CLI already accept the field. Kept in lockstep with the canonical schema's
+   * `storage`.
+   */
+  storage?: BlockStorageDeclaration;
   /** Optional; the canonical declares no required sub-field. */
   iframe?: ManifestIframe;
   /** Full-page surface descriptor (W10). */
@@ -1814,6 +3448,94 @@ export interface BlockWildcardPack {
 }
 
 // ============================================================
+// Resource-file bridge result types (GET_RESOURCE_FILE)
+// ============================================================
+
+/**
+ * The CLOSED error set a `RESOURCE_FILE_RESULT` carries on failure
+ * (civitai/civitai-app-starters#664). Like {@link BlockWildcardPackErrorCode} it
+ * is a discriminated code, never free text. What each code covers is the host's
+ * behaviour in civitai/civitai#6818 (`resource-file.service.ts`,
+ * `resourceFileParse.ts`, `resourceFileHost.ts`):
+ *
+ * - `not-found` — every refusal of the resolve step except maturity: no such
+ *   version; not a `Workflows`/`ComfyWorkflows` version; no such file, or (for a
+ *   non-owner) the file is not `Public`; the site's download gate, evaluated
+ *   WITHOUT moderator rights, refuses it; an unpublished draft (the owner's own
+ *   included); an early-access or paid version for anyone but its owner (buyers
+ *   included); downloads disabled for anyone but the owner; and, for anyone but
+ *   the owner (moderators included), a POI model or a model or version whose
+ *   availability is not open (`Public` or `Unsearchable`), e.g. `Private`.
+ * - `forbidden` — the version passes every gate above but is above the viewer's
+ *   maturity ceiling on this site (checked AFTER the download gate, so a version
+ *   the viewer cannot download never reveals its rating); or the app is running
+ *   in review preview, which refuses before resolving anything.
+ * - `unauthorized` — the viewer is signed out.
+ * - `too-large` — the file's advertised size, its `Content-Length` or the body
+ *   as it streams is over 32 MB; or no entry could be returned and at least one
+ *   was dropped by a size cap (4 MB per entry, 16 MB inflated in total) — so a
+ *   single `.json` over 4 MB is `too-large`.
+ * - `parse-failed` — not a `.json` or `.zip`, a corrupt zip, or no JSON entry
+ *   that could be read and parsed. ALSO the host's catch-all: a network error, a
+ *   non-OK fetch, no answer within the host's 110 s deadline, a transient storage
+ *   failure in the resolve step, or any other server error. So it can be
+ *   transient, and one retry is reasonable. It is also the `dev:live` reply,
+ *   which cannot serve this bridge.
+ * - `busy` — the tab already has 3 resource-file requests in flight; retry.
+ * - `rate-limited` — the viewer's 30-a-minute budget is spent; retry later.
+ */
+export type BlockResourceFileErrorCode =
+  | 'not-found'
+  | 'forbidden'
+  | 'unauthorized'
+  | 'too-large'
+  | 'parse-failed'
+  | 'busy'
+  | 'rate-limited';
+
+/**
+ * How the host classified one parsed JSON entry: `api` when every top-level
+ * value has `class_type` and `inputs` (the ComfyUI API format), `ui` when it has
+ * a `nodes` array (the ComfyUI UI/editor format), otherwise `unknown`.
+ */
+export type BlockResourceFileEntryFormat = 'ui' | 'api' | 'unknown';
+
+/** Which file the host served, and what it belongs to. */
+export interface BlockResourceFileMeta {
+  modelId: number;
+  modelVersionId: number;
+  /** The file the host picked (or the `fileId` the request named). */
+  fileId: number;
+  fileName: string;
+  modelName: string;
+  versionName: string;
+  creatorUsername: string | null;
+}
+
+/** One parsed JSON document out of the file. */
+export interface BlockResourceFileEntry {
+  /** The entry's path inside the archive, or the file name for a plain `.json`. */
+  path: string;
+  format: BlockResourceFileEntryFormat;
+  /** The parsed JSON, as-is. Check `format` before reading it as a graph. */
+  graph: unknown;
+}
+
+/**
+ * A resource file the host resolved, fetched, unzipped and parsed AS THE VIEWER
+ * and returned on `RESOURCE_FILE_RESULT`. A plain `.json` file gives one entry;
+ * a `.zip` gives one per `.json` entry (other entries, `__MACOSX/` and dot-files
+ * are skipped and do not count), at most 20. `truncated` is true when a JSON
+ * entry was dropped: past the 20, over the 4 MB per-entry or 16 MB total inflate
+ * cap, unreadable, or not valid JSON.
+ */
+export interface BlockResourceFile {
+  meta: BlockResourceFileMeta;
+  entries: BlockResourceFileEntry[];
+  truncated: boolean;
+}
+
+// ============================================================
 // App generator SUBQUEUE (QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW)
 // ============================================================
 
@@ -1857,6 +3579,35 @@ export interface AppWorkflow {
   cost: number | null;
   /** ISO-8601. */
   createdAt: string;
+  /**
+   * The Civitai model a training run in this workflow was published as —
+   * present once the viewer has started or finished publishing it through the
+   * model wizard. Same shape and meaning as
+   * {@link BlockWorkflowSnapshot.publishedModel}.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and on
+   * every workflow nobody has published.
+   */
+  publishedModel?: BlockPublishedModel;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step in
+   * this workflow that produced a checkpoint. Same shape and rule as
+   * {@link BlockWorkflowSnapshot.trainedEpochs}: only runs whose training
+   * moderation status is approved are listed, the checkpoint itself is not
+   * exposed, and the field is OMITTED when there are no epochs to list. Lets a
+   * block offer "publish epoch n" from its queue without polling each run.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
+   * absence as "unknown", not as "no checkpoint".
+   */
+  trainedEpochs?: BlockTrainedEpoch[];
+  /**
+   * Labels for the 3D models among this workflow's {@link AppWorkflow.images} —
+   * same shape and rule as {@link BlockWorkflowSnapshot.model3dOutputs}: every
+   * labelled `url` is also an entry of `images`, and the field is OMITTED when
+   * there are none (and on hosts that predate it).
+   */
+  model3dOutputs?: BlockModel3dOutput[];
 }
 
 // ============================================================
@@ -2026,7 +3777,11 @@ export type BlockPostSource =
     }
   | {
       kind: 'published';
-      /** Ids returned by a previous `usePublishGenerationOutputs()` publish. */
+      /**
+       * Ids returned by a previous `usePublishGenerationOutputs()` publish, or
+       * by an in-tab `bytes` upload (`useUploadImageBytes()` in
+       * `@civitai/blocks-react`; page apps only).
+       */
       imageIds: number[];
     };
 
@@ -2108,3 +3863,105 @@ export type BlockCreatePostHostError =
   | 'no images to post'
   | 'no block token'
   | 'declined';
+
+// ============================================================
+// App Blocks training bridge (RUN_TRAINING) and the dataset item
+// ============================================================
+
+/**
+ * One image of a training dataset ({@link WorkflowBodyTraining.items}) — a blob
+ * this host uploaded for the viewer, and the caption to train it with. The
+ * Training Studio's own `{ air, caption }` shape.
+ *
+ * Host bounds (`blockTrainingDatasetItemsSchema`, civitai/civitai#6461): `air`
+ * is the blob's key ({@link BlockTrainingDataImage.air}) or its Civitai-hosted
+ * blob url — the server keeps only the key; `caption` at most
+ * {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters; no other keys;
+ * 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per body, and one blob at
+ * most once (keys compare case-insensitively). A body outside them is refused at
+ * the estimate.
+ */
+export interface BlockTrainingDatasetItem {
+  air: string;
+  caption: string;
+}
+
+/**
+ * The HOST'S OWN refusal codes on a `TRAINING_RESULT`'s `error`. Mirrors
+ * civitai/civitai's `RUN_TRAINING_HOST_ERRORS`
+ * (`src/components/AppBlocks/runTrainingGate.ts`).
+ *
+ * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: server messages
+ * (an expired or already-used quote, a body that differs from the quoted one)
+ * arrive verbatim in the same field.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off.
+ * - `block is not ready` — the host handshake has not completed.
+ * - `sign in to train` — anonymous viewer; there is no account to charge.
+ * - `invalid training request` — the body is not a `kind: 'training'` body
+ *   naming a `quoteId`.
+ * - `no block token` — the host holds no block token yet.
+ * - `training data not uploaded here` — the quote names an image this host did
+ *   not upload for this block (civitai/civitai#6461): the host remembers only the
+ *   blobs its own `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded, and
+ *   forgets them on a reload. Refused BEFORE any dialog: NO RUN, nothing
+ *   charged. Upload the images again, estimate again, run that quote.
+ * - `declined` — the viewer dismissed the consent dialog. 🔴 GUARANTEED to mean
+ *   NO RUN WAS SUBMITTED.
+ * - `submission-unconfirmed` — the submit was SENT but its outcome is unknown
+ *   (the connection dropped, or the server attempted the run and could not
+ *   confirm it). 🔴 The run MAY BE RUNNING AND CHARGED. Check the viewer's
+ *   trainings (`useAppWorkflows()`, or send them to their Training page) before
+ *   offering a retry — a retry of the same body after the server did start the
+ *   run is a SECOND, separately charged run.
+ */
+export type BlockRunTrainingHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to train'
+  | 'invalid training request'
+  | 'no block token'
+  | 'training data not uploaded here'
+  | 'declined'
+  | 'submission-unconfirmed';
+
+/**
+ * The HOST'S OWN refusal codes on a `CONFIRMED_STEP_RESULT`'s `error`. Mirrors
+ * civitai/civitai's `RUN_CONFIRMED_STEP_HOST_ERRORS`
+ * (`src/components/AppBlocks/runConfirmedStepGate.ts`, civitai/civitai#5786).
+ *
+ * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: server messages
+ * (an expired or already-used quote, a body that differs from the quoted one, a
+ * price that changed, `confirmed steps from apps are not enabled`) arrive
+ * verbatim in the same field.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off.
+ * - `block is not ready` — the host handshake has not completed.
+ * - `sign in to run` — anonymous viewer; there is no account to charge.
+ * - `invalid confirmed step request` — the body is not a pass-through
+ *   `kind: 'step'` body naming an `sq_`-shaped `quoteId`.
+ * - `no block token` — the host holds no block token yet.
+ * - `declined` — the viewer dismissed the confirm. 🔴 GUARANTEED to mean NO JOB
+ *   WAS SUBMITTED. The quote is untouched and can still be run before it
+ *   expires.
+ * - `daily-limit-exceeded` — the job would exceed what remains today of the
+ *   daily Buzz limit the VIEWER set for this app. NO job was submitted and
+ *   nothing was charged. The host has already told the viewer, in its own
+ *   chrome, and pointed them at where to raise the limit; there is no confirm
+ *   to click and nothing the app can do about it. Do not retry.
+ * - `submission-unconfirmed` — the submit was SENT but its outcome is unknown.
+ *   🔴 The job MAY BE RUNNING AND CHARGED. Every confirmation is its own job,
+ *   so a retry (which needs a new estimate and a new confirmation) starts a
+ *   SECOND, separately charged job if the first one did start. Check the
+ *   viewer's generations (`useAppWorkflows()`) before offering one, and never
+ *   retry automatically.
+ */
+export type BlockRunConfirmedStepHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to run'
+  | 'invalid confirmed step request'
+  | 'no block token'
+  | 'declined'
+  | 'daily-limit-exceeded'
+  | 'submission-unconfirmed';

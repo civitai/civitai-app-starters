@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useBlockContext, useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';
-import type {
-  BlockTextToImageParams,
-  BlockWorkflowSnapshot,
-  ModelSlotContext,
-  WorkflowBody,
-} from '@civitai/app-sdk/blocks';
+import {
+  useBlockContext,
+  useBlockResize,
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+  WorkflowSubmitError,
+} from '@civitai/blocks-react';
+import { Alert, Button, Card, Group, Stack, Textarea } from '@civitai/blocks-react/ui';
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import type { BlockTextToImageParams, BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
  * buzz-workflow — generate an image and bill Buzz, the right way.
@@ -40,7 +43,16 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
-  const model = ready ? (context as ModelSlotContext) : null;
+  // Keep <html> in step with the host theme (see hello-world for the why).
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
+
+  // NARROW, don't cast: `isModelSlotContext` is a runtime check that the host
+  // really sent a model slot with every field a generation body needs. A cast
+  // would hand `undefined` ids to the orchestrator on any other slot.
+  const model = ready && isModelSlotContext(context) ? context : null;
 
   const [prompt, setPrompt] = useState('a serene mountain lake at golden hour');
   // After the first generation, the next Generate is a re-gen → randomize the
@@ -48,6 +60,8 @@ export function App() {
   // estimate + submit both read THIS so they can't drift (gotcha #59).
   const [isRegenerate, setIsRegenerate] = useState(false);
   const [quotedCost, setQuotedCost] = useState<number | null>(null);
+  // App-owned copy for why there is no price, chosen by `estimateFailureMessage`.
+  const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
   // Shared param builder — the ONLY place params are constructed, so estimate
@@ -83,21 +97,24 @@ export function App() {
     if (!body) return;
     estimate(body)
       .then((snap) => {
-        if (!cancelled) setQuotedCost(snap.cost?.total ?? null);
+        if (cancelled) return;
+        setQuotedCost(snap.cost?.total ?? null);
+        setEstimateNote(null);
       })
       .catch((err: unknown) => {
-        // 🔴 SAME RULE AS THE OTHER TWO ARMS. Since blocks-react 0.43 `estimate()`
-        // REJECTS with a `WorkflowEstimateError` carrying `.snapshot.error` — the
-        // server's reason, and the exact diagnostic civitai/civitai#4159 exists to
-        // preserve. Swallowing it left the CTA on a permanent "…" with nothing
-        // anywhere saying why. Logged for the developer; the CTA still just shows
-        // no price, because a missing quote is not viewer-actionable copy.
-        const snapshotError = (err as { snapshot?: { error?: string } })?.snapshot?.error;
-        console.warn(
-          '[buzz-workflow] estimate failed — no price shown:',
-          snapshotError ?? err,
-        );
-        if (!cancelled) setQuotedCost(null);
+        // 🔴 BRANCH ON THE ERROR'S `code`, NEVER ON ITS PROSE. Since blocks-react
+        // 0.43 an unusable estimate REJECTS with a `WorkflowEstimateError`; its
+        // `code` is the only stable branch target. `snapshot.error` is the
+        // server's own reason (unsanitised: log it, never render it) and
+        // `message` is developer-facing and not a contract.
+        if (err instanceof WorkflowEstimateError) {
+          console.warn(`[buzz-workflow] estimate ${err.code}:`, err.snapshot.error ?? '(no reason given)');
+        } else {
+          console.warn('[buzz-workflow] estimate did not complete:', err);
+        }
+        if (cancelled) return;
+        setQuotedCost(null);
+        setEstimateNote(estimateFailureMessage(err));
       });
     return () => {
       cancelled = true;
@@ -135,15 +152,21 @@ export function App() {
       // 🔴 THE ERROR IS NO LONGER SWALLOWED. This used to be a bare `catch {}`,
       // which threw away the only diagnostic a failed submit produces — so the
       // card said "generation failed" and nothing, anywhere, said why.
-      logServerReason('submit', null, err);
+      logServerReason('submit', err instanceof WorkflowSubmitError ? err.snapshot : null, err);
+      const outcome = submitRejectionOutcome(err);
       setQueue((q) =>
         q.map((it) =>
           it.localId === localId
-            ? {
-                ...it,
-                status: 'error',
-                viewerMessage: 'The generation could not be started. Please try again.',
-              }
+            ? outcome.pollWorkflowId
+              ? // A workflow probably exists: track it like any other submit so
+                // the poll loop below reports its REAL fate, instead of guessing.
+                {
+                  ...it,
+                  workflowId: outcome.pollWorkflowId,
+                  status: 'processing',
+                  viewerMessage: outcome.viewerMessage,
+                }
+              : { ...it, status: 'error', viewerMessage: outcome.viewerMessage }
             : it,
         ),
       );
@@ -162,9 +185,12 @@ export function App() {
         try {
           const snap = await poll(it.workflowId!);
           // Classify + log OUTSIDE the updater (see the submit arm), and use the
-          // POLL message — the submit discriminator does not hold here.
+          // POLL message — the submit discriminator does not hold here. A card
+          // that is being polled BECAUSE its submit was rejected 'workflow-failed'
+          // keeps its own, more cautious copy: that one must not invite a retry.
           if (snap.status === 'failed') logServerReason('poll', snap);
-          const viewerMessage = snap.status === 'failed' ? pollFailureMessage() : undefined;
+          const viewerMessage =
+            snap.status === 'failed' ? (it.viewerMessage ?? pollFailureMessage()) : undefined;
           setQueue((q) =>
             q.map((q2) =>
               q2.localId === it.localId
@@ -204,71 +230,54 @@ export function App() {
     [queue, cancel],
   );
 
-  if (!ready) {
-    // No `rootRef` here: the host shows its own loading state until BLOCK_READY,
-    // and `useBlockResize` observes the real root whenever it mounts.
-    return (
-      <div data-theme={theme} className="hw-root">
-        Loading…
-      </div>
-    );
-  }
+  if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;
 
   // `confirming` is IDLE — the button stays enabled (gotcha #8).
   const busy = status === 'estimating' || status === 'submitting';
 
   return (
-    <div ref={rootRef} data-theme={theme} className="hw-root">
-      <strong>Generate on {model?.modelName}</strong>
+    <div ref={rootRef} data-theme={theme} style={{ padding: 16 }}>
+      <Stack gap={8}>
+        <strong>Generate on {model?.modelName}</strong>
 
-      <textarea
-        className="hw-card"
-        rows={3}
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        style={{ resize: 'vertical', width: '100%' }}
-      />
+        <Textarea label="Prompt" minRows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
 
-      <button onClick={handleGenerate} disabled={busy} style={buttonStyle}>
-        Generate ·{' '}
-        {quotedCost == null ? '…' : quotedCost === 0 ? 'free (cache hit)' : `${quotedCost} Buzz`}
-      </button>
+        <div>
+          <Button onClick={handleGenerate} disabled={busy}>
+            Generate ·{' '}
+            {quotedCost == null ? '…' : quotedCost === 0 ? 'free (cache hit)' : `${quotedCost} Buzz`}
+          </Button>
+        </div>
+        {estimateNote ? <small style={dimmed}>{estimateNote}</small> : null}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {queue.map((it) => (
-          <div key={it.localId} className="hw-card" aria-label="Generating">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>{labelFor(it.status)}</span>
-              {!TERMINAL.has(it.status) ? (
-                <button onClick={() => cancelJob(it.localId)} style={linkButtonStyle}>
-                  Cancel
-                </button>
+          <Card key={it.localId} aria-label="Generating">
+            <Stack gap={8}>
+              <Group justify="space-between">
+                <span>{labelFor(it.status)}</span>
+                {!TERMINAL.has(it.status) ? (
+                  <Button variant="subtle" size="sm" onClick={() => cancelJob(it.localId)}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </Group>
+              {it.snapshot?.imageUrls?.[0] ? (
+                <img src={it.snapshot.imageUrls[0]} alt="result" style={{ width: '100%', borderRadius: 6 }} />
               ) : null}
-            </div>
-            {it.snapshot?.imageUrls?.[0] ? (
-              <img
-                src={it.snapshot.imageUrls[0]}
-                alt="result"
-                style={{ width: '100%', borderRadius: 6, marginTop: 8 }}
-              />
-            ) : null}
-            {it.snapshot?.autoClaim ? (
-              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                +{it.snapshot.autoClaim.amount} daily boost claimed
-              </div>
-            ) : null}
-            {it.status === 'error' || it.snapshot?.status === 'failed' ? (
-              // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
-              // — a server-authored, unsanitised string — straight into markup.
-              // The server's own words are logged for the developer by
-              // `logServerReason`; they must not reach a viewer.
-              <div style={{ color: '#e03131', fontSize: 12, marginTop: 4 }}>
-                {it.viewerMessage ?? 'The generation failed. Please try again.'}
-              </div>
-            ) : null}
-          </div>
+              {it.snapshot?.autoClaim ? (
+                <small style={dimmed}>+{it.snapshot.autoClaim.amount} daily boost claimed</small>
+              ) : null}
+              {it.status === 'error' || it.snapshot?.status === 'failed' ? (
+                // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
+                // — a server-authored, unsanitised string — straight into markup.
+                // The server's own words are logged for the developer by
+                // `logServerReason`; they must not reach a viewer.
+                <Alert color="error">{it.viewerMessage ?? 'The generation failed. Please try again.'}</Alert>
+              ) : null}
+            </Stack>
+          </Card>
         ))}
-      </div>
+      </Stack>
     </div>
   );
 }
@@ -293,6 +302,25 @@ type QueueStatus = 'submitting' | 'processing' | 'succeeded' | 'failed' | 'cance
 const TERMINAL = new Set<QueueStatus>(['succeeded', 'failed', 'canceled', 'expired', 'error']);
 
 /**
+ * Viewer copy THIS APP owns for an estimate that produced no price.
+ *
+ * - `'failed'`  — the estimate did not succeed: usually the server refused this
+ *   configuration (its reason is on `snapshot.error`, logged above). Retrying the
+ *   same inputs will not help, so say so.
+ * - `'no-cost'` — the reply was not a failure but carried no price. Nothing for
+ *   the viewer to fix; the quote may come back on the next change.
+ * - anything else — the request itself did not complete (a timeout, say).
+ */
+function estimateFailureMessage(err: unknown): string {
+  if (err instanceof WorkflowEstimateError) {
+    return err.code === 'failed'
+      ? "This generation can't be priced as configured. Try a different prompt or settings."
+      : 'No price is available right now.';
+  }
+  return "Couldn't reach Civitai to price this generation.";
+}
+
+/**
  * Log the server's own words for the developer. Never rendered.
  *
  * 🔴 THE RAW TEXT IS LOGGED, NOT DISCARDED. Deleting it would trade a leak for a
@@ -305,6 +333,38 @@ function logServerReason(where: string, snap: BlockWorkflowSnapshot | null, thro
 }
 
 /**
+ * What to show — and whether there is anything to poll — when `submit()`
+ * REJECTS (as opposed to resolving a priced refusal, handled above).
+ *
+ * 🔴 NOT EVERY REJECTION MAY SAY "TRY AGAIN". The three arms differ on MONEY, so
+ * they get different copy (the same split as the `buzz-purchase` example):
+ *   - `'workflow-failed'` — a workflow probably exists and Buzz MAY ALREADY BE
+ *     COMMITTED. Inviting a retry would mint a fresh idempotency key and reserve
+ *     a SECOND time. Poll the returned id instead — unless it is `'whatif'`, the
+ *     server's non-workflow sentinel, which has nothing behind it to poll.
+ *   - `'exception'` — the host had no workflow to report; usually nothing was
+ *     queued, so a retry is the sensible recovery.
+ *   - anything else is transport-level (most likely the request timeout), and a
+ *     timed-out submit may well have been queued and charged: most cautious copy.
+ */
+function submitRejectionOutcome(err: unknown): { viewerMessage: string; pollWorkflowId?: string } {
+  if (err instanceof WorkflowSubmitError) {
+    if (err.code === 'workflow-failed') {
+      const id = err.snapshot.workflowId;
+      return {
+        viewerMessage:
+          'The generation was submitted but did not complete. Check your generation history before retrying.',
+        ...(id && id !== 'whatif' ? { pollWorkflowId: id } : {}),
+      };
+    }
+    return { viewerMessage: 'Could not start the generation. Please try again.' };
+  }
+  return {
+    viewerMessage: 'We lost contact before the generation was confirmed. Check your generation history before trying again.',
+  };
+}
+
+/**
  * Viewer copy THIS APP owns for a failed SUBMIT reply.
  *
  * 🔴 THE `cost` TEST IS ONLY MEANINGFUL ON THE SUBMIT REPLY — see
@@ -313,20 +373,24 @@ function logServerReason(where: string, snap: BlockWorkflowSnapshot | null, thro
  * `failed` submit carrying a price is the host declining to spend: a documented
  * OUTCOME, not a crash.
  *
- * 🔴 CAUSE-NEUTRAL ON PURPOSE. A priced refusal is not only "you can't afford
- * it" — it also covers a per-app or daily cap, a velocity limit, a transient
- * "temporarily unavailable" deny, and a missing price quote. Naming one of those
- * would be wrong four times out of five, so only the affordability case (which
- * the message identifies) gets a specific string; everything else says what is
- * true of all of them.
+ * 🔴 NEVER "NOT ENOUGH BUZZ". A resolved priced refusal is a spend CAP or limit
+ * (the per-call budget — whose error text literally reads "insufficient buzz
+ * budget" — a daily or per-app cap, a velocity limit, a transient deny, a
+ * missing quote), and buying Buzz raises none of them. A viewer who is genuinely
+ * out of Buzz makes `submit` REJECT instead. So the copy is cause-neutral and
+ * never matches on the server's wording.
+ *
+ * 🔴 AND "NOTHING WAS CHARGED" ONLY FOR THE SENTINEL. The `'failed'` sentinel id
+ * means the host refused before anything ran. A REAL workflow id means a run was
+ * created and came back failed, and Buzz may have been spent. (This example
+ * submits text-to-image, so it never sees the unconfirmed-TRAINING reply, which
+ * also uses the sentinel — see `useBuzzWorkflow`'s `submit` docs.)
  */
 function submitFailureMessage(snap: BlockWorkflowSnapshot): string {
-  if (typeof snap.cost?.total === 'number') {
-    return /insufficient|not enough|budget/i.test(snap.error ?? '')
-      ? 'Not enough Buzz for this generation.'
-      : 'This generation was not started. Please try again later.';
+  if (snap.workflowId === 'failed') {
+    return 'This generation was not started, and nothing was charged. Please try again later.';
   }
-  return 'The generation could not be started. Please try again.';
+  return 'This generation failed. Check your generation history before trying again.';
 }
 
 /**
@@ -374,21 +438,4 @@ function round64(n: number): number {
   return Math.max(64, Math.round(n / 64) * 64);
 }
 
-const buttonStyle = {
-  padding: '8px 14px',
-  border: 'none',
-  borderRadius: 6,
-  background: '#1971c2',
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer',
-} as const;
-
-const linkButtonStyle = {
-  border: 'none',
-  background: 'transparent',
-  color: 'inherit',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-} as const;
+const dimmed = { color: 'var(--civitai-color-text-dimmed)' } as const;

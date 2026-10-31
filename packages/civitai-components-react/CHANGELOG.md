@@ -1,5 +1,325 @@
 # @civitai/components-react
 
+## 0.10.2
+
+### Patch Changes
+
+- Updated dependencies [ae33f6c]
+  - @civitai/components@0.13.0
+
+## 0.10.1
+
+### Patch Changes
+
+- Updated dependencies [6727901]
+  - @civitai/components@0.12.0
+
+## 0.10.0
+
+### Minor Changes
+
+- f4adc63: Add the generated `CivitaiResourcePicker` binding (`@civitai/components-react/elements/civitai-resource-picker`) for `<civitai-resource-picker>`, with `onPick` (`CustomEvent<PickedResource>`) and `onDismiss`. Like the SDK-backed bindings it is out of the root barrel; import it by path.
+
+### Patch Changes
+
+- Updated dependencies [f4adc63]
+  - @civitai/components@0.11.0
+
+## 0.9.2
+
+### Patch Changes
+
+- Updated dependencies [f3882f0]
+  - @civitai/components@0.10.0
+
+## 0.9.1
+
+### Patch Changes
+
+- Updated dependencies [c66ae73]
+- Updated dependencies [38d0907]
+  - @civitai/components@0.9.0
+
+## 0.9.0
+
+### Minor Changes
+
+- a65190f: **BREAKING (`@civitai/components-react`): the custom elements supersede the
+  hand-written React layer.** The `.` entry no longer exports `Button`, `Card`,
+  `TextInput`, `Alert`, `Badge`, `Loader`, `Stack`, `Group`, `Slider`,
+  `SegmentedControl`, `Select`, `Checkbox`, `Radio`, `RadioGroup`, `NumberInput`,
+  `Textarea`, `TabPanel`, `Toast`, `ToastProvider`/`useToast`, `Tooltip`, `Image`,
+  `Text` (with `TextProps`/`TextAs`/`TextSize`/`TextWeight`), or
+  `injectStyles`/`useComponentStyles`. It re-exports the generated
+  `@lit/react` element bindings instead — `CivitaiButton`, `CivitaiCard`,
+  `CivitaiTextInput`, and so on.
+
+  ## Migrating
+
+  The import rename is the easy half:
+
+  ```diff
+  -import { Button, Card, TextInput } from '@civitai/components-react';
+  +import { CivitaiButton, CivitaiCard, CivitaiTextInput } from '@civitai/components-react';
+  ```
+
+  🔴 **Renaming alone is NOT enough, and THREE cases are silent — they type-check
+  and then quietly do the wrong thing.** Two are prop NAMES: the elements' names
+  are not the React layer's, and `@lit/react` passes anything it does not
+  recognise straight to `React.createElement`, where an unknown name becomes a
+  plain HTML attribute rather than an error. The third is a prop DEFAULT, which
+  no rename can reveal — the names match and the rendering changes anyway.
+
+  | Was (0.8.x)                               | Is (0.9.0)                                    | What a bare rename does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | ----------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `<Alert title="Saved">`                   | `<CivitaiAlert heading="Saved">`              | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | `<Alert onClose={fn}>`                    | `<CivitaiAlert closable onClose={fn}>`        | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+  | `<Toast title=… onClose=…>`               | `<CivitaiToast heading=… closable onClose=…>` | 🔴 identical to Alert, same two traps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+  | `<Card>` (no props)                       | `<CivitaiCard withBorder padding="md">`       | 🔴 SAME NAMES, DIFFERENT DEFAULTS. The React `Card` defaulted `padding='md'` and `withBorder={true}`; `<civitai-card>` defaults to `padding=''` and `withBorder` unset. A bare `<CivitaiCard>` silently loses **16px of padding** in both themes, and its border weakens: in **dark** it disappears (`--civitai-card-border-width: 0`), in **light** it stays 1px but drops from the opaque `--civitai-color-border` to a 55%-opacity mix — light gives a borderless card a default hairline because surface and body are both `#fefefe` there. Pass both props explicitly. `<Card withBorder padding="lg">` with both already stated is unaffected. |
+  | `<Button variant size loading fullWidth>` | unchanged                                     | ✅ same names AND same defaults                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+  `Card` is the only default that moved. Badge, Loader, Slider, RadioGroup,
+  SegmentedControl, Image, Stack, Group and Button all carry element constructor
+  defaults identical to the React ones they replace — which is a statement about
+  DEFAULTS only; several of them still need the contract read for other reasons,
+  listed below.
+
+  Everything else:
+
+  - **Handlers receive the DOM event**, not an extracted value:
+    `onChange={(e) => e.currentTarget.value}`. Field elements re-dispatch the
+    native `change`, which commits on blur/Enter rather than per keystroke — so a
+    controlled input that previously updated per keystroke now updates on commit.
+  - **`injectStyles` / `useComponentStyles` are gone** from this package because
+    nothing here needs them: the elements are self-styling in shadow DOM and
+    inject the `@civitai/theme` tokens themselves. Import `injectStyles` from
+    `@civitai/components` if you also render bare `data-civitai-ui` markup.
+  - **`segmentId` is gone.** It existed to wire `aria-controls` for the deleted
+    `SegmentedControl`'s `mode="tabs"`. The elements split that case out:
+    `<civitai-segmented-control>` is the panel-less `radiogroup`, and
+    `<civitai-tabs>` / `<civitai-tab-panel>` own the panel-switching one and do
+    their own wiring.
+  - 🔴 **Every PROP TYPE the root used to export is gone** — `ButtonProps`,
+    `ButtonVariant`, `ButtonSize`, `CardPadding`, `Gap`, `AlertColor`,
+    `BadgeColor`, `SegmentedControlMode`, `SegmentItem`, `ImageFit`,
+    `ImageStatus`, `ToastApi`, `ToastOptions` and the rest. `export *` re-exports
+    **values only**, and the bindings derive their props from the element class
+    rather than declaring named interfaces. To name one, go through the
+    component: `React.ComponentProps<typeof CivitaiButton>`. Element-level unions
+    — `BadgeVariant`, `LoaderSize`, `ButtonVariant`, `ButtonSize`, `CardPadding`
+    and friends — do still have named exports, but on the **per-element
+    subpath**, NOT on the `@civitai/components` root, which exports only
+    `componentsCss`, `COMPONENT_NAMES`, `ComponentName` and `injectStyles`:
+
+    ```ts
+    import type { BadgeVariant } from "@civitai/components/civitai-badge";
+    import type {
+      ButtonVariant,
+      ButtonSize,
+    } from "@civitai/components/civitai-button";
+    ```
+
+  🔴 **`Text` is the one removal with a PUBLISHED predecessor of its own age.**
+  It landed in `@civitai/components-react@0.8.0` (#477) on both tracks while this
+  change was in flight, so `<Text>` existed publicly for exactly one release.
+  Its replacement is `CivitaiText`, generated from `<civitai-text>`; the element,
+  its CSS and its a11y coverage are untouched — only the hand-written React twin
+  is gone. Anyone who adopted `<Text>` in 0.8.0 renames it like the rest.
+
+  Not a rename at all: if you were using `TabPanel`, `Toast`/`ToastProvider`/
+  `useToast`, `Tooltip`, `Radio` or `Image`, read the element's own contract
+  first — `civitai-toast-region` owns the live region the provider used to,
+  and there is no standalone `civitai-radio` (use `<civitai-radio-group>`).
+
+  **Why.** The package had been shipping two unrelated implementations behind two
+  entry points: 22 hand-written components on `.` that re-rendered the
+  `data-civitai-ui` contract and imported no element, and 47 generated bindings on
+  `./elements` that were genuinely downstream of the elements and had no consumer
+  at all. (Both counts include `Text`/`civitai-text`, which landed on main from
+  #477 while this was in flight and was merged in here — the hand-written half
+  deleted with the other 21, the element kept.) Nothing compared the two, so they diverged where it was invisible —
+  `<Alert onClose>` rendered a dismiss button on one surface and not the other
+  with no type error, and `SegmentedControl` carried three different ARIA role
+  models and two-of-six keyboard nav across the layers. Collapsing onto the
+  elements removes the class, not the instances: there is now one implementation,
+  and a test fails if anything that is not a generated binding appears under
+  `src/`.
+
+  **Known cost, accepted deliberately.** Server rendering is now best-effort.
+  `@lit/react` assigns props as properties from effects, which do not run on the
+  server, so the wrappers emit bare tags that fill in after hydration; the
+  previous React layer server-rendered real markup. Where server output matters,
+  write the `<civitai-*>` tag directly in JSX so its attributes survive SSR, or
+  keep SEO-critical copy in ordinary HTML — which is what the `next-app` starter
+  demo now does.
+
+  **Test coverage moved rather than shrank.** The `html-vs-react-parity` suite is
+  deleted: it asserted that the React arm and a hand-written HTML arm computed
+  identically, and with one implementation there is no second arm — keeping it
+  would have compared the elements to themselves. The axe a11y sweep was
+  retargeted onto the elements and still covers every component family in light
+  and dark. The opt-in visual-regression layer was **deleted, not retargeted** —
+  an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
+  no workflow, script or `.env`, and no baselines were ever committed. It was 50
+  tests, every one of them a skip — the layer enumerated `A11Y_CASES` × 2 themes,
+  and that array stood at 25 cases when it was deleted. (No share of the browser
+  tier is quoted. Two successive drafts of this sentence got that denominator
+  wrong in the same way, by omitting the parity suite; the count of inert tests
+  is what the deletion rests on, and it needs no ratio.) The entry-point guard
+  that required the `.` entry to reach no element module was rewritten rather
+  than dropped: it now pins that the root and the presentational barrel reach
+  the SAME external specifiers — set equality, so an extra at the root and a gap
+  at the root both fail — and that the root still reaches no `@civitai/sdk`.
+
+  **Release sequencing.** The two starters in this repo import the new names, and
+  their `@civitai/components-react` pins are `^0.8.0` — which, being 0.x, admits
+  only `0.8.x`, and 0.8.0 is the release that shipped `Text` on the old layer.
+  Between merging this and publishing 0.9.0, `npx tiged` of those starters
+  scaffolds a project that does not compile. `changeset version` rewrites the
+  pins, so the fix is to publish promptly rather than to change anything here;
+  the nightly published-starter smoke job will flag the window while it is open.
+
+  `@civitai/components` (patch): stop shipping `dist/utilities.generated.*`, about
+  39 kB no consumer could reach (19,549 B of `.js` plus 19,383 B of `.d.ts` — the
+  glob takes both) — nothing imports it and there is no
+  `./utilities` export key, the utility layer being published as `./utilities.css`.
+  Unlike `styles.generated`, which `src/index.ts` imports and so ships via the `.`
+  entry. Same reasoning as the existing `!dist/css` exclusion; no API change.
+
+### Patch Changes
+
+- Updated dependencies [a65190f]
+  - @civitai/components@0.8.1
+
+## 0.8.0
+
+### Minor Changes
+
+- 4aa3a9f: Add `Text` — the typography primitive — on both tracks:
+  `data-civitai-ui="text"` and `<civitai-text>`, plus the `<Text>` React binding.
+
+  **Why.** The pack had no text, heading or paragraph component on either track —
+  the only text-named elements were the two form controls, `civitai-text-input`
+  and `civitai-textarea`. A consumer composing a page out of this pack could not
+  put a headline, a paragraph or a section title on it, so every composed page
+  read as a pile of self-labelling widgets. That is a hole in the design system
+  rather than in any one consumer. (Typography _utilities_ were never the hole:
+  `utilities.css` already ships `ci-fs-1`…`ci-fs-6`, the weights, `ci-muted` and
+  `ci-truncate`. It is the component level that was empty — and note that
+  `utilities.css` is **not** the transitional sheet; `bootstrap-compat.css` is the
+  one markup migrates away from, toward these.)
+
+  **The API**, derived from the components already here rather than invented:
+
+  - **The element is the consumer's choice, and it carries the meaning.** `as`
+    (element attribute) / the tag itself (attribute track): `p` (default), `span`,
+    or `h1`–`h6`. A heading is a REAL heading element — that is what puts it in
+    the document outline and a screen reader's heading list; `role="heading"` on a
+    styled box is not a substitute. `<civitai-text as="h2">` renders an `<h2>`
+    inside its shadow root, and an axe positive control (a deliberately skipped
+    level must be REPORTED) is what proves that heading reaches the accessibility
+    tree with its level intact.
+  - **Size and heading level are independent.** `data-size` never changes what an
+    element means and the element never changes the size, so an `<h2>` can be the
+    small print of a card and a `<p>` can be the lede.
+  - `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+    `4xl` · `5xl` — 12/13/14/16/20/24/28/32/40px. **One scale, in two halves.**
+    `sm`/`md`/`lg` are byte-identical to Button's own font-size ramp, so one size
+    name means one size across the pack, and `xs` is the 12px the field
+    description already uses. Everything from `lg` up is a value `utilities.css`
+    already ships as `ci-fs-N` — `lg`=`ci-fs-6`, `xl`=`ci-fs-5`, `2xl`=`ci-fs-4`,
+    `3xl`=`ci-fs-3`, `4xl`=`ci-fs-2`, `5xl`=`ci-fs-1` — so the package has one
+    type scale under two spellings rather than two that disagree. Nothing above
+    `ci-fs-1` is invented. `xl` and up lead at 1.25; below it, 1.5.
+  - `data-weight`: `normal` (default) · `medium` · `semibold` · `bold` — the
+    weights `utilities.css` already spells, plus the 500 this sheet already uses.
+  - **No colour axis**, and by the same predicate as alignment and truncation
+    below: every value one would take already exists as a utility that reaches
+    this element. `ci-muted` is the dimmed token, `ci-text-info` / `-success` /
+    `-warning` / `-error` the intent enum, `ci-text-default` the body colour, and
+    `color` **inherits** — so a utility on the element, or on any ancestor, reaches
+    `<civitai-text>`'s shadow content too (its inner element is `color: inherit`).
+    Both tracks are therefore `color: inherit` and Text does **not** paint
+    `--civitai-color-text` itself: a _specified_ value beats an _inherited_ one at
+    any specificity, so a token on the element would silently cancel every ancestor
+    utility and make the sentence above false.
+    ⚠️ **The trade, and it applies to pages that DO set a colour — not only to pages
+    that set none.** Text renders in whatever colour it inherits, so wherever an
+    ancestor colour and the token disagree, Text now follows the ancestor. Measured
+    on both tracks, in the shape a block in this repo actually has — a
+    `[data-theme="dark"]` root carrying `color: #e6e6e6` — Text computes
+    `rgb(230, 230, 230)`, while restoring the removed declaration on the same
+    fixture puts both tracks back at the dark token `rgb(193, 194, 197)` with the
+    plain `<p>` beside them still at `rgb(230, 230, 230)`. Dark is where that
+    reads, a soft grey token against a near-white block colour. Light behaves the
+    same: `color: rgb(24, 24, 27)` on `<body>` gives `rgb(24, 24, 27)` where the
+    token `rgb(34, 34, 34)` used to win. Every in-repo consumer is in that
+    population, by two routes — four starters set the colour on `<body>` with
+    Tailwind (`text-zinc-900 dark:text-zinc-100`), and seven set it on a
+    `[data-theme]` root as `#1a1a1a` / `#e6e6e6` (`civitai-block-starter` plus the
+    six apps under `starters/examples/`). The package's own `demo/` and
+    `playground/` still show the token, but by inheriting it from
+    `body { color: var(--civitai-color-text) }` rather than because Text names it.
+    With no colour anywhere Text lands on the UA default `rgb(0, 0, 0)`,
+    `@civitai/theme` shipping tokens and no `color`. `ci-text-default` asks for the
+    token explicitly — see the `utilities.css` note below for what has to be loaded
+    for that class to do anything.
+    This ships `minor` on two published packages, so adding the axis later stays
+    additive while taking it away would not be.
+  - **Margins are reset to `0`.** The UA's heading/paragraph margins are
+    em-relative, so they would move with every `data-size`; vertical rhythm here
+    belongs to `stack`/`group`. It is also what makes the two tracks lay out
+    identically.
+
+  **Tokens: nothing new — and 🔴 Text references no colour token in any declaration
+  of its own.** `@civitai/theme` exposes `--civitai-font` and `--civitai-font-mono`
+  and no size, weight or leading scale — Mantine expresses those per component — so
+  Text adds no token and states its px scale in `MARKUP.md` as a table, the way
+  every other component in this sheet states its metrics. What it does _not_ do is
+  read `--civitai-color-text`: both tracks are `color: inherit`, so overriding that
+  token does not retheme Text on its own. Measured — with
+  `--civitai-color-text: rgb(200, 0, 0)` on a wrapper, both tracks compute
+  `rgb(0, 0, 0)` (the inherited page colour), and only adding `ci-text-default`
+  moves them to `rgb(200, 0, 0)`. The token still reaches Text, but by inheritance
+  from an ancestor that paints with it, or through a `ci-text-*` utility — not
+  because Text names it.
+
+  **Deliberately NOT in v1** — each already has an implementation one layer down,
+  and one predicate decides all three: **colour** → `ci-muted` / `ci-text-*`,
+  **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`,
+  **truncation** → `ci-truncate`. `color` and `text-align` inherit, so the first
+  two reach `<civitai-text>` as well; `overflow` does not, so truncation on the
+  element track is a real follow-up rather than an oversight. Adding any of them
+  later is additive; removing one would not be.
+
+  ⚠️ **Colouring Text requires `utilities.css`, which is a separate stylesheet — and
+  no injection path in these packages ships it.** It is not bundled into
+  `styles.css`; `injectStyles()` injects the tokens and `styles.css` only, and
+  `@civitai/blocks-react`'s `injectBlocksStyles()` — reached on mount by 20 of the
+  21 component modules in that package's `/ui`, `SettingsForm` being the one
+  exception and deliberately unstyled — adds that package's interactive CSS on top
+  and still no utilities. So an App Block author who hand-writes
+  `<p data-civitai-ui="text">`, which rendering a `/ui` component is documented to
+  style, gets the new inherit behaviour together with a
+  `ci-text-default` that silently does nothing: measured, that markup under an
+  ancestor `color: rgb(24, 24, 27)` with `injectStyles()` alone computes
+  `rgb(24, 24, 27)`, the class having no effect. Load
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour, align or
+  truncate text. `demo/index.html` links all three.
+
+  **Both tracks — a choice, not a rule.** Most elements in this package have no
+  attribute-track twin, so "every other component ships both" would be false; the
+  relationship that holds is the converse (nearly every attribute slug also has an
+  element). Text ships both to stay on the side of that pattern and of a published
+  consumption mode.
+
+  Additive: no existing component, attribute, token or export changes behaviour.
+
+### Patch Changes
+
+- Updated dependencies [4aa3a9f]
+  - @civitai/components@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
@@ -218,10 +538,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-            after    @civitai/theme       0.3.1                   — 1 copy
-                     @civitai/components  0.4.2                   — 1 copy
+                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                          after    @civitai/theme       0.3.1                   — 1 copy
+                                   @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

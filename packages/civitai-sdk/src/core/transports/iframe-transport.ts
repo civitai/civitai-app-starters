@@ -15,6 +15,8 @@ import {
 } from '../transport.js';
 import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
 import { OriginMatcher } from '../origin-matcher.js';
+import { HOST_NOTIFICATIONS, HOST_REPLIES, HOST_SNAPSHOT, type HostReply } from './host-replies.generated.js';
+import { VERSION } from '../../version.generated.js';
 
 /**
  * How this bridge frames one call: a correlation id, and a result or a failure.
@@ -31,18 +33,20 @@ interface Envelope<T> {
  * The framing the host had before this package owned the protocol: fields
  * straight in the payload, and failure as the server's own sentence. Converting
  * it here is what keeps the rest of this file — and every domain — speaking one
- * shape; when the host modernises a message, its domain drops the declaration
- * and this stops being reached.
+ * shape; when the host modernises a message, the snapshot reports it as
+ * `envelope` and this stops being reached for it.
  */
-function fromLegacyReply(reply: LegacyReply): Envelope<unknown> {
+function fromLegacyReply(reply: LegacyReply, keys: HostReply['keys']): Envelope<unknown> {
   const { requestId, error, ...fields } = reply;
   // An empty string is how the host spells "no failure" on these replies.
   if (typeof error === 'string' && error !== '') {
     return { requestId, error: { code: classifyHostError(error), message: error } };
   }
   // Some of these replies nest their value under `result` and others put its
-  // fields straight in the payload; the host was never consistent about it.
-  return { requestId, result: 'result' in fields ? fields.result : fields };
+  // fields straight in the payload. The snapshot says which; where the host's
+  // reply could not be read (`keys` null), the payload itself decides.
+  const nested = keys === null ? 'result' in fields : keys.length === 1 && keys[0] === 'result';
+  return { requestId, result: nested ? fields.result : fields };
 }
 
 interface LegacyReply {
@@ -52,34 +56,44 @@ interface LegacyReply {
 }
 
 /**
- * The host's pre-protocol messages, each with the reply it answers with —
- * `<REQUEST>_RESULT` holds across most of them but not all. It is the migration
- * ledger for this protocol: an entry leaves the day the host modernises that
- * reply, and when it empties `fromLegacyReply` goes with it.
+ * Where a caller should go instead of a bridge message, from BREAKING.md. Only
+ * read when the host does not answer the type, so it is what a request the
+ * host dropped (or never had) says instead of hanging.
  */
-const LEGACY_REPLIES: Readonly<Record<string, string>> = {
-  OPEN_BUZZ_PURCHASE: 'BUZZ_PURCHASE_RESULT',
-  OPEN_IMAGE_UPLOAD: 'IMAGE_UPLOAD_RESULT',
-  OPEN_RESOURCE_PICKER: 'RESOURCE_PICKER_RESULT',
-  PUBLISH_GENERATION_OUTPUTS: 'PUBLISH_RESULT',
-  REQUEST_TOKEN: 'TOKEN_REFRESH_RESPONSE',
-  SAVE_IMAGE: 'SAVE_IMAGE_RESULT',
-};
+const REPLACED_BY: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^GET_VIEWER$/, "app.site.get('blocks/me')"],
+  [/^(SUBMIT|ESTIMATE|POLL|CANCEL)_WORKFLOW$|^QUERY_APP_WORKFLOWS$|^CANCEL_APP_WORKFLOW$/, 'app.workflows'],
+  [/^GET_IMAGES_BY_IDS$/, 'GET /api/v1/blocks/images?ids=… (app.site)'],
+  [/^APP_STORAGE_/, 'POST /api/v1/blocks/app-storage/* (app.site)'],
+  [/^SHARED_/, 'app.sharedStorage'],
+  [/^GET_BUZZ_BALANCE$/, "app.site.get('blocks/buzz')"],
+  [/^SET_COLLECTION_FOLLOW$/, 'POST /api/v1/blocks/collections/{id}/follow (app.site)'],
+  [/^TRACK_EVENT$/, 'app.host.track(eventName, properties)'],
+  [/^PUBLISH_GENERATION_OUTPUTS$/, 'app.host.publishGenerationOutputs'],
+];
 
-type ReplyFraming = 'envelope' | 'legacy';
-
-function replyTypeFor(type: string): string {
-  return LEGACY_REPLIES[type] ?? `${type}_RESULT`;
+/** Why `request(type)` cannot settle, and what to call instead. */
+export function unanswerable(type: string): BridgeError {
+  const instead = REPLACED_BY.find(([pattern]) => pattern.test(type))?.[1];
+  const message = HOST_NOTIFICATIONS.has(type)
+    ? `${type} is fire-and-forget: the host never answers it, so request() would wait forever. ` +
+      `Send it with notify()${instead ? `, or use ${instead}` : ''}.`
+    : `${type} is not a request the host answered at civitai ${HOST_SNAPSHOT}, ` +
+      `the host snapshot @civitai/sdk ${VERSION} was built from, so request() would wait forever. ` +
+      (instead
+        ? `Use ${instead} instead.`
+        : 'If the host has added it since, upgrade @civitai/sdk; otherwise see BREAKING.md for where bridge messages moved.');
+  return new BridgeError('invalid', type, message);
 }
 
 /** Turns a reply into the value it carries, or the failure it reports. */
-function unwrap(type: string, reply: unknown, framing: ReplyFraming): unknown {
+export function unwrap(type: string, reply: unknown, expected: HostReply): unknown {
   if (reply == null || typeof reply !== 'object') {
     throw new BridgeError('malformed', type, `${type} replied with no payload`);
   }
   const envelope =
-    framing === 'legacy'
-      ? fromLegacyReply(reply as LegacyReply)
+    expected.framing === 'legacy'
+      ? fromLegacyReply(reply as LegacyReply, expected.keys)
       : (reply as Envelope<unknown>);
 
   if (envelope.error !== undefined) {
@@ -262,12 +276,14 @@ export class IframeTransport implements BlockTransport {
   }
 
   async request(type: string, params: unknown, opts: RequestOptions = {}): Promise<unknown> {
-    const framing: ReplyFraming = type in LEGACY_REPLIES ? 'legacy' : 'envelope';
-    return unwrap(type, await this.#exchange(type, params, opts), framing);
+    // Own keys only: `HOST_REPLIES['toString']` must not read as an answer.
+    const expected = Object.hasOwn(HOST_REPLIES, type) ? HOST_REPLIES[type] : undefined;
+    // Nothing would ever answer it, so say so now rather than wait forever.
+    if (!expected) throw unanswerable(type);
+    return unwrap(type, await this.#exchange(type, expected.reply, params, opts), expected);
   }
 
-  #exchange(type: string, params: unknown, opts: RequestOptions): Promise<unknown> {
-    const responseType = replyTypeFor(type);
+  #exchange(type: string, responseType: string, params: unknown, opts: RequestOptions): Promise<unknown> {
     const { signal } = opts;
     if (signal?.aborted) return Promise.reject(signal.reason);
 
@@ -350,7 +366,9 @@ export class IframeTransport implements BlockTransport {
         this.#emit();
         this.#flushOutbound();
         // height 0 is a placeholder; the real measurement follows once the app mounts.
-        this.#dispatch('BLOCK_READY', { height: 0 });
+        // `sdkName`/`sdkVersion` are informational: the host counts which SDK
+        // versions are in the wild. Nothing is negotiated on them.
+        this.#dispatch('BLOCK_READY', { height: 0, sdkName: 'sdk', sdkVersion: VERSION });
       }
       return;
     }
@@ -366,6 +384,19 @@ export class IframeTransport implements BlockTransport {
     // cannot half-init anything because BLOCK_INIT replaces the snapshot wholesale.
     if (isHostMessage(data, 'THEME_CHANGE')) {
       this.#applyThemeChange(data.payload.theme);
+      return;
+    }
+
+    // The page's sub-path moved under the app root. Folded into the snapshot so
+    // `client.context.subPath` is live and `onChange` reports it — the same
+    // treatment as the theme, and the reason there is no `onRouteChange`.
+    //
+    // Unlike the theme this IS effectively init-gated, because the sub-path
+    // lives only in `context` and the pre-init context has no such key. That
+    // costs nothing: the host sends this only after init, and `BLOCK_INIT`
+    // replaces the snapshot with its own current value.
+    if (isHostMessage(data, 'ROUTE_CHANGED')) {
+      this.#applyRouteChange(data.payload.subPath);
       return;
     }
 
@@ -419,6 +450,17 @@ export class IframeTransport implements BlockTransport {
     const next: BlockSnapshot = { ...this.#snapshot, theme };
     if ('theme' in next.context) next.context = { ...next.context, theme };
     this.#snapshot = next;
+    this.#emit();
+  }
+
+  // Only ever UPDATES a context that already carries the key; never INTRODUCES
+  // it. A model slot has no route, so synthesising `subPath` would assert a page
+  // context the host never sent. Emits only when the value moved.
+  #applyRouteChange(subPath: string): void {
+    const context = this.#snapshot.context;
+    if (!('subPath' in context)) return;
+    if ((context as { subPath?: unknown }).subPath === subPath) return;
+    this.#snapshot = { ...this.#snapshot, context: { ...context, subPath } };
     this.#emit();
   }
 

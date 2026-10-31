@@ -41,6 +41,7 @@ import { expectTypeOf } from 'vitest';
 
 import type {
   BlockSourceImage,
+  BlockTrainingDatasetItem,
   InlineComfyNode,
   WorkflowBody,
   WorkflowBodyCustomComfy,
@@ -49,6 +50,8 @@ import type {
   WorkflowBodyPassThroughStep,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
 } from '../../src/blocks/types.js';
 
 /** The `textToImage` member, narrowed out of the union for member-field asserts. */
@@ -96,6 +99,8 @@ expectTypeOf<WorkflowBody>().toEqualTypeOf<
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
   | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining
+  | WorkflowBodyWorkflow
 >();
 
 // --- additionalResources is OPTIONAL on the textToImage member ---
@@ -381,9 +386,10 @@ expectTypeOf(passThroughNested).toMatchTypeOf<WorkflowBody>();
 // The pass-through arm's key set mirrors the host's `.strict()`
 // `blockPassThroughStepBodySchema` exactly — `step` is present in the TYPE as
 // the optional-undefined arm discriminator (the host spells it `z.undefined()`),
-// and the wire body omits it entirely.
+// and the wire body omits it entirely. `quoteId` is the host's optional
+// confirmed-submit key (civitai/civitai#5786), absent on every other body.
 expectTypeOf<keyof StepPassThrough>().toEqualTypeOf<
-  'kind' | 'step' | '$type' | 'input' | 'maxBuzz'
+  'kind' | 'step' | '$type' | 'input' | 'maxBuzz' | 'quoteId'
 >();
 expectTypeOf<StepPassThrough['$type']>().toEqualTypeOf<string>();
 expectTypeOf<StepPassThrough['input']>().toEqualTypeOf<Record<string, unknown>>();
@@ -443,6 +449,10 @@ if (someBody.kind === 'textToImage') {
   // readable here, which is the point: the compiler forces the second narrow
   // rather than letting a consumer assume every customComfy body is a recipe.
   expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
+} else if (someBody.kind === 'training') {
+  expectTypeOf(someBody.items).toEqualTypeOf<BlockTrainingDatasetItem[]>();
+} else if (someBody.kind === 'workflow') {
+  expectTypeOf(someBody.steps).toEqualTypeOf<WorkflowBodyWorkflow['steps']>();
 } else {
   // 🔴 Same shape one level down: narrowing to `kind === 'step'` leaves BOTH
   // arms, so `step` is `string | undefined` here and `params` is NOT readable.

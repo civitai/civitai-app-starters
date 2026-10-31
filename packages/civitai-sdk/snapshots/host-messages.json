@@ -1,27 +1,116 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "973767bb21",
-  "capturedAt": "2026-09-21",
+  "capturedFrom": "d539d88259",
+  "capturedAt": "2026-10-25",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
-      "reply": "APP_STORAGE_DELETE_RESULT"
+      "reply": "APP_STORAGE_DELETE_RESULT",
+      "replyKeys": [
+        "deleted",
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "deleted",
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [
+        "deleted",
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "APP_STORAGE_GET": {
       "request": true,
-      "reply": "APP_STORAGE_GET_RESULT"
+      "reply": "APP_STORAGE_GET_RESULT",
+      "replyKeys": [
+        "value"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "value"
+      ],
+      "optionalErrorKeys": [
+        "value"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "APP_STORAGE_LIST": {
       "request": true,
-      "reply": "APP_STORAGE_LIST_RESULT"
+      "reply": "APP_STORAGE_LIST_RESULT",
+      "replyKeys": [
+        "keys",
+        "nextCursor"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "keys"
+      ],
+      "optionalErrorKeys": [
+        "keys"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "APP_STORAGE_QUOTA": {
       "request": true,
-      "reply": "APP_STORAGE_QUOTA_RESULT"
+      "reply": "APP_STORAGE_QUOTA_RESULT",
+      "replyKeys": [
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "optionalErrorKeys": [
+        "limitBytes",
+        "limitRows",
+        "rowCount",
+        "usedBytes"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "APP_STORAGE_SET": {
       "request": true,
-      "reply": "APP_STORAGE_SET_RESULT"
+      "reply": "APP_STORAGE_SET_RESULT",
+      "replyKeys": [
+        "ok",
+        "sizeBytes"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "BLOCK_ERROR": {
       "request": false,
@@ -31,53 +120,234 @@
       "request": false,
       "reply": ""
     },
+    "BLOCK_MESSAGE_REJECTED": {
+      "request": false,
+      "reply": ""
+    },
     "BLOCK_READY": {
       "request": false,
       "reply": ""
     },
     "CANCEL_APP_WORKFLOW": {
       "request": true,
-      "reply": "CANCEL_APP_WORKFLOW_RESULT"
+      "reply": "CANCEL_APP_WORKFLOW_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "CANCEL_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_CANCELED"
+      "reply": "WORKFLOW_CANCELED",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": "none",
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "inventory",
+      "failure": null
     },
     "CREATE_POST_FROM_APP": {
       "request": true,
-      "reply": "CREATE_POST_RESULT"
+      "reply": "CREATE_POST_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "ESTIMATE_WORKFLOW": {
       "request": true,
-      "reply": "ESTIMATE_RESULT"
+      "reply": "ESTIMATE_RESULT",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": "none",
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "inventory",
+      "failure": null
+    },
+    "ESTIMATE_WORKFLOW_BATCH": {
+      "request": true,
+      "reply": "ESTIMATE_BATCH_RESULT",
+      "replyKeys": [
+        "aggregate",
+        "snapshots"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_BUZZ_ACCOUNTS": {
       "request": true,
-      "reply": "BUZZ_ACCOUNTS_RESULT"
+      "reply": "BUZZ_ACCOUNTS_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_BUZZ_BALANCE": {
       "request": true,
-      "reply": "BUZZ_BALANCE_RESULT"
+      "reply": "BUZZ_BALANCE_RESULT",
+      "replyKeys": [
+        "balance"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_BUZZ_TRANSACTIONS": {
       "request": true,
-      "reply": "BUZZ_TRANSACTIONS_RESULT"
+      "reply": "BUZZ_TRANSACTIONS_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_DAILY_COMPENSATION": {
       "request": true,
-      "reply": "DAILY_COMPENSATION_RESULT"
+      "reply": "DAILY_COMPENSATION_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "GET_ENTITY_REACTIONS": {
+      "request": true,
+      "reply": "ENTITY_REACTIONS_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_IMAGES_BY_IDS": {
       "request": true,
-      "reply": "IMAGES_RESULT"
+      "reply": "IMAGES_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "GET_RESOURCE_FILE": {
+      "request": true,
+      "reply": "RESOURCE_FILE_RESULT",
+      "replyKeys": [
+        "file"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_VIEWER": {
       "request": true,
-      "reply": "VIEWER_RESULT"
+      "reply": "VIEWER_RESULT",
+      "replyKeys": [
+        "viewer"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "GET_WILDCARD_PACK": {
       "request": true,
-      "reply": "WILDCARD_PACK_RESULT"
+      "reply": "WILDCARD_PACK_RESULT",
+      "replyKeys": [
+        "pack"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "NAVIGATE": {
       "request": false,
@@ -85,31 +355,173 @@
     },
     "OPEN_BUZZ_PURCHASE": {
       "request": true,
-      "reply": "BUZZ_PURCHASE_RESULT"
+      "reply": "BUZZ_PURCHASE_RESULT",
+      "replyKeys": [
+        "purchased"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "OPEN_CHECKPOINT_PICKER": {
       "request": true,
-      "reply": "CHECKPOINT_PICKER_RESULT"
+      "reply": "CHECKPOINT_PICKER_RESULT",
+      "replyKeys": [
+        "selected"
+      ],
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "OPEN_IMAGE_PICKER": {
+      "request": true,
+      "reply": "IMAGE_PICKER_RESULT",
+      "replyKeys": [
+        "selected",
+        "selectedImages"
+      ],
+      "optionalReplyKeys": [
+        "selected",
+        "selectedImages"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "OPEN_IMAGE_UPLOAD": {
       "request": true,
-      "reply": "IMAGE_UPLOAD_RESULT"
+      "reply": "IMAGE_UPLOAD_RESULT",
+      "replyKeys": [
+        "selected"
+      ],
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "OPEN_MEDIA_UPLOAD": {
+      "request": true,
+      "reply": "MEDIA_UPLOAD_RESULT",
+      "replyKeys": [
+        "selected"
+      ],
+      "optionalReplyKeys": [
+        "selected"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "OPEN_RESOURCE_PICKER": {
       "request": true,
-      "reply": "RESOURCE_PICKER_RESULT"
+      "reply": "RESOURCE_PICKER_RESULT",
+      "replyKeys": [
+        "selected",
+        "selectedResources"
+      ],
+      "optionalReplyKeys": [
+        "selected",
+        "selectedResources"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "POLL_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_STATUS"
+      "reply": "WORKFLOW_STATUS",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": "none",
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "inventory",
+      "failure": null
+    },
+    "PREPARE_TRAINING_DATASET": {
+      "request": true,
+      "reply": "TRAINING_DATASET_RESULT",
+      "replyKeys": [],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "PUBLISH_GENERATION_OUTPUTS": {
       "request": true,
-      "reply": "PUBLISH_RESULT"
+      "reply": "PUBLISH_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "QUERY_APP_WORKFLOWS": {
       "request": true,
-      "reply": "APP_WORKFLOWS_RESULT"
+      "reply": "APP_WORKFLOWS_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "REQUEST_CONSENT": {
       "request": false,
@@ -122,85 +534,352 @@
     "REQUEST_TOKEN": {
       "request": true,
       "reply": "TOKEN_REFRESH_RESPONSE",
-      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)"
+      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)",
+      "replyKeys": [
+        "token"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": "none",
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "inventory",
+      "failure": null
     },
     "RESIZE_IFRAME": {
       "request": false,
       "reply": ""
     },
+    "RUN_CONFIRMED_STEP": {
+      "request": true,
+      "reply": "CONFIRMED_STEP_RESULT",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "RUN_TRAINING": {
+      "request": true,
+      "reply": "TRAINING_RESULT",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "SAVE_IMAGE": {
       "request": true,
-      "reply": "SAVE_IMAGE_RESULT"
+      "reply": "SAVE_IMAGE_RESULT",
+      "replyKeys": [
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SET_COLLECTION_FOLLOW": {
       "request": true,
-      "reply": "COLLECTION_FOLLOW_RESULT"
+      "reply": "COLLECTION_FOLLOW_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "SET_ENTITY_REACTION": {
+      "request": true,
+      "reply": "ENTITY_REACTION_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SET_USER_CHECKPOINT": {
       "request": true,
-      "reply": "USER_CHECKPOINT_SET"
+      "reply": "USER_CHECKPOINT_SET",
+      "replyKeys": [
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok"
+      ],
+      "optionalErrorKeys": [
+        "ok"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_APPEND": {
       "request": true,
-      "reply": "SHARED_APPEND_RESULT"
+      "reply": "SHARED_APPEND_RESULT",
+      "replyKeys": [
+        "key"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_GET": {
       "request": true,
-      "reply": "SHARED_GET_RESULT"
+      "reply": "SHARED_GET_RESULT",
+      "replyKeys": [
+        "item"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "item"
+      ],
+      "optionalErrorKeys": [
+        "item"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_GET_COUNT": {
       "request": true,
-      "reply": "SHARED_GET_COUNT_RESULT"
+      "reply": "SHARED_GET_COUNT_RESULT",
+      "replyKeys": [
+        "count"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_GET_COUNTS": {
       "request": true,
-      "reply": "SHARED_GET_COUNTS_RESULT"
+      "reply": "SHARED_GET_COUNTS_RESULT",
+      "replyKeys": [
+        "counts"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_LIST": {
       "request": true,
-      "reply": "SHARED_LIST_RESULT"
+      "reply": "SHARED_LIST_RESULT",
+      "replyKeys": [
+        "items",
+        "nextCursor"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_REPORT": {
       "request": true,
-      "reply": "SHARED_REPORT_RESULT"
+      "reply": "SHARED_REPORT_RESULT",
+      "replyKeys": [
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "ok",
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_UNVOTE": {
       "request": true,
-      "reply": "SHARED_UNVOTE_RESULT"
+      "reply": "SHARED_UNVOTE_RESULT",
+      "replyKeys": [
+        "count"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_UPDATE": {
       "request": true,
-      "reply": "SHARED_UPDATE_RESULT"
+      "reply": "SHARED_UPDATE_RESULT",
+      "replyKeys": [
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "ok",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "ok",
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_VOTE": {
       "request": true,
-      "reply": "SHARED_VOTE_RESULT"
+      "reply": "SHARED_VOTE_RESULT",
+      "replyKeys": [
+        "count"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SHARED_WITHDRAW": {
       "request": true,
-      "reply": "SHARED_WITHDRAW_RESULT"
+      "reply": "SHARED_WITHDRAW_RESULT",
+      "replyKeys": [
+        "deleted",
+        "ok"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error",
+        "rateLimit"
+      ],
+      "optionalErrorKeys": [
+        "rateLimit"
+      ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "SUBMIT_WORKFLOW": {
       "request": true,
-      "reply": "WORKFLOW_SUBMITTED"
+      "reply": "WORKFLOW_SUBMITTED",
+      "replyKeys": [
+        "snapshot"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": "none",
+      "optionalErrorKeys": null,
+      "errorKeysFrom": "inventory",
+      "failure": null
     },
     "TRACK_EVENT": {
+      "request": false,
+      "reply": ""
+    },
+    "VIEWER_ACTIVITY": {
       "request": false,
       "reply": ""
     }
   },
   "scopes": [
     "ai:write:budgeted",
+    "apps:storage",
+    "apps:storage:publish",
     "apps:storage:read",
     "apps:storage:shared:read",
     "apps:storage:shared:write",
     "apps:storage:write",
+    "apps:store:items:write",
     "buzz:read:self",
     "collections:read:private",
     "collections:read:self",
     "collections:write:self",
+    "goods:purchase:self",
+    "goods:read:self",
     "models:read:self",
     "posts:write:self",
+    "social:react:self",
     "social:tip:self",
     "user:read:self"
   ]

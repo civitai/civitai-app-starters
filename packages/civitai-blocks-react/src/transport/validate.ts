@@ -58,6 +58,7 @@ import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
   ParentToBlockMessageType,
+  SharedStorageRateLimit,
   Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
@@ -240,12 +241,26 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (typeof s.status !== 'string' || !WORKFLOW_STATUSES.has(s.status)) return false;
   if (s.cost !== undefined) {
     if (!isObject(s.cost) || typeof s.cost.total !== 'number') return false;
+    // OPTIONAL: an older host omits it and the snapshot stays valid. Present, it
+    // is subtracted from `total` by the block, so a non-number or a negative
+    // would render a wrong price.
+    if (
+      s.cost.authorFee !== undefined &&
+      (!isFiniteNumber(s.cost.authorFee) || s.cost.authorFee < 0)
+    ) {
+      return false;
+    }
   }
   if (s.imageUrls !== undefined) {
     if (!Array.isArray(s.imageUrls)) return false;
     if (!s.imageUrls.every((u): u is string => typeof u === 'string')) return false;
   }
   if (s.error !== undefined && typeof s.error !== 'string') return false;
+  // OPTIONAL: set only on the refusals that define a code (today the training
+  // price-quote refusal), absent everywhere else. Checked as a STRING, not
+  // against today's codes — the open-ended-union rule below: a host adding a
+  // code must not turn into a dropped reply in every shipped bundle.
+  if (s.errorCode !== undefined && typeof s.errorCode !== 'string') return false;
   if (s.autoClaim !== undefined) {
     if (!isObject(s.autoClaim)) return false;
     if (typeof s.autoClaim.type !== 'string' || !AUTO_CLAIM_TYPES.has(s.autoClaim.type)) {
@@ -261,7 +276,165 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
       return false;
     }
   }
+  // ---- The host fields mirrored in #524, plus the training-publish pair. ----
+  //
+  // Same policy as `autoClaim` above: each is OPTIONAL (an older host omits it
+  // and the snapshot stays valid), and a PRESENT but malformed value rejects
+  // the snapshot, because the block dereferences these fields.
+  //
+  // 🔴 ONE DELIBERATE DIFFERENCE: the open-ended string unions
+  // (`modelSubstitutions[].reason`, `trainedEpochs[].$type`, `toolCalls[].type`)
+  // are checked as STRINGS, not against their current members. A rejected snapshot is a dropped
+  // poll reply — the block's request hangs to its timeout — so pinning today's
+  // members here would turn the host adding a value into a fleet-wide hang in
+  // every already-shipped block bundle. The types document that unknown values
+  // may arrive.
+  if (s.modelSubstitutions !== undefined) {
+    if (!Array.isArray(s.modelSubstitutions)) return false;
+    for (const m of s.modelSubstitutions) {
+      if (!isObject(m)) return false;
+      if (!isFiniteNumber(m.requested) || !isFiniteNumber(m.applied)) return false;
+      if (typeof m.reason !== 'string') return false;
+    }
+  }
+  if (s.textOutputs !== undefined) {
+    if (!Array.isArray(s.textOutputs)) return false;
+    if (!s.textOutputs.every((t): t is string => typeof t === 'string')) return false;
+  }
+  if (s.textOutputWithheld !== undefined) {
+    if (!isObject(s.textOutputWithheld) || typeof s.textOutputWithheld.reason !== 'string') {
+      return false;
+    }
+  }
+  if (s.toolCalls !== undefined) {
+    if (!Array.isArray(s.toolCalls)) return false;
+    for (const c of s.toolCalls) {
+      if (!isObject(c)) return false;
+      if (typeof c.id !== 'string' || typeof c.type !== 'string') return false;
+      if (!isObject(c.function)) return false;
+      if (typeof c.function.name !== 'string' || typeof c.function.arguments !== 'string') {
+        return false;
+      }
+    }
+  }
+  if (s.stepOutputs !== undefined) {
+    if (!Array.isArray(s.stepOutputs)) return false;
+    // `output` is `unknown` by contract — only the `$type` label is dereferenced.
+    for (const o of s.stepOutputs) {
+      if (!isObject(o) || typeof o.$type !== 'string') return false;
+    }
+  }
+  if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
+  if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
+  if (s.trainingQuote !== undefined && !isValidTrainingQuote(s.trainingQuote)) return false;
+  if (s.stepQuote !== undefined && !isValidStepQuote(s.stepQuote)) return false;
+  if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
+  if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
   return true;
+}
+
+/**
+ * Shape check for `stepQuote` — the viewer-confirmable quote a pass-through
+ * `step` estimate returns when its fixed price is above the per-call budget. The
+ * block passes `quoteId` back verbatim, renders `total` on its confirm button
+ * and may show `stepType`, so all three are pinned to their types.
+ *
+ * `quoteId`'s `sq_…` FORMAT is deliberately not pinned HERE, for the reason
+ * given on {@link isValidTrainingQuote}: a host changing the handle's format
+ * must not turn every such estimate reply into a dropped one. The format is
+ * checked where it is an instruction rather than an observation — on the way
+ * OUT, in `useRunConfirmedStep()`.
+ */
+function isValidStepQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (typeof q.stepType !== 'string') return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `model3dOutputs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. A block matches
+ * an entry's `url` against its image list and loads it, and branches on
+ * `format` / `variant`, so each is pinned to a string. `format` and `variant`
+ * are OPEN sets (the orchestrator's own format names and output field paths)
+ * and are never checked against a list; `variant` may be the empty string.
+ */
+function isValidModel3dOutputs(outputs: unknown): boolean {
+  if (!Array.isArray(outputs)) return false;
+  for (const o of outputs) {
+    if (!isObject(o) || !isNonEmptyString(o.url)) return false;
+    if (typeof o.format !== 'string' || typeof o.variant !== 'string') return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `steps` — the per-step view of a `kind: 'workflow'` run.
+ * OPTIONAL like its neighbours, and a PRESENT but malformed value rejects the
+ * snapshot: the block reads `name`, `$type`, `status` and `imageUrls` off every
+ * entry.
+ *
+ * `status` is checked against the SAME closed set as the snapshot's own
+ * `status`, unlike the open string unions above: it is typed as that closed
+ * union and a block `switch`es on it, so a snapshot carrying any other value is
+ * dropped rather than handed over. `output` is `unknown` by contract and is not
+ * inspected.
+ */
+function isValidWorkflowSteps(steps: unknown): boolean {
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
+    if (!isObject(step)) return false;
+    if (typeof step.name !== 'string' || typeof step.$type !== 'string') return false;
+    if (typeof step.status !== 'string' || !WORKFLOW_STATUSES.has(step.status)) return false;
+    if (step.imageUrls !== undefined) {
+      if (!Array.isArray(step.imageUrls)) return false;
+      if (!step.imageUrls.every((u): u is string => typeof u === 'string')) return false;
+    }
+    if (step.error !== undefined && typeof step.error !== 'string') return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `trainingQuote` — the quote a `kind: 'training'` estimate
+ * returns. The block passes `quoteId` back verbatim and renders `total`, so both
+ * are pinned: a non-empty string, a finite number. `quoteId`'s `tq_…` FORMAT is
+ * deliberately not pinned — it is opaque, and a host changing it must not turn
+ * every estimate reply into a dropped one.
+ */
+function isValidTrainingQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (!Number.isInteger(q.imageCount) || (q.imageCount as number) < 0) return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `trainedEpochs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. `$type` is
+ * checked as a STRING, not against today's members (see the forward-
+ * compatibility note in {@link isValidWorkflowSnapshot}).
+ */
+function isValidTrainedEpochs(epochs: unknown): boolean {
+  if (!Array.isArray(epochs)) return false;
+  for (const e of epochs) {
+    if (!isObject(e) || typeof e.$type !== 'string') return false;
+    if (!Number.isInteger(e.epochNumber)) return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `publishedModel` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field.
+ */
+function isValidPublishedModel(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isFiniteNumber(p.modelId) || !isFiniteNumber(p.modelVersionId)) return false;
+  return typeof p.published === 'boolean';
 }
 
 /**
@@ -298,6 +471,34 @@ export function isValidTokenRefresh(
 export function isValidThemeChange(p: unknown): p is { theme: Theme } {
   if (!isObject(p)) return false;
   if (p.theme !== 'light' && p.theme !== 'dark') return false;
+  return true;
+}
+
+/**
+ * Host-pushed ROUTE change — the sub-path below the app root that is now
+ * showing. No `requestId` field; the host is the initiator, exactly like
+ * `TOKEN_REFRESH`.
+ *
+ * STRICTNESS: a string, and NOT a non-empty one. `''` is the genuine value on an
+ * app's own index — the same decision `isPageSlotContext` records for the field
+ * this message updates ("`subPath` is checked as a string, not a NON-EMPTY one")
+ * — so requiring content here would drop every navigation back to the app root
+ * and freeze the block on whatever sub-path it was last told about. That is a
+ * worse failure than the one a stricter check would prevent.
+ *
+ * Nothing further is asserted about the shape of the string. A leading slash, a
+ * dot segment or an absolute URL would all be host-side bugs, and this package
+ * is not the authority on the host's own resolver: the value lands in
+ * `context.subPath`, which is data a block routes on, not a URL this package
+ * fetches or assigns. Dropping a push costs at most a stale route (the block
+ * keeps rendering the last good value) and never a hang — nothing awaits it.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it — see the same note on {@link isValidThemeChange}.
+ */
+export function isValidRouteChanged(p: unknown): p is { subPath: string } {
+  if (!isObject(p)) return false;
+  if (typeof p.subPath !== 'string') return false;
   return true;
 }
 
@@ -375,6 +576,38 @@ export function isValidWorkflowReply(
   if (!isObject(p)) return false;
   if (!isValidWorkflowSnapshot(p.snapshot)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `ESTIMATE_WORKFLOW_BATCH`. A well-formed reply
+ * carries EITHER an `error` string OR `snapshots` + `aggregate`.
+ *
+ * 🔴 A PRESENT `error` IS ACCEPTED ON ITS OWN, unlike the single-estimate reply
+ * ({@link isValidWorkflowReply}, which requires a snapshot). That is what lets
+ * the host's generic `{ requestId, error: 'unsupported on this host' }` reach
+ * `useBatchEstimate`, which turns it into the typed error an app falls back to
+ * per-cell estimates on. Dropping it would leave the block waiting out the
+ * timeout instead. `error` is shape-checked only: the channel carries free-text
+ * server messages.
+ *
+ * Without an `error`, EVERY cell must be a valid workflow snapshot and the
+ * aggregate must hold three finite numbers. One malformed cell rejects the whole
+ * reply, the same way one malformed snapshot rejects a single-estimate reply:
+ * the block dereferences these fields.
+ */
+export function isValidEstimateBatchResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) return typeof p.error === 'string';
+  if (!Array.isArray(p.snapshots)) return false;
+  if (!p.snapshots.every((s) => isValidWorkflowSnapshot(s))) return false;
+  const a = p.aggregate;
+  if (!isObject(a)) return false;
+  for (const key of ['total', 'pricedCells', 'cellCount'] as const) {
+    const value = a[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  }
   return true;
 }
 
@@ -497,6 +730,20 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
+ * The `purpose:'trainingData'` `IMAGE_UPLOAD_RESULT.selected` shape
+ * (civitai/civitai#6461): `{ images: [{ url, air }] }`, each `url` and `air` a
+ * non-empty string. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
+ * its key format is the host's to check, at the estimate — so only its type is
+ * pinned here.
+ */
+function isTrainingDataUpload(s: Record<string, unknown>): boolean {
+  if (!Array.isArray(s.images)) return false;
+  return s.images.every(
+    (img) => isObject(img) && isNonEmptyString(img.url) && isNonEmptyString(img.air),
+  );
+}
+
+/**
  * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
  * user dismissed the upload modal (the block's hook resolves to `null`). When
  * present it is a UNION keyed by the request's `purpose`:
@@ -505,7 +752,8 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
  *     value, `url` non-empty).
  *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
  *     dimensions, non-empty url; no imageId/nsfwLevel).
- * The guard accepts EITHER shape (the result carries no purpose discriminator).
+ *   • `'trainingData'` → `{ images: [{ url, air }] }` (non-empty strings).
+ * The guard accepts ANY of the shapes (the result carries no purpose discriminator).
  * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
  * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /
  * `BlockGenerationSourceUploadModal.tsx`).
@@ -517,16 +765,32 @@ export function isValidImageUploadResult(
   selected?:
     | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
     | { url: string; width: number; height: number }
-    | { status: 'pending'; imageId: number; url: string };
+    | { status: 'pending'; imageId: number; url: string }
+    | { images: Array<{ url: string; air: string }> };
+  error?: string;
 } {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
+  // `error` (civitai/civitai#5639): a refused or failed `OPEN_IMAGE_UPLOAD
+  // { bytes }`. Free text (host strings plus forwarded server messages), so
+  // only its TYPE is checked. 🔴 Accepting it is load-bearing: a validator that
+  // dropped `{ requestId, error }` would leave `useUploadImageBytes()` waiting
+  // out its whole timeout on a refusal the host already sent.
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
-  // one of the purpose-keyed shapes (moderated / generationSource / pending).
+  // one of the purpose-keyed shapes (moderated / generationSource / pending /
+  // trainingData).
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
-    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s) && !isPendingUpload(s)) return false;
+    if (
+      !isModeratedUpload(s) &&
+      !isGenerationSourceUpload(s) &&
+      !isPendingUpload(s) &&
+      !isTrainingDataUpload(s)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -717,6 +981,65 @@ export function isValidWildcardPackResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * The CLOSED `RESOURCE_FILE_RESULT` error set, mirroring
+ * `BlockResourceFileErrorCode` (civitai/civitai-app-starters#664).
+ */
+const RESOURCE_FILE_ERROR_CODES = new Set<string>([
+  'not-found',
+  'forbidden',
+  'unauthorized',
+  'too-large',
+  'parse-failed',
+  'busy',
+  'rate-limited',
+]);
+
+const RESOURCE_FILE_ENTRY_FORMATS = new Set<string>(['ui', 'api', 'unknown']);
+
+/**
+ * Reply to a block-initiated `GET_RESOURCE_FILE`. Same contract shape as
+ * {@link isValidWildcardPackResult}: EITHER a `file` OR an `error` that is one of
+ * {@link RESOURCE_FILE_ERROR_CODES}; a free-text or unknown `error`, or a reply
+ * with neither, is malformed and dropped. The `file` is checked field by field —
+ * `meta` ids positive integers, names strings, `creatorUsername` a string or
+ * `null`, `truncated` a boolean, and EVERY entry an object with a string `path`,
+ * a known `format` and a `graph` key. `graph` itself is the host's parsed JSON
+ * and may be any JSON value.
+ */
+export function isValidResourceFileResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) {
+    if (typeof p.error !== 'string' || !RESOURCE_FILE_ERROR_CODES.has(p.error)) return false;
+  }
+  if (p.file !== undefined) {
+    const file = p.file;
+    if (!isObject(file)) return false;
+    const meta = file.meta;
+    if (!isObject(meta)) return false;
+    if (!isPositiveInteger(meta.modelId)) return false;
+    if (!isPositiveInteger(meta.modelVersionId)) return false;
+    if (!isPositiveInteger(meta.fileId)) return false;
+    if (typeof meta.fileName !== 'string') return false;
+    if (typeof meta.modelName !== 'string') return false;
+    if (typeof meta.versionName !== 'string') return false;
+    if (meta.creatorUsername !== null && typeof meta.creatorUsername !== 'string') return false;
+    if (typeof file.truncated !== 'boolean') return false;
+    if (!Array.isArray(file.entries)) return false;
+    for (const entry of file.entries) {
+      if (!isObject(entry)) return false;
+      if (typeof entry.path !== 'string') return false;
+      if (typeof entry.format !== 'string' || !RESOURCE_FILE_ENTRY_FORMATS.has(entry.format)) {
+        return false;
+      }
+      if (!('graph' in entry)) return false;
+    }
+  }
+  if (p.file === undefined && p.error === undefined) return false;
+  return true;
+}
+
 // ============================================================
 // App generator SUBQUEUE reply validators
 // ============================================================
@@ -760,6 +1083,10 @@ function isValidAppWorkflow(w: unknown): boolean {
     if (img.height !== null && !isFiniteNumber(img.height)) return false;
     if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
   }
+  // OPTIONAL — absent on hosts that predate them; checked only when present.
+  if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
+  if (w.trainedEpochs !== undefined && !isValidTrainedEpochs(w.trainedEpochs)) return false;
+  if (w.model3dOutputs !== undefined && !isValidModel3dOutputs(w.model3dOutputs)) return false;
   return true;
 }
 
@@ -1010,6 +1337,97 @@ export function isValidCollectionFollowResult(p: unknown): boolean {
   return true;
 }
 
+/** A positive integer id: what a reaction reply keys UI state by. */
+function isPositiveIntId(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0;
+}
+
+/**
+ * One image's reaction state inside an `ENTITY_REACTION(S)_RESULT`: `counts` an
+ * object of finite numbers, `viewerReactions` an array of strings,
+ * `statsUnknown` a boolean.
+ *
+ * 🔴 The reaction NAMES are not membership-checked, in `counts` or in
+ * `viewerReactions`. The site stores five reactions and may add a sixth; a
+ * reply naming one this SDK does not know is still a true statement about the
+ * viewer, and dropping it would hang the request to its timeout instead.
+ */
+function isValidEntityReactionState(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (!isObject(v.counts)) return false;
+  for (const n of Object.values(v.counts)) {
+    if (!isFiniteNumber(n)) return false;
+  }
+  if (!Array.isArray(v.viewerReactions)) return false;
+  for (const r of v.viewerReactions) {
+    if (typeof r !== 'string') return false;
+  }
+  if (typeof v.statsUnknown !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `SET_ENTITY_REACTION`. A well-formed reply carries
+ * EITHER a `result` OR an `error`; one with neither is malformed and dropped.
+ *
+ * `error` is SHAPE-CHECKED ONLY, although the host's set is closed
+ * (`ENTITY_REACTION_ERROR_CODES`): a code a newer host adds must still reach
+ * the block as a rejection. A membership check would drop it, and a dropped
+ * reply on a request-style message does not reject, it waits out the timeout.
+ * `useReactions` turns an unknown string into a `ReactionError` with no `code`.
+ *
+ * `result` is checked as far as a consumer reads it: `entityId` a positive
+ * integer (state is keyed by it), `reaction` a non-empty string, `reacted` and
+ * `changed` booleans, plus the state fields.
+ */
+export function isValidEntityReactionResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isPositiveIntId(r.entityId)) return false;
+    if (!isNonEmptyString(r.reaction)) return false;
+    if (typeof r.reacted !== 'boolean') return false;
+    if (typeof r.changed !== 'boolean') return false;
+    if (!isValidEntityReactionState(r)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_ENTITY_REACTIONS`. Same one-of and shape-only
+ * `error` contract as {@link isValidEntityReactionResult}.
+ *
+ * `result.byId` must be an object whose every key is a positive-integer id
+ * spelled as a string and whose every value is a valid state;
+ * `result.unavailable` an array of positive-integer ids.
+ */
+export function isValidEntityReactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isObject(r.byId)) return false;
+    for (const [key, state] of Object.entries(r.byId)) {
+      if (!/^[1-9][0-9]*$/.test(key)) return false;
+      if (!isValidEntityReactionState(state)) return false;
+    }
+    if (!Array.isArray(r.unavailable)) return false;
+    for (const id of r.unavailable) {
+      if (!isPositiveIntId(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
 /**
  * Reply to a block-initiated `CREATE_POST_FROM_APP`. A well-formed reply carries
  * EITHER a `result` (`{ postId: positive int, url: non-empty string, imageIds:
@@ -1048,6 +1466,46 @@ export function isValidCreatePostResult(p: unknown): boolean {
     }
   }
   if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_TRAINING`. A well-formed reply carries EITHER a `snapshot` (a
+ * valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`) OR an
+ * `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, and here a membership check would cost the
+ * most: this request carries the TEN-MINUTE consent bound, and the host forwards
+ * server refusals (an expired quote, a changed body, an ineligible image) in this
+ * field. A dropped refusal would leave a Train button spinning for ten minutes.
+ */
+export function isValidTrainingResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_CONFIRMED_STEP`. A well-formed reply carries EITHER a `snapshot`
+ * (a valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`)
+ * OR an `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, for the reason given on
+ * {@link isValidTrainingResult}: this request carries the same TEN-MINUTE
+ * consent bound, and the host forwards server refusals (an expired or used
+ * quote, a changed body or price, the feature flag) in the same field as its own
+ * codes. A membership check would drop those and leave a Run button spinning for
+ * ten minutes.
+ */
+export function isValidConfirmedStepResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
   return true;
 }
 
@@ -1153,6 +1611,10 @@ export function isValidAppStorageQuotaResult(p: unknown): boolean {
 // uniform). Closes the silent-corrupt-return hole: without these,
 // `getCount/getCounts/append/vote/unvote`/`list` returned a missing field as
 // `undefined` typed `number`/`string` with no throw, no timeout.
+//
+// The optional `rateLimit` on the six write replies is NOT checked by any
+// predicate here, so it can never drop a reply; the hook parses it (see
+// `parseSharedStorageRateLimit` below the validators).
 
 /** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
 function isValidSharedValue(v: unknown): boolean {
@@ -1237,7 +1699,7 @@ export function isValidSharedReportResult(p: unknown): boolean {
 /**
  * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
  * `error` is a free-text host-side failure (disallowed origin / withheld image
- * / over-size / fetch failure). Uniform `{ ok, error }` contract (module
+ * / disallowed `bytes` type / over-size / fetch failure / `busy`). Uniform `{ ok, error }` contract (module
  * header) — same shape as `isValidSharedReportResult`.
  */
 export function isValidSaveImageResult(p: unknown): boolean {
@@ -1300,6 +1762,34 @@ export function isValidSharedWithdrawResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * Validate the `rateLimit` a host put on a shared-storage refusal. Returns a
+ * copy holding ONLY the two known fields, or `undefined` when `value` is
+ * missing or malformed.
+ *
+ * Kept in lockstep with the platform's own parser for the same metadata
+ * (`parseRateLimitMeta` in civitai's `src/shared/utils/rate-limit-meta.ts`):
+ * `retryAfterSeconds` must be an integer of at least 1, and `retryAt` a string
+ * `Date.parse` can read. Anything else — a wrong type, a negative or fractional
+ * number, a missing field, a non-object — is malformed.
+ *
+ * 🔴 NOT A VALIDATOR, deliberately. None of the `isValidShared*Result`
+ * predicates look at `rateLimit`, so a malformed one can never DROP a reply:
+ * dropping it would hang the block's request to its timeout over an optional
+ * hint. The reply is delivered unchanged, and `useSharedStorage` calls this
+ * parser: a malformed value is ignored and the plain refusal error is thrown.
+ */
+export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLimit | undefined {
+  if (!isObject(value)) return undefined;
+  const { retryAfterSeconds, retryAt } = value;
+  if (typeof retryAfterSeconds !== 'number' || !Number.isInteger(retryAfterSeconds)) {
+    return undefined;
+  }
+  if (retryAfterSeconds < 1) return undefined;
+  if (typeof retryAt !== 'string' || Number.isNaN(Date.parse(retryAt))) return undefined;
+  return { retryAfterSeconds, retryAt };
+}
+
 // ============================================================
 // Picker + user-checkpoint reply validators
 // ============================================================
@@ -1345,33 +1835,152 @@ export function isValidCheckpointPickerResult(p: unknown): boolean {
 }
 
 /**
- * Reply to `OPEN_RESOURCE_PICKER`. `selected` is ABSENT on dismiss (the hook
- * resolves `null`); when present it is a `BlockResourceInfo` projection — the 5
- * base fields plus `modelType` and the OPTIONAL public recommended-settings
- * (`strength`/`minStrength`/`maxStrength` finite, `trainedWords` a string[],
- * `clipSkip` a finite number OR `null`).
+ * One `BlockResourceInfo` projection — the 5 base fields plus `modelType` and
+ * the OPTIONAL public recommended-settings (`strength`/`minStrength`/
+ * `maxStrength` finite, `trainedWords` a string[], `clipSkip` a finite number
+ * OR `null`). Shared by the single-pick `selected` and every entry of the
+ * multi-select `selectedResources`, so the two cannot drift on what a
+ * well-formed resource is.
+ */
+function isValidPickerResource(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isValidPickerResourceBase(s)) return false;
+  if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
+  if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
+  if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
+  if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
+  if (s.trainedWords !== undefined) {
+    if (!Array.isArray(s.trainedWords)) return false;
+    if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
+  }
+  // `clipSkip` is `number | null` — accept a finite number OR null; reject
+  // other present types.
+  if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_RESOURCE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockResourceInfo` projection.
+ *
+ * Multi-select: `selectedResources` is an array of the same projection (`[]` on
+ * dismiss). ONE malformed entry drops the whole reply — each `versionId` is
+ * money-adjacent, and handing the caller the well-formed remainder would
+ * silently change which resources a generation runs with.
+ *
+ * `error` (a refusal) is not validated here: the hook reads it by PRESENCE, and
+ * a reply carrying only `{ requestId, error }` must reach it.
  */
 export function isValidResourcePickerResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.selected !== undefined) {
-    const s = p.selected;
-    if (!isObject(s)) return false;
-    if (!isValidPickerResourceBase(s)) return false;
-    if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
-    if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
-    if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
-    if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
-    if (s.trainedWords !== undefined) {
-      if (!Array.isArray(s.trainedWords)) return false;
-      if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
-    }
-    // `clipSkip` is `number | null` — accept a finite number OR null; reject
-    // other present types.
-    if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
-      return false;
-    }
+  if (p.selected !== undefined && !isValidPickerResource(p.selected)) return false;
+  if (p.selectedResources !== undefined) {
+    if (!Array.isArray(p.selectedResources)) return false;
+    if (!p.selectedResources.every(isValidPickerResource)) return false;
   }
+  return true;
+}
+
+const IMAGE_PICKER_SOURCES = new Set<string>(['posted', 'generated']);
+
+/**
+ * One `BlockPickedImageInfo`: `source` one of the two libraries, a non-empty
+ * `url`, finite positive `width`/`height`, a finite `nsfwLevel`, and an
+ * `imageId` that is either ABSENT (a generated output has none) or a positive
+ * integer. Shared by the single-pick `selected` and every entry of the
+ * multi-pick `selectedImages`, so the two cannot drift on what a well-formed
+ * image is.
+ */
+function isValidPickedImage(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (typeof s.source !== 'string' || !IMAGE_PICKER_SOURCES.has(s.source)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (!isFiniteNumber(s.width) || s.width <= 0) return false;
+  if (!isFiniteNumber(s.height) || s.height <= 0) return false;
+  if (!isFiniteNumber(s.nsfwLevel)) return false;
+  if (s.imageId !== undefined) {
+    if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_IMAGE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockPickedImageInfo`.
+ *
+ * Multi pick: `selectedImages` is an array of the same shape (`[]` on dismiss).
+ * ONE malformed entry drops the whole reply: handing the caller the
+ * well-formed remainder would silently change which images it goes on to use.
+ *
+ * `error` (a refusal) must be a string when present, and a reply carrying one
+ * is accepted without looking further: `useImagePicker` throws on a PRESENT
+ * `error` before it reads `selected` / `selectedImages`. 🔴 Accepting it is
+ * load-bearing: dropping `{ requestId, error }` would leave the hook waiting
+ * out its whole human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidImagePickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading a pick
+  if (p.selected !== undefined && !isValidPickedImage(p.selected)) return false;
+  if (p.selectedImages !== undefined) {
+    if (!Array.isArray(p.selectedImages)) return false;
+    if (!p.selectedImages.every(isValidPickedImage)) return false;
+  }
+  return true;
+}
+
+const MEDIA_UPLOAD_KINDS = new Set<string>(['image', 'video', 'audio']);
+
+const isPositiveInteger = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0;
+
+/**
+ * One `BlockMediaUploadInfo`: a non-empty `url`, a known `kind`, a string
+ * `mimeType`, a whole `sizeBytes` ≥ 0, and dimensions by kind. `width` and
+ * `height` are positive whole numbers when present, REQUIRED for `image` and
+ * `video` (the host always measures them) and ABSENT for `audio`. `durationMs`
+ * is a finite number ≥ 0 when present.
+ */
+function isValidMediaUploadInfo(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (typeof s.kind !== 'string' || !MEDIA_UPLOAD_KINDS.has(s.kind)) return false;
+  if (typeof s.mimeType !== 'string') return false;
+  if (!isFiniteNumber(s.sizeBytes) || !Number.isInteger(s.sizeBytes) || s.sizeBytes < 0) return false;
+  if (s.kind === 'audio') {
+    if (s.width !== undefined || s.height !== undefined) return false;
+  } else if (!isPositiveInteger(s.width) || !isPositiveInteger(s.height)) {
+    return false;
+  }
+  if (s.durationMs !== undefined && (!isFiniteNumber(s.durationMs) || s.durationMs < 0)) return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD`: `{ requestId, selected }`, `{ requestId, error }`
+ * or a bare `{ requestId }` (dismissed / declined).
+ *
+ * `error` must be a string when present, and a reply carrying one is accepted
+ * without looking further: `useMediaUpload` throws on a PRESENT `error` before
+ * it reads `selected`. 🔴 Accepting it is load-bearing: dropping
+ * `{ requestId, error }` would leave the hook waiting out its whole
+ * human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidMediaUploadResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `selected`
+  if (p.selected !== undefined && !isValidMediaUploadInfo(p.selected)) return false;
   return true;
 }
 
@@ -1460,6 +2069,8 @@ export function payloadValidatorFor(
       return isValidTokenRefreshResponse;
     case 'THEME_CHANGE':
       return isValidThemeChange;
+    case 'ROUTE_CHANGED':
+      return isValidRouteChanged;
     case 'CONSENT_UNAVAILABLE':
       return isValidConsentUnavailable;
     case 'ESTIMATE_RESULT':
@@ -1467,6 +2078,8 @@ export function payloadValidatorFor(
     case 'WORKFLOW_STATUS':
     case 'WORKFLOW_CANCELED':
       return isValidWorkflowReply;
+    case 'ESTIMATE_BATCH_RESULT':
+      return isValidEstimateBatchResult;
     case 'BUZZ_PURCHASE_RESULT':
       return isValidBuzzPurchaseResult;
     case 'BUZZ_BALANCE_RESULT':
@@ -1481,6 +2094,8 @@ export function payloadValidatorFor(
       return isValidDailyCompensationResult;
     case 'WILDCARD_PACK_RESULT':
       return isValidWildcardPackResult;
+    case 'RESOURCE_FILE_RESULT':
+      return isValidResourceFileResult;
     case 'APP_WORKFLOWS_RESULT':
       return isValidAppWorkflowsResult;
     case 'CANCEL_APP_WORKFLOW_RESULT':
@@ -1491,12 +2106,24 @@ export function payloadValidatorFor(
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
       return isValidCollectionFollowResult;
+    case 'ENTITY_REACTION_RESULT':
+      return isValidEntityReactionResult;
+    case 'ENTITY_REACTIONS_RESULT':
+      return isValidEntityReactionsResult;
     // 🔴 PRESENCE of this entry IS compiler-enforced (the `never` bind in
     // `default:`); WHICH validator it names is not. This reply settles a PUBLIC
     // POST, so the identity is pinned by test as well — see the mapping pin in
     // `validate.test.ts`.
     case 'CREATE_POST_RESULT':
       return isValidCreatePostResult;
+    // Same caveat as CREATE_POST_RESULT: presence is compiler-enforced, the
+    // identity is pinned by test (`validate.test.ts`). TRAINING_RESULT settles a
+    // charged run.
+    case 'TRAINING_RESULT':
+      return isValidTrainingResult;
+    // Settles a charged job, like TRAINING_RESULT directly above.
+    case 'CONFIRMED_STEP_RESULT':
+      return isValidConfirmedStepResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':
@@ -1535,6 +2162,10 @@ export function payloadValidatorFor(
       return isValidCheckpointPickerResult;
     case 'RESOURCE_PICKER_RESULT':
       return isValidResourcePickerResult;
+    case 'IMAGE_PICKER_RESULT':
+      return isValidImagePickerResult;
+    case 'MEDIA_UPLOAD_RESULT':
+      return isValidMediaUploadResult;
     case 'USER_CHECKPOINT_SET':
       return isValidUserCheckpointSetResult;
     case 'SUSPEND':

@@ -2,6 +2,17 @@
 
 Shared OAuth + orchestrator glue for building third-party [Civitai](https://civitai.com) apps. Used internally by every starter in [`civitai/civitai-app-starters`](https://github.com/civitai/civitai-app-starters), and publishable for direct use in your own app.
 
+> **Building a block app (an app that runs inside civitai.com)? Start from
+> [`@civitai/sdk`](https://www.npmjs.com/package/@civitai/sdk).** The three
+> packages are layers over one host contract, and all three are supported:
+>
+> - **`@civitai/sdk`** is the client new block apps start on: `initialize()`,
+>   then `app.workflows`, `app.storage`, `app.site` and `app.host`.
+> - **`@civitai/app-sdk/blocks`** (this package) is the contract itself: the
+>   workflow body types, the manifest types and the host message shapes.
+> - **[`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react)**
+>   is the React hook binding over that same contract.
+
 This package is **runtime-agnostic** — Node 20+ APIs only. There is no Next.js, SvelteKit, or Express coupling. Each starter writes a ~30-line framework adapter that calls into these primitives.
 
 ## Install
@@ -21,7 +32,7 @@ pnpm add @civitai/app-sdk
 | `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` | **Type-only** subpath (0 runtime bytes) keying the orchestrator's generated workflow-step shapes from `@civitai/client` by wire `$type`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
 | `blocks/*` — `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic and **zero runtime dependencies** — no React, no DOM types, nothing in your install graph. Hooks and the iframe transport live in a separate package. |
 | `manifest/*` — `defineBlock`, `SCHEMA_DIVERGENCES`, `KNOWN_GAPS` (**Node only**) | Build-time manifest validation. `defineBlock(config)` compiles the vendored canonical schema with [Ajv](https://ajv.js.org) and validates a `BlockManifestV1` against it, so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. It is **derived from the schema, not a hand-written mirror of it** — that mirror is what produced [#330](https://github.com/civitai/civitai-app-starters/issues/330). Needs `node:fs` and the optional peer `ajv`, which is why it is not on the browser-facing `./blocks` surface. |
-| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. Optional peers: `ajv` (runtime) and `vite` (types only). |
+| `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. On the dev server only, it also exposes the manifest's `scopes` + `storage` to `@civitai/sdk` for a dev-tunnel local preview. Optional peers: `ajv` (runtime) and `vite` (types only). |
 
 ## Entry points, and what the root barrel is
 
@@ -85,12 +96,13 @@ over `window.postMessage({ type, payload }, targetOrigin)`, discriminated by
 `type`. The full union is exported:
 
 - **parent → block**: `BLOCK_INIT`, `TOKEN_REFRESH`, `TOKEN_REFRESH_RESPONSE`,
-  `ESTIMATE_RESULT`, `WORKFLOW_SUBMITTED`, `WORKFLOW_STATUS`,
+  `ESTIMATE_RESULT`, `ESTIMATE_BATCH_RESULT`, `WORKFLOW_SUBMITTED`, `WORKFLOW_STATUS`,
   `BUZZ_PURCHASE_RESULT`, `CHECKPOINT_PICKER_RESULT`, `USER_CHECKPOINT_SET`,
-  `APP_STORAGE_*_RESULT`, `SUSPEND`, `RESUME`, `THEME_CHANGE`,
+  `APP_STORAGE_*_RESULT`, `SUSPEND`, `RESUME`, `THEME_CHANGE`, `ROUTE_CHANGED`,
   `CONSENT_UNAVAILABLE` (`ParentToBlockMessage`).
 - **block → parent**: `BLOCK_READY`, `BLOCK_ERROR`, `REQUEST_TOKEN`,
-  `RESIZE_IFRAME`, `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`,
+  `RESIZE_IFRAME`, `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
+  `ESTIMATE_WORKFLOW_BATCH`, `POLL_WORKFLOW`,
   `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW`, `OPEN_BUZZ_PURCHASE`,
   `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`, `NAVIGATE`, `TRACK_EVENT`,
   `APP_STORAGE_*` (`BlockToParentMessage`).
@@ -137,8 +149,9 @@ interface BlockInitPayload {
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | Every known block scope string (the authoritative enum the canonical schema validates `scopes` against) + the `domain:verb:target` format-helper regex. Read the current set from `BLOCK_SCOPES` itself — scopes are added and retired, so no count is quoted here. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
+| `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -167,12 +180,39 @@ own key:
   `'chat-completion'`, …). The wire enum is derived from the host's step registry, so an
   unregistered id is rejected fail-closed at the schema, and `params` are validated by that
   step's own `.strict()` schema.
+  An estimate the host has no price quote for fails with no `cost` and `snapshot.errorCode`
+  `step_quote_rejected` (refused; the same body will fail again), `step_quote_unavailable` (no
+  usable answer; the one a retry can clear) or `step_quote_unpriced` (an answer without a price).
+  The submit is unchanged. An older host prices that estimate at the step's declared estimate.
 - **`WorkflowBodyPassThroughStep`** (`step` ABSENT) — names an **orchestrator `$type`** directly
   and the host forwards `input` unmodified. There is no registry lookup, no param schema, no
   prompt audit and no AIR scan; what bounds it is a denylist of platform-internal `$type`s
   (scanners, moderation classifiers, hashing/model ingestion, web egress), a 64-character
-  `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
-  step timeout in seconds**.
+  `$type` cap, a 256 KB `input` cap, and the spend reservation. **Unlike the inline arm, `maxBuzz`
+  is not always the timeout here**: on both `estimate` and `submit` the host asks the orchestrator
+  for a `whatif` quote of the step. **Quoted** → it reserves `max(maxBuzz, quote)`, gated against
+  the token's per-call budget (`token.buzzBudget`: a platform default when the manifest declares
+  none, clamped to a platform cap — current values in the
+  [limits table](https://developer.civitai.com/apps/guide/text-to-image.md#limits-table) — so the
+  reservation can exceed the 1–250 `maxBuzz` range), and stamps **no** step timeout.
+  **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds; the timeout
+  bounds wall-clock time, and spend only for a step billed by compute time — a step priced per
+  unit can bill above `maxBuzz`. `estimate` returns the reservation as `cost.total`; it is not a
+  guaranteed maximum. Full rules: `WorkflowBodyPassThroughStep.maxBuzz`.
+
+  `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
+  this arm by an explicit operator decision. They get no special treatment: the quoted/unquoted
+  rules above apply to them as to any other `$type`. Whether a given training input is quoted,
+  and at what price, is the orchestrator's answer — read it from `estimate` before submitting.
+  The trained checkpoint is not part of the block contract (an older
+  host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
+  something to build on); a host that supports it reports the trained epochs on
+  `snapshot.trainedEpochs` (and on each `AppWorkflow` row of the app-queue read) without the
+  checkpoint, and the viewer publishes
+  one by being navigated (`useCivitaiNavigate`, `scope: 'site'`) to Civitai's own model wizard at
+  `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `snapshot.publishedModel` (and
+  `AppWorkflow.publishedModel`) then reports the resulting model. These fields are absent on hosts
+  that predate them.
 
 ```ts
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
@@ -185,6 +225,129 @@ const body: WorkflowBody = {
   maxBuzz: 10,
 };
 ```
+
+**Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
+can still run when the **viewer confirms its exact price** in Civitai's own dialog
+(civitai/civitai#5786). When the orchestrator quotes a **fixed** price (positive, not variable
+or metered) above the token's per-call budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`
+(5,000), the `estimate` reply carries `snapshot.stepQuote` (`quoteId`, `total`, `stepType`,
+`expiresAt`). Send the same body back with that `quoteId` on the `RUN_CONFIRMED_STEP` bridge
+(`CONFIRMED_STEP_RESULT`); a `quoteId` body sent as an ordinary submit is refused. A quote is
+single-use and expires after 15 minutes. Only a **single** estimate carries `stepQuote` — a
+batch estimate stores nothing, so its cells never do. Where a quote would be granted, the
+estimate **fails instead** (`{ workflowId: 'failed', status: 'failed', error }`) for a training
+`$type` in any casing (`a training step type cannot run as a confirmed step — use kind:'training'`) and for an
+`input` that is not plain JSON (`a confirmed step needs plain JSON input (objects, arrays,
+strings, finite numbers, booleans, null) — <path> is <what>`; the suffix varies, so match on
+the text before the dash). Each confirmation is its own job, so a
+`submission-unconfirmed` result — the outcome is unknown — must never be retried automatically:
+a retry is a new, separately charged job. Page apps only, `ai:write:budgeted`, behind the host
+flag `app-blocks-confirmed-step` (off by default), and refused for development, dev-tunnel and
+review tokens — so it is exercised against the mock host, not `dev:live`. Use it through
+`@civitai/blocks-react`'s `useRunConfirmedStep()`.
+
+**3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
+`snapshot.imageUrls`; `snapshot.model3dOutputs` (and the same field on an `AppWorkflow` row)
+labels them. Omitted when there are none.
+
+```ts
+import type { BlockModel3dOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+// `format` is the model's file format; `variant` is the output it came from.
+function pickModel(
+  snapshot: BlockWorkflowSnapshot,
+  format: string,
+  variant: string,
+): BlockModel3dOutput | undefined {
+  return snapshot.model3dOutputs?.find((m) => m.format === format && m.variant === variant);
+}
+
+const mesh = pickModel(snapshot, 'glb', 'model');
+const rigged = pickModel(snapshot, 'fbx', 'riggedFbxModel');
+```
+
+`WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
+run on images the viewer uploaded through the host, mirroring the host's
+`blockTrainingBodySchema` (civitai/civitai#5434, #6461). Its dataset is `items: [{ air, caption }]`
+(`BlockTrainingDatasetItem`; at most `BLOCK_TRAINING_DATASET_MAX_ITEMS` items and
+`BLOCK_TRAINING_CAPTION_MAX_CHARS` caption characters, one blob at most once). There is no `maxBuzz` and no timeout — the
+`estimate` reply carries `snapshot.trainingQuote` (`quoteId`, `total`, `imageCount`,
+`expiresAt`), and the run starts only through the `RUN_TRAINING` bridge, after the viewer
+confirms that price in Civitai's own dialog. A confirmed run may exceed the token's per-call
+budget, up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000). Page apps only, `ai:write:budgeted`,
+behind the host flag `app-blocks-training-kind` (off by default), and refused from development
+and review sessions. The images are uploaded over `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`,
+which replies `IMAGE_UPLOAD_RESULT { selected: { images: [{ url, air }] } }`
+(`BlockTrainingDataUploadResult`); the host refuses a run whose quote names a blob it did not
+upload for the block, with the `BlockRunTrainingHostError` `training data not uploaded here`.
+`PREPARE_TRAINING_DATASET` (the server-prepared dataset of civitai/civitai#5438) is removed from
+the protocol. Use it through `@civitai/blocks-react`'s `useImageUpload({ purpose: 'trainingData' })`
+and `useRunTraining()`.
+
+`WorkflowBodyWorkflow` (`kind: 'workflow'`) submits **several orchestrator steps as one
+workflow**, 1 to `BLOCK_WORKFLOW_MAX_STEPS` (8), through the same messages as every other kind.
+A value anywhere in a step's `input` may be a `WorkflowStepRef`
+(`{ $ref, path, default?, format? }`) naming `'$arguments'`, an **earlier** step's `name`, or an
+earlier **unnamed** step by position (`'$0'`). A `name` starts with a lowercase
+letter, uses only lowercase letters, digits, `_` and `-`, and is unique (the exact rule is on
+`WorkflowBodyWorkflowStep.name`). `suppressOutput: true` marks an intermediate step whose
+blobs are not surfaced. There is no `maxBuzz`: the ceiling is the app's per-generation budget × the
+number of steps.
+
+```ts
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      suppressOutput: true,
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+```
+
+- 🔴 **The estimate is not a maximum.** The orchestrator re-prices a step once the values it
+  references are known and charges the difference.
+- **A workflow the host cannot price has no estimate, but its submit still proceeds.** The
+  estimate (and a batch-estimate cell) fails with no `cost` and `snapshot.errorCode`
+  `workflow_quote_rejected` (the orchestrator refused the body; the same body will fail again),
+  `workflow_quote_unavailable` (no usable answer; the one a retry can clear) or
+  `workflow_quote_unpriced` (an answer without a price). The submit of the same body is reserved
+  at the ceiling above — unless it contains a training step (refused without a quote on both, as
+  on the single-step arm) or a `repeat` step at any depth (also refused on both, before any
+  reservation, as `workflow_repeat_unbounded`; its `error` states the cause). An older host
+  returns the ceiling as the estimate's `cost.total` instead of failing.
+- **One author fee per workflow**, on the quoted base, itemised as `cost.authorFee` on the
+  estimate. If the workflow bills more, the fee charged is held to the fee shown; a workflow that
+  does not succeed has its whole fee reversed, even if earlier steps delivered output.
+- **`repeat` over `arguments` only, at most 16 iterations** (`BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS`,
+  nested repeats multiplied): `for.$ref` must be `'$arguments'` and `path` must name an array
+  there. A `merge` step's `fields` entries each need a string `$ref` (an earlier step or
+  `$arguments`) and a `reduce`. Repeat children appear in `snapshot.steps` as `<name>.<n>`. The
+  velocity limit counts one unit per step, and a `repeat` one per iteration.
+- `snapshot.steps` reports each step's `status`, `imageUrls`, `output` and `error`. A `failed`
+  workflow can still carry `cost.total > 0` and usable `imageUrls`: steps that succeeded before
+  the failing one stay charged.
+- A refused body carries `snapshot.errorCode`: `workflow_step_denied` (a platform-internal
+  `$type`), `workflow_ref_invalid` (a reference to the step itself, a later step, or nothing, or a
+  step name that breaks the naming rules, or a malformed `repeat`/`merge`),
+  `workflow_repeat_unbounded` (a `repeat` not over an array in `arguments`, or over 16 iterations,
+  or a `repeat` with no price quote) or `workflow_too_many_steps`. The single-step pass-through arm refuses `repeat` outright.
+- Requires a host that knows the kind; an older host refuses the body.
 
 ### `defineBlock` validator rules
 
@@ -232,7 +395,7 @@ no entry fails the suite.
 > assigned server-side, so it cannot be enforced locally.
 
 **Where it runs.** Every scaffold that ships a `block.manifest.json`
-(`starters/civitai-block-starter` and all six `starters/examples/*`) registers
+(`starters/civitai-block-starter` and every `starters/examples/*` app) registers
 `blockManifestPlugin` from `@civitai/app-sdk/vite` in its `vite.config.ts`. It
 fires from Vite's `configResolved`, the one hook called on both the dev-server
 and the build path — so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail
@@ -249,6 +412,15 @@ import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
 const plugins = [blockManifestPlugin()];
 ```
+
+**On the dev server only**, the plugin also puts the manifest's `scopes` and
+`storage` on the page (a `<script>` at the end of `index.html`'s `<head>`; `vite build` never
+emits it). `@civitai/sdk` reads it in a dev-tunnel preview, where the host marks the
+frame `storageMode: 'local-preview'` and `app.storage.collection(name)` is served by
+an in-memory store that enforces these declarations — see "In a dev-tunnel preview"
+in `@civitai/sdk`'s README. Nothing else of the manifest is exposed. Without the
+plugin, a preview's document store refuses every call `local_preview_no_manifest`:
+this plugin is the only way the manifest reaches `@civitai/sdk`.
 
 ### Web storage in a block (`@civitai/app-sdk/safe-storage`)
 
@@ -320,10 +492,133 @@ const { Viewer } = await import(viewerModuleSpecifier);
 for each global it actually replaced. `createMemoryStorage()` is exported too,
 if you want the standalone `Storage` work-alike.
 
+### Nested documents
+
+🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
+load, and no manifest change fixes it** — your block's origin is opaque and the
+static host stamps `frame-ancestors` + `X-Frame-Options` on every path it
+serves. The full derivation, the dated external browser matrix (an
+observation of the platform — nothing in this repo verifies it) and the known
+limits
+are in one place: the header of
+[`src/blocks/nestedDocument.ts`](src/blocks/nestedDocument.ts).
+
+**Prefer a single-document design.** An engine build (Defold, Unity WebGL,
+Phaser) is a `<canvas>` plus a JS loader that normally mounts straight into the
+document you hand it, which avoids the whole problem class.
+
+When a separate document is genuinely required, fetch it and inline it as the
+iframe's `srcdoc` — that frame inherits your opaque origin and carries no
+response headers of its own:
+
+```ts
+import { fetchNestedDocument } from '@civitai/app-sdk/blocks';
+
+const { srcDoc, baseHref } = await fetchNestedDocument({ src: '/game/index.html' });
+// baseHref === 'https://<blockId>.civit.ai/game/'
+const frame = document.createElement('iframe');
+frame.setAttribute('sandbox', 'allow-scripts'); // your own; it does not inherit
+frame.srcdoc = srcDoc;
+```
+
+The injected `<base href>` is the mechanism: a `srcdoc` document's base URL is
+`about:srcdoc`, inheriting yours, so every relative `src=` in the fetched markup
+would otherwise resolve to nothing. The base is the directory of the
+**response's final URL**, so a redirect is followed rather than resolved one
+directory too high. A document that already declares a `<base href>` has that
+one resolved against the final URL and replaced — the base the parser uses is
+always absolute. It is **not** a de-duplication: markup declaring two
+`<base href>` tags comes back with two, the first (the only one a parser
+honours) rewritten and the second left inert. Only real markup counts — a
+`<base>` or a `<head>` inside a comment or an inline `<script>`/`<style>` body
+is ignored, and tag names match case-insensitively.
+
+**The returned string is NOT sanitized**, on purpose — it is your own markup and
+scripts, verbatim, and stripping them would remove the thing the nested document
+exists to run. Only pass a `src` you control. React callers want
+`useNestedDocument()` from
+[`@civitai/blocks-react`](../civitai-blocks-react/README.md).
+
+### Can this workflow file run inline? (`checkComfyGraph`)
+
+Almost no posted ComfyUI workflow can run as an inline `customComfy` graph:
+they are saved in the editor's UI format, most use custom node packs, and
+their loaders name models by local filename. `checkComfyGraph` answers from
+the file alone, offline, so an app can disable "Run" and say why before any
+Buzz is spent:
+
+```ts
+import { checkComfyGraph } from '@civitai/app-sdk/blocks';
+import type { BlockResourceFileEntry } from '@civitai/app-sdk/blocks';
+
+function runLabel(entry: BlockResourceFileEntry): string {
+  const check = checkComfyGraph(entry);
+  if (check.runnable) return 'Run';
+  const reason = check.reasons[0]!;
+  switch (reason.code) {
+    case 'not-api-format':
+      return 'Re-export this workflow with "Save (API Format)"';
+    case 'custom-nodes':
+      return `Needs custom nodes: ${reason.packs.join(', ') || reason.classes.join(', ')}`;
+    case 'model-filenames':
+      return `Models are named by file, not AIR: ${reason.inputs.map((i) => i.value).join(', ')}`;
+    case 'too-many-nodes':
+      return `Over ${reason.max} nodes`;
+    case 'too-large':
+      return `Over ${reason.max} bytes`;
+  }
+}
+```
+
+The reason codes are a closed set, in this order:
+
+| `code` | Fires when | Extra fields |
+|---|---|---|
+| `not-api-format` | the entry is not ComfyUI API format (`format` is `ui` or `unknown`, or the graph does not have API shape). The next three are then not checked. | `format` |
+| `custom-nodes` | a node class is outside the core list (API graphs, and the node lists of UI graphs and their subgraphs) | `classes` (the complete list of offending classes), `packs` (partial: only the `properties.cnr_id` values present on those nodes in the file, so UI graphs only, and a node saved without one adds no pack) |
+| `model-filenames` | a loader input (`*_name`, e.g. `ckpt_name`, `unet_name`, `lora_name`, `vae_name`, `clip_name`, `control_net_name`; plus `model_file`, `text_encoder`; plus `name` on `ModelPatchLoader` and `existing_lora` on `TrainLoraNode`) holds a model filename (`.safetensors`, `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf`, …) rather than an AIR (`urn:air:…`) | `inputs` (`nodeId`, `classType`, `input`, `value`) |
+| `too-many-nodes` | more than `BLOCK_INLINE_COMFY_MAX_NODES` (300) nodes | `nodes`, `max` |
+| `too-large` | the graph as sent (each node reduced to `class_type` + `inputs`) serializes to more than `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` (262144) | `bytes`, `max` |
+
+The core-node list is generated by `scripts/gen-comfy-core-nodes.mjs` from one
+pinned ComfyUI commit (recorded in the generated file's header), never edited
+by hand: the node classes `nodes.py` registers in `NODE_CLASS_MAPPINGS`, plus
+the classes each `comfy_extras` module it loads actually registers (through
+`get_node_list` or `NODE_CLASS_MAPPINGS`; a class that is only defined, or
+commented out of that list, is not included). Partner API nodes are not in it.
+
+🔴 **The pin is a ComfyUI commit, not the worker's ComfyUI version.** The list
+can name classes newer than the ComfyUI the generation worker runs, so a graph
+that uses one gets `runnable: true` here and can still fail on the worker. The editor-only classes `Note`, `MarkdownNote`, `Reroute` and
+`PrimitiveNode` are allowed in a UI graph, and never appear in an API one.
+
+`runnable: true` means no known blocker was found, not that the job will
+succeed: the worker image decides which nodes exist, and the host still runs its
+AIR-containment, entitlement and moderation gates on the body you submit.
+
+Before you submit, two host limits this check does not cover (the second only
+on one path):
+- **Strip per-node extras.** The host's node schema is strict: a node carrying
+  anything besides `class_type` and `inputs` (an export's `_meta`, for
+  instance) is rejected. `too-large` already measures the graph without them.
+- **Calling the REST routes directly caps the whole request at 256 KB of
+  UTF-8.** If you call `POST /api/v1/blocks/workflows/estimate` or `/submit`
+  yourself with a block token, a larger body is refused with a 413. That body
+  holds `resources`, `prompt` and the rest as well as the graph, so a graph
+  just under `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` can still be refused there.
+  A page app using the hooks goes through the host bridge instead, which has
+  no such 256 KB request cap; the graph cap itself still applies.
+
+🔴 **A Comfy estimate is a ceiling, never a price.** Estimating a `customComfy`
+body returns your `maxBuzz` as `cost.total`, and billing settles to the real GPU
+time after the run. Show it as "up to N Buzz".
+
 ### Version compatibility
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
+| `0.80.0` | `checkComfyGraph` — pre-spend check that a workflow file can run as an inline `customComfy` graph; `BLOCK_INLINE_COMFY_MAX_NODES` / `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` |
+| `0.57.0` | `fetchNestedDocument` / `NestedDocumentError` — the `srcdoc` escape hatch for embedding your own bundled documents |
 | `0.27.0` | `@civitai/app-sdk/safe-storage` — opaque-origin `localStorage`/`sessionStorage` shim, auto-installed by the `blocks` subpath |
 | `0.24.0` | `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW` messages + the `AppWorkflow` type (app generator subqueue, PR #3164) |
 | `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |
@@ -446,7 +741,7 @@ The starters in `civitai/civitai-app-starters` wire this into framework-specific
 
 ## Choosing a workflow step type
 
-The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (50 in total).
+The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (58 in total).
 
 The catalog is pinned to the orchestrator's published OpenAPI spec two ways — an offline unit test against a transcribed copy of the spec's `WorkflowStepTemplate` discriminator mapping, and a CI job (`pnpm check:catalogs`) that re-fetches the live spec and diffs it. If a `$type` is listed here, the orchestrator accepts it.
 
@@ -521,15 +816,15 @@ What it exports:
 
 | Export | What |
 |---|---|
-| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 50 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
+| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 58 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
 | `WorkflowStepTemplateFor<'videoGen'>` | One step's template. |
 | `WorkflowStepInputFor<'videoGen'>` | One step's `input` shape, without needing the generated `*Input` name. |
 | `AnyWorkflowStepTemplate` | Discriminated union of all 47 mapped templates — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
 | `TypedWorkflowTemplate` | The submit envelope with `steps` narrowed to that union. Pass it straight to `submitWorkflow` / `estimateWorkflow`. |
 
-> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 50 `$type`s; this map covers 47. The 3 with no generated template in the pinned `@civitai/client` are `imageScanning`, `preprocessVideo`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
+> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 58 `$type`s; this map covers 47. The 11 with no generated template in the pinned `@civitai/client` are `archiveExtraction`, `audioModeration`, `imageScanning`, `liveTextToSpeech`, `liveTranscription`, `merge`, `multimodalEmbedding`, `preprocessVideo`, `promptModeration`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
 >
-> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (50, 47, 3, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
+> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (58, 47, 11, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
 
 The generated `*StepTemplate` and `*Input` types are **not** re-exported individually. Using this subpath already requires `@civitai/client` installed, so if you want one by name, import it straight from there — `import type { TextToImageStepTemplate } from '@civitai/client'`.
 
@@ -564,9 +859,11 @@ A `$type` having a type here says nothing about whether you may submit it.
 - **App Blocks** don't reach the orchestrator at all. A block posts a `WorkflowBody` to the host, which validates it server-side against its own schema. That contract is `@civitai/app-sdk/blocks` and is completely unaffected by this subpath.
 - **Standalone apps / BFFs** submit directly with the user's OAuth token, and the orchestrator applies its own authorization. A body that compiles can still come back 400 or 403.
 
-Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
 
-Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 50 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
+`training` and `imageResourceTraining` are the exception: an App Block's host explicitly **allows** them on the pass-through arm (see `WorkflowBodyPassThroughStep` under Primitives above for the `maxBuzz` bound, and how a trained epoch is published). For a standalone app, the orchestrator's own authorization still decides.
+
+Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 58 entries exactly three — `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for each `$type` the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 
 ## Public vs. confidential clients
 

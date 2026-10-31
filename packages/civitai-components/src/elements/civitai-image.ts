@@ -6,6 +6,10 @@ import { defineElement } from './registry.js';
 
 export type ImageFit = 'cover' | 'contain';
 export type ImageStatus = 'loading' | 'loaded' | 'error' | 'blocked';
+/** `<img loading>`'s values. `''` means the attribute is not rendered at all. */
+export type ImageLoading = 'eager' | 'lazy' | '';
+/** `<img decoding>`'s values. `''` means the attribute is not rendered at all. */
+export type ImageDecoding = 'sync' | 'async' | 'auto' | '';
 
 const TAG = 'civitai-image';
 
@@ -36,6 +40,8 @@ export class CivitaiImage extends CivitaiMediaElement {
     fit: { reflect: true },
     openable: { type: Boolean, reflect: true },
     label: { reflect: true },
+    loading: { reflect: true },
+    decoding: { reflect: true },
   };
 
   declare fit: ImageFit;
@@ -43,12 +49,23 @@ export class CivitaiImage extends CivitaiMediaElement {
   declare openable: boolean;
   /** Names the open button when it should say more than `alt`. */
   declare label: string;
+  /**
+   * `<img loading>`, passed straight through: `lazy` defers a tile that is still
+   * below the fold. Unset renders no attribute, so the default stays HTML's.
+   * The `<img>` is built in this element's shadow root, so a consumer's markup
+   * cannot reach it — which is why this is a property rather than nothing.
+   */
+  declare loading: ImageLoading;
+  /** `<img decoding>`, passed straight through. Unset renders no attribute. */
+  declare decoding: ImageDecoding;
 
   constructor() {
     super();
     this.fit = 'cover';
     this.openable = false;
     this.label = '';
+    this.loading = '';
+    this.decoding = '';
   }
 
   #open(): void {
@@ -60,6 +77,8 @@ export class CivitaiImage extends CivitaiMediaElement {
       part="image"
       src=${ifDefined(this.src || undefined)}
       alt=${this.alt}
+      loading=${ifDefined(this.loading || undefined)}
+      decoding=${ifDefined(this.decoding || undefined)}
       data-fit=${this.fit}
       @load=${this.settleLoaded}
       @error=${this.settleFailed}

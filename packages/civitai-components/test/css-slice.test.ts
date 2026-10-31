@@ -43,6 +43,17 @@
  * are ALL green — 14 >= 14, and 14 is exactly the length one of them pins —
  * and this guard is the only failure. It carries no number to keep up to date.
  *
+ * 🔴 THE LITERAL COUNTS IN THE PROSE ABOVE ARE THE MEASUREMENT'S, NOT THE
+ * SHEET'S. The sheet was 14 sections / 20 components when that measurement was
+ * taken; adding the Text section took it to 15 / 21, and the two literal
+ * assertions moved with it (`toHaveLength(15)`, `derived.size === 21`). The
+ * `>= 14` floors did NOT move — they are floors, and raising one on every
+ * addition is churn with no signal. The paragraph above predicted exactly this
+ * growth as the case where a literal check stops catching a mis-indented
+ * marker; at 15 sections `toHaveLength(15)` still fires on it, so the
+ * prediction is not yet realised, and the count-relative boundary guard is
+ * still the only assertion that will keep firing when it is.
+ *
  * 🔴 WHAT THIS SUITE DOES **NOT** COVER — read before trusting it.
  * The per-component artifacts are NOT a public surface and are NOT published.
  * `package.json` declares no `./css/*` entries, so
@@ -293,8 +304,8 @@ describe('the slug vocabulary is derived from SELECTORS, not from comment prose'
     expect(derived).toEqual(declared);
     // Literal floor so the equality above cannot be satisfied at zero by a
     // derivation that returns nothing on both sides.
-    expect(derived.size).toBe(20);
-    expect(COMPONENT_NAMES.length).toBe(20);
+    expect(derived.size).toBe(21);
+    expect(COMPONENT_NAMES.length).toBe(21);
   });
 
   it('no slug is a phantom: every one is selected by a rule in the sheet', () => {
@@ -360,7 +371,18 @@ describe('the ./css/* artifacts are deliberately UNEXPORTED and UNPUBLISHED (iss
    * `.npmignore`, a changed negation order). This runs the real packer and
    * counts what it would actually put in the tarball.
    */
-  it('the per-component artifacts are NOT published (npm pack ships no dist/css)', () => {
+  /*
+   * TIMEOUT, not a default: this spawns the real `npm` and packs the whole
+   * package, so its duration is a property of the RUNNER, not of the code under
+   * test. Measured on two consecutive commits of one branch in the same CI job:
+   * 2,557 ms green, then 5,892 ms against vitest's 5,000 ms default — the same
+   * work, red the second time, with 289 other tests passing and only this one's
+   * time moved. At ~51% of the default on a good run it had no margin at all.
+   * 60 s is deliberately far above any plausible pack so that a trip means a
+   * genuine hang; the assertions below, not the clock, are what this test is
+   * for.
+   */
+  it('the per-component artifacts are NOT published (npm pack ships no dist/css)', { timeout: 60_000 }, () => {
     const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
       cwd: pkgRoot,
       encoding: 'utf8',
@@ -406,7 +428,7 @@ describe('the ./css/* artifacts are deliberately UNEXPORTED and UNPUBLISHED (iss
         slice.slug
       ).toBe(true);
     }
-    expect(slices).toHaveLength(14);
+    expect(slices).toHaveLength(15);
   });
 });
 

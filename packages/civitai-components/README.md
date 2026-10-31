@@ -35,8 +35,10 @@ import { injectStyles } from '@civitai/components';
 injectStyles();
 ```
 
-React authors want [`@civitai/components-react`](../civitai-components-react),
-which renders exactly this markup.
+React authors usually want [`@civitai/components-react`](../civitai-components-react)
+instead — but note it binds the `<civitai-*>` custom elements, which style
+themselves in shadow DOM and so consume neither this sheet nor this markup
+contract. Use the sheet when you are writing the markup yourself.
 
 ### One component's CSS only — not available, on purpose
 
@@ -79,10 +81,16 @@ import '@civitai/components/civitai-button/define';  // just this one
 ```
 
 ```html
+<civitai-text as="h2" size="xl" weight="bold">Generate an image</civitai-text>
 <civitai-button variant="filled" size="md">Generate</civitai-button>
 <civitai-text-input label="Prompt" name="prompt"></civitai-text-input>
 <civitai-segmented-control aria-label="View"></civitai-segmented-control>
 ```
+
+`<civitai-text>` renders the element `as` names — a real `<h1>`–`<h6>`, `<p>` or
+`<span>` — inside its shadow root, so a heading is a heading to the document
+outline and not a box wearing `role="heading"`. Size and level are independent:
+`as` is the page's structure, `size` is its design.
 
 One script tag, no build:
 
@@ -92,8 +100,36 @@ One script tag, no build:
 ```
 
 `elements.js` is a self-contained bundle at the package root, because jsDelivr
-ignores `exports` — the same reason `styles.css` is copied there. The build
-fails if it exceeds **25 kB gzip**; it currently sits at about 19 kB.
+ignores `exports` — the same reason `styles.css` is copied there.
+
+Each bundle has a hard gzip **budget** the build fails over: **32 kB** for
+`elements.js`, **38 kB** for `site-elements.js`. Those two numbers are the
+contract; they live in `scripts/build-elements.ts`, and
+`tests/guards/bundle-budget-claims.test.mjs` fails if this sentence and that file
+ever disagree.
+
+**What the bundles measure right now is deliberately not written down here.** That
+figure moves with every element added, this paragraph had already stated a stale
+one twice, and it has no reader who needs it — the budget is the promise, the
+current size is build output. The build prints it on every run, for both bundles,
+against the budget:
+
+```sh
+pnpm --filter @civitai/components build
+# [build-elements] dist/elements.js + elements.js — … kB raw, … kB gzip (…% of the 32 kB budget)
+```
+
+That output is the only place it cannot rot, so read it there. The guard named
+above also fails on an occupancy figure put back into prose — a percentage of the
+budget, or a "currently sits at N kB" — because that is the shape that rotted, not
+the particular number. **It does not read every file in the package**: the scan
+covers `.md`, `.ts`, `.tsx`, `.mjs` and `.css` under this package, and skips —
+besides the build and dependency directories — `demo/`, `playground/`,
+`CHANGELOG.md` (a changelog may legitimately record what was true at a release)
+and `scripts/build-elements.ts` (it is the authority, and it prints the figure).
+That list is illustrative, not the definition: the guard's own docblock states
+the corpus and the limits exactly, so read it there rather than assuming either
+a wider or a narrower claim.
 
 ### The civitai vocabulary
 
@@ -157,6 +193,30 @@ hangs under it — while `top-start` and `bottom` stay in a row, which is where
 the rating and the `POI` badges sit side by side. `<civitai-reaction>`
 abbreviates its count the way the site does.
 
+A click flips `reacted` and `count` at once and dispatches `react`, whose
+`detail` is `{ emoji, reacted, count }`; set the property back if the write
+fails. Give it a `reaction` such as `reaction="Like"` and the detail also
+carries it, as-is, so a handler knows which reaction it is without reading the
+emoji, which is display only. Without `reaction` (or with an empty one) the
+event is unchanged.
+
+`detail.reaction` is whatever string the element was given, so narrow it before
+handing it to `useReactions().toggle` in `@civitai/blocks-react`, which takes
+only the reactions an app may set:
+
+```ts
+import { isAppReaction } from '@civitai/app-sdk/blocks';
+
+el.addEventListener('react', (event) => {
+  const { reaction, reacted } = (event as CustomEvent<ReactionDetail>).detail;
+  if (!isAppReaction(reaction)) return;
+  toggle(imageId, reaction, reacted);
+});
+```
+
+The full binding, including putting the element back after a refused write, is
+under `useReactions` in `@civitai/blocks-react`'s README.
+
 ### Image, video and audio
 
 `<civitai-image>`, `<civitai-video>` and `<civitai-audio>` follow HTML's three
@@ -181,11 +241,25 @@ only while hovered or focused; a full video keeps its native controls, and so
 cannot be a button. Size them from outside; `--civitai-media-max-height` caps a
 tall one without cropping when `fit="contain"`.
 
+`<civitai-image>` passes `loading` and `decoding` straight to its `<img>`, which
+is the only way to reach them — the `<img>` is built inside the shadow root, so
+markup in the consuming page never touches it. Set `loading="lazy"` on tiles that
+start below the fold and the browser defers them; leave both unset and no
+attribute is rendered, so the default stays HTML's own.
+
+```html
+<civitai-image src="…" alt="Tile 47" loading="lazy" decoding="async"></civitai-image>
+```
+
 [`custom-elements.json`](./custom-elements.json) is the published contract —
 every tag, attribute, property, `::part` and slot. It is generated from the
 element sources (tags from `defineElement(TAG, …)`, parts and slots from the
 templates), so nothing is restated in JSDoc and nothing can drift. A test fails
-if it stops matching what the package registers.
+if it stops matching what the package registers. What an element inherits —
+every form control's `label`, `required`, `size` and the rest — is listed on the
+element itself with `inheritedFrom`, and the base classes it names
+(`CivitaiElement`, `CivitaiField`, `CivitaiMediaElement`) are declared in the
+manifest too, without a tag.
 
 The attribute CSS above keeps shipping unchanged at the same path, so nothing
 has to migrate. The `.` entry still carries no renderer — importing
@@ -218,8 +292,9 @@ to write themselves: one tab stop, arrows wrapping across enabled segments,
 Home/End, and selection following focus.
 
 `error` on a field also makes it **invalid**, so the form will not submit while
-the message shows — unlike the React binding, which draws the message but leaves
-`checkValidity()` true despite setting `aria-invalid`.
+the message shows — unlike the bare `data-civitai-ui` markup, where `error`
+draws the message but leaves `checkValidity()` true despite setting
+`aria-invalid`, because an attribute cannot call `setCustomValidity()`.
 
 ### Working on them
 
@@ -231,6 +306,139 @@ pnpm --filter @civitai/components test:browser  # element behaviour + parity
 The playground imports the elements from `src/`, so an edit is on screen
 without a build. `demo/` is the opposite: it loads the published artifact from
 jsDelivr to verify what consumers actually get.
+
+### Testing them in a non-browser DOM (`jsdom` / `happy-dom`)
+
+`<civitai-menu>` **mounts and opens** under `happy-dom` with no shim, and that is
+enforced rather than asserted: `pnpm --filter @civitai/components test` runs a
+`dom` project on happy-dom alongside the source guards, and
+`test/civitai-menu.dom.test.ts` opens the menu there.
+
+Scope, precisely: the menu is the only element in this package that touches the
+popover API (grep `showPopover`, `hidePopover`, `:popover-open` — the hits are one
+file), so it was the only one that could not mount **without a setup file**. The
+form controls are the other exception — see the next paragraph. Element
+*behaviour* is covered in a real browser.
+
+**Form controls need one setup file: `@civitai/components/testing/happy-dom`.**
+happy-dom implements no `ElementInternals` (measured on 20.9.0, 20.14.6 and
+21.0.1), and every form-associated element calls `attachInternals()` on
+construction: `<civitai-button>`, `<civitai-checkbox>`, `<civitai-number-input>`,
+`<civitai-radio-group>`, `<civitai-segmented-control>`, `<civitai-select>`,
+`<civitai-slider>`, `<civitai-switch>`, `<civitai-text-input>` and
+`<civitai-textarea>`. Without the shim each throws
+`TypeError: this.attachInternals is not a function`.
+
+```ts
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    environment: 'happy-dom',
+    setupFiles: ['@civitai/components/testing/happy-dom'],
+  },
+});
+```
+
+It installs a minimal stand-in **only when `attachInternals` is absent** (a real
+browser is untouched): `form` (the nearest ancestor `<form>`), `validity` /
+`checkValidity()` / `reportValidity()` driven by the element's own
+`setValidity()` calls, `setFormValue`, `states`. It does **not** make
+`new FormData(form)` see a control's value or run `form.reset()` callbacks —
+test those in a real browser. The elements themselves deliberately do not guard
+against a missing `attachInternals`: that would let a real page lose form
+association silently. `test/element-internals-shim.dom.test.ts` enumerates the
+form-associated elements from `custom-elements.json` and constructs each one.
+
+`jsdom` is **measured, not gated** — it is not in this repo's CI at all. With the
+same test, `<civitai-menu>` mounts and opens without throwing on **jsdom 25.0.1**
+and **jsdom 30.1.1** as well. Neither implements the popover API either.
+
+Those DOMs are **incomplete**, not merely different, and the gaps are **not the
+same in each one**. Measured with the element's own probe:
+
+| | happy-dom 20.9.0 | jsdom 25.0.1 | jsdom 30.1.1 | chromium 153 |
+|---|---|---|---|---|
+| `showPopover` / `hidePopover` / `togglePopover` | absent | absent | absent | ✅ |
+| `menu.show()` opens, no throw | ✅ | ✅ | ✅ | ✅ |
+| `data-open` on the panel | ✅ | ✅ | ✅ | ✅ |
+| computed `display` follows it | ✅ | ✅ | ❌ always `block` | ✅ |
+| a click on the slotted trigger opens it | ❌ **silent** | ✅ | ✅ | ✅ |
+
+Two things to take from that table.
+
+**Assert `data-open`, not computed `display`.** It is the one signal that holds in
+all four columns. jsdom 30 does not apply a shadow root's stylesheet in
+`getComputedStyle`, so the panel reads `display: block` there whether it is open
+or shut — a display assertion passes for the wrong reason, and would have passed
+before this element was fixed at all.
+
+**Under happy-dom, a trigger click does nothing, and no shim changes that.** A
+click on light-DOM content assigned to a `<slot>` reaches the **host** (a listener
+there fires once) but **not** a listener on the `<slot>` element — which is the
+node Lit binds `@click` to. So the click dispatches, bubbles, and the handler is
+never called: no throw, no state change, a test that quietly does nothing. jsdom
+does deliver it. **Drive overlay elements through their methods** and the
+difference stops mattering:
+
+```ts
+menu.show();                  // ✅ works in every DOM above
+await menu.updateComplete;
+menu.hide();
+
+triggerButton.click();        // ❌ silently does nothing under happy-dom
+```
+
+Why `data-open` exists at all: the element treats popover as **additive**. The
+panel's visibility is decided by that attribute, and `showPopover()` is called
+only where it exists, for the two things only the top layer gives you — escaping
+a clipping ancestor, and native light dismiss. Neither of those survives into a
+non-browser DOM, so **do not expect the top layer, anchor positioning, or light
+dismiss**: a click outside a shown panel does not close it there. If that is what
+you are testing, use a real browser; this package's `browser` vitest project is
+the worked example.
+
+If **your own** code calls into the popover API, `@civitai/blocks-react/testing`
+exports a shim for it — `installPopoverShim()`, which also probes for the slotted
+click problem above and warns when it finds it. See that package's README
+§ "Testing overlay elements". You do not need it for the elements here.
+
+### Giving `<civitai-menu>`'s items an addressable container
+
+`part="panel"` **styles** the panel from the document
+(`civitai-menu::part(panel) { … }` resolves), but it is not a query target:
+`::part()` is a CSS-only mechanism, so `document.querySelector('[part="panel"]')`
+is `null`, and `document.querySelector` does not pierce shadow roots either. A
+test id, an analytics hook or an `aria-describedby` target therefore cannot live
+on the panel.
+
+**Put it on a container of your own, around the items.** That container is light
+DOM, so it is genuinely reachable from a document query, and the menu collects
+items through it:
+
+```html
+<civitai-menu label="Contribute">
+  <button slot="trigger">Contribute</button>
+  <div data-testid="contribute-menu-items">
+    <civitai-menu-item value="benchmark">Run a benchmark</civitai-menu-item>
+    <civitai-menu-item value="review">Write a review</civitai-menu-item>
+  </div>
+</civitai-menu>
+```
+
+```ts
+document.querySelector('[data-testid="contribute-menu-items"]');  // ✅ found
+```
+
+This is a **supported pattern**, not a workaround: the menu descends into
+assigned elements to find `[role="menuitem"]`, in DOM order, so focus management
+and arrow-key navigation keep working. Several containers are fine, wrapped and
+unwrapped items can be mixed, and `<civitai-menu-label>` inside a container is
+still skipped by the arrow keys. The attribute is yours — nothing about the name
+`data-testid` is special.
+
+What is **not** supported is `menu.shadowRoot.querySelector('.panel')`. It works,
+because the shadow root is open, but `.panel` is an implementation detail and a
+rename would break you silently.
 
 ### The dashboard five
 
@@ -345,6 +553,81 @@ Waiting for the host applies only to the host path: with no validated host
 origin a press sends nothing and the button renders disabled. Given a `signIn`
 it is usable at once, since no handshake is involved.
 
+### `<civitai-resource-picker>`
+
+Lets the viewer pick one **version** of a published resource from the Civitai
+catalog — their own, or anyone's. It opens as a modal with a search box, a
+"My … / All …" switch and, per result, a version select (newest first) with a
+badge on gated versions. It does not need `@civitai/sdk`: results come from a
+`source` you hand it.
+
+```ts
+import {
+  blockTokenSource,
+  type CivitaiResourcePicker,
+} from '@civitai/components/civitai-resource-picker';
+import '@civitai/components/civitai-resource-picker/define';
+
+const picker = document.querySelector<CivitaiResourcePicker>('civitai-resource-picker')!;
+// `origin` is the validated host origin; the token is the block's raw token.
+picker.source = blockTokenSource({ origin: hostOrigin, getToken: () => blockToken });
+const picked = await picker.show(); // null when the viewer closes it
+```
+
+```html
+<civitai-resource-picker types="Workflows ComfyWorkflows" noun="workflow" owner="mine"
+  heading="Choose a workflow"></civitai-resource-picker>
+```
+
+| Attribute / property | |
+|---|---|
+| `types` | Model types to list, space- or comma-separated. Required. |
+| `owner` | `any` (default) or `mine` — the list it opens on; the viewer can switch. |
+| `noun` | What one result is called in the picker's copy (`workflow` → "My workflows"). Default `resource`. |
+| `heading` | The modal's title. |
+| `debounce` | Milliseconds of quiet typing before a search runs. Default 300. |
+| `limit` | Page size, 1–100. Default 20. |
+| `open` | Shows it. Setting it `false` closes it without a pick or a `dismiss`. |
+| `source` (property) | A `ResourceSource`: `{ search(params, signal): Promise<ResourcePage> }`. |
+| `show()` / `close()` | `show()` opens it and resolves with the pick, or `null`. `close()` closes it as a dismissal. |
+
+It fires `pick` (`detail`: a `PickedResource`) and `dismiss`. A pick is
+`{ modelId, modelVersionId, name, versionName, creatorUsername, baseModel,
+earlyAccessDeadline?, access, owner }`, where `access` is `open`,
+`early-access` or `paid`.
+
+- 🔴 **`owner` is a UX hint, never proof of ownership.** It records which list
+  the viewer picked from; the app can rewrite it. A server that needs "this is
+  the viewer's own" must check it itself.
+- 🔴 **It refuses to show a `mine` list the server did not confirm.** A `mine`
+  search answered with anything but `owner: 'mine'` is shown as an error, not
+  as a list. `blockTokenSource` reads that from `metadata.owner`, which a
+  server older than the `owner` parameter does not send.
+- `blockTokenSource({ origin, getToken, signedIn?, fetch? })` calls
+  `GET /api/v1/blocks/models` with `Authorization: Bearer <token>` and plain
+  `fetch`, sending `types` as repeated parameters plus `owner`, `query`,
+  `limit` and `cursor`. It never calls any other route — in particular it never
+  falls back to the public `/api/v1/models`, which knows no `owner`.
+- Gated versions are listed, not hidden: the server's `paidAccess` gate
+  (`{ permanent, endsAt }`) becomes an "Early access until …" badge for a timed
+  gate and a "Paid" badge for a permanent one.
+- On a `401`, `blockTokenSource` calls `getToken({ fresh: true })` once and
+  retries if that returns a different token — a block token that expired while
+  the tab slept. Otherwise the search ends as `unauthorized`. The exception is
+  a `mine` search when `signedIn()` returns `false`: the server answers an
+  anonymous viewer's `mine` with a `401` as well, so that search ends as
+  `unauthorized` at once, without calling `getToken({ fresh: true })`.
+- Changing `owner` while it is open drops the rows on screen and searches the
+  other list. A pick's `owner` is the list its row was shown in.
+- A failed "Load more" keeps the rows already shown and offers that page again.
+  A busy one keeps them too while it retries the same page.
+- A newer search aborts the one in flight, and a late answer to an older search
+  is dropped. `429` and `503` show a retry state and are retried after
+  `Retry-After`, twice; then "Try again" is offered. `ResourceSourceError`'s
+  `kind` (`busy`, `unauthorized`, `owner-unsupported`, `failed`) is how a
+  source of your own says which of these happened.
+- A change to `source` or `types` while it is open searches again.
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —
@@ -364,8 +647,15 @@ elements do.
 
 Spacing is a scale of its own — `--civitai-space-0` through `-6` — because
 Mantine expresses spacing per component rather than as a ramp, so
-`@civitai/theme` has nothing to derive it from. Override the custom properties
-to retune every utility at once. Colour utilities name tokens rather than
+`@civitai/theme` has nothing to derive it from. Redeclare the custom properties
+to retune every utility at once — **on a scope, not `:root`**. These live in a
+bare `:root` block in `utilities.css`, which carries no `@layer`, so a `:root`
+redeclaration only ties with it and the later sheet wins. ⚠️ Unlike the token
+sheet, nothing injects `utilities.css` for you — you link it yourself, so that
+order is *yours* to control and a `:root` override can be made to work. Scoping
+is still the advice, because it needs no ordering discipline at all. (Measured
+for the token sheet; this sheet is the same shape by construction, not
+separately measured.) Colour utilities name tokens rather than
 shades, so `ci-muted` follows the theme into dark mode instead of pinning a
 grey. The grid is CSS Grid: `ci-row` is twelve columns, `ci-col-4` spans four,
 and `ci-md-col-6` does it from the `md` breakpoint up.
@@ -420,8 +710,11 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Design
 
-- All rules live in `@layer civitai.components`, so consumer CSS wins the
-  cascade without specificity fights.
+- All rules live in `@layer civitai.components`, so consumer CSS beats **this
+  sheet** without specificity fights. 🔴 Not the **tokens**: `@civitai/theme`'s
+  sheet is unlayered, so a `:root { --civitai-…: }` override only ties with it
+  and loses on stylesheet order. Scope token overrides — see
+  [`MARKUP.md`](./MARKUP.md) → *Cascade / overriding*.
 - State colors (hover/active/tint) are derived with `color-mix()` from base
   tokens — no shade enumeration.
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
@@ -434,18 +727,39 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Markup contract
 
-Styling is selected entirely by `data-*` attributes; any HTML that follows the
-contract below renders identically to the React bindings. **`legend`:** _bold_ =
+Styling is selected entirely by `data-*` attributes, so any HTML that follows
+the contract below picks up the design system without a framework. It is no
+longer comparable to "the React bindings": since components-react@0.9.0 those
+bind the `<civitai-*>` elements, which style themselves in shadow DOM and do
+not consume this sheet at all. **`legend`:** _bold_ =
 required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical
 source (with per-component examples + a11y wiring) and the executable contract
-the `html-vs-react-parity` browser test enforces; the essentials are inlined
+this package's own browser suites enforce — `presentational-parity` compares
+each element against the attribute markup it replaces; the essentials are inlined
 here so they're readable on the npm package page.
 
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor
 (typically `<html>` or the block root); tokens re-resolve from that scope
-(default = light). **Cascade** — every rule lives in `@layer civitai.components`,
-so your own unlayered CSS always wins with no `!important`; override a token
-locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+(default = **dark**, and never the OS preference — see MARKUP.md). **Cascade** — every rule lives in `@layer civitai.components`,
+so your own unlayered CSS always wins with no `!important` — **over this
+package's rules, NOT over the tokens**. 🔴 A token override must be **scoped**
+(`style="--civitai-color-primary: #a259ff"` on any ancestor, or a class on your
+block root); at `:root` it silently loses. Why, and the measured matrix:
+[`MARKUP.md`](./MARKUP.md) → *Cascade / overriding*.
+
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. The one component that prescribes no
+element: **you write the tag the meaning calls for** — `<h1>`–`<h6>`, `<p>` or
+`<span>` — and this styles it. A heading MUST be a real heading element.
+`data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` · `4xl` ·
+`5xl` (12/13/14/16/20/24/28/32/40px) — **one scale**: `sm`/`md`/`lg` are Button's
+own three, and everything from `lg` up is a value the `ci-fs-*` utilities already
+ship (`lg`=`ci-fs-6` … `5xl`=`ci-fs-1`). `data-weight`: `normal` (default) ·
+`medium` · `semibold` · `bold`. **Size and level are independent** — an `<h2>`
+can be `data-size="xs"`. Margins are reset to `0`; space text with `stack`.
+Colour, alignment and truncation stay in the utilities (`ci-muted` /
+`ci-text-*`, `ci-text-center`, `ci-truncate`) — all three inherit into the
+element track except `ci-truncate`.
 
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">`).

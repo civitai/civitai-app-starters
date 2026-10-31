@@ -58,6 +58,75 @@ export {
 } from './appStorageLimits.js';
 
 /**
+ * App reactions (`SET_ENTITY_REACTION` / `GET_ENTITY_REACTIONS`, scope
+ * `social:react:self`). The vocabulary mirrors civitai's
+ * `block-reaction.constants.ts`; see `reactions.ts`.
+ */
+export {
+  APP_REACTIONS,
+  STORED_REACTIONS,
+  REACTION_ENTITY_TYPES,
+  REACTION_READ_MAX_IDS,
+  REACT_TICKET_MAX_LENGTH,
+  ENTITY_REACTION_ERROR_CODES,
+  isEntityReactionErrorCode,
+  isAppReaction,
+} from './reactions.js';
+export type {
+  BlockAppReaction,
+  BlockStoredReaction,
+  BlockReactionEntityType,
+  BlockEntityReactionErrorCode,
+  BlockReactionCounts,
+  BlockEntityReactionState,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
+} from './reactions.js';
+
+export {
+  BLOCK_IDEMPOTENCY_KEY_REGEX,
+  BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH,
+  isValidBlockIdempotencyKey,
+  blockIdempotencyKeyRejection,
+} from './idempotency.js';
+
+/**
+ * The `srcdoc` escape hatch for embedding one of your own bundled documents
+ * inside a block, because a plain `<iframe src>` of your own subdomain cannot
+ * load. Prefer a SINGLE-DOCUMENT design. The measured reason, the matrix and
+ * the limits live in ONE place: the header of `nestedDocument.ts`.
+ *
+ * 🔴 `injectBaseHref` and `InjectBaseHrefResult` ARE DELIBERATELY NOT HERE, and
+ * the omission is the same decision as the `appStorageErrors.ts` block below:
+ * publish the branching surface, not every internal the module happens to
+ * export. `fetchNestedDocument` covers every runnable example in this repo's
+ * four prose surfaces (this package's README, `@civitai/blocks-react`'s README,
+ * `docs/build-your-first-app-block.md` and the changeset); the only in-tree
+ * importers of the rewrite are this module's own unit tests, and
+ * `@civitai/blocks-react` does not value-import it. There can be no EXTERNAL
+ * consumer either. The DEFINING evidence is the git history, not a sample of
+ * tarballs: `nestedDocument.ts` is ADDED by the branch that introduced this
+ * helper — `git log --diff-filter=A` over it returns exactly one commit — so no
+ * version published before that commit can contain the symbol, whatever any
+ * individual tarball says. ⚠ An earlier revision of this comment derived that
+ * conclusion from a handful of tarball probes instead — a sample generalised
+ * into a claim about every published version. The conclusion was right; the
+ * grounds it stated were not, which is the part worth not repeating. The probes
+ * themselves, with their read dates and controls, are recorded in
+ * `packages/civitai-blocks-react/PEER_FLOOR.md`.
+ *
+ * Both stay exported from `nestedDocument.ts`, so the unit suite reaches them by
+ * file path — and adding one here later is a `minor`, while removing one once
+ * published is not.
+ */
+export { fetchNestedDocument, NestedDocumentError } from './nestedDocument.js';
+export type {
+  FetchNestedDocumentOptions,
+  NestedDocument,
+  NestedDocumentErrorCode,
+} from './nestedDocument.js';
+
+/**
  * {@link classifyAppStorageError} — the matcher a block branches on — plus the
  * four rejection messages a MOCK HOST has to emit. The wire carries a
  * host-authored message, never the TRPC code; see `appStorageErrors.ts` for the
@@ -122,6 +191,7 @@ export type {
   ParentToBlockMessage,
   ParentToBlockMessageType,
   SharedStorageItemWire,
+  SharedStorageRateLimit,
   SharedStorageValue,
   WrappedToken,
   BlockBuzzTransactionsParams,
@@ -150,9 +220,19 @@ export type {
   PageSlotContext,
   PageSlotId,
   UnknownSlotContext,
+  BlockAnalyticsDeclaration,
+  BlockAnalyticsEventDeclaration,
+  BlockAnalyticsPropertyDeclaration,
   BlockManifest,
+  BlockManifestGood,
   BlockManifestV1,
   BlockSettings,
+  BlockStorageCollectionDeclaration,
+  BlockStorageDeclaration,
+  BlockStorageIndexes,
+  BlockStorageIndexType,
+  BlockStoragePrivateCollectionDeclaration,
+  BlockStorageSharedCollectionDeclaration,
   BlockToken,
   ContentRating,
   ManifestBooleanField,
@@ -175,11 +255,23 @@ export type {
   BlockSourceImage,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockImagePickerSource,
+  BlockPickedImageInfo,
+  BlockMediaKind,
+  BlockMediaUploadInfo,
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
+  BlockNavigateScope,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
+  BlockEstimateBatchAggregate,
+  BlockModelSubstitution,
+  ModelSubstitutionReason,
+  KnownBlockWorkflowErrorCode,
+  BlockStepToolCall,
+  BlockTrainedEpoch,
+  BlockPublishedModel,
   BuzzAccountType,
   ShowcaseImage,
   WorkflowBody,
@@ -190,6 +282,11 @@ export type {
   InlineComfyNode,
   WorkflowBodyStep,
   WorkflowBodyPassThroughStep,
+  WorkflowBodyWorkflow,
+  WorkflowBodyWorkflowStep,
+  WorkflowStepRef,
+  WithWorkflowStepRefs,
+  BlockWorkflowStepSnapshot,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,
@@ -197,6 +294,11 @@ export type {
   BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  BlockResourceFile,
+  BlockResourceFileEntry,
+  BlockResourceFileEntryFormat,
+  BlockResourceFileErrorCode,
+  BlockResourceFileMeta,
   AppWorkflow,
   AppWorkflowImage,
   BlockGatedImage,
@@ -206,4 +308,55 @@ export type {
   BlockCreatePostRequest,
   BlockCreatePostResult,
   BlockCreatePostHostError,
+  WorkflowBodyTraining,
+  AiToolkitTrainingParams,
+  AiToolkitTrainingParamsBase,
+  AiToolkitPlainEcosystem,
+  AiToolkitLrScheduler,
+  AiToolkitOptimizerType,
+  BlockTrainingQuote,
+  BlockTrainingDatasetItem,
+  BlockTrainingDataImage,
+  BlockTrainingDataUploadResult,
+  BlockRunTrainingHostError,
+  BlockStepQuote,
+  BlockModel3dOutput,
+  BlockRunConfirmedStepHostError,
+} from './types.js';
+
+/**
+ * Host bounds for an inline `customComfy` graph, mirrored from civitai/civitai —
+ * see `WorkflowBodyCustomComfyInline.workflow`.
+ */
+export { BLOCK_INLINE_COMFY_MAX_NODES, BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES } from './types.js';
+
+/**
+ * Pre-spend runnability check for a workflow file entry (`useResourceFile`),
+ * against a ComfyUI core-node list generated from one pinned ComfyUI commit.
+ * A Comfy estimate is a ceiling, never a price.
+ */
+export { checkComfyGraph } from './comfyGraph.js';
+export type { ComfyGraphCheck, ComfyGraphRefusal, ComfyModelFilenameInput } from './comfyGraph.js';
+
+/** Host bound for the App Blocks `kind: 'workflow'` body — see `WorkflowBodyWorkflow`. */
+export { BLOCK_WORKFLOW_MAX_STEPS, BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS } from './types.js';
+
+/**
+ * Host bounds for a viewer-confirmed pass-through step, mirrored from
+ * civitai/civitai — see `BlockWorkflowSnapshot.stepQuote`.
+ */
+export { BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB, BLOCK_STEP_QUOTE_ID_REGEX } from './types.js';
+
+/**
+ * Host bounds for the App Blocks `kind: 'training'` flow, mirrored from
+ * civitai/civitai's zod — see `WorkflowBodyTraining`.
+ */
+export {
+  BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
+  BLOCK_TRAINING_DATASET_MAX_ITEMS,
+  BLOCK_TRAINING_CAPTION_MAX_CHARS,
+  BLOCK_TRAINING_SAMPLE_PROMPTS_MAX,
+  BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS,
+  BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS,
+  BLOCK_TRAINING_MODEL_KEY_MAX_CHARS,
 } from './types.js';

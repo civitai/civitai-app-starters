@@ -25,6 +25,37 @@ async function mount(markup: string): Promise<HTMLElement> {
 /** The dialog's native `close` event is queued as a task, not a microtask. */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+const EVENT_TIMEOUT_MS = 2000;
+
+/**
+ * Await an event instead of a fixed number of task turns. Use this, not
+ * {@link tick}, whenever the assertion is ABOUT an event: the native `close` is
+ * queued as a task, so a `tick()` races it rather than waiting for it.
+ *
+ * 🔴 When this races, `open === false` still passes — the click handler sets
+ * the property on an earlier path — so only the event count reads 0. That reads
+ * as "the event never fired" when the truth is "the test measured too early".
+ *
+ * Rejects rather than hanging, so a real regression names itself instead of
+ * arriving as a bare suite timeout. Create it as late as possible and await it
+ * immediately: a throw between creation and `await` orphans the rejection,
+ * which vitest then attributes to whichever test is running 2 s later.
+ */
+function eventFired(target: EventTarget, type: string): Promise<Event> {
+  return new Promise((resolve, reject) => {
+    const onEvent = (event: Event): void => {
+      clearTimeout(timer);
+      target.removeEventListener(type, onEvent);
+      resolve(event);
+    };
+    const timer = setTimeout(() => {
+      target.removeEventListener(type, onEvent);
+      reject(new Error(`no "${type}" event after ${EVENT_TIMEOUT_MS}ms`));
+    }, EVENT_TIMEOUT_MS);
+    target.addEventListener(type, onEvent);
+  });
+}
+
 afterEach(() => {
   scope?.remove();
   scope = undefined;
@@ -33,6 +64,35 @@ afterEach(() => {
 describe('<civitai-modal>', () => {
   const dialogOf = (el: CivitaiModal): HTMLDialogElement =>
     el.shadowRoot!.querySelector('dialog')!;
+
+  /**
+   * {@link eventFired} only "names its own failure instead of arriving as a
+   * bare suite timeout" while its 2 s reject beats the surrounding test
+   * timeout. Nothing stated that relationship, and `vitest.config.ts` sets no
+   * `testTimeout`.
+   *
+   * 🔴 SCOPE, STATED EXACTLY, because an earlier draft over-claimed it: this
+   * catches a change to the GLOBAL `testTimeout` and to THIS describe's budget,
+   * because `ctx.task.timeout` resolves per-test and this assertion lives in
+   * the same describe as both `eventFired` callers. It does NOT catch a
+   * per-test override on an individual `it(...)`. The earlier version said it
+   * "covers any future caller" and sat at FILE top level — measured, a
+   * `describe('<civitai-modal>', { timeout: 1000 }, …)` left it reading 15000
+   * and passing green while the real budget was below the helper's own reject.
+   *
+   * 🔴 TWO CORRECTIONS TO EARLIER ATTEMPTS, both measured:
+   *  - The inherited default here is **15000 ms**, not 5000 — vitest resolves
+   *    `testTimeout ??= browser.enabled ? 15e3 : 5e3`, and this file runs only
+   *    in the `browser` project. An earlier draft quoted the node figure, then
+   *    pinned a derived `EVENT_TIMEOUT_MS * 2.5 = 5000` believing it a no-op;
+   *    against the real default that was a 3× cut. Removed.
+   *  - `ctx.task.timeout` IS readable in browser mode. An earlier commit said
+   *    it was not — that was a bad probe (browser mode does not forward
+   *    `console.log`), not a missing API.
+   */
+  it('the event timeout leaves room inside the test timeout', (ctx) => {
+    expect(ctx.task.timeout).toBeGreaterThan(EVENT_TIMEOUT_MS * 2);
+  });
 
   async function open(attrs = ''): Promise<CivitaiModal> {
     await mount(`<civitai-modal heading="Confirm" ${attrs}><p>Costs Buzz.</p></civitai-modal>`);
@@ -102,10 +162,32 @@ describe('<civitai-modal>', () => {
   it('the close button closes it and announces close once', async () => {
     const el = await open();
     let closes = 0;
+    // Registered BEFORE `eventFired`'s listener, so `closes` is already
+    // incremented by the time the await below resolves.
     el.addEventListener('close', () => void (closes += 1));
 
-    el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!.click();
-    await el.updateComplete;
+    // 🔴 THE `!` IS ERASED AT RUNTIME, so hoisting the query did NOT close the
+    // orphan window — an earlier comment here claimed it did. If `[part="close"]`
+    // ever stops matching, `querySelector` returns null, the assertion compiles
+    // away, and `.click()` throws BETWEEN the promise's creation and its await.
+    // Mark it handled, exactly as the Escape test does; the `await` below still
+    // throws the timeout error on the real failing path.
+    const closeButton = el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!;
+    const closed = eventFired(el, 'close');
+    void closed.catch(() => {});
+    closeButton.click();
+    await closed;
+
+    // The `once` half needs a budget in which a DUPLICATE could still arrive;
+    // awaiting the event only pins the lower bound. This tick is now spent
+    // entirely on that, instead of also having to cover the first event.
+    //
+    // ⚠ THAT BUDGET IS EXACTLY ONE TASK TURN — measured, not assumed. A second
+    // `close` dispatched synchronously, one `setTimeout(0)` later, or on the
+    // next frame is caught; one dispatched TWO nested timeouts later is NOT.
+    // "Strictly stronger than before" is a claim about the OLD form, which
+    // missed even the one-task-later case; it is not a claim of unbounded
+    // duplicate detection.
     await tick();
     expect(el.open).toBe(false);
     expect(dialogOf(el).open).toBe(false);
@@ -141,9 +223,19 @@ describe('<civitai-modal>', () => {
     // A real key press: a synthetic `cancel` has no default action, so
     // dispatching one proves nothing about what Escape actually does.
     const el = await open();
+    // Same race as the close-button test: `el.open` only flips once the native
+    // close TASK reaches `#onClose`, so a `tick()` races it rather than waiting
+    // for it. Await the event — the property is already final when it fires.
+    const closed = eventFired(el, 'close');
+    // 🔴 Here the listener MUST precede the keypress, so the orphan window the
+    // helper's doc warns about is unavoidable rather than removable: if
+    // `userEvent.keyboard` rejects, nothing has awaited `closed` yet and its
+    // rejection surfaces 2 s later against an unrelated test. Marking it
+    // handled costs nothing and does not weaken the `await` below, which still
+    // throws the timeout error on the real failing path.
+    void closed.catch(() => {});
     await userEvent.keyboard('{Escape}');
-    await el.updateComplete;
-    await tick();
+    await closed;
     expect(el.open).toBe(false);
   });
 

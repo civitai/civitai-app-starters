@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Public shape of one entry returned by `list()` — `updatedAt` is a real
@@ -150,6 +151,7 @@ export interface UseAppStorage {
  * const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
  */
 export function useAppStorage(): UseAppStorage {
+  useTransportConnection();
   return useMemo<UseAppStorage>(() => {
     const transport = getTransport();
     return {

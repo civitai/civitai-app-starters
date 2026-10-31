@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { DIRECT_LOAD_TIMEOUT_MS } from '../transport/directLoad.js';
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useDirectLoad} returns: `true` once the block is known to be
@@ -63,6 +64,7 @@ function isTopLevel(): boolean {
  * `ready` is `true`, so a late init can't leave a stuck fallback.
  */
 export function useDirectLoad(options?: UseDirectLoadOptions): UseDirectLoad {
+  useTransportConnection();
   const timeoutMs = options?.timeoutMs ?? DIRECT_LOAD_TIMEOUT_MS;
   const ready = useTransportSnapshot().ready;
   // Sampled once per mount — top-level-ness doesn't change during a page's life.

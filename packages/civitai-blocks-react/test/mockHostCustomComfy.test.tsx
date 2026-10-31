@@ -99,7 +99,7 @@ describe('createMockHost — customComfy generation', () => {
   it('estimate returns a cost for a customComfy body (non-empty sentinel workflowId survives the inbound validator)', async () => {
     // A plausible fixed display estimate (~15-20 Buzz) via the shared costPerGen
     // knob — no customComfy-specific config surface.
-    uninstall = createMockHost({ generation: { costPerGen: 17 }, pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, generation: { costPerGen: 17 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -113,7 +113,7 @@ describe('createMockHost — customComfy generation', () => {
   });
 
   it('estimate returns the default cost when no scenario cost is configured', async () => {
-    uninstall = createMockHost({ pollsUntilDone: 1 }).install();
+    uninstall = createMockHost({ consentGranted: true, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -183,7 +183,18 @@ describe('createMockHost — customComfy generation', () => {
   // ---- scenario config applies identically to customComfy ----
 
   it('failNext rejects the first customComfy submit then succeeds', async () => {
-    uninstall = createMockHost({ generation: { failNext: 1 }, pollsUntilDone: 1 }).install();
+    // `consentGranted: true` so the token already carries `ai:write:budgeted`.
+    // This test is about the `failNext` KNOB — one deliberate failure, then a
+    // success — and with an un-granted token the SDK's automatic consent
+    // prompt-and-retry would legitimately absorb that first failure (prompt →
+    // the mock grants → retry → succeeds), leaving nothing for
+    // `submitExpectingRejection` to catch. Granting up front makes the consent
+    // path inert so the knob is what is being measured.
+    uninstall = createMockHost({
+      consentGranted: true,
+      generation: { failNext: 1 },
+      pollsUntilDone: 1,
+    }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
@@ -219,8 +230,12 @@ describe('createMockHost — customComfy generation', () => {
     expect(err.snapshot.cost).toBeUndefined();
   });
 
-  it('a simulated balance that cannot cover the gen fails customComfy with insufficient-Buzz', async () => {
+  // Out of Buzz REJECTS with `'exception'` on every body kind — production's
+  // host replies with its cost-less `failureSnapshot(err)` (see
+  // `mockHostScenarios.test.tsx`, buzz balance scenario).
+  it('a simulated balance that cannot cover the gen REJECTS customComfy as out of Buzz', async () => {
     uninstall = createMockHost({
+      consentGranted: true,
       buzz: { balance: 5 },
       generation: { costPerGen: 17 },
       pollsUntilDone: 1,
@@ -228,22 +243,43 @@ describe('createMockHost — customComfy generation', () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await runComfyGen(result);
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toMatch(/insufficient buzz/i);
+    const err = await comfySubmitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(err.snapshot.error).toMatch(/insufficient buzz/i);
   });
 
-  it('buzz.insufficient forces the insufficient path for customComfy regardless of balance', async () => {
+  it('buzz.insufficient REJECTS customComfy as out of Buzz regardless of balance', async () => {
     uninstall = createMockHost({
+      consentGranted: true,
       buzz: { balance: 1000, insufficient: true },
       pollsUntilDone: 1,
     }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
+    const err = await comfySubmitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(err.snapshot.error).toMatch(/insufficient buzz/i);
+  });
+
+  it('generation.submitCapRefusal RESOLVES customComfy priced (cap refusal)', async () => {
+    uninstall = createMockHost({
+      consentGranted: true,
+      generation: { costPerGen: 17, submitCapRefusal: 'daily Buzz cap reached' },
+      pollsUntilDone: 1,
+    }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
     const snap = await runComfyGen(result);
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toMatch(/insufficient buzz/i);
+    expect(snap).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 17 },
+      error: 'daily Buzz cap reached',
+    });
   });
 
   it('debits the simulated balance on a successful customComfy gen', async () => {

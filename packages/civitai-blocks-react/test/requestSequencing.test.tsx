@@ -8,6 +8,7 @@ import { useBuzzAccounts } from '../src/hooks/useBuzzAccounts.js';
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useBuzzTransactions } from '../src/hooks/useBuzzTransactions.js';
 import { useDailyCompensation } from '../src/hooks/useDailyCompensation.js';
+import { useResourceFile } from '../src/hooks/useResourceFile.js';
 import { useTipAllowance } from '../src/hooks/useTipAllowance.js';
 import { useViewer } from '../src/hooks/useViewer.js';
 import { useWildcardPack } from '../src/hooks/useWildcardPack.js';
@@ -193,17 +194,42 @@ const BRIDGE_CASES: BridgeCase[] = [
     read: (c) => (c.pack as { modelVersionId: number } | null)?.modelVersionId,
     errorReply: { error: 'busy' },
   },
+  {
+    name: 'useResourceFile',
+    render: () => useResourceFile(5202) as never,
+    request: 'GET_RESOURCE_FILE',
+    reply: 'RESOURCE_FILE_RESULT',
+    result: (m) => ({
+      file: {
+        meta: {
+          modelId: 4101,
+          modelVersionId: 5202,
+          fileId: m,
+          fileName: 'workflow.json',
+          modelName: 'A workflow',
+          versionName: 'v1',
+          creatorUsername: 'maker',
+        },
+        entries: [{ path: 'workflow.json', format: 'ui', graph: { nodes: [] } }],
+        truncated: false,
+      },
+    }),
+    read: (c) => (c.file as { meta: { fileId: number } } | null)?.meta.fileId,
+    // Closed code set, like WILDCARD_PACK_RESULT: free text would be dropped.
+    errorReply: { error: 'busy' },
+  },
 ];
 
 /**
- * The DERIVED set (#392). Seven postMessage-bridge hooks plus `useTipAllowance`,
- * which the issue excluded but which measurably does NOT sequence — see the
- * dedicated case at the bottom of this file.
+ * The DERIVED set (#392). Eight postMessage-bridge hooks (the seven #392 named,
+ * plus `useResourceFile` from #664) and `useTipAllowance`, which the issue
+ * excluded but which measurably does NOT sequence — see the dedicated case at
+ * the bottom of this file.
  */
 const SEQUENCED_HOOKS = [...BRIDGE_CASES.map((c) => c.name), 'useTipAllowance'].sort();
 
 describe('#392 request sequencing — the derived hook set', () => {
-  it('is non-empty and pinned at 8 (7 bridge hooks + useTipAllowance)', () => {
+  it('is non-empty and pinned at 9 (8 bridge hooks + useTipAllowance)', () => {
     // Non-vacuity: an empty table would make every `it.each` below vanish and
     // this file would pass while asserting nothing.
     expect(BRIDGE_CASES.length).toBeGreaterThan(0);
@@ -213,11 +239,12 @@ describe('#392 request sequencing — the derived hook set', () => {
       'useBuzzBalance',
       'useBuzzTransactions',
       'useDailyCompensation',
+      'useResourceFile',
       'useTipAllowance',
       'useViewer',
       'useWildcardPack',
     ]);
-    expect(SEQUENCED_HOOKS).toHaveLength(8);
+    expect(SEQUENCED_HOOKS).toHaveLength(9);
   });
 });
 

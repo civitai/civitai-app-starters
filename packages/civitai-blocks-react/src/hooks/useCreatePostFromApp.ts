@@ -6,10 +6,23 @@ import type {
   BlockCreatePostResult,
   BlockPostSource,
 } from '@civitai/app-sdk/blocks';
+import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
+import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
+import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
+
+/**
+ * The consent-gated scope this bridge requires — `posts:write:self`, named in
+ * `@civitai/app-sdk`'s own `CREATE_POST_FROM_APP` message docs ("Scope
+ * `posts:write:self` (NOT `ai:write:budgeted`), which is SENSITIVE and
+ * CONSENT-GATED"). From {@link BLOCK_SCOPES}, never a literal: a typo would not
+ * error, it would make the automatic consent prompt silently do nothing.
+ */
+const CREATE_POST_SCOPES = [BLOCK_SCOPES.POSTS_WRITE_SELF] as const;
 
 export type {
   BlockCreatePostHostError,
@@ -88,8 +101,13 @@ export class CreatePostError extends Error {
    */
   readonly declined: boolean;
   /**
-   * There is no session. Route this into `useRequestSignIn()` rather than
-   * showing an error — the viewer's next step is signing in, not retrying.
+   * There is no session — the viewer is signed out (`sign in to post`), or
+   * their session ended, e.g. signed out in another tab (a bare
+   * `UNAUTHORIZED`). Route this into `useRequestSignIn()` rather than showing
+   * an error — the viewer's next step is signing in, not retrying.
+   *
+   * A session that now belongs to a different account is NOT this: `.message`
+   * asks the viewer to reload the page, and is safe to render.
    */
   readonly signInRequired: boolean;
 
@@ -99,7 +117,7 @@ export class CreatePostError extends Error {
     this.timedOut = opts?.timedOut === true;
     if (isCreatePostErrorCode(error)) this.code = error;
     this.declined = error === 'declined';
-    this.signInRequired = error === 'sign in to post';
+    this.signInRequired = error === 'sign in to post' || error === 'UNAUTHORIZED';
   }
 }
 
@@ -113,7 +131,10 @@ export interface UseCreatePostFromApp {
    * `declined`, which means the viewer dismissed the confirm and NO POST EXISTS.
    * Check `.declined` before rendering a failure.
    */
-  createPost: (args: BlockCreatePostRequest) => Promise<BlockCreatePostResult>;
+  createPost: (
+    args: BlockCreatePostRequest,
+    options?: ConsentRetryOptions,
+  ) => Promise<BlockCreatePostResult>;
   /** `true` while a request is in flight (including the viewer's confirm). */
   pending: boolean;
   /**
@@ -146,7 +167,8 @@ export interface UseCreatePostFromApp {
  *
  * 🔴 NO ARM OF `sources` TAKES A URL. Name a workflow from this app's own
  * subqueue plus indexes into its outputs, or `Image` ids from a previous
- * `usePublishGenerationOutputs()` publish. The server re-verifies both.
+ * `usePublishGenerationOutputs()` publish or `useUploadImageBytes()` upload.
+ * The server re-verifies both.
  *
  * ⚠️ POSTING A PUBLISHED IMAGE REMOVES IT FROM THIS APP'S OWN GRID. The
  * app-scoped read behind `useGatedImages()` is conjoined with `postId IS NULL`,
@@ -180,6 +202,7 @@ export interface UseCreatePostFromApp {
  * };
  */
 export function useCreatePostFromApp(): UseCreatePostFromApp {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<CreatePostError | null>(null);
 
@@ -194,54 +217,109 @@ export function useCreatePostFromApp(): UseCreatePostFromApp {
     };
   }, []);
 
-  const createPost = useCallback(
+  /** ONE round-trip + its result contract. Re-invoked verbatim on a consent retry. */
+  const createPostOnce = useCallback(
     async (args: BlockCreatePostRequest): Promise<BlockCreatePostResult> => {
+      const reply = await sendTypedRequest(
+        getTransport(),
+        {
+          type: 'CREATE_POST_FROM_APP',
+          payload: {
+            sources: args.sources,
+            ...(args.title !== undefined ? { title: args.title } : {}),
+            ...(args.detail !== undefined ? { detail: args.detail } : {}),
+            ...(args.tags !== undefined ? { tags: args.tags } : {}),
+            ...(args.modelVersionId !== undefined
+              ? { modelVersionId: args.modelVersionId }
+              : {}),
+          },
+        },
+        'CREATE_POST_RESULT',
+        // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
+        // host answers only when the viewer clicks or dismisses its confirm.
+        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
+      ).catch((err: unknown): never => {
+        // 🔴 THE `timedOut` STAMP LIVES HERE, INSIDE THE CLOSURE
+        // `withConsentRetry` RE-INVOKES — NOT IN `createPost`'s OUTER CATCH.
+        // That placement is the whole point and it is load-bearing: rule 4 of
+        // `internal/withConsentRetry.ts` ("never retry a keyless bridge's
+        // timeout") is read off THIS error, so a stamp applied outside the
+        // wrapper is invisible to it. Until #500 round 2 it was applied outside,
+        // and the consequence was exactly what `CreatePostError.timedOut`'s
+        // docstring exists to prevent: a raw `RequestTimeoutError` reached the
+        // helper carrying neither `declined` nor `timedOut`, so on a token
+        // lacking `posts:write:self` the SDK prompted and RE-SENT THE POST.
+        // `CREATE_POST_FROM_APP` has no `idempotencyKey` on the wire, so that
+        // second send is a genuine second write — a DUPLICATE PUBLIC POST under
+        // the viewer's name.
+        //
+        // Structural, not a message match — see `RequestTimeoutError`.
+        if (err instanceof RequestTimeoutError) {
+          throw new CreatePostError(err.message, { timedOut: true });
+        }
+        throw err instanceof Error ? err : new Error(String(err));
+      });
+      if (reply.error || !reply.result) {
+        // 🔴 `||`, NOT `??`. `isValidCreatePostResult` gates `error` on SHAPE
+        // only (it has to: the channel carries free-text server messages), so
+        // a host `error: ''` is a VALID reply that reaches here. `??` would
+        // then throw an Error with an EMPTY message for a public post, which
+        // renders as a blank failure. Fall through to a code that at least
+        // names a real outcome.
+        throw new CreatePostError(reply.error || 'no images to post');
+      }
+      return reply.result;
+    },
+    [],
+  );
+
+  const createPost = useCallback(
+    async (
+      args: BlockCreatePostRequest,
+      options?: ConsentRetryOptions,
+    ): Promise<BlockCreatePostResult> => {
       if (mountedRef.current) {
         setPending(true);
         setError(null);
       }
       try {
-        const reply = await sendTypedRequest(
+        // 🔴 INSIDE the try, not around it: the wrapper must sit between the
+        // round-trip and the `setError` below, so a first attempt that is
+        // recovered by a consent grant never leaves a failure in `error` for the
+        // UI to render next to a post that succeeded.
+        //
+        // No idempotency key is involved — `CREATE_POST_FROM_APP` has none on the
+        // wire, which is exactly why a TIMEOUT here must never be retried: there
+        // is nothing for the server to dedupe a second send against, so the retry
+        // would be a second public post. `createPostOnce` stamps `timedOut` on
+        // its own error for that reason, INSIDE this closure where rule 4 can see
+        // it. The remaining duplicate-protection is the host's own per-post
+        // confirm, which a consent retry re-opens exactly once; and a `declined`
+        // (the viewer dismissing that confirm) is never retried at all.
+        return await withConsentRetry(
           getTransport(),
-          {
-            type: 'CREATE_POST_FROM_APP',
-            payload: {
-              sources: args.sources,
-              ...(args.title !== undefined ? { title: args.title } : {}),
-              ...(args.detail !== undefined ? { detail: args.detail } : {}),
-              ...(args.tags !== undefined ? { tags: args.tags } : {}),
-              ...(args.modelVersionId !== undefined
-                ? { modelVersionId: args.modelVersionId }
-                : {}),
-            },
-          },
-          'CREATE_POST_RESULT',
-          // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
-          // host answers only when the viewer clicks or dismisses its confirm.
-          { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
+          CREATE_POST_SCOPES,
+          () => createPostOnce(args),
+          options,
+          // Rule 3 in the time axis: a grant that lands after this component is
+          // gone must not publish a post nobody is left to see.
+          () => mountedRef.current,
         );
-        if (reply.error || !reply.result) {
-          // 🔴 `||`, NOT `??`. `isValidCreatePostResult` gates `error` on SHAPE
-          // only (it has to: the channel carries free-text server messages), so
-          // a host `error: ''` is a VALID reply that reaches here. `??` would
-          // then throw an Error with an EMPTY message for a public post, which
-          // renders as a blank failure. Fall through to a code that at least
-          // names a real outcome.
-          throw new CreatePostError(reply.error || 'no images to post');
-        }
-        return reply.result;
       } catch (err: unknown) {
-        // A transport timeout arrives as a plain Error; wrap it so callers have
-        // ONE error type to test, with `.code` left undefined (it is not a host
-        // refusal). Re-wrapping our own error would lose `.code`, so pass it
-        // through.
+        // Wrap anything that is not already ours so callers have ONE error type
+        // to test, with `.code` left undefined (it is not a host refusal).
+        // Re-wrapping our own error would lose `.code` AND `.timedOut`, so pass
+        // it through.
+        //
+        // 🔴 NO `timedOut` STAMP HERE. It used to be applied at this line, which
+        // put it OUTSIDE `withConsentRetry` and made rule 4 unreachable for this
+        // bridge — the round-2 defect. `createPostOnce` owns the stamp now, so
+        // every transport timeout arrives here ALREADY a `CreatePostError` and
+        // takes the pass-through branch above.
         const wrapped =
           err instanceof CreatePostError
             ? err
-            : new CreatePostError(err instanceof Error ? err.message : String(err), {
-                // Structural, not a message match — see `RequestTimeoutError`.
-                timedOut: err instanceof RequestTimeoutError,
-              });
+            : new CreatePostError(err instanceof Error ? err.message : String(err));
         if (mountedRef.current) setError(wrapped);
         // 🔴 THROWN UNCONDITIONALLY, even when unmounted. The caller's `await`
         // is not the component — an app that persists the result must still

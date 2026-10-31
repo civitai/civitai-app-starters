@@ -191,18 +191,33 @@ describe('host.publishGenerationOutputs over the real bridge', () => {
   });
 
   /**
-   * 🔴 `error: ''` is how the host spells "no failure", so such a reply reaches
-   * the caller as a SUCCESS carrying nothing. Returning it would resolve
+   * 🔴 `error: ''` is how the host spells "no failure", so such a reply reads
+   * as a SUCCESS carrying nothing. Returning it would resolve
    * `undefined` out of a promise typed `number[]` — a lie that reads as
    * "nothing published" at a call site where something may well have been.
    */
-  it('rejects a reply carrying neither image ids nor a failure', async () => {
+  it('rejects a reply carrying neither a result nor a failure', async () => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
 
     const pending = createHost(transport).publishGenerationOutputs({ workflowId: 'wf_1' });
     const sent = posted.at(-1)!.msg as { payload: { requestId: string } };
     deliver({ type: 'PUBLISH_RESULT', payload: { requestId: sent.payload.requestId, error: '' } });
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'malformed',
+      operation: 'PUBLISH_GENERATION_OUTPUTS',
+    });
+    await expect(pending).rejects.toThrow(/reply carried no result/);
+  });
+
+  it('rejects a result carrying no image ids', async () => {
+    const { transport, posted, deliver } = mountTransport();
+    deliver(init());
+
+    const pending = createHost(transport).publishGenerationOutputs({ workflowId: 'wf_1' });
+    const sent = posted.at(-1)!.msg as { payload: { requestId: string } };
+    deliver({ type: 'PUBLISH_RESULT', payload: { requestId: sent.payload.requestId, error: '', result: {} } });
 
     await expect(pending).rejects.toMatchObject({
       code: 'malformed',

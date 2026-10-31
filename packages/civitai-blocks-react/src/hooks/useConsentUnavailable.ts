@@ -9,6 +9,7 @@ import {
 } from '../internal/consentRefusalLatch.js';
 import { getTransport } from '../transport/singleton.js';
 import { subscribeTyped } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { ConsentUnavailablePayload };
 
@@ -102,6 +103,7 @@ export interface UseConsentUnavailable {
  * return <button onClick={() => requestConsent({ scopes: ['ai:write:budgeted'] })}>Generate</button>;
  */
 export function useConsentUnavailable(): UseConsentUnavailable {
+  useTransportConnection();
   const [refusal, setRefusal] = useState<ConsentUnavailablePayload | null>(null);
 
   useEffect(() => {

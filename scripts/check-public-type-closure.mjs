@@ -42,10 +42,15 @@
  * closed. So the issue is inaccurate about what is BROKEN, not about what
  * exists.
  *
- * One name is a third case worth separating: `FieldBaseProps` IS exported from
- * its own module and merely absent from the package barrel — importing it from
- * `dist/internal/field.d.ts` type-checks cleanly. That is the `internal/`
+ * One name was a third case worth separating: `FieldBaseProps`, exported from
+ * its own module and merely absent from the package barrel — the `internal/`
  * directory feeding public signatures, the shape #378 fixed in blocks-react.
+ * 🔴 RESOLVED, and NOT by exporting it: `@civitai/components-react@0.9.0`
+ * deleted the hand-written React layer outright when the `<civitai-*>` custom
+ * elements superseded it, so `src/internal/field.tsx` and the seven
+ * labeled-input prop types that extended it no longer exist, and their seven
+ * LEDGER rows went with them. Kept as history because the count above
+ * ("23 of the 24 names") includes this one.
  *
  * Classified by POSITION, the 47 were:
  *
@@ -229,12 +234,6 @@ const MIN_REFERENCE_NODES = 400;
  *     `extends` base of the three ManifestSettingField arms. Members inline;
  *     `Omit<ManifestBooleanField, 'type' | 'widget' | 'default'>` is the base.
  *
- *   FieldBaseProps  (`@civitai/components-react`)
- *     `extends` base of the seven labeled-input prop types. Members inline;
- *     `Pick<SelectProps, 'label' | 'description' | …>` is the shared chrome.
- *     NOTE it lives in `src/internal/` — the shape #378 just moved out of
- *     `internal/` in blocks-react. Worth the same treatment; out of scope here.
- *
  *   ResourceCard{Card,Row}Props / ResourceCard{Static,Interactive}Arm
  *     (`@civitai/blocks-react/ui`) — the four arms of the exported
  *     `ResourceCardProps` union. `Extract<ResourceCardProps, { variant: 'card' }>`
@@ -302,13 +301,6 @@ const LEDGER = [
   '@civitai/blocks-react/ui#ResourceCardProps :: alias-rhs :: ResourceCardRowProps',
   '@civitai/blocks-react/ui#ResourceCardProps :: alias-rhs :: ResourceCardStaticArm',
   '@civitai/blocks-react/ui#ResourceCardProps :: alias-rhs :: ResourceCardStaticArm',
-  '@civitai/components-react#CheckboxProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#NumberInputProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#RadioProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#SliderProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#SelectProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#TextInputProps :: extends :: FieldBaseProps',
-  '@civitai/components-react#TextareaProps :: extends :: FieldBaseProps',
 
   // ------------------------------------------------------------------------
   // `@civitai/components` custom elements (#415). Two routes, both name-free,

@@ -215,6 +215,122 @@ describe('<civitai-reaction>', () => {
     expect(el.count).toBe(0);
   });
 
+  /** One bare reaction element, rendered and settled. */
+  const single = async (markup: string): Promise<CivitaiReaction> => {
+    scope?.remove();
+    scope = document.createElement('div');
+    scope.innerHTML = markup;
+    document.body.append(scope);
+    const el = scope.firstElementChild as CivitaiReaction;
+    await el.updateComplete;
+    return el;
+  };
+
+  const details = (el: CivitaiReaction): ReactionDetail[] => {
+    const seen: ReactionDetail[] = [];
+    el.addEventListener('react', (e) => seen.push((e as CustomEvent<ReactionDetail>).detail));
+    return seen;
+  };
+
+  it('carries its `reaction` in the event detail', async () => {
+    const el = await single('<civitai-reaction emoji="&#10084;" reaction="Heart" count="2"></civitai-reaction>');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+    button(el).click();
+    await el.updateComplete;
+
+    expect(seen).toEqual([
+      { emoji: '❤', reacted: true, count: 3, reaction: 'Heart' },
+      { emoji: '❤', reacted: false, count: 2, reaction: 'Heart' },
+    ]);
+  });
+
+  it('dispatches exactly the old detail when it has no `reaction`', async () => {
+    const el = await single('<civitai-reaction emoji="&#128077;" count="2"></civitai-reaction>');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+
+    // The KEY SET is the contract: a consumer spreading or serialising the
+    // detail must see no new field.
+    expect(seen).toHaveLength(1);
+    expect(Object.keys(seen[0]!).sort()).toEqual(['count', 'emoji', 'reacted']);
+    expect(seen[0]).toEqual({ emoji: '👍', reacted: true, count: 3 });
+  });
+
+  it('passes any non-empty `reaction` string through unjudged', async () => {
+    // The element names no reaction set; which reactions exist is the host's
+    // business. A value outside civitai.com's four still reaches the handler.
+    const el = await single('<civitai-reaction emoji="x" reaction="Dislike" count="1"></civitai-reaction>');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+
+    expect(seen).toEqual([{ emoji: 'x', reacted: true, count: 2, reaction: 'Dislike' }]);
+  });
+
+  it('treats an EMPTY `reaction` as absent: the old detail exactly', async () => {
+    const el = await single('<civitai-reaction emoji="x" reaction="" count="1"></civitai-reaction>');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+
+    expect(seen).toHaveLength(1);
+    expect(Object.keys(seen[0]!).sort()).toEqual(['count', 'emoji', 'reacted']);
+  });
+
+  it('carries a `reaction` set as a property', async () => {
+    const el = await single('<civitai-reaction emoji="x" count="0"></civitai-reaction>');
+    el.reaction = 'Laugh';
+    await el.updateComplete;
+    expect(el.getAttribute('reaction')).toBe('Laugh');
+    const seen = details(el);
+
+    button(el).click();
+    await el.updateComplete;
+
+    expect(seen[0]?.reaction).toBe('Laugh');
+  });
+
+  it('names itself by `reaction` when it has no `label`, and by `label` over both', async () => {
+    const named = await single('<civitai-reaction emoji="&#128514;" reaction="Laugh"></civitai-reaction>');
+    expect(button(named).getAttribute('aria-label')).toBe('Laugh');
+
+    const labelled = await single(
+      '<civitai-reaction emoji="&#128514;" reaction="Laugh" label="Funny"></civitai-reaction>',
+    );
+    expect(button(labelled).getAttribute('aria-label')).toBe('Funny');
+
+    // No reaction: the old fallback to the emoji, unchanged.
+    const bare = await single('<civitai-reaction emoji="&#128514;"></civitai-reaction>');
+    expect(button(bare).getAttribute('aria-label')).toBe('😂');
+  });
+
+  it('can be reverted by setting the properties back after a failed write', async () => {
+    const el = await single('<civitai-reaction emoji="x" reaction="Like" count="5"></civitai-reaction>');
+    el.addEventListener('react', (e) => {
+      const { reacted, count } = (e as CustomEvent<ReactionDetail>).detail;
+      // What a host does when the write fails: undo the optimistic flip.
+      queueMicrotask(() => {
+        el.reacted = !reacted;
+        el.count = count + (reacted ? -1 : 1);
+      });
+    });
+
+    button(el).click();
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+
+    expect(el.reacted).toBe(false);
+    expect(el.count).toBe(5);
+    expect(button(el).getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('refuses to react when disabled', async () => {
     scope?.remove();
     scope = document.createElement('div');

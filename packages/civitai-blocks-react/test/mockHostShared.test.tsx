@@ -1,9 +1,26 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { useSharedStorage } from '../src/hooks/useSharedStorage.js';
+import { SharedStorageRateLimitError, useSharedStorage } from '../src/hooks/useSharedStorage.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
+
+/**
+ * The storage scopes these suites exercise.
+ *
+ * `createMockHost` gates `APP_STORAGE_*` / `SHARED_*` on the scopes a manifest
+ * DECLARES, defaulting to none — the dev host used to serve storage
+ * unconditionally, which is why an app that forgot these passed its whole suite
+ * and then failed every save in production. A storage-mechanics test declares
+ * them explicitly; there is deliberately no permissive flag to reach for.
+ */
+const STORAGE_SCOPES = [
+  'apps:storage:read',
+  'apps:storage:write',
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
+];
+
 
 /**
  * Coverage for the SHARED-storage mock backend in `createMockHost` (the
@@ -33,7 +50,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   }
 
   it('append() assigns a key; list() returns entries newest-first', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -56,7 +73,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('append() echoes the opaque `data` payload back through list()', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -74,7 +91,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('seed populates the store (newest-first) with author + votes', async () => {
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: {
         seed: [
           { value: { title: 'oldest' }, authorUserId: 11, voters: [11, 12] },
@@ -94,7 +111,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('vote() is one-per-user (idempotent); unvote() removes it', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -115,7 +132,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('getCounts() returns a map, 0 for unknown keys', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -131,7 +148,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('withdraw() removes the entry; a second withdraw reports deleted:false', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -146,7 +163,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() edits the author\'s own entry in place, preserving key + votes', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -166,7 +183,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() on a missing key rejects with NOT_FOUND', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -177,7 +194,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
 
   it('update() on another author\'s entry rejects with FORBIDDEN', async () => {
     // Seed an entry owned by a DIFFERENT user (the mock viewer is id 2).
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: { seed: [{ value: { title: 'not mine' }, authorUserId: 999 }] },
     });
     uninstall = host.install();
@@ -196,7 +213,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() rejects an empty title with INVALID_VALUE', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -205,7 +222,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('shared.failNext also forces update() to error then recovers', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -220,7 +237,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('vote() on a missing key rejects with NOT_FOUND', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -228,7 +245,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('shared.failNext forces N mutations to error then recovers', async () => {
-    host = createMockHost({ shared: { failNext: 1 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: { failNext: 1 } });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -241,7 +258,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('list() paginates with a cursor (newest-first)', async () => {
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: {
         seed: [
           { value: { title: 't1' } },
@@ -261,5 +278,102 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
     const page2 = await result.current.list({ limit: 2, cursor: page1.nextCursor });
     expect(page2.items.map((i) => i.value.title)).toEqual(['t1']);
     expect(page2.nextCursor).toBeUndefined();
+  });
+
+  describe('shared.rateLimitNext (#597)', () => {
+    async function rejection(p: Promise<unknown>): Promise<unknown> {
+      return p.then(
+        () => {
+          throw new Error('expected the call to reject');
+        },
+        (e: unknown) => e,
+      );
+    }
+
+    it('refuses the next write as rate-limited with the given metadata, then counts down', async () => {
+      host = createMockHost({
+        declaredScopes: STORAGE_SCOPES,
+        shared: {
+          rateLimitNext: 1,
+          rateLimit: { retryAfterSeconds: 312, retryAt: '2031-04-05T06:07:08.000Z' },
+        },
+      });
+      uninstall = host.install();
+      const { result } = renderHook(() => useSharedStorage());
+      await ready();
+
+      const err = await rejection(result.current.append({ title: 'refused' }));
+      expect(err).toBeInstanceOf(SharedStorageRateLimitError);
+      const rl = err as SharedStorageRateLimitError;
+      expect(rl.message).toBe('Too many submissions — retry in 312s');
+      expect(rl.retryAfterSeconds).toBe(312);
+      expect(rl.retryAt).toBe('2031-04-05T06:07:08.000Z');
+      // Nothing landed.
+      expect((await result.current.list()).items).toEqual([]);
+      // Counted down: the next write goes through.
+      const { key } = await result.current.append({ title: 'landed' });
+      expect((await result.current.list()).items.map((i) => i.key)).toEqual([key]);
+    });
+
+    it('covers all six writes, worded per write family like the platform', async () => {
+      host = createMockHost({
+        declaredScopes: STORAGE_SCOPES,
+        shared: { seed: [{ value: { title: 'mine' } }] },
+      });
+      uninstall = host.install();
+      const { result } = renderHook(() => useSharedStorage());
+      await ready();
+      const key = (await result.current.list()).items[0].key;
+      const cases: Array<[() => Promise<unknown>, string]> = [
+        [() => result.current.append({ title: 't' }), 'Too many submissions — retry in 47s'],
+        [() => result.current.update(key, { title: 't' }), 'Too many submissions — retry in 47s'],
+        [() => result.current.vote(key), 'Too many votes — retry in 47s'],
+        [() => result.current.unvote(key), 'Too many votes — retry in 47s'],
+        [() => result.current.withdraw(key), 'Too many withdrawals — retry in 47s'],
+        [() => result.current.report(key), 'Too many reports — retry in 47s'],
+      ];
+      for (const [call, message] of cases) {
+        host.setScenario({
+          shared: { rateLimitNext: 1, rateLimit: { retryAfterSeconds: 47, retryAt: '2032-01-02T03:04:05.000Z' } },
+        });
+        const err = await rejection(call());
+        expect(err).toBeInstanceOf(SharedStorageRateLimitError);
+        expect((err as Error).message).toBe(message);
+        expect((err as SharedStorageRateLimitError).retryAfterSeconds).toBe(47);
+        expect((err as SharedStorageRateLimitError).retryAt).toBe('2032-01-02T03:04:05.000Z');
+      }
+      // The refused withdraw did not delete the row.
+      expect((await result.current.list()).items.map((i) => i.key)).toEqual([key]);
+    });
+
+    it('defaults retryAfterSeconds to 60 and retryAt to now + 60s', async () => {
+      host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: { rateLimitNext: 1 } });
+      uninstall = host.install();
+      const { result } = renderHook(() => useSharedStorage());
+      await ready();
+      const before = Date.now();
+      const err = (await rejection(result.current.vote('missing'))) as SharedStorageRateLimitError;
+      const after = Date.now();
+      expect(err).toBeInstanceOf(SharedStorageRateLimitError);
+      expect(err.retryAfterSeconds).toBe(60);
+      expect(err.message).toBe('Too many votes — retry in 60s');
+      const at = Date.parse(err.retryAt);
+      expect(at).toBeGreaterThanOrEqual(before + 60_000);
+      expect(at).toBeLessThanOrEqual(after + 60_000);
+    });
+
+    it('a malformed rateLimit knob arrives as a plain Error (the hook ignores it)', async () => {
+      host = createMockHost({
+        declaredScopes: STORAGE_SCOPES,
+        shared: { rateLimitNext: 1, rateLimit: { retryAfterSeconds: 2.5 } },
+      });
+      uninstall = host.install();
+      const { result } = renderHook(() => useSharedStorage());
+      await ready();
+      const err = await rejection(result.current.append({ title: 't' }));
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(SharedStorageRateLimitError);
+      expect((err as Error).message).toBe('Too many submissions — retry in 2.5s');
+    });
   });
 });

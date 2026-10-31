@@ -25,6 +25,13 @@ export type { DetectOptions } from './transport/detector.js';
 export { getTransport } from './transport/singleton.js';
 
 export { sendTypedRequest } from './transport/transport.js';
+// Exported so a block can MINT a conforming key for a logical operation it has
+// no natural id for, and hold it across retries. Previously internal, which is
+// why `useTip`'s own `@example` reached for `React.useId()` instead — a value
+// that fails the host's charset on most of the React versions this package's
+// peer range admits. The documented alternative has to be reachable, or the doc
+// recommends whatever happens to be in scope.
+export { generateIdempotencyKey } from './transport/transport.js';
 export type {
   BlockSnapshot,
   BlockTransport,
@@ -54,6 +61,38 @@ export type {
   WatchWorkflowOptions,
   WorkflowSubmitErrorCode,
 } from './hooks/useBuzzWorkflow.js';
+export {
+  BATCH_ESTIMATE_MAX_CELLS,
+  BatchEstimateError,
+  useBatchEstimate,
+} from './hooks/useBatchEstimate.js';
+export type {
+  BatchEstimateCell,
+  BatchEstimateErrorCode,
+  BatchEstimateResult,
+  BlockEstimateBatchAggregate,
+  EstimateBatchOptions,
+  UseBatchEstimate,
+} from './hooks/useBatchEstimate.js';
+export { WORKFLOW_BATCH_MAX_CELLS, useWorkflowBatch } from './hooks/useWorkflowBatch.js';
+export type {
+  UseWorkflowBatch,
+  WorkflowBatchCancelResult,
+  WorkflowBatchCancelState,
+  WorkflowBatchCell,
+  WorkflowBatchCellPhase,
+  WorkflowBatchOptions,
+  WorkflowBatchSummary,
+} from './hooks/useWorkflowBatch.js';
+export { useEntitlements } from './hooks/useEntitlements.js';
+export type { UseEntitlements, Entitlement } from './hooks/useEntitlements.js';
+export { useGoodPurchase, GoodPurchaseRefusal } from './hooks/useGoodPurchase.js';
+export type {
+  UseGoodPurchase,
+  GoodPurchaseParams,
+  GoodPurchaseOptions,
+  GoodPurchaseResult,
+} from './hooks/useGoodPurchase.js';
 export { useTip } from './hooks/useTip.js';
 export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js';
 export { useTipAllowance } from './hooks/useTipAllowance.js';
@@ -80,6 +119,8 @@ export { useDailyCompensation } from './hooks/useDailyCompensation.js';
 export type { UseDailyCompensation } from './hooks/useDailyCompensation.js';
 export { useWildcardPack, WildcardPackError } from './hooks/useWildcardPack.js';
 export type { UseWildcardPack } from './hooks/useWildcardPack.js';
+export { useResourceFile, ResourceFileError } from './hooks/useResourceFile.js';
+export type { UseResourceFile } from './hooks/useResourceFile.js';
 export { useAppWorkflows } from './hooks/useAppWorkflows.js';
 export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
 export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
@@ -92,6 +133,11 @@ export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
 // JSDoc says consumers need to distinguish "no reply" from "the host said no" —
 // which they cannot do if they cannot name the type.
 export { RequestTimeoutError } from './transport/transport.js';
+// Exported because all three money hooks can throw it and its whole purpose is
+// to be DISTINGUISHABLE from the money-ambiguous rejections beside it — a caller
+// that cannot name the type cannot tell "nothing was spent" from "may have been
+// spent", which is the one distinction the class exists to carry.
+export { InvalidIdempotencyKeyError } from './transport/transport.js';
 export {
   useCollectionFollow,
   CollectionFollowError,
@@ -99,6 +145,14 @@ export {
   isCollectionFollowErrorCode,
 } from './hooks/useCollectionFollow.js';
 export type { UseCollectionFollow } from './hooks/useCollectionFollow.js';
+export {
+  useReactions,
+  ReactionError,
+  REACTIONS,
+  REACTION_ERROR_CODES,
+  isReactionErrorCode,
+} from './hooks/useReactions.js';
+export type { UseReactions, UseReactionsOptions } from './hooks/useReactions.js';
 export {
   useCreatePostFromApp,
   CreatePostError,
@@ -112,30 +166,96 @@ export type {
   BlockCreatePostResult,
   BlockCreatePostHostError,
 } from './hooks/useCreatePostFromApp.js';
+export {
+  useRunTraining,
+  RunTrainingError,
+  RUN_TRAINING_ERROR_CODES,
+  isRunTrainingErrorCode,
+} from './hooks/useRunTraining.js';
+export type {
+  UseRunTraining,
+  QuotedTrainingBody,
+  RunTrainingErrorCode,
+  BlockRunTrainingHostError,
+  BlockTrainingQuote,
+  BlockTrainingDatasetItem,
+  WorkflowBodyTraining,
+} from './hooks/useRunTraining.js';
+export {
+  useRunConfirmedStep,
+  RunConfirmedStepError,
+  RUN_CONFIRMED_STEP_ERROR_CODES,
+  isRunConfirmedStepErrorCode,
+  isStepQuoteId,
+} from './hooks/useRunConfirmedStep.js';
+export type {
+  UseRunConfirmedStep,
+  QuotedStepBody,
+  RunConfirmedStepErrorCode,
+  BlockRunConfirmedStepHostError,
+  BlockStepQuote,
+  WorkflowBodyPassThroughStep,
+} from './hooks/useRunConfirmedStep.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
   BlockDailyCompensationResource,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  BlockResourceFile,
+  BlockResourceFileEntry,
+  BlockResourceFileEntryFormat,
+  BlockResourceFileErrorCode,
+  BlockResourceFileMeta,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
   BlockCollectionFollowResult,
+  BlockAppReaction,
+  BlockStoredReaction,
+  BlockReactionEntityType,
+  BlockEntityReactionErrorCode,
+  BlockReactionCounts,
+  BlockEntityReactionState,
+  BlockEntityReactionResult,
+  BlockEntityReactionsResult,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export type { UseCheckpointPicker } from './hooks/useCheckpointPicker.js';
-export { useResourcePicker } from './hooks/useResourcePicker.js';
-export type { UseResourcePicker } from './hooks/useResourcePicker.js';
+export { useResourcePicker, RESOURCE_PICKER_MULTIPLE_MAX } from './hooks/useResourcePicker.js';
+export type {
+  UseResourcePicker,
+  ResourcePickerOpenOptions,
+  ResourcePickerMultiple,
+} from './hooks/useResourcePicker.js';
 export { useImageUpload } from './hooks/useImageUpload.js';
 export type {
   UseImageUpload,
   UseImageUploadAsyncScan,
   UseImageUploadGenerationSource,
+  UseImageUploadTrainingData,
   UseImageUploadOptions,
+  BlockTrainingDataImage,
 } from './hooks/useImageUpload.js';
+export { useUploadImageBytes } from './hooks/useUploadImageBytes.js';
+export type {
+  UploadImageBytesOptions,
+  UseUploadImageBytes,
+} from './hooks/useUploadImageBytes.js';
+export { useMediaUpload } from './hooks/useMediaUpload.js';
+export type {
+  UseMediaUpload,
+  MediaUploadOpenOptions,
+  MediaUploadBytesOptions,
+} from './hooks/useMediaUpload.js';
+export { useImagePicker, IMAGE_PICKER_MULTIPLE_MAX } from './hooks/useImagePicker.js';
+export type {
+  UseImagePicker,
+  ImagePickerOpenOptions,
+  ImagePickerMultiple,
+} from './hooks/useImagePicker.js';
 export { useGenerationResources } from './hooks/useGenerationResources.js';
 export type { UseGenerationResources } from './hooks/useGenerationResources.js';
 export {
@@ -149,7 +269,14 @@ export type {
   RawGenerationResourcesResponse,
 } from './api/generationResources.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
-export type { UseCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
+export type {
+  UseCivitaiNavigate,
+  UseCivitaiNavigateOptions,
+} from './hooks/useCivitaiNavigate.js';
+// The other half of the `NAVIGATE` round trip: `useCivitaiNavigate` asks the
+// host to move, `useCivitaiRoute` is how the block learns where it now is.
+export { useCivitaiRoute } from './hooks/useCivitaiRoute.js';
+export type { UseCivitaiRoute } from './hooks/useCivitaiRoute.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export type { UseRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';
@@ -159,6 +286,7 @@ export type {
   UseConsentUnavailable,
   ConsentUnavailablePayload,
 } from './hooks/useConsentUnavailable.js';
+export type { ConsentRetryOptions } from './hooks/consentRetryOptions.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export type { UseBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export { useDomainMaturity } from './hooks/useDomainMaturity.js';
@@ -168,6 +296,15 @@ export type { SfwGateProps } from './hooks/SfwGate.js';
 export { useDirectLoad } from './hooks/useDirectLoad.js';
 export type { UseDirectLoad, UseDirectLoadOptions } from './hooks/useDirectLoad.js';
 export { hostToRunUrl, DIRECT_LOAD_TIMEOUT_MS } from './transport/directLoad.js';
+// A block CANNOT frame its own bundled content by URL. This is the `srcdoc`
+// fallback; prefer a single-document design. Why, measured, in one place:
+// `@civitai/app-sdk`'s `src/blocks/nestedDocument.ts` header.
+export { useNestedDocument } from './hooks/useNestedDocument.js';
+export type {
+  NestedDocumentStatus,
+  UseNestedDocument,
+  UseNestedDocumentOptions,
+} from './hooks/useNestedDocument.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
   AppStorageKeyEntry,
@@ -175,7 +312,7 @@ export type {
   AppStorageQuota,
   UseAppStorage,
 } from './hooks/useAppStorage.js';
-export { useSharedStorage } from './hooks/useSharedStorage.js';
+export { useSharedStorage, SharedStorageRateLimitError } from './hooks/useSharedStorage.js';
 export type {
   SharedAppendValue,
   SharedListItem,

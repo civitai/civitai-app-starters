@@ -2,6 +2,8 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useGenerationResources } from '../src/hooks/useGenerationResources.js';
+import { useEntitlements } from '../src/hooks/useEntitlements.js';
+import { useGoodPurchase } from '../src/hooks/useGoodPurchase.js';
 import { useTip } from '../src/hooks/useTip.js';
 import { useTipAllowance } from '../src/hooks/useTipAllowance.js';
 import { getTransport } from '../src/transport/singleton.js';
@@ -10,33 +12,57 @@ import { resetTransport } from '../src/testing.js';
 /**
  * #398 — THE HOST-ORIGIN-ABSENT FAMILY, IN ONE PLACE.
  *
- * Three hooks direct-fetch the App Blocks REST API and therefore need
+ * FIVE hooks direct-fetch the App Blocks REST API and therefore need
  * `useHostOrigin()` before they can do anything. This file pins what each does
  * when that origin NEVER arrives (a direct/unembedded load, `InlineTransport`
  * before bootstrap), and asserts the one property that must hold across all of
  * them: NOTHING IS LEFT WAITING FOREVER.
  *
+ * 🔴 THIS FILE IS THE LEDGER FOR THAT FAMILY. A hook that direct-fetches and is
+ * NOT recorded here is a hook nobody has checked for an eternal spinner — but
+ * WHERE you record it depends on which of the two shapes below it has, and an
+ * earlier version of this note said only "ADD IT IN BOTH PLACES", which is
+ * wrong for a declarative hook: `settled` is an IMPERATIVE-only ledger.
+ *
+ *   A NEW IMPERATIVE HOOK → three places: this prose, the `settled` array's
+ *   exact-equality assertion in the last case, and a `.catch(…)` that pushes
+ *   its name onto that array. The exact-equality is the point — it fails when
+ *   the set grows as well as when it shrinks.
+ *
+ *   A NEW DECLARATIVE HOOK → three places too, but not the same three: this
+ *   prose, a `renderHook` in the last case, and its OWN post-bound assertions
+ *   there (`loading === false` plus a named `error`). It must NOT go in
+ *   `settled` — it never rejects, so adding it makes that assertion
+ *   permanently red. A declarative member's membership is visible only in the
+ *   assertions it adds, so it is the shape most easily left half-added.
+ *
+ * (The goods pair was added to the last case without this prose being updated,
+ * which is how the count read "Three" while the body drove five.)
+ *
  * 🔴 ONE PROPERTY, TWO SHAPES — and the split is by API shape, not by accident:
  *
- *   IMPERATIVE (`useTip.tip()`, `useGenerationResources.fetch()`) — the caller
- *   holds a promise, so the terminal state is a REJECTION with a named error,
- *   delivered immediately. There is no `loading` flag to strand.
+ *   IMPERATIVE (`useTip.tip()`, `useGenerationResources.fetch()`,
+ *   `useGoodPurchase.purchase()`) — the caller holds a promise, so the terminal
+ *   state is a REJECTION with a named error, delivered immediately. There is no
+ *   `loading` flag to strand.
  *
- *   DECLARATIVE (`useTipAllowance`) — nobody holds a promise; the hook owns
- *   `loading`/`error` and auto-fetches. Throwing from an effect is not available
- *   to it, so its terminal state is `loading: false` plus a named `error`, after
- *   a BOUNDED WAIT (the origin is absent during every healthy boot too, so an
- *   immediate error would flash on every embedded block).
+ *   DECLARATIVE (`useTipAllowance`, `useEntitlements`) — nobody holds a promise;
+ *   the hook owns `loading`/`error` and auto-fetches. Throwing from an effect is
+ *   not available to it, so its terminal state is `loading: false` plus a named
+ *   `error`, after a BOUNDED WAIT (the origin is absent during every healthy
+ *   boot too, so an immediate error would flash on every embedded block).
  *
  * `useWildcardPack` is NOT in this family, contrary to the issue's table: its
  * `:77-82` early `setLoading(false)` is a `modelVersionId` validity guard, and
  * the hook never reads the host origin at all.
  *
- * ⚠️ HONEST LABEL: the two imperative cases below are GREEN at `f913811`. They
- * are INVARIANT GUARDS pinning behaviour the fix must not flatten while making
- * the family agree — they are NOT regression coverage for #398. Only the
- * `useTipAllowance` cases (here and in `useTipAllowance.test.tsx`) were watched
- * to fail.
+ * ⚠️ HONEST LABEL: the two `useTip` / `useGenerationResources` cases below are
+ * GREEN at `f913811`. They are INVARIANT GUARDS pinning behaviour the fix must
+ * not flatten while making the family agree — they are NOT regression coverage
+ * for #398. Only the `useTipAllowance` cases (here and in
+ * `useTipAllowance.test.tsx`) were watched to fail. The two goods hooks postdate
+ * #398 entirely and were written against the settled contract, so their
+ * membership in the last case is an invariant guard too.
  */
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -112,7 +138,9 @@ describe('#398 host origin never arrives — the direct-fetch hook family', () =
 
     const tipHook = renderHook(() => useTip());
     const resourcesHook = renderHook(() => useGenerationResources());
+    const purchaseHook = renderHook(() => useGoodPurchase());
     const allowanceHook = renderHook(() => useTipAllowance());
+    const entitlementsHook = renderHook(() => useEntitlements());
 
     const settled: string[] = [];
     const rejections = Promise.all([
@@ -120,20 +148,33 @@ describe('#398 host origin never arrives — the direct-fetch hook family', () =
       resourcesHook.result.current
         .fetch([1])
         .catch(() => settled.push('useGenerationResources')),
+      purchaseHook.result.current
+        .purchase({ goodId: 'g' })
+        .catch(() => settled.push('useGoodPurchase')),
     ]);
     await act(async () => {
       await rejections;
     });
-    expect(settled.sort()).toEqual(['useGenerationResources', 'useTip']);
+    expect(settled.sort()).toEqual(['useGenerationResources', 'useGoodPurchase', 'useTip']);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_001);
     });
     expect(allowanceHook.result.current.loading).toBe(false);
     expect(allowanceHook.result.current.error).toBeInstanceOf(Error);
+    // The second declarative member. Its docstring asserts this terminal state
+    // in 🔴 terms and nothing pinned it until now.
+    expect(entitlementsHook.result.current.loading).toBe(false);
+    expect(entitlementsHook.result.current.error).toBeInstanceOf(Error);
+    // 🔴 And NOT mistaken for a sign-in problem: the host never introduced
+    // itself, which is not the same refusal as an anonymous viewer, and routing
+    // it to a sign-in screen would be a dead end for an embedded block.
+    expect(entitlementsHook.result.current.unauthenticated).toBe(false);
 
     tipHook.unmount();
     resourcesHook.unmount();
+    purchaseHook.unmount();
     allowanceHook.unmount();
+    entitlementsHook.unmount();
   });
 });

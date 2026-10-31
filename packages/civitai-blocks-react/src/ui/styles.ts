@@ -39,8 +39,28 @@ import { tokensCss } from '@civitai/theme';
  * Theming (gotcha #60): a block sets `data-theme={theme}` on its OWN root
  * (from `BLOCK_INIT.theme`); the host can't reach across the iframe boundary.
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
- * selector; the default (no `data-theme`, i.e. light) matches @civitai/theme's
- * `:root` palette.
+ * selector.
+ *
+ * 🔴 Brand-override behaviour is documented on `useBlocksStyles()`'s own JSDoc
+ * below — the only copy, and the only one that reaches the published `.d.ts`.
+ * Do not restate it here, headline included: two copies in one file is the
+ * desync this package already argues against.
+ *
+ * **"No `data-theme`" means DARK, and nothing here consults the OS.** Since
+ * `@civitai/theme@0.5.0` the `:root` palette IS the dark one and the stylesheet
+ * declares no `prefers-color-scheme` block in either direction, so an
+ * attribute-less element is dark on any machine. Only `light` and `dark` select
+ * a token block; any other value — `auto`, an empty string, a typo, the right
+ * word in the wrong case — selects none and therefore inherits the dark base.
+ *
+ * ⚠️ **This paragraph used to say the opposite, and the reversal is the whole
+ * point of that release.** Before it, `:root` carried LIGHT and dark arrived via
+ * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` — so an
+ * attribute-less root followed the OS, and a surface that must not do that had to
+ * set `data-theme` explicitly just to defeat it. `DirectLoadFallback`
+ * (./BlockGate.tsx) still stamps the attribute on its own wrapper, and it is
+ * still correct, but it is no longer the only thing standing between a block and
+ * the browser's preference.
  */
 
 /** Marker attribute on the injected interactive-5 `<style>` so injection is idempotent. */
@@ -490,6 +510,13 @@ export function injectBlocksStyles(doc?: Document): void {
  * Hook that injects the pack's styles once on mount. Every `/ui` component
  * calls this so rendering any of them is enough to get the styling — the
  * author never imports CSS or runs a setup step.
+ *
+ * 🔴 **Branding: SCOPE a `--civitai-*` override, never declare one at `:root`.**
+ * Because this is an effect, the token sheet lands AFTER your bundler-injected
+ * CSS, and the token sheet is unlayered — so a `:root` override only ties with
+ * it and loses on order, silently. Put the custom property on your block root
+ * or an inline `style` instead. Measured matrix: `@civitai/components`'
+ * MARKUP.md, "Cascade / overriding".
  */
 export function useBlocksStyles(): void {
   useEffect(() => {

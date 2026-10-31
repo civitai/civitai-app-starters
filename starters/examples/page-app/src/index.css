@@ -1,0 +1,13 @@
+:root {
+  /* Dark first, in the same order as index.html's <meta name="color-scheme">:
+     this declaration overrides the meta once the stylesheet loads. */
+  color-scheme: dark light;
+  font-family: var(--civitai-font, system-ui, sans-serif);
+  color: var(--civitai-color-text);
+}
+
+body {
+  margin: 0;
+  /* No `background` on html/body: index.html's boot <style> owns the page
+     colour, and this file loads after it, so a rule here would win. */
+}

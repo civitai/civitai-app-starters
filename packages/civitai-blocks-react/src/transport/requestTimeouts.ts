@@ -33,6 +33,53 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
  */
 export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * The bound for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` (civitai/civitai#6461),
+ * which is longer than {@link HUMAN_INTERACTION_TIMEOUT_MS} on purpose.
+ *
+ * The host replies ONCE, when its modal closes — after the viewer picked up to 50
+ * images AND the host uploaded every original. That second half is network work
+ * the viewer does not control, so ten minutes from `open()` can expire while the
+ * host is still uploading. The block would then reject, drop the late reply, and
+ * never learn the keys the host now remembers for `RUN_TRAINING`. The host always
+ * answers on close (images, or a bare cancel), so the bound only has to end a wait
+ * on a host that will never answer; an hour does that without cutting off a slow
+ * upload.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: it is at least
+ * the human bound, which is what that bucket guarantees.
+ */
+export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
+ * host forwards it to the orchestrator and replies only once that answers. No
+ * person is in the loop, so it stays in the `'protocol'` bucket below; it just
+ * needs more than {@link DEFAULT_REQUEST_TIMEOUT_MS}.
+ *
+ * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
+ * preflight plus the real submit plus a prompt audit), and
+ * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`.
+ *
+ * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so every
+ * caller shares the number instead of re-typing it.
+ */
+export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * The bound for `GET_RESOURCE_FILE` (`hooks/useResourceFile.ts`), a `'protocol'`
+ * request whose HOST work is slow: a session-authed resolve, a fetch of the
+ * signed URL (up to 32 MB), then an unzip and parse of up to 16 MB in the
+ * viewer's tab. The host bounds all three with ONE 110 s deadline
+ * (civitai/civitai#6818 `RESOURCE_FILE_DEADLINE_MS`), after which it replies
+ * `parse-failed`. At {@link DEFAULT_REQUEST_TIMEOUT_MS} a large file on a slow
+ * connection would time out on the block while the host was still working, and
+ * the host's valid reply would be dropped as unroutable. 120 s leaves the host's
+ * 110 s deadline room to answer first. Same number as
+ * {@link WORKFLOW_REQUEST_TIMEOUT_MS}.
+ */
+export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
+
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
   /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
@@ -64,7 +111,9 @@ const REQUEST_TIMEOUT_CLASS = {
   // ── Gated on a human ────────────────────────────────────────────────────
   OPEN_BUZZ_PURCHASE: 'human', //          viewer walks a purchase flow
   OPEN_CHECKPOINT_PICKER: 'human', //      viewer browses + picks
+  OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
+  OPEN_MEDIA_UPLOAD: 'human', //           viewer picks a file, or a 64 MB upload + host retries
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)
   // 🔴 `'human'` for the SAME reason as PUBLISH_GENERATION_OUTPUTS, and the
@@ -84,6 +133,18 @@ const REQUEST_TIMEOUT_CLASS = {
   // failure, with nothing to reconcile the two. Unlike the publish bridge there
   // is no "outputs were lost" framing available here: the post exists.
   CREATE_POST_FROM_APP: 'human',
+  // 🔴 `'human'`: the host opens a training CONSENT dialog (price, base model,
+  // length, dataset size) and replies only on the viewer's click or dismiss. At
+  // the 30s default the request would reject with the dialog still open, and a
+  // viewer who then clicked Train would start a CHARGED run the block had
+  // already reported as failed.
+  RUN_TRAINING: 'human',
+  // 🔴 `'human'`, same reason as RUN_TRAINING directly above: the host shows the
+  // viewer the job's price in its own confirm and replies only on their click or
+  // dismiss. At the 30s default the request would reject with the dialog still
+  // open, and a viewer who then confirmed would start a CHARGED job the block
+  // had already reported as failed.
+  RUN_CONFIRMED_STEP: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',
@@ -118,6 +179,9 @@ const REQUEST_TIMEOUT_CLASS = {
   // longer bound (`WORKFLOW_REQUEST_TIMEOUT_MS` in `hooks/useBuzzWorkflow.ts`)
   // for orchestrator latency — a different reason for a different number.
   ESTIMATE_WORKFLOW: 'protocol',
+  // The batch twin of ESTIMATE_WORKFLOW: no person in the loop, up to 16 cost
+  // quotes behind one reply. Sent under the same `WORKFLOW_REQUEST_TIMEOUT_MS`.
+  ESTIMATE_WORKFLOW_BATCH: 'protocol',
   POLL_WORKFLOW: 'protocol',
   SUBMIT_WORKFLOW: 'protocol',
   GET_BUZZ_ACCOUNTS: 'protocol',
@@ -127,6 +191,10 @@ const REQUEST_TIMEOUT_CLASS = {
   GET_IMAGES_BY_IDS: 'protocol',
   GET_VIEWER: 'protocol',
   GET_WILDCARD_PACK: 'protocol',
+  // No person in the loop, so `'protocol'` — but sent under its own longer
+  // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
+  // under a 110 s deadline, which the 30 s default would cut short.
+  GET_RESOURCE_FILE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',
   // The host fetches the blob and triggers the browser's own download; it replies
@@ -136,6 +204,12 @@ const REQUEST_TIMEOUT_CLASS = {
   // whether a human is involved. Not reclassified here.
   SAVE_IMAGE: 'protocol',
   SET_USER_CHECKPOINT: 'protocol',
+  // App reactions. `'protocol'`, NOT `'human'`, and that is a decision rather
+  // than an omission: unlike SET_COLLECTION_FOLLOW there is no host confirm to
+  // wait on. The consent is the `social:react:self` grant, made beforehand; a
+  // host without it refuses `needs-consent` at once.
+  SET_ENTITY_REACTION: 'protocol',
+  GET_ENTITY_REACTIONS: 'protocol',
   SHARED_APPEND: 'protocol',
   SHARED_GET: 'protocol',
   SHARED_GET_COUNT: 'protocol',

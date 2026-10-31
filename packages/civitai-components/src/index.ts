@@ -16,6 +16,7 @@ export { componentsCss };
 
 /** The presentational components this package styles. */
 export const COMPONENT_NAMES = [
+  'text',
   'button',
   'text-input',
   'textarea',

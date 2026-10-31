@@ -1,0 +1,2276 @@
+import { css } from 'lit';
+
+/** The chat's own shadow-root styles. */
+export const chatStyles = css`
+/* The region positions itself with a rule it adds to the document head, which does not reach into this shadow root. */
+civitai-toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(92vw, 380px);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  container: civitai-chat / inline-size;
+  background: var(--civitai-color-body);
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font, system-ui, sans-serif);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.cvt-starting {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+.cvt-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cvt-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  cursor: pointer;
+}
+
+.cvt-icon-button:hover:not(:disabled) {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-icon-button:focus-visible,
+.cvt-chat-open:focus-visible,
+.cvt-example:focus-visible,
+.cvt-choice-option:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cvt-icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cvt-brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ── shell ── */
+
+.cvt-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+.cvt-main-host {
+  min-width: 0;
+  height: 100%;
+}
+
+/* An implicit column sizes to its widest content, so a long title once widened the whole chat past a phone. */
+.cvt-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.cvt-main > * {
+  min-width: 0;
+}
+
+.cvt-main::part(overlay) {
+  inset: 10px;
+  z-index: 20;
+  border: 2px dashed color-mix(in srgb, var(--civitai-color-primary) 70%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--civitai-color-body) 72%, transparent);
+  backdrop-filter: blur(6px);
+  animation: cvt-drop-in 140ms ease-out;
+}
+
+.cvt-drop-card {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 28px 36px;
+  border-radius: 14px;
+  background: var(--civitai-color-surface);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+  text-align: center;
+  animation: cvt-drop-lift 180ms ease-out;
+}
+
+.cvt-drop-card svg {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  padding: 10px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--civitai-color-primary) 16%, transparent);
+  fill: none;
+  stroke: var(--civitai-color-primary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cvt-drop-card strong {
+  font-size: 16px;
+}
+
+.cvt-drop-card span {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--civitai-color-text-dimmed);
+}
+
+@keyframes cvt-drop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cvt-drop-lift {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.cvt-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--civitai-color-border);
+}
+
+.cvt-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cvt-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where there is room the chat list is a column; the title opens it as a dropdown otherwise. */
+.cvt-history-toggle,
+.cvt-history {
+  display: none;
+}
+
+.cvt-history-toggle {
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 0 0 -8px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.cvt-history-toggle:hover,
+.cvt-history-toggle[aria-expanded='true'] {
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-history-toggle:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-history-toggle svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 150ms ease;
+}
+
+.cvt-history-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.cvt-history {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  z-index: 30;
+  width: min(340px, calc(100% - 16px));
+  overflow: hidden;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  animation: cvt-history-in 120ms ease-out;
+}
+
+.cvt-history civitai-chat-sidebar {
+  border: none;
+}
+
+.cvt-history .cvt-sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  max-height: min(480px, 70vh);
+}
+
+.cvt-history .cvt-sidebar-top {
+  display: none;
+}
+
+.cvt-history .cvt-chat-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 4px;
+}
+
+/* No hover on touch screens, so the row actions stay visible here. */
+.cvt-history .cvt-chat-actions {
+  visibility: visible;
+}
+
+.cvt-history .cvt-sidebar-footer {
+  padding-bottom: 12px;
+}
+
+@keyframes cvt-history-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.cvt-loading {
+  display: grid;
+  place-items: center;
+}
+
+.cvt-signed-out-chats {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 8px;
+  padding: 16px;
+  border-right: 1px solid var(--civitai-color-border);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-signed-out-chats h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cvt-signed-out-chats p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-signed-out-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--civitai-color-text-dimmed);
+  white-space: nowrap;
+}
+
+.cvt-sign-in-status {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 16px 4px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+  text-align: center;
+}
+
+.cvt-sign-in-status button {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--civitai-color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ── sidebar ── */
+
+civitai-chat-sidebar {
+  display: block;
+  min-height: 0;
+  border-right: 1px solid var(--civitai-color-border);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-sidebar-inner {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+}
+
+.cvt-sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  padding-top: max(12px, env(safe-area-inset-top));
+}
+
+.cvt-chat-list {
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+
+.cvt-chat-list section h2 {
+  margin: 12px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-chat-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cvt-chat-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--civitai-radius, 8px);
+}
+
+/* Its reply is being stopped before its delete. */
+.cvt-chat-row[data-stopping] {
+  opacity: 0.6;
+}
+
+.cvt-chat-row:hover,
+.cvt-chat-row[data-current] {
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-chat-open {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  overflow: hidden;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cvt-chat-actions {
+  display: flex;
+  visibility: hidden;
+}
+
+.cvt-chat-row:hover .cvt-chat-actions,
+.cvt-chat-row:focus-within .cvt-chat-actions {
+  visibility: visible;
+}
+
+.cvt-rename {
+  width: 100%;
+  margin: 2px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--civitai-color-primary);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+}
+
+.cvt-empty {
+  margin: 16px 8px;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--civitai-color-border);
+}
+
+.cvt-user-name {
+  flex: 1;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── thread ── */
+
+civitai-chat-thread {
+  position: relative;
+  display: block;
+  min-height: 0;
+}
+
+.cvt-thread-scroll {
+  height: 100%;
+  overflow-y: auto;
+  scroll-padding-bottom: 24px;
+}
+
+.cvt-thread-list {
+  display: grid;
+  gap: 28px;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px 16px 32px;
+}
+
+/* The page's own content after the last message (slot="thread-end"), at the messages' width; nothing
+   slotted takes no space. */
+.cvt-thread-end {
+  display: block;
+  max-width: 800px;
+  margin: 0 auto;
+  padding-inline: 16px;
+  box-sizing: border-box;
+}
+
+.cvt-jump {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+civitai-chat-turn {
+  display: grid;
+  gap: 14px;
+}
+
+.cvt-user {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.cvt-bubble {
+  max-width: min(85%, 600px);
+  padding: 10px 14px;
+  border-radius: 18px 18px 4px 18px;
+  background: var(--civitai-color-primary-light);
+  color: var(--civitai-color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A message that waits to go: the viewer's bubble, faded, with what it waits for under it. */
+.cvt-queued .cvt-bubble {
+  opacity: 0.7;
+}
+
+.cvt-queued-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+/* The latest message's Edit, under its bubble; editing, a box in the bubble's place. */
+.cvt-user-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cvt-edit-button {
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-edit-button:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-edit-button:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-user-editor {
+  display: grid;
+  gap: 8px;
+  /* As wide as a bubble may be, and the whole row in a narrow chat. */
+  width: min(100%, 600px);
+  padding: 10px 12px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 16px;
+  background: var(--civitai-color-surface);
+  box-sizing: border-box;
+}
+
+.cvt-user-editor:focus-within {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-user-editor textarea {
+  width: 100%;
+  min-height: 3em;
+  max-height: 240px;
+  field-sizing: content;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.cvt-user-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cvt-user-editor-actions .cvt-hint {
+  flex: 1 1 120px;
+}
+
+.cvt-unsent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  /* Lined up with the message box: 16px gutters, centred at 800px. */
+  margin: 0 max(16px, calc((100% - 800px) / 2)) 8px;
+}
+
+.cvt-unsent-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * One minmax(0, 1fr) column, never the implicit auto one: an auto track sizes to its widest content,
+ * so a code block widened the reply, the turn and the thread past a phone and everything scrolled
+ * sideways. Pinned, a code block scrolls inside itself and the rest wraps.
+ */
+.cvt-assistant {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  justify-items: start;
+}
+
+.cvt-assistant > * {
+  max-width: 100%;
+}
+
+/* The assistant's words sit in a bubble of their own, left, on the surface colour (the viewer's is
+   primary-light, right); its tool calls, cards and what it made stay outside it. */
+.cvt-assistant > .cvt-md {
+  padding: 10px 14px;
+  border-radius: 18px 18px 18px 4px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
+}
+
+.cvt-activity,
+.cvt-error-details {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.cvt-error-details summary {
+  cursor: pointer;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-error-details code {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+}
+
+.cvt-note {
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-activity::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+/* The live reply's status line (civitai-chat-reply-status): always there while the reply is. */
+civitai-chat-reply-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-reply-status-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cvt-reply-status-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--civitai-color-text-dimmed);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+.cvt-reply-status-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.cvt-reply-status-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+civitai-chat-reply-status[state='reconnecting'] .cvt-reply-status-dots span,
+civitai-chat-reply-status[state='approval'] .cvt-reply-status-dots span {
+  background: var(--civitai-color-warning);
+}
+
+civitai-chat-reply-status[state='reconnecting'],
+civitai-chat-reply-status[state='approval'] {
+  color: var(--civitai-color-text);
+}
+
+.cvt-reply-status-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Still dots, at full strength, for a viewer who asked for less motion: the words and time say it is live. */
+@media (prefers-reduced-motion: reduce) {
+  .cvt-reply-status-dots span {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+@keyframes cvt-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.cvt-models {
+  display: flex;
+  gap: 10px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+civitai-chat-model-card {
+  flex: none;
+}
+
+/* ── assistant text ── */
+
+.cvt-md {
+  overflow-wrap: anywhere;
+}
+
+.cvt-md > :first-child {
+  margin-top: 0;
+}
+
+.cvt-md > :last-child {
+  margin-bottom: 0;
+}
+
+.cvt-md p,
+.cvt-md ul,
+.cvt-md ol,
+.cvt-md blockquote,
+.cvt-md pre {
+  margin: 0 0 10px;
+}
+
+.cvt-md ul,
+.cvt-md ol {
+  padding-left: 22px;
+}
+
+.cvt-md a {
+  color: var(--civitai-color-primary);
+}
+
+.cvt-md code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--civitai-color-surface-2);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+  font-size: 0.9em;
+}
+
+.cvt-md pre {
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-md pre code {
+  padding: 0;
+  background: none;
+}
+
+.cvt-md blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--civitai-color-border);
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-md table {
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.cvt-md th,
+.cvt-md td {
+  padding: 4px 10px;
+  border: 1px solid var(--civitai-color-border);
+}
+
+/* ── choices ── */
+
+.cvt-choice {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.cvt-choice legend {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.cvt-choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cvt-choice-option {
+  display: grid;
+  gap: 4px;
+  width: 160px;
+  padding: 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-choice-option:hover:not(:disabled) {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-choice-option img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: calc(var(--civitai-radius, 8px) - 2px);
+}
+
+.cvt-choice-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.cvt-choice-description {
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-choice:disabled .cvt-choice-option {
+  opacity: 0.55;
+  cursor: default;
+}
+
+civitai-chat-panel {
+  display: block;
+}
+
+.cvt-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cvt-panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.cvt-panel-share {
+  margin-left: auto;
+}
+
+.cvt-panel-close {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cvt-panel-share + .cvt-panel-close {
+  margin-left: 0;
+}
+
+.cvt-panel-close:hover {
+  color: var(--civitai-color-text);
+}
+
+.cvt-instructions-card {
+  display: grid;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 640px;
+  padding: 14px 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-instructions-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cvt-instructions-card blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--civitai-color-border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.cvt-instructions-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.cvt-instructions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cvt-instructions-state {
+  margin: 0;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-panel-closed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-panel-head p {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-commands {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.cvt-commands button {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-commands button:hover,
+.cvt-commands button:focus-visible {
+  background: var(--civitai-color-border);
+  outline: none;
+}
+
+.cvt-commands span {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed {
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.cvt-step-failed summary::before {
+  content: '⚠ ';
+  color: var(--civitai-color-warning, var(--civitai-color-error));
+}
+
+.cvt-step-failed code {
+  display: block;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* tool-calls="details": a row per call, and calls in a row as one group. Never wider than the thread. */
+.cvt-call,
+.cvt-tool-group {
+  justify-self: stretch;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cvt-tool-group {
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-call-head,
+.cvt-tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-tool-group-head {
+  min-height: 36px;
+}
+
+.cvt-call-head:hover,
+.cvt-tool-group-head:hover {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-head:focus-visible,
+.cvt-tool-group-head:focus-visible,
+.cvt-call-pre:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-call-chevron {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+
+[aria-expanded='true'] > .cvt-call-chevron {
+  transform: rotate(45deg);
+}
+
+.cvt-call-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+}
+
+.cvt-call-server {
+  flex: none;
+  max-width: 25%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--civitai-color-surface-2);
+  font-size: 11px;
+}
+
+.cvt-call-summary,
+.cvt-tool-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-tool-group-label {
+  color: var(--civitai-color-text);
+}
+
+.cvt-call-state {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.cvt-call[data-state='error'] > .cvt-call-head .cvt-call-state,
+.cvt-tool-group[data-state='error'] > .cvt-tool-group-head .cvt-call-state {
+  color: var(--civitai-color-error);
+}
+
+.cvt-call[data-state='calling'] > .cvt-call-head .cvt-call-state::before,
+.cvt-tool-group[data-state='calling'] > .cvt-tool-group-head .cvt-tool-group-label::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+/* Opens by animating the row track from 0 to its content's height. */
+.cvt-call-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-width: 0;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.cvt-call-body[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.cvt-call-inner {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cvt-tool-group-list {
+  display: grid;
+  gap: 2px;
+  padding: 0 4px 4px;
+}
+
+.cvt-call-value {
+  min-width: 0;
+  padding: 4px 8px 4px 22px;
+}
+
+.cvt-call-label {
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-call-pre {
+  max-width: 100%;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text);
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A subagent's card: one tappable header (44px tall) that wraps rather than overflows on a phone. */
+.cvt-subagent {
+  justify-self: stretch;
+  min-width: 0;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-surface);
+  font-size: 13px;
+}
+
+.cvt-subagent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: var(--civitai-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cvt-subagent-head:hover {
+  background: var(--civitai-color-surface-2);
+}
+
+.cvt-subagent-head:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 1px;
+}
+
+.cvt-subagent-title {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cvt-subagent-kind {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--civitai-color-text-dimmed);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cvt-subagent-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-subagent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-subagent[data-status='error'] .cvt-subagent-status,
+.cvt-subagent[data-status='interrupted'] .cvt-subagent-status,
+.cvt-subagent[data-status='refused'] .cvt-subagent-status {
+  color: var(--civitai-color-error);
+}
+
+.cvt-subagent[data-status='calling'] .cvt-subagent-status::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  animation: cvt-pulse 1.2s ease-in-out infinite;
+}
+
+.cvt-subagent-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 10px 10px 24px;
+}
+
+.cvt-subagent-text {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+  min-width: 0;
+}
+
+.cvt-subagent-activity li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cvt-subagent-activity .cvt-call-name {
+  max-width: none;
+  white-space: normal;
+}
+
+.cvt-subagent-arg {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-panel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: var(--civitai-color-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-panel-chip:hover {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-panel-chip svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.cvt-panel-runs {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.cvt-panel-runs > civitai-chat-generation-card,
+civitai-chat-generation-card[audio] {
+  justify-self: stretch;
+}
+
+/* ── composer ── */
+
+/* The page's own content just above the message box (slot="composer-top"), lined up with it like
+   .cvt-unsent; nothing slotted takes no space. */
+.cvt-composer-top {
+  display: block;
+  margin: 0 max(16px, calc((100% - 800px) / 2));
+}
+
+civitai-chat-composer {
+  display: block;
+  padding: 8px 16px 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.cvt-composer-hold {
+  max-width: 800px;
+  margin: 0 auto 6px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-composer-box {
+  display: grid;
+  /* Bounded to the box, so a row wider than it shrinks to fit rather than widening the column. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 16px;
+  background: var(--civitai-color-surface);
+}
+
+.cvt-composer-box:focus-within {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-composer-box textarea {
+  width: 100%;
+  max-height: 240px;
+  field-sizing: content;
+  min-height: 1.5em;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.cvt-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The buttons keep their full size; the hint, then the model's name, give way in a narrow chat. */
+.cvt-composer-actions > .cvt-icon-button,
+.cvt-composer-actions > .cvt-voice-language {
+  flex: none;
+}
+
+/* The hint is also the space pushing the buttons after it to the right: it stays, and can shrink to nothing. */
+.cvt-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--civitai-color-text-dimmed);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cvt-composer-box:focus-within .cvt-hint {
+  opacity: 1;
+}
+
+.cvt-send {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--civitai-color-primary);
+  color: var(--civitai-color-primary-fg, #fff);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+}
+
+.cvt-send:hover:not(:disabled) {
+  background: var(--civitai-color-primary-hover);
+}
+
+.cvt-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.cvt-send:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-send:disabled {
+  background: var(--civitai-color-surface-2);
+  color: var(--civitai-color-text-dimmed);
+  cursor: default;
+}
+
+.cvt-voice-language {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cvt-voice-language:hover,
+.cvt-voice-language:focus-within {
+  color: var(--civitai-color-text);
+  border-color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-voice-language:focus-within {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-voice-language select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+/* The chat's model: a chip by the add button, its list opening above the message box. */
+.cvt-composer-box {
+  position: relative;
+}
+
+civitai-chat-model-picker {
+  display: contents;
+}
+
+.cvt-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 180px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cvt-model-chip:hover:not(:disabled),
+.cvt-model-chip[aria-expanded='true'] {
+  color: var(--civitai-color-text);
+  border-color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-model-chip:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-model-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-chip-marker {
+  flex: none;
+  white-space: pre;
+}
+
+.cvt-model-chip svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cvt-model-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 10;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  max-height: min(360px, 60vh);
+  padding: 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.cvt-model-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-body);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+
+.cvt-model-search:focus {
+  outline: none;
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-model-options {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.cvt-model-options button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-model-options button:hover,
+.cvt-model-options button:focus-visible {
+  background: var(--civitai-color-border);
+  outline: none;
+}
+
+.cvt-model-options button[aria-selected='true'] {
+  box-shadow: inset 2px 0 0 var(--civitai-color-primary);
+  font-weight: 600;
+}
+
+.cvt-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-price {
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-model-id {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-model-status {
+  margin: 0;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+}
+
+.cvt-recording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.cvt-levels {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.cvt-levels span {
+  flex: 1;
+  max-width: 3px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: var(--civitai-color-text-dimmed);
+}
+
+.cvt-conversation-state {
+  color: var(--civitai-color-text);
+}
+
+.cvt-heard {
+  margin: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--civitai-color-text);
+}
+
+.cvt-ran-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cvt-transcribing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.cvt-transcribing-label {
+  flex: 1;
+  min-width: 0;
+  background: linear-gradient(90deg, var(--civitai-color-text-dimmed) 30%, var(--civitai-color-text) 50%, var(--civitai-color-text-dimmed) 70%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cvt-shimmer 1.6s linear infinite;
+}
+
+.cvt-spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--civitai-color-border);
+  border-top-color: var(--civitai-color-primary);
+  border-radius: 50%;
+  animation: cvt-spin 0.8s linear infinite;
+}
+
+@keyframes cvt-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes cvt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cvt-transcribing-label {
+    animation: none;
+    color: var(--civitai-color-text);
+  }
+
+  .cvt-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.cvt-send svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cvt-send rect {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* Contents, so the breakdown is placed against the top bar (which is relative), inside the chat on a phone. */
+civitai-chat-spend,
+civitai-chat-balance {
+  display: contents;
+}
+
+.cvt-spend svg.cvt-balance-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.cvt-balance-panel section {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--civitai-color-border);
+}
+
+.cvt-balance-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cvt-balance-panel civitai-button {
+  justify-self: start;
+}
+
+.cvt-balance-panel .cvt-spend-note {
+  margin: 0;
+}
+
+/* On a phone the title keeps the room; the same figures are in Settings. */
+@container civitai-chat (max-width: 400px) {
+  civitai-chat-balance {
+    display: none;
+  }
+}
+
+.cvt-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cvt-top-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* As the generation card's Get Buzz. */
+.cvt-buy-buzz {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--civitai-radius, 8px);
+  background: var(--civitai-color-primary);
+  color: var(--civitai-color-primary-fg, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.cvt-buy-buzz:hover {
+  background: var(--civitai-color-primary-hover, var(--civitai-color-primary));
+}
+
+/* A 44px target around the small pill; the -6px margin makes it take the 32px of the top bar's other buttons (the bar measured 49px tall with it). */
+.cvt-spend {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -6px 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cvt-spend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: var(--civitai-color-surface-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-spend:hover .cvt-spend-pill,
+.cvt-spend[aria-expanded='true'] .cvt-spend-pill {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: -4px;
+}
+
+.cvt-spend-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 30;
+  width: min(300px, calc(100% - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  font-size: 14px;
+}
+
+.cvt-spend-panel[hidden] {
+  display: none;
+}
+
+.cvt-spend-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.cvt-spend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cvt-spend-row dt {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-spend-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-spend-total {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--civitai-color-border);
+  font-weight: 600;
+}
+
+.cvt-spend-total dt {
+  color: var(--civitai-color-text);
+}
+
+.cvt-spend-note {
+  margin: 10px 0 0;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cvt-spend svg {
+  width: 13px;
+  height: 13px;
+  fill: var(--civitai-color-warning, #f59f00);
+}
+
+/* ── welcome ── */
+
+civitai-chat-welcome {
+  display: block;
+  overflow-y: auto;
+}
+
+.cvt-welcome-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 16px 24px;
+  text-align: center;
+}
+
+.cvt-welcome-inner h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+.cvt-welcome-inner > p {
+  margin: 0 auto 24px;
+  max-width: 560px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-examples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  text-align: left;
+}
+
+.cvt-example {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 12px;
+  background: var(--civitai-color-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-example:hover {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-example span {
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-welcome-inner .cvt-fineprint {
+  margin-top: 24px;
+  font-size: 12px;
+}
+
+/* ── settings ── */
+
+.cvt-settings {
+  display: grid;
+  gap: 20px;
+}
+
+.cvt-settings section h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.cvt-settings section p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+/* ── compact: the chat list as a dropdown ── */
+
+/* Sized by the space the chat is given, so a sidebar gets the phone layout. */
+@container civitai-chat (max-width: 900px) {
+  :host([layout='auto']) .cvt-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :host([layout='auto']) .cvt-shell > civitai-chat-sidebar,
+  :host([layout='auto']) .cvt-shell > .cvt-signed-out-chats,
+  :host([layout='auto']) .cvt-title-text {
+    display: none;
+  }
+
+  :host([layout='auto']) .cvt-history-toggle {
+    display: inline-flex;
+  }
+
+  :host([layout='auto']) .cvt-history {
+    display: block;
+  }
+
+  :host([layout='auto']) .cvt-hint {
+    visibility: hidden;
+  }
+
+  :host([layout='auto']) .cvt-welcome-inner {
+    padding-top: 24px;
+  }
+}
+
+:host([layout='compact']) .cvt-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:host([layout='compact']) .cvt-shell > civitai-chat-sidebar,
+:host([layout='compact']) .cvt-shell > .cvt-signed-out-chats,
+:host([layout='compact']) .cvt-title-text {
+  display: none;
+}
+
+:host([layout='compact']) .cvt-history-toggle {
+  display: inline-flex;
+}
+
+:host([layout='compact']) .cvt-history {
+  display: block;
+}
+
+:host([layout='compact']) .cvt-hint {
+  visibility: hidden;
+}
+
+:host([layout='compact']) .cvt-welcome-inner {
+  padding-top: 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── generation details (viewer) ── */
+
+.cvt-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 32px;
+  align-items: start;
+  font-size: 13px;
+}
+
+.cvt-details-text,
+.cvt-details-meta {
+  grid-column: 1 / -1;
+}
+
+.cvt-details-prompt {
+  max-width: 80ch;
+}
+
+.cvt-details h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-details-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.cvt-details-copy {
+  padding: 2px 8px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--civitai-color-text-dimmed);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cvt-details-copy:hover {
+  color: var(--civitai-color-text);
+}
+
+.cvt-details-prompt {
+  max-height: 220px;
+  margin: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--civitai-color-surface-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.cvt-details-resources {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cvt-details-resources li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cvt-details-resources a {
+  overflow: hidden;
+  color: var(--civitai-color-anchor, var(--civitai-color-primary));
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvt-details-kind,
+.cvt-details-service,
+.cvt-details-meta {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-details-service,
+.cvt-details-meta {
+  margin: 0;
+}
+
+.cvt-details-resources + .cvt-details-service {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.cvt-details-settings {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.cvt-details-settings dt {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-details-settings dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvt-details-meta {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cvt-details-meta code {
+  font-family: var(--civitai-font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+`;

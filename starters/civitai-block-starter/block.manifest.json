@@ -12,13 +12,13 @@
       "requiredContext": ["modelId", "modelVersionId"]
     }
   ],
-  "scopes": ["models:read:self"],
+  "scopes": [],
   "bootSkeleton": true,
   "iframe": {
     "minHeight": 200,
     "maxHeight": 600,
     "resizable": true,
-    "sandbox": "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+    "sandbox": "allow-scripts allow-forms"
   },
   "contentRating": "pg",
   "minApiVersion": "1.0"

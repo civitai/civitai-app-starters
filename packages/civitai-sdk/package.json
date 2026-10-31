@@ -1,6 +1,6 @@
 {
   "name": "@civitai/sdk",
-  "version": "0.7.0",
+  "version": "0.21.0",
   "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
@@ -30,13 +30,17 @@
     "dist"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "generate": "node ../../scripts/gen-version.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && node ../../scripts/gen-version.mjs && tsc -p tsconfig.json",
     "api": "node scripts/api-report.mjs",
     "api:check": "node scripts/api-report.mjs --check",
     "check:layering": "node scripts/check-layering.mjs",
     "check:parity": "node scripts/check-host-parity.mjs",
     "gen:steps": "node scripts/gen-step-types.mjs",
     "check:steps": "node scripts/gen-step-types.mjs --check",
+    "gen:workflow-types": "node scripts/gen-workflow-types.mjs",
+    "gen:host-replies": "node scripts/gen-host-replies.mjs",
+    "check:host-replies": "node scripts/gen-host-replies.mjs --check",
     "snapshot:host": "node scripts/snapshot-host-messages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
     "test": "vitest run",

@@ -2,6 +2,16 @@ import { EMPTY_SNAPSHOT, type BlockSnapshot, type BlockTransport } from './core/
 import { BridgeError, type BridgeFailureCode } from './core/errors.js';
 
 export { __resetTransport } from './core/get-transport.js';
+export { createFakeStorage, FAKE_STORAGE_MODERATION } from './doc-store/fake.js';
+export type {
+  FakeModerationVerdict,
+  FakeStorage,
+  FakeStorageCall,
+  FakeStorageCaller,
+  FakeStorageOptions,
+  FakeStorageSession,
+  FakeStorageViewer,
+} from './doc-store/fake.js';
 
 export interface FakeTransport extends BlockTransport {
   /** Every request sent, in order. */
