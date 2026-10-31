@@ -1,9 +1,10 @@
 import type { Attachment } from '../types.js';
 
-export const ATTACHMENT_ID = /^(up\d+-\d+|gen\d+-\d+-\d+)$/;
+export const ATTACHMENT_ID = /^(up\d+-\d+|gen\d+-\d+-\d+|p\d+-\d+-\d+)$/;
 
 export const uploadId = (seq: number, n: number): string => `up${seq}-${n}`;
 export const jobId = (seq: number, call: number): string => `gen${seq}-${call}`;
+export const panelRunId = (panel: string, run: number): string => `${panel}-${run}`;
 export const resultId = (job: string, n: number): string => `${job}-${n}`;
 
 export class MissingAttachmentError extends Error {

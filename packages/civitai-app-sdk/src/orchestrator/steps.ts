@@ -3,7 +3,7 @@
  * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
- * (`WORKFLOW_STEP_TYPES` — 51 `$type` names and what each one does) and the
+ * (`WORKFLOW_STEP_TYPES` — 58 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
@@ -65,14 +65,22 @@
  *
  * The practical consequence: a number of the 47 step types below exist to serve
  * Civitai's own pipelines rather than third-party apps — `modelPickleScan`,
- * `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`,
+ * `xGuardModeration`, `comfyNodepackSnapshot`, `qwenImageBench`,
  * the `model*` / `media*` hashing and classification steps. They are in the
  * consumer spec, so they are typed here. They are not an invitation.
  *
+ * `training` and `imageResourceTraining` are the exception: an App Block's host
+ * explicitly ALLOWS both on the pass-through arm (`WorkflowBodyPassThroughStep`
+ * in `blocks/types.ts`), with the same spend rules as any other `$type` there
+ * (see `WorkflowBodyPassThroughStep.maxBuzz`). The trained checkpoint is not
+ * part of the block contract; publishing goes through Civitai's model wizard
+ * (`BlockWorkflowSnapshot.trainedEpochs`). For a standalone app the
+ * orchestrator's own authorization still decides.
+ *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 51 entries, exactly TWO sit under its "Platform internals" heading —
- * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
- * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
+ * of its 58 entries, exactly THREE sit under its "Platform internals" heading —
+ * `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration`. `training`,
+ * `webScrape`, `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
  * consumer-facing usage notes. So "the catalog already flags these as internal"
  * is not a reason this map types them, and an earlier version of this docblock
@@ -89,10 +97,12 @@
  * (#315) without anything going red. The measured state, derived rather than
  * typed:
  *
- * `WORKFLOW_STEP_TYPES` documents 51 `$type`s; this map covers 47. The 4 with
- * no generated template in the pinned `@civitai/client` are `imageScanning`,
- * `preprocessVideo`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile
- * error for each of them.
+ * `WORKFLOW_STEP_TYPES` documents 58 `$type`s; this map covers 47. The 11 with
+ * no generated template in the pinned `@civitai/client` are `archiveExtraction`,
+ * `audioModeration`, `imageScanning`, `liveTextToSpeech`, `liveTranscription`,
+ * `merge`, `multimodalEmbedding`, `preprocessVideo`, `promptModeration`,
+ * `soniloAudioGen`, `yuE2`, and
+ * `WorkflowStepTemplateFor<…>` is a compile error for each of them.
  *
  * That gap is EXPECTED and is not a defect in either surface. The catalog
  * tracks the LIVE orchestrator spec (`pnpm check:catalogs` and the daily
@@ -102,7 +112,7 @@
  * stated: it is spelled as a `never` ledger in
  * `test/orchestrator/step-templates.test-d.ts` (which also pins the compile
  * error above, one `@ts-expect-error` per gap `$type`), and the sentence naming
- * the 3 is pinned character for character — here and in the README — by
+ * the gap is pinned character for character — here and in the README — by
  * `test/orchestrator/step-count-prose.test.ts`, which derives all four numbers
  * from `WORKFLOW_STEP_TYPES` and this file's own AST. Both go red when the gap
  * moves in either direction.
@@ -387,7 +397,7 @@ interface StepTemplateMap {
 }
 
 /**
- * `$type` → its step-template type, for 47 of the catalog's 51 step types.
+ * `$type` → its step-template type, for 47 of the catalog's 58 step types.
  *
  * Keyed by the WIRE name rather than the generated type name, because the wire
  * name is what you actually have in hand and the generator does not always

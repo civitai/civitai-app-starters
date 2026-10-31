@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import type { BlockNavigateScope } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Options for {@link UseCivitaiNavigate.navigate}.
@@ -72,6 +73,7 @@ export interface UseCivitaiNavigate {
  * navigate('detail/7', 'new_tab');                       // the pre-`scope` shape, still app-scoped
  */
 export function useCivitaiNavigate(): UseCivitaiNavigate {
+  useTransportConnection();
   const navigate = useCallback(
     (path: string, options: 'current' | 'new_tab' | UseCivitaiNavigateOptions = {}) => {
       // A bare string is the pre-`scope` call shape (`navigate(path, 'new_tab')`)

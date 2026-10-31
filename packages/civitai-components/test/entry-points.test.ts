@@ -34,6 +34,21 @@ function reachableSpecifiers(entry: string): Set<string> {
   return external;
 }
 
+/** Every file reachable from an entry, following relative imports only. */
+function reachableFiles(entry: string): string[] {
+  const seen = new Set<string>();
+  const queue = [resolve(pkgRoot, entry)];
+  while (queue.length) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const [, specifier] of readFileSync(file, 'utf8').matchAll(IMPORT_RE)) {
+      if (specifier!.startsWith('.')) queue.push(resolve(dirname(file), specifier!));
+    }
+  }
+  return [...seen];
+}
+
 describe('entry points', () => {
   it('the `.` entry pulls no renderer', () => {
     const external = reachableSpecifiers('dist/index.js');
@@ -90,6 +105,51 @@ describe('entry points', () => {
     expect(pkg.sideEffects).toContain('**/*.define.js');
     expect(pkg.sideEffects).toContain('**/elements/register.js');
     expect(pkg.sideEffects).toContain('**/elements/register-site.js');
+  });
+
+  it('the test-environment shim is its own entry, and no runtime entry reaches it', () => {
+    // A guard in the elements would let production lose form association
+    // silently; the shim is only ever loaded on purpose, by a test setup file.
+    expect(pkg.exports['./testing/happy-dom']).toEqual({
+      types: './dist/testing/happy-dom.d.ts',
+      import: './dist/testing/happy-dom.js',
+    });
+    // Imported for its side effect, so it must survive tree-shaking too.
+    expect(pkg.sideEffects).toContain('**/testing/happy-dom.js');
+
+    const runtime = [
+      'dist/index.js',
+      'dist/elements/register.js',
+      'dist/elements/register-site.js',
+      ...readdirSync(join(pkgRoot, 'dist/elements'))
+        .filter((f) => f.endsWith('.js'))
+        .map((f) => `dist/elements/${f}`),
+      ...readdirSync(join(pkgRoot, 'dist/sdk'))
+        .filter((f) => f.endsWith('.js'))
+        .map((f) => `dist/sdk/${f}`),
+    ];
+    const MARK = '@civitai/components/testing/element-internals-shim';
+    // Positive control: the mark IS findable where it lives.
+    expect(readFileSync(join(pkgRoot, 'dist/testing/happy-dom.js'), 'utf8')).toContain(MARK);
+    for (const entry of runtime) {
+      const files = reachableFiles(entry);
+      expect(
+        files.filter((f) => f.includes('/testing/')),
+        `${entry} reaches the testing shim`
+      ).toEqual([]);
+    }
+    // The single-file bundles are built by vite, so read them, not their imports.
+    for (const bundle of ['elements.js', 'site-elements.js']) {
+      expect(readFileSync(join(pkgRoot, bundle), 'utf8'), bundle).not.toContain(MARK);
+    }
+  });
+
+  it('the shim is a no-op where there is no DOM (a `@vitest-environment node` file)', async () => {
+    // A setup file runs for EVERY test file, including ones that opt out of the
+    // DOM; throwing there would break a consumer's node-environment tests.
+    expect(typeof globalThis.HTMLElement).toBe('undefined');
+    const shim = await import('../src/testing/happy-dom.js');
+    expect(shim.installElementInternalsShim()).toBe(false);
   });
 
   it('every declared export resolves to a built file', () => {

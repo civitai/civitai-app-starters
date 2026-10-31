@@ -13,6 +13,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope this bridge requires — `posts:write:self`, named in
@@ -100,8 +101,13 @@ export class CreatePostError extends Error {
    */
   readonly declined: boolean;
   /**
-   * There is no session. Route this into `useRequestSignIn()` rather than
-   * showing an error — the viewer's next step is signing in, not retrying.
+   * There is no session — the viewer is signed out (`sign in to post`), or
+   * their session ended, e.g. signed out in another tab (a bare
+   * `UNAUTHORIZED`). Route this into `useRequestSignIn()` rather than showing
+   * an error — the viewer's next step is signing in, not retrying.
+   *
+   * A session that now belongs to a different account is NOT this: `.message`
+   * asks the viewer to reload the page, and is safe to render.
    */
   readonly signInRequired: boolean;
 
@@ -111,7 +117,7 @@ export class CreatePostError extends Error {
     this.timedOut = opts?.timedOut === true;
     if (isCreatePostErrorCode(error)) this.code = error;
     this.declined = error === 'declined';
-    this.signInRequired = error === 'sign in to post';
+    this.signInRequired = error === 'sign in to post' || error === 'UNAUTHORIZED';
   }
 }
 
@@ -161,7 +167,8 @@ export interface UseCreatePostFromApp {
  *
  * 🔴 NO ARM OF `sources` TAKES A URL. Name a workflow from this app's own
  * subqueue plus indexes into its outputs, or `Image` ids from a previous
- * `usePublishGenerationOutputs()` publish. The server re-verifies both.
+ * `usePublishGenerationOutputs()` publish or `useUploadImageBytes()` upload.
+ * The server re-verifies both.
  *
  * ⚠️ POSTING A PUBLISHED IMAGE REMOVES IT FROM THIS APP'S OWN GRID. The
  * app-scoped read behind `useGatedImages()` is conjoined with `postId IS NULL`,
@@ -195,6 +202,7 @@ export interface UseCreatePostFromApp {
  * };
  */
 export function useCreatePostFromApp(): UseCreatePostFromApp {
+  useTransportConnection();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<CreatePostError | null>(null);
 

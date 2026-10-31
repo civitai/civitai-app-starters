@@ -5,6 +5,7 @@ import type { BlockWildcardPack, BlockWildcardPackErrorCode } from '@civitai/app
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 export type { BlockWildcardPack, BlockWildcardPackErrorCode };
 
@@ -62,6 +63,7 @@ export interface UseWildcardPack {
  * if (error instanceof WildcardPackError && error.code === 'busy') return <RetryLater />;
  */
 export function useWildcardPack(modelVersionId: number): UseWildcardPack {
+  useTransportConnection();
   const [pack, setPack] = useState<BlockWildcardPack | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);

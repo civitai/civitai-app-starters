@@ -102,7 +102,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -124,17 +125,28 @@ const HOST_ALLOWED_SANDBOX_TOKENS = new Set([
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.turbo', 'coverage', '.next']);
 const SCAN_EXTS = ['.md', '.mdx', '.ts', '.tsx', '.mjs', '.js', '.json', '.html'];
 
-function walk(dir, out = []) {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP_DIRS.has(entry)) continue;
-    const abs = join(dir, entry);
-    if (statSync(abs).isDirectory()) walk(abs, out);
-    else out.push(abs);
-  }
-  return out;
+/**
+ * The corpus is what git would ship — tracked files plus untracked ones that are
+ * NOT gitignored — never a raw directory walk. A raw walk also read gitignored
+ * trees, and `.direnv/` (the flake dev shell's cache, gitignored) holds a copy of
+ * this repo's own source, so every local run with direnv failed on files nobody
+ * can commit while CI stayed green. `SKIP_DIRS` still applies on top, for build
+ * output that a missing ignore rule would otherwise let in.
+ */
+function corpus() {
+  const listed = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return listed
+    .split('\0')
+    .filter((p) => p && !p.split('/').some((seg) => SKIP_DIRS.has(seg)))
+    .map((p) => join(REPO_ROOT, p))
+    .filter((abs) => existsSync(abs) && statSync(abs).isFile());
 }
 
-const ALL_FILES = walk(REPO_ROOT);
+const ALL_FILES = corpus();
 const rel = (abs) => relative(REPO_ROOT, abs).split(sep).join('/');
 
 // ── Rule 1: every shipped manifest declares only grantable tokens ─────────────

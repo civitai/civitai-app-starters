@@ -5,10 +5,15 @@ import '@civitai/components/civitai-button/define';
 import type { CivitaiConfirmDialog } from '@civitai/components/civitai-confirm-dialog';
 import '@civitai/components/civitai-confirm-dialog/define';
 import '@civitai/components/civitai-loader/define';
+import '@civitai/components/civitai-menu/define';
+import '@civitai/components/civitai-menu-item/define';
 import '@civitai/components/civitai-progress/define';
 import { css, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 
+import { DEFAULT_ACTIONS, type CardAction } from './actions.js';
 import { media, mediaSizes, type MediaKind } from './media.js';
+
+export { DEFAULT_ACTIONS, type CardAction };
 
 const TAG = 'civitai-chat-generation-card';
 
@@ -29,6 +34,8 @@ export interface CardResult {
   kind: MediaKind;
   url?: string;
   blocked?: boolean;
+  width?: number;
+  height?: number;
 }
 
 /** What the card needs from a generation; it re-renders on the job's `change` events. */
@@ -36,6 +43,8 @@ export interface CardJob extends EventTarget {
   readonly label: string;
   /** What it makes, named before it starts (e.g. "Your picture"); `label` says what it is doing once it runs. */
   readonly subject?: string;
+  /** What it was asked to make, shown before it runs so "Make it?" says what. */
+  readonly request?: string;
   readonly state: CardState;
   readonly price: { total: number; variable: boolean } | null;
   readonly progress: number | null;
@@ -44,38 +53,18 @@ export interface CardJob extends EventTarget {
   readonly results: CardResult[];
   readonly cancelable: boolean;
   readonly workflowId?: string;
+  /** Its mature results are shown blurred until it is paid for with Buzz that covers them. */
+  readonly locked?: boolean;
+  readonly unlocking?: boolean;
+  readonly unlockError?: { message: string };
+  unlock?(): Promise<void>;
   confirm(): Promise<void>;
   decline(): void;
   cancel(): Promise<void>;
   retry(): Promise<void>;
 }
 
-export interface CardAction {
-  id: string;
-  label: string;
-}
 
-const NOT_STARTED = new Set<CardState>(['pricing', 'awaiting_confirmation', 'declined', 'rejected']);
-
-export const DEFAULT_ACTIONS: Record<MediaKind, CardAction[]> = {
-  image: [
-    { id: 'reference', label: 'Use in chat' },
-    { id: 'animate', label: 'Animate' },
-    { id: 'upscale', label: 'Sharpen' },
-    { id: 'info', label: 'Info' },
-    { id: 'download', label: 'Download' },
-  ],
-  video: [
-    { id: 'reference', label: 'Use in chat' },
-    { id: 'upscale', label: 'Sharpen' },
-    { id: 'info', label: 'Info' },
-    { id: 'download', label: 'Download' },
-  ],
-  audio: [
-    { id: 'info', label: 'Info' },
-    { id: 'download', label: 'Download' },
-  ],
-};
 
 /** One generation in plain words: its price, the wait, the result, and what can be done next. */
 export class CivitaiChatGenerationCard extends CivitaiElement {
@@ -102,6 +91,15 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
         margin: 0;
         font-size: 14px;
         font-weight: 600;
+      }
+      .request {
+        margin: 8px 0 0;
+        font-size: 14px;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
       }
       .status {
         display: flex;
@@ -139,14 +137,57 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
         grid-template-columns: 1fr;
       }
       figure {
+        position: relative;
         margin: 0;
         display: grid;
         gap: 6px;
       }
       .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      figure:hover .actions,
+      .actions:focus-within,
+      .actions:has(civitai-menu[open]) {
+        opacity: 1;
+      }
+      @media (hover: none) {
+        .actions {
+          opacity: 1;
+        }
+      }
+      figure[data-kind='audio'] .actions {
+        position: static;
+        justify-self: end;
+        opacity: 1;
+      }
+      .more {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: rgb(0 0 0 / 0.55);
+        color: #fff;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .more:hover {
+        background: rgb(0 0 0 / 0.75);
+      }
+      .more:focus-visible {
+        outline: 2px solid var(--civitai-color-primary);
+        outline-offset: 2px;
+      }
+      figure[data-kind='audio'] .more {
+        background: transparent;
+        color: var(--civitai-color-text-dimmed);
       }
       civitai-alert {
         margin-top: 10px;
@@ -184,6 +225,8 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     buyBuzzUrl: { attribute: 'buy-buzz-url' },
     actions: { attribute: false },
     single: { type: Boolean, reflect: true },
+    adjustable: { type: Boolean },
+    raiseSteps: { attribute: false },
   };
 
   declare job?: CardJob;
@@ -191,6 +234,13 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   /** Which actions each result offers; each emits `media-action` with its id. */
   declare actions: Record<MediaKind, CardAction[]>;
   declare single: boolean;
+  /** Offers Adjust, which emits `job-adjust`: the page turns the request into controls to change and rerun. */
+  declare adjustable: boolean;
+  /**
+   * Limits a confirmation may also raise the viewer's to: the smallest that covers a fixed price is offered
+   * beside Go ahead, and picking it emits `job-raise-limit` with `{ limit }` before running the job.
+   */
+  declare raiseSteps: number[];
 
   #watched?: CardJob;
   #retried = new Set<string>();
@@ -201,6 +251,8 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     this.buyBuzzUrl = 'https://civitai.com/purchase/buzz';
     this.actions = DEFAULT_ACTIONS;
     this.single = false;
+    this.adjustable = false;
+    this.raiseSteps = [];
   }
 
   override disconnectedCallback(): void {
@@ -216,6 +268,9 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   protected override willUpdate(changed: PropertyValues): void {
     if (changed.has('job')) this.#watch(this.job);
     this.single = (this.job?.results.length ?? 0) <= 1;
+    // A player has no width of its own, so a card of sounds takes the thread's width rather than shrinking to it.
+    const results = this.job?.results ?? [];
+    this.toggleAttribute('audio', results.length > 0 && results.every((result) => result.kind === 'audio'));
   }
 
   #watch(job: CardJob | undefined): void {
@@ -253,27 +308,28 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
       case 'pricing':
         return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Checking the price…</div>`;
       case 'awaiting_confirmation':
-        return html`<div class="status" role="status">
+        return html`${this.#request(job)}<div class="status" role="status">
             <span>${job.price ? html`Costs about <strong>${job.price.total} Buzz</strong>. Make it?` : 'Make it?'}</span>
           </div>
           <div class="row">
             <civitai-button part="confirm" size="sm" @click=${() => void job.confirm()}>Go ahead</civitai-button>
+            ${this.#raise(job)}
             <civitai-button part="decline" size="sm" variant="subtle" @click=${() => job.decline()}>Not now</civitai-button>
-            ${this.#info()}
+            ${this.#adjust()} ${this.#info()}
           </div>`;
       case 'submitting':
         return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Starting…</div>`;
       case 'running':
         return this.#running(job);
       case 'succeeded':
-        return this.#gallery(job);
+        return html`${this.#gallery(job)}${this.#unlock(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
       case 'rejected':
         return html`<civitai-alert color="warning" part="error">
           You don't have enough Buzz for this${job.price ? html` (about ${job.price.total})` : nothing}.
-          <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a></div>
+          <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a>${this.#adjust()}</div>
         </civitai-alert>`;
       case 'declined':
-        return html`<div class="status">Not started.</div>
+        return html`${this.#request(job)}<div class="status">Not started.</div>
           <div class="row"><civitai-button size="sm" variant="light" @click=${() => void job.confirm()}>Run it</civitai-button></div>`;
       case 'canceled':
         return html`<div class="status">Stopped. Only work already done is billed.</div>`;
@@ -286,7 +342,45 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     }
   }
 
+  #unlock(job: CardJob): TemplateResult | typeof nothing {
+    if (!job.locked || !job.unlock) return nothing;
+    return html`<div class="status">Blurred: the Buzz it was paid with doesn't cover mature content.</div>
+      <div class="row">
+        <civitai-button part="unlock" size="sm" ?loading=${job.unlocking === true} ?disabled=${job.unlocking === true} @click=${() => void job.unlock!()}>Unlock</civitai-button>
+      </div>
+      ${job.unlockError
+        ? html`<civitai-alert color="warning" part="unlock-error">
+            ${job.unlockError.message}
+            <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a></div>
+          </civitai-alert>`
+        : nothing}`;
+  }
+
+  #request(job: CardJob): TemplateResult | typeof nothing {
+    return job.request ? html`<p class="request" part="request" title=${job.request}>“${job.request}”</p>` : nothing;
+  }
+
+  #raise(job: CardJob): TemplateResult | typeof nothing {
+    const price = job.price;
+    const limit = price && !price.variable ? this.raiseSteps.find((step) => step >= price.total) : undefined;
+    if (limit === undefined) return nothing;
+    return html`<civitai-button
+      part="confirm-raise"
+      size="sm"
+      variant="light"
+      @click=${() => {
+        this.#emit('job-raise-limit', { limit });
+        void job.confirm();
+      }}
+      >Yes, don't ask up to ${limit} Buzz</civitai-button
+    >`;
+  }
+
   /** Asks the page to show what this job is making, before there is anything to open. */
+  #adjust(): TemplateResult | typeof nothing {
+    return this.adjustable ? html`<civitai-button part="adjust" size="sm" variant="subtle" @click=${() => this.#emit('job-adjust', {})}>Adjust</civitai-button>` : nothing;
+  }
+
   #info(): TemplateResult {
     return html`<civitai-button part="info" size="sm" variant="subtle" @click=${() => this.#emit('job-info', {})}>Info</civitai-button>`;
   }
@@ -320,23 +414,28 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     if (job.results.length === 0) return html`<div class="status">Finished, but nothing came back.</div>`;
     return html`<div class="gallery" part="gallery">
       ${job.results.map(
-        (result) => html`<figure>
+        (result, index) => html`<figure data-kind=${result.kind}>
           ${media({
             kind: result.kind,
             mode: 'inline',
             src: result.url,
             pending: !result.url && !result.blocked,
             blocked: result.blocked === true,
+            width: result.width,
+            height: result.height,
             onOpen: () => this.#emit('open', { id: result.id }),
             onError: () => this.#retry(result.id),
           })}
-          ${result.url
+          ${result.url && this.actions[result.kind]?.length
             ? html`<div class="actions" part="actions">
-                ${(this.actions[result.kind] ?? []).map(
-                  (action) => html`<civitai-button size="sm" variant="subtle" @click=${() => this.#emit('media-action', { id: result.id, action: action.id })}
-                    >${action.label}</civitai-button
-                  >`,
-                )}
+                <civitai-menu
+                  placement="bottom-end"
+                  label=${`Actions for ${job.results.length > 1 ? `result ${index + 1}` : 'this result'}`}
+                  @select=${(e: CustomEvent<{ value: string }>) => this.#emit('media-action', { id: result.id, action: e.detail.value })}
+                >
+                  <button slot="trigger" type="button" class="more" aria-label=${`More for ${job.results.length > 1 ? `result ${index + 1}` : 'this result'}`}>⋯</button>
+                  ${this.actions[result.kind]!.map((action) => html`<civitai-menu-item value=${action.id}>${action.label}</civitai-menu-item>`)}
+                </civitai-menu>
               </div>`
             : nothing}
         </figure>`,
@@ -348,7 +447,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     const job = this.job;
     if (!job) return html``;
     return html`<header>
-        <h3 part="label">${NOT_STARTED.has(job.state) ? (job.subject ?? job.label) : job.label}</h3>
+        <h3 part="label">${job.state === 'submitting' || job.state === 'running' ? job.label : (job.subject ?? job.label)}</h3>
         ${this.#price()}
       </header>
       ${this.#body(job)}

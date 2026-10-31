@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 45, of which 7 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 53, of which 15 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -70,11 +70,12 @@
  * and row budgets enforced per (app, user) — with the REAL ceilings, so a
  * write this host accepts is one production would accept.
  *
- * SET_USER_CHECKPOINT (Phase 4): FORWARDED (faithful) to the block-token
- * `blocks.updateUserSettings` mutation — never fabricated. The default page
- * setup mints a PAGE token which lacks `ctx.modelId`, so the backend returns the
- * honest error "block token lacks modelId context"; that real outcome is
- * surfaced to the block. With a model-slot token it persists for real.
+ * SET_USER_CHECKPOINT (Phase 4): answered as the production host for the slot
+ * would. On a PAGE context (the default; dev-token mints page tokens) it is
+ * refused locally with the page host's own reply — `ok: false` and the same
+ * error text — and no backend call, because the page host makes none. On a
+ * model-slot context it is FORWARDED to the block-token
+ * `blocks.updateUserSettings` mutation, never fabricated.
  *
  * SHARED STORAGE (#386): the live host SERVES all TEN `SHARED_*` bridges —
  * `apps.shared.{list,get,getCount,getCounts,append,update,vote,unvote,withdraw,
@@ -82,6 +83,12 @@
  * and `SHARED_REPORT` were the last two missing; until #386 they fell through
  * the switch's `default: return` with no reply at all, so `useSharedStorage()`
  * hung to the 30s protocol timeout in dev:live for code that worked in dev:mock.
+ *
+ * TRACK_EVENT: recorded only in production, so the live host forwards nothing
+ * and replies nothing (production replies nothing either). What it does is
+ * CHECK each event against the manifest passed as `options.manifest` and warn
+ * once per distinct problem production would silently drop — see
+ * `trackEventCheck.ts`.
  *
  * 🔴 SCOPE — the capabilities live mode still cannot SERVE. Each REFUSES on its
  * own reply channel — `logOnce` (or `console.info`) plus an honest error, never
@@ -99,12 +106,38 @@
  *     links the real purchase page and replies `purchased: false`.
  *   • SET_COLLECTION_FOLLOW — needs the session-authed follow procedures plus
  *     host-chrome consent. Replies `collection-unavailable`.
+ *   • SET_ENTITY_REACTION — the server's reaction procedures take the viewer's
+ *     signed-in SESSION alongside the block token, and refuse any token as
+ *     authentication. Replies `entity-unavailable`.
+ *   • GET_ENTITY_REACTIONS — the same session-authed procedure pair. Replies
+ *     `entity-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
+ *   • RUN_TRAINING — the server refuses every `kind: 'training'` request from a
+ *     dev token, and a run is confirmed in a host-chrome consent dialog this
+ *     harness does not have. Replies with a refusal.
+ *   • RUN_CONFIRMED_STEP — the server refuses a confirmed step from a dev token
+ *     and the estimate never returns a `stepQuote` for one, and the price is
+ *     confirmed in host chrome this harness does not have. Replies with a
+ *     refusal.
+ *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
+ *     civitai.com session, which the local harness does not have; test
+ *     publishing against the mock host — `createMockHost` or `Harness` from
+ *     `@civitai/blocks-react/testing`, with the `publishImageIds` /
+ *     `publishError` options. Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
+ *   • GET_RESOURCE_FILE — the same session-authed resolve plus in-tab
+ *     fetch/unzip/parse, and only full-page app hosts answer it. Replies
+ *     `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
  *     pipeline. Replies DISMISSED (the hook resolves `null`).
+ *   • OPEN_IMAGE_PICKER — needs the host's picker over the viewer's own posted
+ *     images and generator outputs, read off their signed-in session; no
+ *     block-token endpoint lists either. Replies with a refusal.
+ *   • OPEN_MEDIA_UPLOAD — the generation-input upload runs in the host with the
+ *     viewer's signed-in session, which the local harness does not have.
+ *     Replies with a refusal.
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -122,6 +155,7 @@ import {
   type BlockNavigateScope,
   type BlockWorkflowSnapshot,
   type ColorDomain,
+  type SharedStorageRateLimit,
   type Theme,
   type ViewerInfo,
   type WorkflowBody,
@@ -129,8 +163,11 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
+import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
+import { parseSharedStorageRateLimit } from '../transport/validate.js';
+import { createTrackEventChecker } from './trackEventCheck.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -138,6 +175,26 @@ import {
   type OpenPickerOptions,
   type PickerResultChannel,
 } from './pickerOverlay.js';
+
+/** Logged once when a block sends either reaction message to the live host. */
+const REACTIONS_UNSUPPORTED_LOG =
+  'SET_ENTITY_REACTION / GET_ENTITY_REACTIONS are not supported in dev:live (the reaction ' +
+  'procedures need the signed-in civitai.com session). Replying `entity-unavailable`. Use ' +
+  'dev:mock to exercise the reaction bridge.';
+
+/**
+ * The `error` the live host answers `OPEN_IMAGE_PICKER` with. `useImagePicker()`
+ * rejects with it, so it says what to do instead.
+ */
+export const IMAGE_PICKER_UNSUPPORTED_ERROR =
+  'the image picker is not supported in dev:live — use dev:mock';
+
+/**
+ * The `error` the live host answers `OPEN_MEDIA_UPLOAD` with. `useMediaUpload()`
+ * rejects with it, so it says what to do instead.
+ */
+export const MEDIA_UPLOAD_UNSUPPORTED_ERROR =
+  'media upload is not supported in dev:live — use dev:mock';
 
 /** Default civitai backend the live host forwards to. */
 const DEFAULT_BACKEND_BASE_URL = 'https://civitai.com';
@@ -196,13 +253,46 @@ export interface LiveHostOptions {
    * `dev:live` run this is omitted — the dev clicks a card in the overlay.
    */
   onPickerReady?: (handle: PickerOverlayHandle) => void;
+  /**
+   * The app's manifest — pass `block.manifest.json` as the harness imported it.
+   * Used for one thing: each `TRACK_EVENT` is checked against its
+   * `analytics.events` declaration, and the console warns ONCE per distinct
+   * problem production would silently drop — an undeclared event, an
+   * undeclared property, a value that does not match the declared type or enum.
+   * A declared, valid event logs nothing. The check never throws, never blocks
+   * the block, and sends no reply (production sends none either). Omit it and
+   * the first `TRACK_EVENT` says the check is off.
+   *
+   * Typed `unknown` because an imported JSON file widens its string literals
+   * (`"type": "enum"` reads as `string`), which a stricter type would reject.
+   *
+   * @example
+   * // `manifest` = your block.manifest.json, imported as JSON — every
+   * // `starters/examples/*` harness does this.
+   * createLiveHost({ blockToken, manifest });
+   */
+  manifest?: unknown;
 }
-
-/** Page slot id — dev-token mints page tokens (mirrors PAGE_SLOT_ID server-side). */
-const PAGE_SLOT_ID = 'app.page';
 
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
+
+/**
+ * The reply `RUN_TRAINING` gets in dev:live — see its handler.
+ */
+export const TRAINING_UNSUPPORTED_ERROR = 'training is not supported in dev:live — use dev:mock';
+
+/** The once-per-session console line for a refused training bridge. */
+const trainingUnsupportedLog = (type: string): string =>
+  `${type} is not supported in dev:live (the server refuses every training request from a ` +
+  'dev token, and a run needs the host-chrome consent dialog). Replying with a refusal. ' +
+  'Use dev:mock to exercise the training flow.';
+
+/**
+ * The reply `RUN_CONFIRMED_STEP` gets in dev:live — see its handler.
+ */
+export const CONFIRMED_STEP_UNSUPPORTED_ERROR =
+  'confirmed steps are not supported in dev:live — use dev:mock';
 
 /**
  * Decoded payload of a block-token JWT (the claims `BlockTokenService.sign`
@@ -331,6 +421,11 @@ interface RawTrpcResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
+  /**
+   * The validated `error.data.rateLimit` of a rate-limited refusal, when the
+   * server sent one (today only the `apps.shared.*` write procedures do).
+   */
+  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
@@ -344,6 +439,8 @@ interface TrpcDataResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
+  /** See {@link RawTrpcResult.rateLimit}. */
+  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
@@ -353,6 +450,9 @@ interface TrpcDataResult {
  * deploy (the dev token is fine; the pod just hasn't loaded the verifier yet) —
  * the exact blip the round-5 dogfood hit. Anything ≥ 500, plus 408 (timeout)
  * and 429 (rate-limit), is also transient.
+ *
+ * Only {@link pollWithRetry} reads `transient`; a shared-storage 429 is a
+ * write-budget refusal whose wait is minutes, so it must never be retried.
  */
 function isTransientHttpStatus(status: number): boolean {
   return status >= 500 || status === 408 || status === 429 || status === 401;
@@ -483,6 +583,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     );
   }
 
+  // `TRACK_EVENT` vs the manifest's `analytics.events`; dedupes its own warnings.
+  const trackEventChecker = createTrackEventChecker(options.manifest);
+
   // One-time "not supported in live v1" log gating per capability.
   const loggedOnce = new Set<string>();
   const logOnce = (key: string, message: string) => {
@@ -495,10 +598,13 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   /**
    * The single tRPC transport primitive. Builds the non-batched httpLink +
    * superjson request for `procedure` and returns the PARSED envelope (or an
-   * error). `method` selects the tRPC verb:
-   *   - `'POST'` (mutation): body is `{ json: <input> }`.
-   *   - `'GET'` (query): input is querystring-encoded as
-   *     `?input=encodeURIComponent(JSON.stringify({ json: <input> }))`.
+   * error). Every call — query or mutation — is a POST to
+   * `/api/trpc/<procedure>` with body `{ json: <input> }` and no querystring.
+   * For a QUERY that is tRPC's query method override, which civitai.com's
+   * tRPC handler accepts (`allowMethodOverride: true`); the procedure is still
+   * a query on the server. Never GET: every procedure the live host calls
+   * takes the block token (a bearer credential) in its input, and a GET would
+   * put that input — token included — in the URL (`?input=…`).
    * Every call carries `Authorization: Bearer <rawToken>`. A thrown fetch →
    * `{ error, transient: true }`; a non-2xx → `{ error, transient }` (status-
    * classified via {@link isTransientHttpStatus}). Both `callTrpcMutation` and
@@ -507,27 +613,20 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   async function rawTrpcCall(
     procedure: string,
     input: Record<string, unknown>,
-    method: 'GET' | 'POST',
   ): Promise<RawTrpcResult> {
     if (!fetchImpl) return { error: 'no fetch available' };
     try {
-      let url = `${baseUrl}/api/trpc/${procedure}`;
+      const url = `${baseUrl}/api/trpc/${procedure}`;
       const init: RequestInit = {
-        method,
+        method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${rawToken}`,
         },
-      };
-      if (method === 'GET') {
-        // tRPC query: superjson input goes in the querystring.
-        const encoded = encodeURIComponent(JSON.stringify({ json: input }));
-        url = `${url}?input=${encoded}`;
-      } else {
         // Non-batched httpLink + superjson transformer wraps the input as
         // `{ json: <input> }` (no `meta` for plain JSON inputs).
-        init.body = JSON.stringify({ json: input });
-      }
+        body: JSON.stringify({ json: input }),
+      };
       const res = await fetchImpl(url, init);
       const text = await res.text();
       let parsed: unknown;
@@ -538,7 +637,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       }
       if (!res.ok) {
         const msg = extractTrpcError(parsed) ?? `${procedure} failed: HTTP ${res.status}`;
-        return { error: msg, transient: isTransientHttpStatus(res.status) };
+        const rateLimit = parseSharedStorageRateLimit(extractTrpcErrorData(parsed)?.rateLimit);
+        return {
+          error: msg,
+          transient: isTransientHttpStatus(res.status),
+          ...(rateLimit ? { rateLimit } : {}),
+        };
       }
       return { parsed };
     } catch (err) {
@@ -558,7 +662,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     procedure: string,
     input: Record<string, unknown>,
   ): Promise<TrpcCallResult> {
-    const raw = await rawTrpcCall(procedure, input, 'POST');
+    const raw = await rawTrpcCall(procedure, input);
     if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
     const snapshot = extractSnapshot(raw.parsed);
     if (!snapshot) {
@@ -569,17 +673,23 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
   /**
    * Call a tRPC DATA procedure (storage / settings) and unwrap the plain data
-   * object it returns (via {@link extractData}). `method` is `'GET'` for queries
-   * (`apps.storage.{get,list,getQuota}`) and `'POST'` for mutations
-   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`).
+   * object it returns (via {@link extractData}). Queries
+   * (`apps.storage.{get,list,getQuota}`) and mutations
+   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`) alike — the
+   * wire form is the same POST (see {@link rawTrpcCall}).
    */
   async function callTrpcData(
     procedure: string,
     input: Record<string, unknown>,
-    method: 'GET' | 'POST',
   ): Promise<TrpcDataResult> {
-    const raw = await rawTrpcCall(procedure, input, method);
-    if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
+    const raw = await rawTrpcCall(procedure, input);
+    if (raw.error !== undefined) {
+      return {
+        error: raw.error,
+        transient: raw.transient,
+        ...(raw.rateLimit ? { rateLimit: raw.rateLimit } : {}),
+      };
+    }
     const data = extractData(raw.parsed);
     if (data === undefined) {
       return { error: `${procedure}: malformed response (no data)` };
@@ -594,11 +704,19 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
    * with {@link POLL_RETRY_BACKOFF_MS} backoff. The final result is only ever a
    * `snapshot` OR a still-transient error — the caller turns the latter into a
    * keep-polling `processing` reply, never a fabricated terminal `failed`.
+   *
+   * `waitSeconds` is the block's long-poll hint, passed through unchanged;
+   * `undefined` sends none, which keeps the request byte-identical to a plain
+   * read.
    */
-  async function pollWithRetry(workflowId: string): Promise<TrpcCallResult> {
+  async function pollWithRetry(workflowId: string, waitSeconds?: number): Promise<TrpcCallResult> {
     let last: TrpcCallResult = { error: 'poll failed', transient: true };
     for (let attempt = 0; attempt <= POLL_RETRY_BACKOFF_MS.length; attempt += 1) {
-      last = await callTrpcMutation('blocks.pollWorkflow', { blockToken: rawToken, workflowId });
+      last = await callTrpcMutation('blocks.pollWorkflow', {
+        blockToken: rawToken,
+        workflowId,
+        ...(waitSeconds !== undefined ? { waitSeconds } : {}),
+      });
       // A real snapshot (incl. a genuine terminal `failed`) — done.
       if (last.snapshot) return last;
       // A non-transient error (malformed response, deterministic 4xx) — don't
@@ -821,7 +939,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
      * is trusted or spends Buzz.
      */
     const openPicker = (
-      params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId'>,
+      params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId' | 'multiple'>,
       resultType: PickerResultChannel,
       requestId: string,
     ) => {
@@ -840,15 +958,32 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         fetchImpl,
         ...(params.baseModelGroup != null ? { baseModelGroup: params.baseModelGroup } : {}),
         ...(params.currentVersionId != null ? { currentVersionId: params.currentVersionId } : {}),
+        ...(params.multiple ? { multiple: params.multiple } : {}),
         ...(win.document ? { document: win.document } : {}),
         ...(options.onPickerReady ? { onReady: options.onPickerReady } : {}),
         onResolve: (selection) => {
           openOverlays.delete(handle);
           if (torn) return;
+          if (params.multiple) {
+            // MULTI-select: the reply shape follows the REQUEST — always a list,
+            // `[]` on dismissal, and never `selected` (the production contract).
+            dispatchToBlock({
+              type: resultType,
+              payload: {
+                requestId,
+                selectedResources:
+                  selection && 'selectedResources' in selection ? selection.selectedResources : [],
+              },
+            });
+            return;
+          }
           dispatchToBlock({
             type: resultType,
             // A dismissal omits `selected` (the hooks resolve to undefined/null).
-            payload: { requestId, ...(selection ? { selected: selection.selected } : {}) },
+            payload: {
+              requestId,
+              ...(selection && 'selected' in selection ? { selected: selection.selected } : {}),
+            },
           });
         },
       });
@@ -875,6 +1010,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             imageIds?: number[];
             title?: string;
             body?: WorkflowBody;
+            // SUBMIT_WORKFLOW / POLL_WORKFLOW. `unknown`: this object is a cast
+            // over an untyped `postMessage`, and each is checked before use.
+            idempotencyKey?: unknown;
+            waitSeconds?: unknown;
+            // ESTIMATE_WORKFLOW_BATCH — forwarded as sent; the server checks it.
+            bodies?: unknown;
             path?: string;
             /**
              * NAVIGATE's space selector. Declared as the UNION rather than
@@ -952,6 +1093,31 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'ESTIMATE_WORKFLOW_BATCH': {
+            // Forwarded to the token-bound `blocks.estimateWorkflowBatch`, the
+            // batch twin of the estimate above. Its reply is a plain
+            // `{ snapshots, aggregate }` (unwrapped with `callTrpcData`); a
+            // whole-call failure is FREE-TEXT `error`, a per-cell failure rides in
+            // `snapshots`. Estimate only — nothing is submitted. Unroutable
+            // without a requestId. Against a civitai that predates the procedure
+            // the server's own not-found error comes back here as `error`.
+            if (!isRoutableRequestId(requestId)) return;
+            void callTrpcData(
+              'blocks.estimateWorkflowBatch',
+              { blockToken: rawToken, bodies: typed.payload?.bodies },
+            ).then((r) => {
+              const data = r.data as { snapshots?: unknown; aggregate?: unknown } | undefined;
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload:
+                  data && Array.isArray(data.snapshots) && data.aggregate
+                    ? { requestId, snapshots: data.snapshots, aggregate: data.aggregate }
+                    : { requestId, error: r.error ?? 'batch estimate failed' },
+              });
+            });
+            return;
+          }
+
           case 'SUBMIT_WORKFLOW': {
             const body = typed.payload?.body;
             // 🔴 KNOWN GAP, DELIBERATELY NOT CHANGED HERE — see below before
@@ -971,23 +1137,48 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // transfer, and inventing one is a behaviour change on a path where
             // `dev:live` spends REAL Buzz. Threading it through is tracked
             // separately rather than bolted on here.
-            void callTrpcMutation('blocks.submitWorkflow', { blockToken: rawToken, body }).then(
-              (r) => {
-                dispatchToBlock({
-                  type: 'WORKFLOW_SUBMITTED',
-                  payload: {
-                    requestId,
-                    snapshot: r.snapshot ?? errorSnapshot(r.error ?? 'submit failed'),
-                  },
-                });
-              },
-            );
+            //
+            // 🔴 THE IDEMPOTENCY KEY IS FORWARDED, as both production hosts do:
+            // only when it is a non-empty string, otherwise the field is left
+            // off. It was dropped here, so in `dev:live` — which spends REAL
+            // Buzz — a retry carrying the same key was a second submit rather
+            // than a deduplicated one, and a key in a format the server refuses
+            // was never refused. The server validates the format; its refusal
+            // comes back as the failed snapshot below.
+            const rawIdempotencyKey = typed.payload?.idempotencyKey;
+            const idempotencyKey =
+              typeof rawIdempotencyKey === 'string' && rawIdempotencyKey.length > 0
+                ? rawIdempotencyKey
+                : undefined;
+            void callTrpcMutation('blocks.submitWorkflow', {
+              blockToken: rawToken,
+              body,
+              ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+            }).then((r) => {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: r.snapshot ?? errorSnapshot(r.error ?? 'submit failed'),
+                },
+              });
+            });
             return;
           }
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            void pollWithRetry(workflowId).then((r) => {
+            // The long-poll hint is forwarded (it was dropped here, so
+            // `watch()` could never hold a poll open in `dev:live`), with the
+            // production hosts' rule as of civitai/civitai#5798: a finite
+            // number is sent UNCHANGED, anything else sends no field. The
+            // server owns every bound (floor, `<= 0` is no hold, the cap).
+            const rawWaitSeconds = typed.payload?.waitSeconds;
+            const waitSeconds =
+              typeof rawWaitSeconds === 'number' && Number.isFinite(rawWaitSeconds)
+                ? rawWaitSeconds
+                : undefined;
+            void pollWithRetry(workflowId, waitSeconds).then((r) => {
               // Snapshot present (incl. a genuine terminal `failed` from the
               // backend) — forward it as-is.
               if (r.snapshot) {
@@ -1081,7 +1272,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzBalance',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_BALANCE_RESULT',
@@ -1106,7 +1296,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyViewer',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'VIEWER_RESULT',
@@ -1127,7 +1316,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzTransactions',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_TRANSACTIONS_RESULT',
@@ -1144,7 +1332,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyBuzzAccounts',
               { blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'BUZZ_ACCOUNTS_RESULT',
@@ -1161,7 +1348,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getMyDailyCompensation',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'DAILY_COMPENSATION_RESULT',
@@ -1209,6 +1395,40 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'SET_ENTITY_REACTION': {
+            // UNSUPPORTED in live: `blocks.setReactionFromApp` /
+            // `blocks.getReactionsForApp` are session procedures marked
+            // `blockApiKeys`, so the server refuses ANY token as the caller's
+            // authentication and then checks that the block token's subject IS
+            // the session user. A liveHost holds a token and no session.
+            //
+            // `entity-unavailable`: the closed code that already means "this
+            // request cannot be served, nothing was written". `sign-in-required`
+            // would send the block into a REQUEST_SIGN_IN loop against a harness
+            // with no sign-in; `needs-consent` into a consent ask that cannot
+            // help. Use dev:mock (`reactionStates` / `reactionError`, with
+            // `social:react:self` in `declaredScopes`) to exercise the bridge.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTION_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
+            });
+            return;
+          }
+
+          case 'GET_ENTITY_REACTIONS': {
+            // UNSUPPORTED in live, for the reason on SET_ENTITY_REACTION directly
+            // above: the read is the same session-authed procedure pair.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('entity-reaction', REACTIONS_UNSUPPORTED_LOG);
+            dispatchToBlock({
+              type: 'ENTITY_REACTIONS_RESULT',
+              payload: { requestId, error: 'entity-unavailable' },
+            });
+            return;
+          }
+
           case 'CREATE_POST_FROM_APP': {
             // UNSUPPORTED in live v1, for a STRONGER version of the
             // SET_COLLECTION_FOLLOW reason directly above. The real host makes
@@ -1248,6 +1468,61 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'RUN_TRAINING': {
+            // UNSUPPORTED in live, and here the SERVER decides it, not this
+            // harness: every `kind: 'training'` procedure refuses a dev token
+            // ("training is not available from a development or review session"
+            // — `assertTrainingRequestAllowed` in civitai/civitai), because there
+            // is no host page whose chrome can show the viewer a price. A
+            // training ESTIMATE is still forwarded (ESTIMATE_WORKFLOW above) and
+            // comes back carrying that same server refusal. A run is also
+            // CHARGED and confirmed in host chrome this harness does not have, so
+            // faking either half would let dev prove out a flow production does
+            // not have. The upload half (`OPEN_IMAGE_UPLOAD { purpose:
+            // 'trainingData' }`) is answered as a dismissal (`null`), like every
+            // other upload mode — see OPEN_IMAGE_UPLOAD below.
+            //
+            // FREE TEXT on the message's own reply channel; no host code is
+            // honest about "this harness cannot do it". Use dev:mock — its
+            // `cannedTrainingDataUpload`, `trainingDataNotUploadedHere` and
+            // `runTrainingError` knobs cover the upload, the not-uploaded-here
+            // refusal, `declined`, `submission-unconfirmed` and the rest.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('training-run', trainingUnsupportedLog('RUN_TRAINING'));
+            dispatchToBlock({
+              type: 'TRAINING_RESULT',
+              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'RUN_CONFIRMED_STEP': {
+            // UNSUPPORTED in live, and the SERVER decides it, exactly as for the
+            // training bridges above: a confirmed step is refused for a dev token
+            // ("a confirmed step is not available from a development or review
+            // session" — `quotedGrantTokenGate` in civitai/civitai), so a forwarded
+            // ESTIMATE never carries a `stepQuote` here and a block has no real
+            // `quoteId` to send. The price is also confirmed in host chrome this
+            // harness does not have, and the job is CHARGED — faking either half
+            // would let dev prove out a flow production does not have.
+            //
+            // Use dev:mock: an over-budget `generation.costPerGen` makes its
+            // estimate quote one, and `runConfirmedStepError` covers `declined`,
+            // `daily-limit-exceeded` and `submission-unconfirmed`.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'confirmed-step',
+              'RUN_CONFIRMED_STEP is not supported in dev:live (the server refuses a confirmed ' +
+                'step from a dev token, and the price is confirmed in host chrome). Replying ' +
+                'with a refusal. Use dev:mock to exercise the confirmed-step flow.',
+            );
+            dispatchToBlock({
+              type: 'CONFIRMED_STEP_RESULT',
+              payload: { requestId, error: CONFIRMED_STEP_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
           case 'GET_WILDCARD_PACK': {
             // UNSUPPORTED in live v1 (honest-by-design, like OPEN_BUZZ_PURCHASE):
             // the real host resolves the pack via a SESSION-authed proc and does
@@ -1271,6 +1546,29 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'GET_RESOURCE_FILE': {
+            // UNSUPPORTED in live v1, for the same reason as GET_WILDCARD_PACK
+            // directly above: the real host resolves the file through a
+            // SESSION-authed procedure and fetches + unzips + parses it in the
+            // viewer's page tab. A liveHost holds a BLOCK token, not a session,
+            // so it cannot resolve the file. Reply with an honest `parse-failed`
+            // (never a fabricated file) so the hook surfaces a typed error rather
+            // than hanging. The closed error set has no "unsupported" code, and
+            // `parse-failed` is the one the wildcard refusal already uses.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'resource-file',
+              'GET_RESOURCE_FILE is not supported in dev:live (it needs the session-authed ' +
+                'resolve + in-tab fetch and unzip, on a full-page app host). Replying ' +
+                '`parse-failed`. Use dev:mock to exercise the resource-file path.',
+            );
+            dispatchToBlock({
+              type: 'RESOURCE_FILE_RESULT',
+              payload: { requestId, error: 'parse-failed' },
+            });
+            return;
+          }
+
           case 'QUERY_APP_WORKFLOWS': {
             // App generator SUBQUEUE read via the token-bound
             // `blocks.queryAppWorkflows` MUTATION (POST). params (cursor/limit) are
@@ -1283,7 +1581,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.queryAppWorkflows',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'APP_WORKFLOWS_RESULT',
@@ -1308,7 +1605,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.cancelAppWorkflow',
               { blockToken: rawToken, workflowId: cancelId },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'CANCEL_APP_WORKFLOW_RESULT',
@@ -1321,32 +1617,40 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'PUBLISH_GENERATION_OUTPUTS': {
-            // Publish selected outputs of one of the app's OWN workflows as bare,
-            // real-scanned public Image rows via the token-bound
-            // `blocks.publishGenerationOutputs` MUTATION (POST). The block sends
-            // `workflowId` + optional `imageIndexes` (NEVER urls); the host
-            // re-derives ownership, re-uploads + FULL-scans server-side. Returns a
-            // plain `{ imageIds }`, unwrapped with `callTrpcData`. FREE-TEXT error
-            // on failure. Unroutable without requestId.
+            // UNSUPPORTED in live, for the same reason as CREATE_POST_FROM_APP
+            // above: publishing requires the viewer's signed-in civitai.com
+            // session, which the local harness does not have — it holds a dev
+            // block token and has no civitai chrome to render the publish
+            // confirm in. On civitai.com the real host resolves the workflow's
+            // outputs, shows that confirm, and only then publishes bare,
+            // real-scanned public Image rows.
+            //
+            // FREE TEXT, like the post refusal: none of the host's codes is
+            // honest about "this harness cannot do it". `usePublishGenerationOutputs`
+            // rejects with it as the message. Test publishing against the mock
+            // host — `createMockHost` or `Harness` from
+            // `@civitai/blocks-react/testing`, with the `publishImageIds` /
+            // `publishError` options.
             if (!isRoutableRequestId(requestId)) return;
-            void callTrpcData(
-              'blocks.publishGenerationOutputs',
-              {
-                blockToken: rawToken,
-                workflowId: typed.payload?.workflowId,
-                ...(typed.payload?.imageIndexes !== undefined
-                  ? { imageIndexes: typed.payload.imageIndexes }
-                  : {}),
-                ...(typed.payload?.title !== undefined ? { title: typed.payload.title } : {}),
+            logOnce(
+              'publish-outputs',
+              'PUBLISH_GENERATION_OUTPUTS is not supported in dev:live (publishing requires the ' +
+                "viewer's signed-in civitai.com session, which the local harness does not have). " +
+                'Replying with a refusal. Test publishing against the mock host — createMockHost ' +
+                'or Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                'publishError options.',
+            );
+            dispatchToBlock({
+              type: 'PUBLISH_RESULT',
+              payload: {
+                requestId,
+                error:
+                  'publishing generation outputs is not supported in dev:live — publishing ' +
+                  "requires the viewer's signed-in civitai.com session, which the local harness " +
+                  'does not have; test publishing against the mock host — createMockHost or ' +
+                  'Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                  'publishError options',
               },
-              'POST',
-            ).then((r) => {
-              dispatchToBlock({
-                type: 'PUBLISH_RESULT',
-                payload: r.data
-                  ? { requestId, result: r.data }
-                  : { requestId, error: r.error ?? 'publish unavailable' },
-              });
             });
             return;
           }
@@ -1361,7 +1665,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.getImagesByIds',
               { blockToken: rawToken, imageIds: typed.payload?.imageIds ?? [] },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'IMAGES_RESULT',
@@ -1402,12 +1705,39 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // re-validated server-side at estimate/submit.
             const resourceType: 'Checkpoint' | 'LORA' =
               typed.payload?.resourceType === 'Checkpoint' ? 'Checkpoint' : 'LORA';
+            // MULTI-select (`multiple: { max }`) — the production host's rules:
+            // LoRA only, `max` a whole number ≥ 1 clamped to 5, and a refusal is
+            // ANSWERED with `error` (the hook throws on it) rather than opening
+            // a single-pick overlay the block did not ask for.
+            const rawMultiple = (typed.payload as { multiple?: unknown } | undefined)?.multiple;
+            let multiple: { max: number } | undefined;
+            if (rawMultiple !== undefined && rawMultiple !== null) {
+              const max =
+                typeof rawMultiple === 'object' ? (rawMultiple as { max?: unknown }).max : undefined;
+              const refusal =
+                resourceType === 'Checkpoint'
+                  ? 'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.'
+                  : typeof max !== 'number' || !Number.isInteger(max) || max < 1
+                    ? 'OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.'
+                    : null;
+              if (refusal !== null) {
+                // A refusal nobody can route is not worth sending.
+                if (!isRoutableRequestId(requestId)) return;
+                dispatchToBlock({
+                  type: 'RESOURCE_PICKER_RESULT',
+                  payload: { requestId, error: refusal },
+                });
+                return;
+              }
+              multiple = { max: Math.min(max as number, 5) };
+            }
             openPicker(
               {
                 type: resourceType,
                 ...(typeof typed.payload?.baseModelGroup === 'string'
                   ? { baseModelGroup: typed.payload.baseModelGroup }
                   : {}),
+                ...(multiple ? { multiple } : {}),
               },
               'RESOURCE_PICKER_RESULT',
               requestId ?? '',
@@ -1423,12 +1753,34 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // the hook resolves to `null`) and log an actionable message. Honest-
             // by-design — never fabricate a moderated image id. Mirrors the
             // OPEN_BUZZ_PURCHASE "no headless contract" pattern.
-            logOnce(
-              'open-image-upload',
-              'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +
-                'modal — resolving the upload as dismissed (null). Test the image-upload flow ' +
-                'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
-            );
+            //
+            // The `bytes` variant (`useUploadImageBytes()`) gets the same reply,
+            // but that hook has no "dismissed" outcome: it REJECTS with its
+            // no-image error. So it gets its own message, naming its mock option.
+            if (typed.payload != null && 'bytes' in (typed.payload as object)) {
+              logOnce(
+                'open-image-upload-bytes',
+                'OPEN_IMAGE_UPLOAD { bytes } received but live dev mode has no bytes upload path — ' +
+                  'useUploadImageBytes().upload() REJECTS with "the host returned no uploaded image". ' +
+                  'Test the bytes upload against the real site, or use ' +
+                  'createMockHost({ uploadImageBytesResult }) in dev:mock.',
+              );
+            } else if ((typed.payload as { purpose?: unknown } | null)?.purpose === 'trainingData') {
+              logOnce(
+                'open-image-upload-training-data',
+                "OPEN_IMAGE_UPLOAD { purpose: 'trainingData' } received but live dev mode " +
+                  'cannot serve the training-data upload modal — resolving the upload as cancelled (null). ' +
+                  'Test the training flow against the real site, or use ' +
+                  'createMockHost({ cannedTrainingDataUpload }) in dev:mock.',
+              );
+            } else {
+              logOnce(
+                'open-image-upload',
+                'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +
+                  'modal — resolving the upload as dismissed (null). Test the image-upload flow ' +
+                  'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
+              );
+            }
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
               payload: { requestId: requestId ?? '' },
@@ -1436,14 +1788,71 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'OPEN_IMAGE_PICKER': {
+            // REFUSED. The picker lists the viewer's own posted images and
+            // generator outputs in host chrome, off the viewer's signed-in
+            // session. A dev block token has no endpoint that lists either, and
+            // this harness has no session, so there is nothing real to pick
+            // from. Rather than let `useImagePicker()` hang to its 10-minute
+            // timeout, or hand back an invented image, answer with an error
+            // (the hook rejects) and log what to use instead.
+            logOnce(
+              'open-image-picker',
+              'OPEN_IMAGE_PICKER received but live dev mode cannot list the viewer\'s own images ' +
+                '— useImagePicker().open() REJECTS. Test the image picker against the real site, ' +
+                'or use createMockHost({ cannedImagePicks }) in dev:mock.',
+            );
+            // A refusal nobody can route is not worth sending.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'IMAGE_PICKER_RESULT',
+              payload: { requestId, error: IMAGE_PICKER_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'OPEN_MEDIA_UPLOAD': {
+            // REFUSED. The host uploads the file with the viewer's signed-in
+            // session; this harness has none, and nothing a dev block token can
+            // call takes the upload. Rather than let `useMediaUpload()` hang to
+            // its 10-minute timeout, or hand back an invented URL a step would
+            // then fail on, answer with an error (the hook rejects).
+            logOnce(
+              'open-media-upload',
+              'OPEN_MEDIA_UPLOAD received but live dev mode cannot upload generation inputs ' +
+                '— useMediaUpload() REJECTS. Test it against the real site, ' +
+                'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+            );
+            // A refusal nobody can route is not worth sending.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'MEDIA_UPLOAD_RESULT',
+              payload: { requestId, error: MEDIA_UPLOAD_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
           case 'SET_USER_CHECKPOINT': {
-            // FORWARD (faithful) to blocks.updateUserSettings — never fabricate.
-            // Mirror the prod IframeHost's versionId validation: a number or an
-            // explicit null is valid; anything else is rejected WITHOUT a backend
-            // call. NOTE: dev-token mints PAGE tokens which lack `ctx.modelId`, so
-            // with the default page setup the backend returns the honest error
-            // "block token lacks modelId context" — this is FAITHFUL (it surfaces
-            // the real outcome) and works for real with a model-slot token.
+            // 🔴 A PAGE REFUSES, ALWAYS, WITHOUT A BACKEND CALL — and the default
+            // context is a page. That is the production page host exactly: the
+            // same reply type, shape and error text, whatever `versionId` was
+            // sent, and nothing dropped except a request with no id to answer.
+            // This used to forward to `blocks.updateUserSettings`, a call the
+            // page host never makes, so the block saw the server's wording where
+            // production sends its own refusal. See ./hostSurface.ts.
+            if (emulatesPageHost(options.context)) {
+              if (!isRoutableRequestId(requestId)) return;
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: { requestId, ok: false, error: PAGE_CHECKPOINT_PERSIST_ERROR },
+              });
+              return;
+            }
+            // MODEL SLOT: FORWARD (faithful) to blocks.updateUserSettings — never
+            // fabricate. Mirror the prod IframeHost's versionId validation: a
+            // number or an explicit null is valid; anything else is rejected
+            // WITHOUT a backend call. A token without `ctx.modelId` gets the
+            // server's honest "block token lacks modelId context".
             const rawVersionId = typed.payload?.versionId;
             const versionId =
               rawVersionId === null
@@ -1465,7 +1874,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'blocks.updateUserSettings',
               { blockToken: rawToken, settings: { checkpoint_version_id: versionId } },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'USER_CHECKPOINT_SET',
@@ -1478,11 +1886,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_GET': {
-            // Query apps.storage.get {blockToken, key} (GET). The server enforces
+            // Query apps.storage.get {blockToken, key} (sent as POST). The server enforces
             // the apps:storage:read scope; the dev token carries it iff the local
             // manifest declared it.
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }, 'GET').then(
+            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1511,7 +1919,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.storage.set',
               { blockToken: rawToken, key, value },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -1539,7 +1946,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.storage.delete',
               { blockToken: rawToken, key },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -1566,7 +1972,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_LIST': {
-            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (GET).
+            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (sent as POST).
             // Clamp the limit to the server's [1,200] bound (default 50); only
             // include prefix/cursor when they're strings so JSON.stringify drops
             // the undefined keys (the server input is `.optional()`).
@@ -1580,7 +1986,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof prefix === 'string') listInput.prefix = prefix;
             if (typeof cursor === 'string') listInput.cursor = cursor;
-            void callTrpcData('apps.storage.list', listInput, 'GET').then((r) => {
+            void callTrpcData('apps.storage.list', listInput).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'APP_STORAGE_LIST_RESULT',
@@ -1615,8 +2021,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'APP_STORAGE_QUOTA': {
-            // Query apps.storage.getQuota {blockToken} (GET).
-            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }, 'GET').then(
+            // Query apps.storage.getQuota {blockToken} (sent as POST).
+            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1672,7 +2078,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
             if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
-            void callTrpcData('apps.shared.list', listInput, 'GET').then((r) => {
+            void callTrpcData('apps.shared.list', listInput).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_LIST_RESULT',
@@ -1699,7 +2105,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_GET_COUNT': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }, 'GET').then(
+            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1723,7 +2129,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.getCounts',
               { blockToken: rawToken, keys },
-              'GET',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
@@ -1765,7 +2170,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // so a `?g=` deep-link to a moderated row cannot distinguish it
             // from an absent one. Only a HOST-SIDE failure sets `error`.
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }, 'GET').then((r) => {
+            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_GET_RESULT',
@@ -1804,12 +2209,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.append',
               { blockToken: rawToken, value },
-              'POST',
             ).then((r) => {
               if (r.error) {
                 dispatchToBlock({
                   type: 'SHARED_APPEND_RESULT',
-                  payload: { requestId: requestId ?? '', key: '', error: r.error },
+                  payload: { requestId: requestId ?? '', key: '', ...sharedRefusal(r) },
                 });
                 return;
               }
@@ -1828,12 +2232,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             void callTrpcData(
               'apps.shared.update',
               { blockToken: rawToken, key, value },
-              'POST',
             ).then((r) => {
               dispatchToBlock({
                 type: 'SHARED_UPDATE_RESULT',
                 payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
                   : { requestId: requestId ?? '', ok: true },
               });
             });
@@ -1842,12 +2245,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_VOTE': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
                     type: 'SHARED_VOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
                   });
                   return;
                 }
@@ -1863,12 +2266,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_UNVOTE': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
                     type: 'SHARED_UNVOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
                   });
                   return;
                 }
@@ -1884,7 +2287,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SHARED_WITHDRAW': {
             const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }, 'POST').then(
+            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }).then(
               (r) => {
                 if (r.error) {
                   dispatchToBlock({
@@ -1893,7 +2296,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                       requestId: requestId ?? '',
                       ok: false,
                       deleted: false,
-                      error: r.error,
+                      ...sharedRefusal(r),
                     },
                   });
                   return;
@@ -1929,11 +2332,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             if (typeof typed.payload?.reason === 'string') {
               reportInput.reason = typed.payload.reason;
             }
-            void callTrpcData('apps.shared.report', reportInput, 'POST').then((r) => {
+            void callTrpcData('apps.shared.report', reportInput).then((r) => {
               dispatchToBlock({
                 type: 'SHARED_REPORT_RESULT',
                 payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
                   : { requestId: requestId ?? '', ok: true },
               });
             });
@@ -1954,8 +2357,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             //   • `imageId` — the host resolves it through the SAME per-viewer
             //     gated read that backs GET_IMAGES_BY_IDS, so a withheld or
             //     above-ceiling image can never be coerced into a download.
+            //   • `bytes` (#583) — refused here too. Its gate (content
+            //     classification, the cap) is reproducible, and `createMockHost`
+            //     reproduces it; but a dev:live "download" would be this
+            //     harness's tab saving a file, which proves nothing about the
+            //     production host's page-only rule or its top-frame download.
+            //     One honest refusal for every variant keeps this branch simple.
             //
-            // This harness has NEITHER gate. The allowlist is the production
+            // This harness has NEITHER of the url / imageId gates. The allowlist is the production
             // host's, not this SDK's — there is no origin set here to check
             // against — so a dev-side "download it anyway" would accept URLs
             // production refuses and let a block ship having never once handled
@@ -2179,14 +2588,31 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'TRACK_EVENT':
+            // Fire-and-forget, no reply — as in production, where the host
+            // forwards it and the ingest keeps only what the manifest's
+            // `analytics.events` declares. Nothing is sent anywhere from here;
+            // the only effect is a once-per-problem console warning for what
+            // production would drop (see `trackEventCheck.ts`).
+            for (const message of trackEventChecker.check(typed.payload)) {
+              // eslint-disable-next-line no-console
+              console.warn(`[createLiveHost] ${message}`);
+            }
+            return;
+
           case 'REQUEST_SIGN_IN':
           case 'BLOCK_ERROR':
-            // No-op. TRACK_EVENT/BLOCK_ERROR are fire-and-forget; REQUEST_SIGN_IN
+            // No-op. BLOCK_ERROR is fire-and-forget; REQUEST_SIGN_IN
             // can't open a login in dev (the viewer comes from the token — a
             // failed viewer fetch already warns in resolveViewer).
             return;
 
           default:
+            // No reply, as in production. `livehost-message-coverage.test.mjs`
+            // holds every protocol type with a reply channel to a `case` above,
+            // so what reaches here is BLOCK_HELLO, BLOCK_MESSAGE_REJECTED or a
+            // type this protocol does not declare. The real host's `unsupported
+            // on this host` reply is built only for a request type it KNOWS and
+            // has no handler for; a type it does not know gets nothing.
             return;
         }
       },
@@ -2366,12 +2792,37 @@ function extractData(parsed: unknown): unknown {
  * `{ error: { message } }`. Returns undefined when no message is found.
  */
 function extractTrpcError(parsed: unknown): string | undefined {
+  const message = trpcErrorShape(parsed)?.message;
+  return typeof message === 'string' ? message : undefined;
+}
+
+/**
+ * The `data` object of a tRPC error response (`{ error: { json: { data } } }`
+ * or `{ error: { data } }`), or undefined. The platform's error formatter puts
+ * machine-readable refusal fields here — `rateLimit` on a rate-limited
+ * shared-storage write — which {@link extractTrpcError} alone dropped.
+ */
+function extractTrpcErrorData(parsed: unknown): Record<string, unknown> | undefined {
+  const data = trpcErrorShape(parsed)?.data;
+  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : undefined;
+}
+
+/** The unwrapped tRPC error shape (superjson `{ json }` or plain), or undefined. */
+function trpcErrorShape(parsed: unknown): Record<string, unknown> | undefined {
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const error = (parsed as { error?: unknown }).error;
   if (typeof error !== 'object' || error === null) return undefined;
   const inner =
     'json' in error ? (error as { json?: unknown }).json : (error as Record<string, unknown>);
   if (typeof inner !== 'object' || inner === null) return undefined;
-  const message = (inner as { message?: unknown }).message;
-  return typeof message === 'string' ? message : undefined;
+  return inner as Record<string, unknown>;
+}
+
+/**
+ * The error fields of a shared-storage WRITE reply — `error`, plus `rateLimit`
+ * only when the refusal carried it. The dev-host twin of the production host's
+ * `sharedStorageErrorReply`, so the six write bridges build the refusal one way.
+ */
+function sharedRefusal(r: TrpcDataResult): { error: string; rateLimit?: SharedStorageRateLimit } {
+  return { error: r.error ?? '', ...(r.rateLimit ? { rateLimit: r.rateLimit } : {}) };
 }

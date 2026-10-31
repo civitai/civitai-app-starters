@@ -4,7 +4,8 @@ import type {
   WorkflowTemplate as GeneratedWorkflowTemplate,
 } from '@civitai/orchestration-client/dist/generated/types.gen.js';
 
-import { ApiError, type Http } from '../http/index.js';
+import type { Http } from '../http/index.js';
+import { isTransient, sleep } from '../http/retry.js';
 
 import type { Step, StepTemplate } from './steps.generated.js';
 
@@ -149,23 +150,4 @@ export function createOrchestrationClient(http: Http): OrchestrationClient {
     queryWorkflows: (query = {}, { signal } = {}) =>
       http<WorkflowPage>('GET', WORKFLOWS, { query: { ...query }, signal }),
   };
-}
-
-/** A blip is worth waiting out; a refusal is an answer. */
-function isTransient(error: unknown): boolean {
-  return !(error instanceof ApiError) || error.status >= 500 || error.status === 429;
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
-  });
 }

@@ -45,9 +45,13 @@
  *
  * This module declares no runtime value; it compiles to an empty ES module.
  */
+import type { BlockPickedImageInfo } from '@civitai/app-sdk/blocks';
+
+import type { ImagePickerMultiple } from './useImagePicker.js';
 import type {
   useAppStorage,
   useAppWorkflows,
+  useBatchEstimate,
   useBlockAnalytics,
   useBlockBreakpoint,
   useBlockContext,
@@ -74,19 +78,29 @@ import type {
   useGenerationResources,
   useGoodPurchase,
   useHostOrigin,
+  useImagePicker,
   useImageUpload,
+  useMediaUpload,
+  useNestedDocument,
   usePublishGenerationOutputs,
+  useReactions,
   useRequestConsent,
   useRequestSignIn,
+  useResourceFile,
   useResourcePicker,
+  useRunConfirmedStep,
+  useRunTraining,
   useSaveImage,
   useSharedStorage,
   useTip,
   useTipAllowance,
+  useUploadImageBytes,
   useViewer,
   useWildcardPack,
+  useWorkflowBatch,
   UseAppStorage,
   UseAppWorkflows,
+  UseBatchEstimate,
   UseBlockAnalytics,
   UseBlockBreakpoint,
   UseBlockContext,
@@ -113,17 +127,26 @@ import type {
   UseGenerationResources,
   UseGoodPurchase,
   UseHostOrigin,
+  UseImagePicker,
   UseImageUpload,
+  UseMediaUpload,
+  UseNestedDocument,
   UsePublishGenerationOutputs,
+  UseReactions,
   UseRequestConsent,
   UseRequestSignIn,
+  UseResourceFile,
   UseResourcePicker,
+  UseRunConfirmedStep,
+  UseRunTraining,
   UseSaveImage,
   UseSharedStorage,
   UseTip,
   UseTipAllowance,
+  UseUploadImageBytes,
   UseViewer,
   UseWildcardPack,
+  UseWorkflowBatch,
 } from '../index.js';
 
 /** Mutual assignability. Bracketed so unions are compared whole — see above. */
@@ -134,6 +157,7 @@ type Assert<T extends true> = T;
 
 type _useAppStorage = Assert<Exact<ReturnType<typeof useAppStorage>, UseAppStorage>>;
 type _useAppWorkflows = Assert<Exact<ReturnType<typeof useAppWorkflows>, UseAppWorkflows>>;
+type _useBatchEstimate = Assert<Exact<ReturnType<typeof useBatchEstimate>, UseBatchEstimate>>;
 type _useBlockAnalytics = Assert<Exact<ReturnType<typeof useBlockAnalytics>, UseBlockAnalytics>>;
 type _useBlockBreakpoint = Assert<Exact<ReturnType<typeof useBlockBreakpoint>, UseBlockBreakpoint>>;
 type _useBlockContext = Assert<Exact<ReturnType<typeof useBlockContext>, UseBlockContext>>;
@@ -175,32 +199,95 @@ type _useGenerationResources = Assert<
 type _useGoodPurchase = Assert<Exact<ReturnType<typeof useGoodPurchase>, UseGoodPurchase>>;
 type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrigin>>;
 /**
- * 🔴 OVERLOADED, SO THIS LINE COVERS ONE ARM OF THREE — say so rather than let
+ * 🔴 OVERLOADED, SO THIS LINE COVERS ONE ARM OF FOUR — say so rather than let
  * it read as full coverage. `ReturnType` resolves an overloaded function to its
  * LAST signature, which here is the default `{ purpose?: 'display' }` call. No
- * conditional-type trick reaches the earlier two: overload resolution inside
+ * conditional-type trick reaches the earlier three: overload resolution inside
  * `infer` also picks the last signature, so an `Exact` written for them would
  * compare the display arm against the generationSource type and fail for a
  * reason that has nothing to do with the code.
  *
- * What covers them instead: {@link UseImageUploadGenerationSource} and
- * {@link UseImageUploadAsyncScan} are the LITERAL return annotations on their
- * overload signatures, and `tsc` checks every overload signature against the
- * implementation's. Rename or gut either one and the build fails at the
- * declaration, not here.
+ * What covers them instead: {@link UseImageUploadGenerationSource},
+ * {@link UseImageUploadTrainingData} and {@link UseImageUploadAsyncScan} are the
+ * LITERAL return annotations on their overload signatures, and `tsc` checks
+ * every overload signature against the implementation's. Rename or gut any one
+ * and the build fails at the declaration, not here.
  */
 type _useImageUpload = Assert<Exact<ReturnType<typeof useImageUpload>, UseImageUpload>>;
+type _useNestedDocument = Assert<Exact<ReturnType<typeof useNestedDocument>, UseNestedDocument>>;
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;
+type _useReactions = Assert<Exact<ReturnType<typeof useReactions>, UseReactions>>;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
+type _useImagePicker = Assert<Exact<ReturnType<typeof useImagePicker>, UseImagePicker>>;
+type _useMediaUpload = Assert<Exact<ReturnType<typeof useMediaUpload>, UseMediaUpload>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
+type _useRunConfirmedStep = Assert<
+  Exact<ReturnType<typeof useRunConfirmedStep>, UseRunConfirmedStep>
+>;
+type _useRunTraining = Assert<Exact<ReturnType<typeof useRunTraining>, UseRunTraining>>;
 type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>>;
 type _useSharedStorage = Assert<Exact<ReturnType<typeof useSharedStorage>, UseSharedStorage>>;
 type _useTip = Assert<Exact<ReturnType<typeof useTip>, UseTip>>;
 type _useTipAllowance = Assert<Exact<ReturnType<typeof useTipAllowance>, UseTipAllowance>>;
+type _useUploadImageBytes = Assert<
+  Exact<ReturnType<typeof useUploadImageBytes>, UseUploadImageBytes>
+>;
 type _useViewer = Assert<Exact<ReturnType<typeof useViewer>, UseViewer>>;
 type _useWildcardPack = Assert<Exact<ReturnType<typeof useWildcardPack>, UseWildcardPack>>;
+type _useResourceFile = Assert<Exact<ReturnType<typeof useResourceFile>, UseResourceFile>>;
+type _useWorkflowBatch = Assert<Exact<ReturnType<typeof useWorkflowBatch>, UseWorkflowBatch>>;
+
+/**
+ * `useImagePicker().open` is OVERLOADED, and `ReturnType` reads only the last
+ * signature, so the line above cannot see what each overload resolves with.
+ * This reads all three, in declaration order, with their option types.
+ *
+ * The third exists for a `multiple` decided at runtime
+ * (`open({ multiple: many ? { max: 3 } : undefined })`), which neither of the
+ * first two accepts. The last three assertions pin exactly that: the toggle's
+ * argument fits the third signature and neither of the others.
+ */
+type ImagePickerOpenSignatures = UseImagePicker['open'] extends {
+  (opts?: infer SingleOpts): infer SingleResult;
+  (opts: infer MultiOpts): infer MultiResult;
+  (opts: infer ToggleOpts): infer ToggleResult;
+}
+  ? {
+      singleOpts: SingleOpts;
+      single: SingleResult;
+      multiOpts: MultiOpts;
+      multi: MultiResult;
+      toggleOpts: ToggleOpts;
+      toggle: ToggleResult;
+    }
+  : never;
+type ImagePickerToggleArg = { multiple: ImagePickerMultiple | undefined };
+type _imagePickerSingle = Assert<
+  Exact<ImagePickerOpenSignatures['single'], Promise<BlockPickedImageInfo | null>>
+>;
+type _imagePickerMulti = Assert<
+  Exact<ImagePickerOpenSignatures['multi'], Promise<BlockPickedImageInfo[]>>
+>;
+type _imagePickerToggle = Assert<
+  Exact<
+    ImagePickerOpenSignatures['toggle'],
+    Promise<BlockPickedImageInfo | BlockPickedImageInfo[] | null>
+  >
+>;
+type _imagePickerToggleFits = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['toggleOpts'] ? true : false
+>;
+// Two assertions, not one against a union of the two option types: TypeScript
+// accepts `{ multiple: A | undefined }` for `{ multiple?: undefined } | { multiple: A }`
+// by splitting it across the union, which overload resolution never does.
+type _imagePickerToggleMissesSingle = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['singleOpts'] ? false : true
+>;
+type _imagePickerToggleMissesMulti = Assert<
+  ImagePickerToggleArg extends ImagePickerOpenSignatures['multiOpts'] ? false : true
+>;
 
 export {};

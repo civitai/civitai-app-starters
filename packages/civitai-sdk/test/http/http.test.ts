@@ -43,6 +43,33 @@ describe('createHttp', () => {
     expect(calls.map((c) => c.headers.Authorization)).toEqual(['Bearer stale', 'Bearer fresh']);
   });
 
+  it('does NOT retry a 401 that asks the viewer to sign in: one request, no re-mint', async () => {
+    let mints = 0;
+    const { fetch, calls } = fakeFetch([
+      () => json(401, { code: 'sign_in_required', message: 'sign in required', error: 'sign in required' }),
+    ]);
+    const session = createTokenSession({ token: 'anon', refresh: () => `fresh${++mints}` });
+
+    await expect(createHttp({ session, baseUrl: BASE, fetch })('GET', 'blocks/storage/prefs')).rejects.toMatchObject({
+      status: 401,
+      body: { code: 'sign_in_required' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(mints).toBe(0);
+  });
+
+  it('still retries a 401 in the same envelope with any other code (token expiry)', async () => {
+    let mints = 0;
+    const { fetch, calls } = fakeFetch([
+      () => json(401, { code: 'unauthenticated', message: 'expired', error: 'expired' }),
+      () => json(200, { ok: 1 }),
+    ]);
+    const session = createTokenSession({ token: 'stale', refresh: () => `fresh${++mints}` });
+
+    await expect(createHttp({ session, baseUrl: BASE, fetch })('GET', 'blocks/storage/prefs')).resolves.toEqual({ ok: 1 });
+    expect(calls.map((c) => c.headers.Authorization)).toEqual(['Bearer stale', 'Bearer fresh1']);
+  });
+
   it('gives up after the fresh token is refused too', async () => {
     const { fetch, calls } = fakeFetch([
       () => json(401, { error: 'expired' }),

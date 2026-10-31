@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AppWorkflow, BlockGatedImage } from '@civitai/app-sdk/blocks';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
-import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useBuzzWorkflow, WorkflowSubmitError } from '../src/hooks/useBuzzWorkflow.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
 import { useBlockToken } from '../src/hooks/useBlockToken.js';
@@ -64,7 +64,7 @@ describe('createMockHost', () => {
   });
 
   it('estimate→submit→poll resolves to a succeeded snapshot with image + cost', async () => {
-    uninstall = createMockHost({ pollsUntilDone: 2, cost: 12 }).install();
+    uninstall = createMockHost({ consentGranted: true, pollsUntilDone: 2, cost: 12 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     // Wait for init so the transport flushes outbound to the mock host.
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
@@ -94,19 +94,24 @@ describe('createMockHost', () => {
     expect(result.current.result?.imageUrls?.[0]).toContain('placehold.co');
   });
 
-  it('failMode "all" returns an insufficient-Buzz failed snapshot on submit', async () => {
-    uninstall = createMockHost({ failMode: 'all' }).install();
+  it('failMode "all" REJECTS submit as out of Buzz (exception, no cost), as production does', async () => {
+    uninstall = createMockHost({ consentGranted: true, failMode: 'all' }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    let snap!: { status: string; error?: string };
+    let outcome: unknown;
     await act(async () => {
-      snap = await result.current.submit(TEXT_BODY);
+      outcome = await result.current.submit(TEXT_BODY).then(
+        (snap) => ({ unexpectedlyResolved: snap }),
+        (err) => err,
+      );
     });
-    // A `failed` snapshot is terminal → status 'done', error carried on the result.
-    await waitFor(() => expect(result.current.status).toBe('done'));
-    expect(snap.status).toBe('failed');
-    expect(result.current.result?.error).toMatch(/insufficient buzz/i);
+    expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+    const err = outcome as WorkflowSubmitError;
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(err.snapshot.error).toMatch(/insufficient buzz/i);
+    await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
   it('OPEN_RESOURCE_PICKER returns the canned LoRA pick', async () => {
@@ -131,6 +136,111 @@ describe('createMockHost', () => {
       picked = await result.current.open({ resourceType: 'LORA' });
     });
     expect(picked).toBeNull();
+  });
+
+  it('OPEN_RESOURCE_PICKER with `multiple` returns the default two LoRAs, in order', async () => {
+    uninstall = createMockHost().install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+    });
+    expect((picked as { versionId: number; modelName: string }[]).map((p) => [p.versionId, p.modelName])).toEqual([
+      [666002, 'Sinfully Stylish'],
+      [777003, 'Ink Wash Lines'],
+    ]);
+  });
+
+  it('OPEN_RESOURCE_PICKER with `multiple` cuts the canned list to `max`, keeping order', async () => {
+    const pick = (versionId: number) => ({
+      versionId,
+      modelId: versionId + 1,
+      modelName: `L${versionId}`,
+      versionName: 'v1',
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+    });
+    uninstall = createMockHost({ cannedMultiPicks: [pick(30), pick(10), pick(20), pick(40)] }).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+    });
+    expect((picked as { versionId: number }[]).map((p) => p.versionId)).toEqual([30, 10, 20]);
+  });
+
+  it('OPEN_RESOURCE_PICKER with `multiple` caps at 5 even when more are canned and asked for', async () => {
+    const pick = (versionId: number) => ({
+      versionId,
+      modelId: versionId + 1,
+      modelName: `L${versionId}`,
+      versionName: 'v1',
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+    });
+    uninstall = createMockHost({
+      cannedMultiPicks: [7, 6, 5, 4, 3, 2, 1].map(pick),
+    }).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 9 } });
+    });
+    expect((picked as { versionId: number }[]).map((p) => p.versionId)).toEqual([7, 6, 5, 4, 3]);
+  });
+
+  it.each([
+    ['cannedMultiPicks: null', { cannedMultiPicks: null }],
+    ['cannedMultiPicks: []', { cannedMultiPicks: [] }],
+    ['cannedPicks.LORA: null (one dismiss setting covers both modes)', { cannedPicks: { LORA: null } }],
+  ])('OPEN_RESOURCE_PICKER with `multiple` resolves [] when dismissed — %s', async (_, options) => {
+    uninstall = createMockHost(options).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown = 'unset';
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 2 } });
+    });
+    expect(picked).toEqual([]);
+  });
+
+  it('the mock REFUSES a raw `multiple` + Checkpoint request with an error, like the host', async () => {
+    uninstall = createMockHost().install();
+    renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    // The hook refuses this before sending, so post the raw message a
+    // hand-rolled client would, and read the mock's raw reply.
+    const replies: unknown[] = [];
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data as { type?: string; payload?: unknown };
+      if (d?.type === 'RESOURCE_PICKER_RESULT') replies.push(d.payload);
+    };
+    window.addEventListener('message', onMessage);
+    try {
+      window.parent.postMessage(
+        {
+          type: 'OPEN_RESOURCE_PICKER',
+          payload: { requestId: 'raw-ckpt-multi', resourceType: 'Checkpoint', multiple: { max: 2 } },
+        },
+        '*',
+      );
+      await waitFor(() => expect(replies).toHaveLength(1));
+      expect(replies[0]).toEqual({
+        requestId: 'raw-ckpt-multi',
+        error:
+          'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+      });
+    } finally {
+      window.removeEventListener('message', onMessage);
+    }
   });
 
   it('consent round-trip: REQUEST_CONSENT grants the scope + pushes a refreshed token', async () => {
@@ -390,6 +500,35 @@ describe('createMockHost', () => {
     act(() => result.current.refetch());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.workflows.find((w) => w.workflowId === 'wf_app_1')?.status).toBe('canceled');
+  });
+
+  // INVARIANT guard (green before the AppWorkflow.trainedEpochs change too): the
+  // mock replies with canned rows verbatim, so a training row's trainedEpochs
+  // must reach the hook intact — through the real inbound row validator.
+  it('QUERY_APP_WORKFLOWS passes a training row\'s trainedEpochs + publishedModel through to the hook', async () => {
+    const trainingRow: AppWorkflow = {
+      workflowId: 'wf_train',
+      status: 'succeeded',
+      images: [],
+      cost: 250,
+      createdAt: '2026-07-14T12:05:00.000Z',
+      trainedEpochs: [
+        { $type: 'training', epochNumber: 1 },
+        { $type: 'training', epochNumber: 2 },
+      ],
+      publishedModel: { modelId: 71, modelVersionId: 83, published: false },
+    };
+    uninstall = createMockHost({ appWorkflows: { workflows: [trainingRow, ...APP_WFS] } }).install();
+    const { result } = renderHook(() => useAppWorkflows());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.workflows[0]?.trainedEpochs).toEqual([
+      { $type: 'training', epochNumber: 1 },
+      { $type: 'training', epochNumber: 2 },
+    ]);
+    expect(result.current.workflows[0]?.publishedModel).toEqual({ modelId: 71, modelVersionId: 83, published: false });
+    expect(result.current.workflows.slice(1)).toEqual(APP_WFS);
   });
 
   it('appWorkflowsError forces BOTH bridges to the error variant (read errors, cancel rejects)', async () => {

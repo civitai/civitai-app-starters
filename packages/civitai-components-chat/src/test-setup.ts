@@ -1,3 +1,5 @@
+import { afterEach } from 'vitest';
+
 // jsdom lacks what the civitai elements and the viewer lean on; none of it is under test here.
 
 class ResizeObserverStub {
@@ -69,3 +71,6 @@ HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogEle
 HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) {
   this.open = false;
 };
+
+// Each test is a tab of its own: what the chat notes in the tab's sessionStorage (the reply it started) goes with it.
+afterEach(() => sessionStorage.clear());

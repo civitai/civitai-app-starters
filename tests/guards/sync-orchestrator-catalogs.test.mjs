@@ -32,6 +32,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { CLAIMS } from '../../packages/civitai-app-sdk/test/orchestrator/step-count-claims.mjs';
+
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SYNC = join(REPO_ROOT, 'scripts', 'sync-orchestrator-catalogs.mjs');
@@ -73,14 +75,41 @@ async function serveSpec(spec) {
   };
 }
 
+/** The `$type`s a synthetic ledger string names (`never` → none). */
+const ledgerKeys = (ledger) =>
+  ledger === 'never' || !ledger.startsWith("'")
+    ? []
+    : ledger.split('|').map((part) => part.trim().slice(1, -1));
+
+/** A claim template with `values` substituted — the fixture side, not the script's. */
+const renderClaim = (text, values) => text.replace(/\{(\w+)\}/g, (_, k) => values[k]);
+
 /**
  * A synthetic tree carrying only the paths the script writes, in the real repo's
- * shape: the four files it rewrites, plus the `.changeset` directory it drops a
- * fifth file into. The SDK source and test file are REAL excerpts — same anchors
+ * shape: the six files it rewrites, plus the `.changeset` directory it drops a
+ * seventh file into. The SDK source and test file are REAL excerpts — same anchors
  * the script does text surgery against — so a change to those anchors upstream
  * fails here rather than in production.
+ *
+ * `mapped` is the synthetic `interface StepTemplateMap`'s keys; by default every
+ * catalog key the ledger does not name, which is the consistent state `main` is
+ * held to. `steps.ts` and the README carry every step-count claim from
+ * `step-count-claims.mjs`, rendered for that state, and the type test carries one
+ * `@ts-expect-error` pin per ledger entry — so a tree starts out passing the SDK's
+ * step-count guard, and what a run changes is what the run did.
  */
-function makeTree({ stepTypes, engines, ledger = 'never' }) {
+function makeTree({ stepTypes, engines, ledger = 'never', mapped }) {
+  const gapKeys = ledgerKeys(ledger);
+  const mappedKeys = mapped ?? stepTypes.filter((k) => !gapKeys.includes(k));
+  const gap = stepTypes.filter((k) => !mappedKeys.includes(k)).sort();
+  const values = {
+    catalog: String(stepTypes.length),
+    mapped: String(mappedKeys.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+  const claimsFor = (tag) => CLAIMS.filter((c) => c.files.includes(tag));
+
   const dir = mkdtempSync(join(tmpdir(), 'catalog-sync-'));
   mkdirSync(join(dir, 'packages/civitai-app-sdk/test/fixtures'), { recursive: true });
   mkdirSync(join(dir, 'packages/civitai-app-sdk/test/orchestrator'), { recursive: true });
@@ -128,6 +157,39 @@ function makeTree({ stepTypes, engines, ledger = 'never' }) {
       `type CatalogStepTypesWithoutAGeneratedType = ${ledger};`,
       'const after = 2;',
       '',
+      '/**',
+      ' * One alias per ledger entry, named `_NoGeneratedTemplateFor_<$type>`.',
+      ' */',
+      ...gapKeys.flatMap((k) => [
+        '// @ts-expect-error — documented `$type`, no generated template in the pinned peer',
+        `export type _NoGeneratedTemplateFor_${k} = WorkflowStepTemplateFor<'${k}'>;`,
+      ]),
+      'const afterPins = 3;',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, STEPS),
+    [
+      '/**',
+      ' * A synthetic excerpt carrying every step-count claim the sync script rewrites.',
+      ...claimsFor('steps').flatMap((c) => [' *', ` * ${renderClaim(c.text, values)}`]),
+      ' */',
+      'interface StepTemplateMap {',
+      ...mappedKeys.map((k, i) => `  ${k}: T${i}StepTemplate;`),
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, README),
+    [
+      '# synthetic README excerpt',
+      ...claimsFor('readme').flatMap((c) => [
+        '',
+        `${c.id === 'gap' ? '> ' : ''}${renderClaim(c.text, values)}`,
+      ]),
+      '',
     ].join('\n'),
   );
   return dir;
@@ -138,6 +200,9 @@ const SDK = 'packages/civitai-app-sdk/src/orchestrator/index.ts';
 const FIXTURE = 'packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json';
 const TEST = 'packages/civitai-app-sdk/test/orchestrator.test.ts';
 const TYPE_TEST = 'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts';
+const STEPS = 'packages/civitai-app-sdk/src/orchestrator/steps.ts';
+const README = 'packages/civitai-app-sdk/README.md';
+const ALL = [SDK, FIXTURE, TEST, TYPE_TEST, STEPS, README];
 
 async function run(script, env) {
   try {
@@ -260,13 +325,30 @@ test('a new STEP TYPE extends the not-yet-typed ledger; a new ENGINE leaves it a
   // that, "write the ledger unconditionally" is an equivalent mutant: an
   // engine-only run re-emits `never` byte-for-byte and the assertion below
   // cannot see it. Measured — with a `never` ledger that mutant SURVIVED.
+  //
+  // The ledger's keys are catalog keys here, as they are on `main` (the type
+  // test pins the ledger to catalog-minus-map), so the gap pass finds the SAME
+  // set and must leave the hand ordering alone. Its own spec: the step-type arm
+  // above would otherwise see these two as additions.
+  const engineSpec = await serveSpec(
+    makeSpec(
+      {
+        echo: 'Echo the input back.',
+        imageScanning: 'Scan an image.',
+        songGen: 'Generate a song.',
+        yuE2: 'Generate music.',
+      },
+      { comfy: 'A ComfyUI graph.', flux: 'Flux image generation.' },
+    ),
+  );
   const engineOnly = makeTree({
-    stepTypes: ['echo', 'songGen'],
+    stepTypes: ['echo', 'imageScanning', 'songGen', 'yuE2'],
     engines: ['comfy'],
     ledger: "'yuE2' | 'imageScanning'",
   });
   t.after(async () => {
     await server.close();
+    await engineSpec.close();
     rmSync(dir, { recursive: true, force: true });
     rmSync(engineOnly, { recursive: true, force: true });
   });
@@ -283,7 +365,7 @@ test('a new STEP TYPE extends the not-yet-typed ledger; a new ENGINE leaves it a
   assert.match(stepRun.out, /songGen/, 'the run must say what it added to the ledger');
 
   const engineBefore = read(engineOnly, TYPE_TEST);
-  const engineRun = await runSync(engineOnly, server.url);
+  const engineRun = await runSync(engineOnly, engineSpec.url);
   assert.equal(engineRun.code, 0, `sync should succeed; got ${engineRun.code}\n${engineRun.out}`);
   assert.match(
     read(engineOnly, SDK),
@@ -297,11 +379,11 @@ test('a new STEP TYPE extends the not-yet-typed ledger; a new ENGINE leaves it a
   );
 });
 
-test('an existing ledger GROWS rather than being replaced, and an unparseable one is refused', async (t) => {
+test('an existing ledger entry still in the gap is KEPT beside a new one, and an unparseable ledger is refused', async (t) => {
   const server = await serveSpec(
-    makeSpec({ echo: 'Echo the input back.', songGen: 'Generate a song.' }),
+    makeSpec({ echo: 'Echo the input back.', songGen: 'Generate a song.', yuE2: 'Generate music.' }),
   );
-  const grow = makeTree({ stepTypes: ['echo'], engines: ['comfy'], ledger: "'yuE2'" });
+  const grow = makeTree({ stepTypes: ['echo', 'yuE2'], engines: ['comfy'], ledger: "'yuE2'" });
   const refuse = makeTree({
     stepTypes: ['echo'],
     engines: ['comfy'],
@@ -323,72 +405,49 @@ test('an existing ledger GROWS rather than being replaced, and an unparseable on
 
   // A shape this script cannot parse is one it must not guess at — same
   // contract as `bumpCount`, and the same "nothing written" promise.
-  const refuseBefore = [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(refuse, p));
+  const refuseBefore = ALL.map((p) => read(refuse, p));
   const refuseRun = await runSync(refuse, server.url);
   assert.equal(refuseRun.code, 1, `an unparseable ledger must exit 1, got ${refuseRun.code}\n${refuseRun.out}`);
   assert.match(refuseRun.out, /CatalogStepTypesWithoutAGeneratedType/, 'the refusal must name the alias');
   assert.deepEqual(
-    [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(refuse, p)),
+    ALL.map((p) => read(refuse, p)),
     refuseBefore,
     'exit 1 must mean NOTHING was written',
   );
   assert.deepEqual(readdirSync(join(refuse, '.changeset')), [], 'and no changeset');
 });
 
-test('a HYPHENATED step type survives the round trip: what one run writes, the next run can read', async (t) => {
-  // 🔴 THE WRITER AND THE READER MUST ADMIT THE SAME KEY SHAPE. `SAFE_KEY`
-  // deliberately allows hyphens — `flux1-kontext` is live in the imageGen
-  // mapping today and is named in that constant's own comment as the reason —
-  // so a hyphenated key is a shape this script accepts and emits. No hyphenated
-  // STEP TYPE is live yet (measured against the pinned fixture: 0 of 47, versus
-  // 1 of 13 engines), so this is a latent path, not a past incident. What made
-  // it a wedge rather than a crash is WHERE it lands: `extendLedger`'s reader
-  // was a separately hand-written regex that did not admit hyphens, so run 1
-  // wrote a ledger entry that run 2 refused — exit 1, nothing written, no PR,
-  // on a scheduled job, one run after the cause.
+test('a HYPHENATED step type is REFUSED, naming the key, with nothing written', async (t) => {
+  // 🔴 WHAT THIS USED TO PIN, AND WHY IT CHANGED. `SAFE_KEY` deliberately allows
+  // hyphens (`flux1-kontext` is a live imageGen engine), and this test once
+  // chained two runs to prove the ledger WRITER and READER admit the same key
+  // shape — a hyphenated step type written into the ledger by run 1 used to wedge
+  // run 2 with exit 1 (fixed by deriving `SAFE_KEY_LITERAL` from `SAFE_KEY`).
   //
-  // The two runs are CHAINED: the second reads exactly what the first wrote,
-  // not a hand-typed copy of it. A test that asserted a literal ledger string
-  // could drift from the emitter and stop testing the pairing.
+  // Since the script also writes one `_NoGeneratedTemplateFor_<$type>` alias per
+  // gap `$type`, a hyphenated step type cannot be synced at all:
+  // `_NoGeneratedTemplateFor_flux1-kontext` is not a TypeScript name, and how to
+  // spell such a pin is a decision for the SDK guard that reads them
+  // (`readCompileErrorPins`). So the script refuses up front — exit 1, the key
+  // named, nothing written — rather than writing a ledger the very next step
+  // (`Validate SDK`) fails on. No hyphenated STEP TYPE is live (0 of 58 in the
+  // pinned fixture), so this is a latent path, not a past incident.
   const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
-  const firstSpec = await serveSpec(
+  const spec = await serveSpec(
     makeSpec({ echo: 'Echo the input back.', 'flux1-kontext': 'Edit an image from an instruction.' }),
   );
-  const secondSpec = await serveSpec(
-    makeSpec({
-      echo: 'Echo the input back.',
-      'flux1-kontext': 'Edit an image from an instruction.',
-      songGen: 'Generate a song.',
-    }),
-  );
   t.after(async () => {
-    await firstSpec.close();
-    await secondSpec.close();
+    await spec.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const run1 = await runSync(dir, firstSpec.url);
-  assert.equal(run1.code, 0, `run 1 should succeed; got ${run1.code}\n${run1.out}`);
-  assert.match(
-    read(dir, TYPE_TEST),
-    /^type CatalogStepTypesWithoutAGeneratedType = 'flux1-kontext';$/m,
-    'run 1 must write the hyphenated key into the ledger — otherwise run 2 has nothing to choke on',
-  );
-
-  const run2 = await runSync(dir, secondSpec.url);
-  assert.equal(
-    run2.code,
-    0,
-    `run 2 must be able to READ what run 1 wrote; got ${run2.code}\n${run2.out}`,
-  );
-  assert.match(
-    read(dir, TYPE_TEST),
-    /^type CatalogStepTypesWithoutAGeneratedType = 'flux1-kontext' \| 'songGen';$/m,
-    'the hyphenated entry must survive, and the new one must be added beside it',
-  );
-  // Positive control: run 2 really did work, rather than finding nothing to do.
-  assert.match(read(dir, SDK), /songGen: "Generate a song\."/);
-  assert.match(read(dir, SDK), /"flux1-kontext": "Edit an image from an instruction\."/);
+  const before = ALL.map((p) => read(dir, p));
+  const run1 = await runSync(dir, spec.url);
+  assert.equal(run1.code, 1, `a hyphenated step type must exit 1; got ${run1.code}\n${run1.out}`);
+  assert.match(run1.out, /"flux1-kontext"/, 'the refusal must name the key');
+  assert.match(run1.out, /_NoGeneratedTemplateFor_/, 'and say it is the pin spelling that blocks it');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), before, 'exit 1 must mean NOTHING was written');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
 });
 
 test('a WITHDRAWN key is refused with exit 2 and NOTHING is written', async (t) => {
@@ -695,5 +754,192 @@ test('a failure PART WAY THROUGH leaves every file byte-identical', async (t) =>
     before,
     'exit 1 must mean NOTHING was written — including the fixture and the SDK source, which are computed first',
   );
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});
+
+// ---------------------------------------------------------------------------
+// The step-type GAP surfaces, against COPIES OF THE REAL FILES.
+//
+// Run 37834855058 (workflow_dispatch, 2026-10-08) added a step type, wrote the
+// fixture / catalog / count pin / ledger, and then failed its own `Validate SDK`
+// step in `step-count-prose.test.ts`: six `claim-count` misses and "pins one
+// live compile error per gap $type". The script did not touch the README /
+// steps.ts prose or the `@ts-expect-error` pins, so NO PR OPENED. These tests
+// drive the script over the real README, steps.ts and type test — the synthetic
+// excerpts above cannot see a claim that only the real prose wraps or words
+// differently — and assert the outcome the way that guard does: every claim, with
+// the values a human would write, occurs exactly once.
+// ---------------------------------------------------------------------------
+
+/** The guard's normalisation, restated: JSDoc `*` / blockquote `>` prefixes off, whitespace collapsed. */
+const normaliseProse = (text) =>
+  text
+    .replace(/^[ \t]*(?:\*|>)[ \t]?/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** Copy the six files the script edits out of THIS checkout into a throwaway tree. */
+function copyRealTree() {
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-sync-real-'));
+  for (const p of ALL) {
+    mkdirSync(dirname(join(dir, p)), { recursive: true });
+    writeFileSync(join(dir, p), readFileSync(join(REPO_ROOT, p), 'utf8'));
+  }
+  mkdirSync(join(dir, '.changeset'), { recursive: true });
+  return dir;
+}
+
+/** The ledger's members, read with a regex of this test's own. */
+function readLedger(dir) {
+  const m = /^type CatalogStepTypesWithoutAGeneratedType = ([^;]*);$/m.exec(read(dir, TYPE_TEST));
+  assert.ok(m, 'the ledger alias must be present');
+  return m[1].trim() === 'never' ? [] : m[1].split('|').map((s) => s.trim().slice(1, -1)).sort();
+}
+
+/** The `$type`s pinned by a `@ts-expect-error` + `_NoGeneratedTemplateFor_<$type>` pair. */
+function readPins(dir) {
+  const re =
+    /^\/\/ @ts-expect-error — documented `\$type`, no generated template in the pinned peer\nexport type _NoGeneratedTemplateFor_(\w+) = WorkflowStepTemplateFor<'(\w+)'>;$/gm;
+  return [...read(dir, TYPE_TEST).matchAll(re)].map((m) => {
+    assert.equal(m[1], m[2], `pin alias ${m[1]} must pin its own $type`);
+    return m[1];
+  }).sort();
+}
+
+/**
+ * Every claim for `tag` that does NOT occur exactly once in `file` with
+ * `values` substituted — the guard's own `claim-count` check, restated. Empty
+ * means the file passes it.
+ */
+function claimMisses(dir, file, tag, values) {
+  const text = normaliseProse(read(dir, file));
+  return CLAIMS.filter((c) => c.files.includes(tag))
+    .map((c) => {
+      const needle = normaliseProse(renderClaim(c.text, values));
+      const n = text.split(needle).length - 1;
+      return n === 1 ? null : `${c.id}: found ${n} of: ${needle}`;
+    })
+    .filter(Boolean);
+}
+
+const realFixture = () => JSON.parse(readFileSync(join(REPO_ROOT, FIXTURE), 'utf8'));
+
+/** A spec carrying exactly `steps` (no description) and the real fixture's engines. */
+const specFor = (steps) =>
+  makeSpec(
+    Object.fromEntries(steps.map((k) => [k, null])),
+    Object.fromEntries(realFixture().imageGenEngines.map((k) => [k, null])),
+  );
+
+test('REAL FILES: a new untyped step type restates the gap in the prose, the ledger and the pins — and a second run is a no-op', async (t) => {
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  // Expected values from THIS test's inputs, not from the script: the catalog
+  // grows by one, the map does not move, and the gap is the ledger the tree
+  // started with plus the new key.
+  const gapBefore = readLedger(dir);
+  const NEW = 'zzSyncProbeStep';
+  assert.ok(!before.includes(NEW));
+  const gap = [...gapBefore, NEW].sort();
+  const values = {
+    catalog: String(before.length + 1),
+    mapped: String(before.length - gapBefore.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+  // Positive control on the claim check itself: the UNTOUCHED copy must fail it
+  // for these values, or a green below says nothing about the script.
+  assert.notDeepEqual(claimMisses(dir, STEPS, 'steps', values), [], 'control: the stale steps.ts must miss');
+  assert.notDeepEqual(claimMisses(dir, README, 'readme', values), [], 'control: the stale README must miss');
+
+  const server = await serveSpec(specFor([...before, NEW]));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const run1 = await runSync(dir, server.url);
+  assert.equal(run1.code, 0, `sync should succeed; got ${run1.code}\n${run1.out}`);
+
+  assert.deepEqual(claimMisses(dir, STEPS, 'steps', values), [], 'every steps.ts claim must state the new counts');
+  assert.deepEqual(claimMisses(dir, README, 'readme', values), [], 'every README claim must state the new counts');
+  assert.deepEqual(readLedger(dir), gap, 'the never-ledger must name the new gap');
+  assert.deepEqual(readPins(dir), gap, 'one @ts-expect-error pin per gap $type');
+  assert.equal(
+    [...read(dir, TYPE_TEST).matchAll(/^export type _NoGeneratedTemplateFor_/gm)].length,
+    gap.length,
+    'no pin may be left outside the block',
+  );
+
+  // Idempotent: the same spec again writes nothing and says so.
+  const after1 = ALL.map((p) => read(dir, p));
+  const changesets1 = readdirSync(join(dir, '.changeset'));
+  const run2 = await runSync(dir, server.url);
+  assert.equal(run2.code, 0, `run 2 should succeed; got ${run2.code}\n${run2.out}`);
+  assert.match(run2.out, /No drift/, 'a second run must report nothing to do');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), after1, 'a second run must leave every file byte-identical');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), changesets1, 'and write no second changeset');
+});
+
+test('REAL FILES: a $type that gains a StepTemplateMap row leaves the gap everywhere, with no catalog drift', async (t) => {
+  // The REMOVAL direction. A human adds the row once `@civitai/client`
+  // republishes with the template; re-running the sync must drop that `$type`
+  // from the ledger, the pins and the prose, and write no catalog/changeset
+  // change, because the spec did not move.
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  const gapBefore = readLedger(dir);
+  assert.ok(gapBefore.length >= 2, 'needs a gap to shrink');
+  const leaving = gapBefore[0];
+  const steps = read(dir, STEPS);
+  const closeAt = steps.indexOf('\n}\n', steps.indexOf('interface StepTemplateMap {'));
+  writeFileSync(
+    join(dir, STEPS),
+    `${steps.slice(0, closeAt)}\n  ${leaving}: SomeGeneratedStepTemplate;${steps.slice(closeAt)}`,
+  );
+  const gap = gapBefore.filter((k) => k !== leaving);
+  const values = {
+    catalog: String(before.length),
+    mapped: String(before.length - gap.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+
+  const server = await serveSpec(specFor(before));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const untouched = [SDK, FIXTURE, TEST].map((p) => read(dir, p));
+
+  const run = await runSync(dir, server.url);
+  assert.equal(run.code, 0, `sync should succeed; got ${run.code}\n${run.out}`);
+  assert.deepEqual(readLedger(dir), gap, `${leaving} must leave the ledger`);
+  assert.deepEqual(readPins(dir), gap, `${leaving} must lose its @ts-expect-error pin`);
+  assert.deepEqual(claimMisses(dir, STEPS, 'steps', values), []);
+  assert.deepEqual(claimMisses(dir, README, 'readme', values), []);
+  assert.deepEqual([SDK, FIXTURE, TEST].map((p) => read(dir, p)), untouched, 'no catalog drift, so no catalog edit');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});
+
+test('REAL FILES: a REWORDED claim is refused by id, with nothing written', async (t) => {
+  // The rewrite is anchored on the whole sentence. A claim it cannot find must
+  // stop the run loudly — not leave a stale number for `Validate SDK` to find.
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  const readme = read(dir, README);
+  assert.equal(readme.split(' in total)').length - 1, 1, 'fixture precondition: catalog-3 occurs once');
+  writeFileSync(join(dir, README), readme.replace(' in total)', ' total)'));
+  const server = await serveSpec(specFor([...before, 'zzSyncProbeStep']));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const snapshot = ALL.map((p) => read(dir, p));
+
+  const run = await runSync(dir, server.url);
+  assert.equal(run.code, 1, `a missing claim must exit 1; got ${run.code}\n${run.out}`);
+  assert.match(run.out, /claim catalog-3 occurs 0 times/, 'the refusal must name the claim');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), snapshot, 'exit 1 must mean NOTHING was written');
   assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
 });

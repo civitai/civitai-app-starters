@@ -6,6 +6,11 @@ import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import type { CivitaiTabs } from '../src/elements/civitai-tabs.js';
 import type { CivitaiToastRegion } from '../src/elements/civitai-toast-region.js';
 import type { CivitaiVideo } from '../src/elements/civitai-video.js';
+import type { CivitaiProgress } from '../src/elements/civitai-progress.js';
+import type { CivitaiBreadcrumb } from '../src/elements/civitai-breadcrumb.js';
+import type { CivitaiPagination } from '../src/elements/civitai-pagination.js';
+import type { CivitaiNavList } from '../src/elements/civitai-nav-list.js';
+import type { CivitaiConfirmDialog } from '../src/elements/civitai-confirm-dialog.js';
 import '../src/elements/register-site.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
@@ -208,6 +213,46 @@ document.querySelector('#toast-error')?.addEventListener('click', () => {
   });
 });
 document.querySelector('#toast-clear')?.addEventListener('click', () => toasts?.clear());
+
+const progress = document.querySelector<CivitaiProgress>('#progress-live');
+setInterval(() => {
+  if (progress) progress.value = (progress.value + 5) % 105;
+}, 300);
+
+const crumbs = document.querySelector<CivitaiBreadcrumb>('#crumbs');
+if (crumbs) {
+  crumbs.data = [
+    { label: 'Home', href: '#' },
+    { label: 'Models', href: '#models' },
+    { label: 'Flux.1 [dev]' },
+  ];
+}
+
+const pageValue = document.querySelector('#page-value');
+document.querySelector('#pages')?.addEventListener('change', (event) => {
+  if (pageValue) pageValue.textContent = `page ${(event.target as CivitaiPagination).page}`;
+});
+
+const nav = document.querySelector<CivitaiNavList>('#nav');
+const navValue = document.querySelector('#nav-value');
+nav?.addEventListener('click', (event) => {
+  const link = event.composedPath().find((el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement);
+  if (!link) return;
+  event.preventDefault();
+  nav.current = link.getAttribute('href') ?? '';
+  if (navValue) navValue.textContent = `current: ${nav.current}`;
+});
+
+const confirmValue = document.querySelector('#confirm-value');
+for (const [button, dialog] of [
+  ['#ask-confirm', '#confirm'],
+  ['#ask-destructive', '#confirm-destructive'],
+] as const) {
+  document.querySelector(button)?.addEventListener('click', async () => {
+    const answer = await document.querySelector<CivitaiConfirmDialog>(dialog)?.ask();
+    if (confirmValue) confirmValue.textContent = `ask() resolved ${answer}`;
+  });
+}
 
 const form = document.querySelector<HTMLFormElement>('#demo');
 const result = document.querySelector('#result');

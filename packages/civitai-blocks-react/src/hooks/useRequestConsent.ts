@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import { sendRequestConsent } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useRequestConsent} returns. */
 export interface UseRequestConsent {
@@ -50,6 +51,7 @@ export interface UseRequestConsent {
  * requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
  */
 export function useRequestConsent(): UseRequestConsent {
+  useTransportConnection();
   const requestConsent = useCallback((payload?: { scopes?: string[] }) => {
     // Single-sourced with the SDK's own automatic prompt-and-retry
     // (`internal/withConsentRetry.ts`), which posts the identical message. The

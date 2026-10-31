@@ -11,9 +11,54 @@ const turn = (seq: number, steps: number): Turn => ({
 });
 
 describe('conversationSpend', () => {
-  it('adds what the generations cost to one Buzz per assistant call and per saved turn', () => {
+  it('counts each reply at what the orchestrator charged it, free replies at 0, whatever the model', () => {
+    const free = turn(1, 6);
+    free.assistant.buzz = 0;
+    const premium = turn(2, 2);
+    premium.assistant.buzz = 37;
+    const conversation: Conversation = { id: 'c', title: 'Bikes', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [free, premium] };
+    expect(conversationSpend(conversation, [{ spent: 20 }], 1)).toEqual({ total: 59, generations: 20, assistant: 39 });
+  });
+
+  it('counts a reopened chat of free replies as costing nothing, before any save in this session says what saving costs', () => {
+    const free = turn(1, 3);
+    free.assistant.buzz = 0;
+    const conversation: Conversation = { id: 'c', title: 'Free', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [free, { ...turn(2, 2), assistant: { ...turn(2, 2).assistant, buzz: 0 } }] };
+    expect(conversationSpend(conversation, [])).toEqual({ total: 0, generations: 0, assistant: 0 });
+  });
+
+  it('estimates replies saved before charges were reported at one Buzz per call, plus each saved turn', () => {
     const conversation: Conversation = { id: 'c', title: 'Bikes', titleSource: 'llm', createdAt: '', updatedAt: '', turns: [turn(1, 2), turn(2, 1)] };
-    expect(conversationSpend(conversation, [{ spent: 44 }, { spent: 0 }, { spent: 8.4 }])).toEqual({ total: 58, generations: 52, assistant: 6 });
+    expect(conversationSpend(conversation, [{ spent: 44 }, { spent: 0 }, { spent: 8.4 }], 1)).toEqual({ total: 58, generations: 52, assistant: 6 });
     expect(conversationSpend(conversation, [], 0).assistant).toBe(4);
+  });
+
+  it('adds each subagent’s steps, from its saved dispatch_agent result, and says how many', () => {
+    // 2 calls of the reply itself, and two subagents of 13 and 4 steps; a refusal (no steps) adds nothing.
+    const withChildren: Turn = {
+      seq: 1,
+      createdAt: '2026-10-19T00:00:00Z',
+      user: { content: 'research', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd2', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd3', toolName: 'dispatch_agent', input: {} }, { type: 'tool-call', toolCallId: 'd4', toolName: 'dispatch_agent', input: {} }] },
+          {
+            role: 'tool',
+            content: [
+              { type: 'tool-result', toolCallId: 'd1', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', status: 'done', summary: 's', steps: 13, toolCalls: 20, activity: [] } } },
+              { type: 'tool-result', toolCallId: 'd2', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', status: 'ran_out', summary: '', steps: 4, toolCalls: 3, activity: [] } } },
+              { type: 'tool-result', toolCallId: 'd3', toolName: 'dispatch_agent', output: { type: 'json', value: { kind: 'subagent', error: 'write subagents are not available yet' } } },
+              // A page's own tool of that name: not a subagent, whatever its output says.
+              { type: 'tool-result', toolCallId: 'd4', toolName: 'dispatch_agent', output: { type: 'json', value: { status: 'done', summary: '', steps: 50, toolCalls: 0, activity: [] } } },
+            ],
+          },
+          { role: 'assistant', content: 'Here is what they found.' },
+        ],
+      },
+    };
+    const conversation: Conversation = { id: 'c', title: 't', titleSource: 'first-message', createdAt: '', updatedAt: '', turns: [withChildren] };
+    // (2 + 13 + 4) calls and one saved turn.
+    expect(conversationSpend(conversation, [], 1)).toEqual({ total: 20, generations: 0, assistant: 20, subagentSteps: 17 });
   });
 });

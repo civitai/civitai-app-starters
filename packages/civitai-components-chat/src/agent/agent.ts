@@ -1,50 +1,99 @@
-import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
-import { MAX_OUTPUT_TOKENS, MAX_STEPS } from '../config.js';
+import { outputTokenCap } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PostManager } from '../posting/post.js';
-import type { ThreadStore } from '../store/thread-store.js';
-import { ASK_CHOICE } from '../tools/build.js';
-import type { Attachment, Turn } from '../types.js';
-import { humanize } from '../ux/humanize.js';
+import type { ConversationStore } from '../store/conversation-store.js';
+import { editTurn } from '../store/thread-store.js';
+import type { Attachment, ResumePoint, Turn } from '../types.js';
+import { humanize, type HumanError } from '../ux/humanize.js';
+import type { ChatAgent } from './chat-agent.js';
+import { AgentCore, type AgentCoreOutcome, type LiveTurn } from './core.js';
+import { errorTrace, type ErrorTrace, type TraceContext } from './error-trace.js';
 import { buildModelMessages } from './history.js';
-import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
-import { buildSystemPrompt } from './system-prompt.js';
+import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
+import { nextReply } from '../tools/gate.js';
+
+export type { LiveTurn } from './core.js';
 
 export interface AgentDeps {
-  model: LanguageModel;
-  store: ThreadStore;
+  /** Read at the start of every reply, so a change in Settings applies from the next one. */
+  model(): LanguageModel;
+  /** Naming a conversation is a few words; it need not use a costly model the viewer picked. */
+  titleModel?(): LanguageModel;
+  /** The most one step of the reply may write, read at the start of every reply; the page's default when absent. */
+  maxOutputTokens?(): number;
+  store: ConversationStore;
   jobs: JobManager;
   posts?: PostManager;
-  toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet>;
+  /**
+   * The reply's tools. `reply` is the reply's number (`nextReply()`), the same every time one reply
+   * builds them, its rebuilds after `reopenTools` included, so a page's per-reply count holds across them.
+   */
+  toolSet(turn: { conversationId: string; seq: number; reply: number }): Promise<ToolSet>;
   attachments(): Attachment[];
   customInstructions?(): string | undefined;
   /** Read at the start of every reply, so the embedding page can change them at any time. */
   hostInstructions?(): string | undefined;
+  /** Whether the user hears replies read aloud, read at the start of every reply. */
+  spokenReplies?(): boolean;
   isHostTool?(name: string): boolean;
+  /** What the assistant is told about the panels on screen, read at the start of every reply. */
+  panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** The words the viewer sees for a reply that failed; `humanize` unless set. */
+  describeError?(error: unknown): HumanError;
   now?(): Date;
+  /** The viewer's time zone for the prompt's date (`dateLine`), read at the start of every reply; UTC's date unless set. */
+  timeZone?(): string | undefined;
+  /**
+   * The wait before each automatic retry of one drop of the browser's network (see
+   * `network-retry.ts`); its length is how many retries one drop gets, and `[]` turns them off.
+   */
+  networkRetryDelaysMs?: readonly number[];
+  /** The most automatic retries one reply makes in all; `MAX_NETWORK_RETRIES_PER_REPLY` unless set. */
+  maxNetworkRetries?: number;
 }
 
-export interface LiveTurn {
-  seq: number;
-  parts: TurnPart[];
+/** What the agent's `error` event carries: the words the viewer sees, and where the reply failed. */
+export interface AgentErrorDetail extends HumanError {
+  trace: ErrorTrace;
 }
 
-/** Runs one assistant reply at a time and records it on the thread store. */
-export class Agent extends EventTarget {
-  live: LiveTurn | null = null;
+/** What the agent's `network-retry` event carries: which retry of the reply this is (from 1), and where the reply was cut. */
+export interface AgentRetryDetail {
+  attempt: number;
+  trace: ErrorTrace;
+}
+
+/** Runs one assistant reply at a time and records it on the thread store; the reply's loop is {@link AgentCore}'s. */
+export class Agent extends EventTarget implements ChatAgent {
   #deps: AgentDeps;
-  #abort?: AbortController;
+  #core: AgentCore;
+  #turn: Turn | undefined;
 
   constructor(deps: AgentDeps) {
     super();
     this.#deps = deps;
+    this.#core = new AgentCore({ describeError: (error) => (this.#deps.describeError ?? humanize)(error), change: () => this.#emit() });
+  }
+
+  /** The reply now running, as shown so far; `null` between replies. */
+  get live(): LiveTurn | null {
+    return this.#core.live;
   }
 
   get running(): boolean {
-    return this.#abort !== undefined;
+    return this.#core.running;
+  }
+
+  /** Falls back to the last reply: the title call runs after the reply ends. */
+  charged(buzz: number): void {
+    const turn = this.#turn ?? this.#deps.store.current?.turns.at(-1);
+    if (!turn) return;
+    turn.assistant.buzz = (turn.assistant.buzz ?? 0) + buzz;
+    this.#emit();
   }
 
   async send(content: string, attachments: Attachment[] = [], refs: string[] = []): Promise<void> {
@@ -54,66 +103,109 @@ export class Agent extends EventTarget {
   }
 
   abort(): void {
-    this.#abort?.abort();
+    this.#core.abort();
   }
 
-  async #run(turn: Turn): Promise<void> {
+  /** The page leaves the reply: in the page, that ends it as Stop does. */
+  leave(): void {
+    this.abort();
+  }
+
+  /** The session is replaced: in the page, that ends the reply as Stop does. */
+  dispose(): void {
+    this.abort();
+  }
+
+  /**
+   * Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it, or asked
+   * again after the connection was lost. The user's message is not sent again as a new one: the same
+   * turn is asked for again.
+   *
+   * When the failed reply has a resume point (`assistant.resume`, see {@link ResumePoint}) it carries
+   * on from there: the steps that finished, with every tool they ran and its result, are sent as they
+   * are and kept on screen, and only the step that failed is asked for again, as the automatic retry
+   * of a dropped connection does. Without one (a reply whose failed step had already called a tool,
+   * or a chat opened from storage), the reply starts over.
+   */
+  async retry(): Promise<void> {
+    const turn = this.#deps.store.current?.turns.at(-1);
+    if (this.running || turn?.assistant.status !== 'error') return;
+    const { resume: from, buzz } = turn.assistant;
+    turn.assistant = { messages: [], status: 'streaming', ...(buzz ? { buzz } : {}) };
+    await this.#run(turn, from);
+  }
+
+  /** In the page, the viewer can always edit their latest message while no reply runs. */
+  get canEdit(): boolean {
+    return true;
+  }
+
+  /**
+   * The viewer edited their latest message: its text becomes `content`, the reply to it (if any) is
+   * dropped, and it is replied to afresh: a new reply from its start, charged as one (nothing carries on
+   * from the old reply, whose cost stays charged). Only while no reply runs.
+   */
+  async edit(content: string): Promise<void> {
+    const conversation = this.#deps.store.current;
+    const turn = conversation?.turns.at(-1);
+    if (this.running || !conversation || !turn) return;
+    const { store } = this.#deps;
+    if (store.editUserTurn) store.editUserTurn(turn, content);
+    else editTurn(conversation, turn, content, (this.#deps.now?.() ?? new Date()).toISOString());
+    await this.#run(turn);
+  }
+
+  async #run(turn: Turn, from?: ResumePoint): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
-    const controller = new AbortController();
-    this.#abort = controller;
-    this.live = { seq: turn.seq, parts: [] };
-    this.#emit();
-
-    let completed: ModelMessage[] = [];
-    let stepText = '';
-    let streamError: unknown;
-    try {
-      const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
-      const result = streamText({
-        model: this.#deps.model,
-        system: buildSystemPrompt({
-          attachments: this.#deps.attachments(),
+    if (!this.running) {
+      this.#deps.store.replyStarted?.(turn);
+      // Carrying on from saved steps: saved at once as running here, so another tab sees it live and does not offer it too.
+      if (from) this.#checkpoint(turn, from.messages);
+    }
+    this.#turn = turn;
+    // One number for the whole reply: a rebuild of its tools (`reopenTools`) is the same reply.
+    const reply = nextReply();
+    const outcome = await this.#core.run({
+      seq: turn.seq,
+      ...(from ? { from } : {}),
+      tools: () => this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq, reply }),
+      request: (tools) => {
+        const hostInstructions = this.#deps.hostInstructions?.();
+        const system = buildSystemPrompt({
           now: this.#deps.now?.() ?? new Date(),
+          timeZone: this.#deps.timeZone?.(),
           customInstructions: this.#deps.customInstructions?.(),
           canPost: this.#deps.posts?.available ?? false,
           tools: Object.keys(tools),
-          host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructions: this.#deps.hostInstructions?.() },
+          host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructs: Boolean(hostInstructions?.trim()) },
           rules: this.#deps.systemPrompt?.(),
-        }),
-        messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key)),
-        tools,
-        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE)],
-        abortSignal: controller.signal,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        temperature: 0.7,
-        providerOptions: PROVIDER_OPTIONS,
-        // The last allowed step must speak, or a run of failing tools ends in silence.
-        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' } : undefined),
-        onStepFinish: (step) => {
-          completed = [...step.response.messages];
-        },
-      });
-      for await (const part of result.fullStream) {
-        if (part.type === 'start-step') stepText = '';
-        if (part.type === 'text-delta') stepText += part.text;
-        if (part.type === 'error') streamError = part.error;
-        this.#onPart(part);
-      }
-      if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else if (streamError !== undefined) this.#failed(turn, streamError);
-      else turn.assistant.status = 'done';
-    } catch (error) {
-      if (controller.signal.aborted) turn.assistant.status = 'aborted';
-      else this.#failed(turn, error);
-    }
-
-    // A step cut short never reached onStepFinish; keep what the user already read.
-    if (turn.assistant.status !== 'done' && stepText.trim() !== '') completed.push({ role: 'assistant', content: stepText });
-    turn.assistant.messages = completed;
-    this.live = null;
-    this.#abort = undefined;
-    this.#emit();
+        });
+        const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions, spoken: this.#deps.spokenReplies?.() ?? false });
+        const history = buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context });
+        return {
+          model: this.#deps.model(),
+          system,
+          history,
+          maxOutputTokens: outputTokenCap(this.#deps.maxOutputTokens?.()),
+          ...(this.#deps.networkRetryDelaysMs ? { networkRetryDelaysMs: this.#deps.networkRetryDelaysMs } : {}),
+          ...(this.#deps.maxNetworkRetries !== undefined ? { maxNetworkRetries: this.#deps.maxNetworkRetries } : {}),
+        };
+      },
+      retrying: (attempt, trace) => this.#retrying(turn, attempt, trace),
+      // Progress saved as the reply goes, so a page that sleeps or closes loses at most the step it was on.
+      // Every tool call is saved as it starts and as its result comes in (`toolProgress`), and each step
+      // that ran a tool as it finishes. So Continue elsewhere sends a call that finished with its result
+      // and marks one that started and did not finish as interrupted: neither runs again. The one gap is a
+      // call whose start was not saved yet when the page died (one save's round trip). A step that ran no
+      // tool is the reply's last, and is saved as it ends.
+      toolProgress: ({ messages }) => this.#checkpoint(turn, messages),
+      stepFinished: ({ messages, calledTools }) => calledTools && this.#checkpoint(turn, messages),
+      // While the reply still shows: the turn takes how it ended (and `error` fires) before `live` clears.
+      settled: (ended) => this.#settle(turn, ended),
+    });
+    if (this.#turn === turn) this.#turn = undefined;
+    if (!outcome) return;
 
     try {
       await this.#deps.store.completeTurn(turn);
@@ -125,45 +217,42 @@ export class Agent extends EventTarget {
     }
   }
 
-  #failed(turn: Turn, error: unknown): void {
-    turn.assistant.status = 'error';
-    const human = humanize(error);
-    turn.assistant.error = human.message;
-    turn.assistant.errorDetail = human.detail;
-    this.dispatchEvent(new CustomEvent('error', { detail: human }));
+  #checkpoint(turn: Turn, messages: ModelMessage[]): void {
+    this.#deps.store.checkpoint?.(turn, { messages }).catch((error: unknown) => console.warn('[chat-cvt] could not save the reply so far', error));
   }
 
-  #onPart(part: TextStreamPart<ToolSet>): void {
-    const live = this.live;
-    if (!live) return;
-    switch (part.type) {
-      case 'text-delta': {
-        const last = live.parts.at(-1);
-        if (last?.kind === 'text') last.text += part.text;
-        else live.parts.push({ kind: 'text', text: part.text });
-        break;
-      }
-      case 'tool-call':
-        live.parts.push({ kind: 'tool', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input, state: 'calling' });
-        break;
-      case 'tool-result':
-      case 'tool-error': {
-        const tool = live.parts.find((p) => p.kind === 'tool' && p.toolCallId === part.toolCallId);
-        if (tool?.kind !== 'tool') break;
-        if (part.type === 'tool-result') Object.assign(tool, { state: 'done', output: part.output });
-        else Object.assign(tool, { state: 'error', error: humanize(part.error).message });
-        break;
-      }
-      default:
-        return;
+  #settle(turn: Turn, ended: AgentCoreOutcome): void {
+    if (ended.status === 'error') this.#failed(turn, ended.error, ended.where!, ended.resume);
+    else {
+      turn.assistant.status = ended.status;
+      if (ended.stopped !== undefined) turn.assistant.stopped = ended.stopped;
+      else if (ended.ranOut) turn.assistant.ranOut = true;
     }
-    this.#emit();
+    turn.assistant.messages = ended.messages;
+  }
+
+  #failed(turn: Turn, error: unknown, where: TraceContext, resume?: ResumePoint): void {
+    turn.assistant.status = 'error';
+    if (resume) turn.assistant.resume = { ...resume, messages: [...resume.messages] };
+    const human = (this.#deps.describeError ?? humanize)(error);
+    const trace = errorTrace(error, where);
+    turn.assistant.error = human.message;
+    turn.assistant.errorDetail = human.detail;
+    turn.assistant.errorKind = human.kind;
+    turn.assistant.errorTrace = trace;
+    this.dispatchEvent(new CustomEvent<AgentErrorDetail>('error', { detail: { ...human, trace } }));
+  }
+
+  /** Notes a cut the reply recovers from by itself: kept on the turn for this session, and sent as `network-retry`. */
+  #retrying(turn: Turn, attempt: number, trace: ErrorTrace): void {
+    (turn.assistant.networkRetries ??= []).push(trace);
+    this.dispatchEvent(new CustomEvent<AgentRetryDetail>('network-retry', { detail: { attempt, trace } }));
   }
 
   async #nameConversation(turn: Turn): Promise<void> {
     try {
       const { text } = await generateText({
-        model: this.#deps.model,
+        model: (this.#deps.titleModel ?? this.#deps.model)(),
         maxOutputTokens: 24,
         temperature: 0.3,
         providerOptions: PROVIDER_OPTIONS,
@@ -174,7 +263,10 @@ export class Agent extends EventTarget {
         await this.#deps.store.setTitle(title, 'llm');
       }
     } catch (error) {
-      console.warn('[chat-cvt] could not name the conversation', error);
+      // Free only and the title model has no free replies: the chat keeps its first-message title
+      // quietly; a refusal of the reply itself already says so once. A title that could not be saved
+      // is not announced either: every later save of the chat carries it again.
+      if (humanize(error).kind !== 'free_tier_not_free') console.warn('[chat-cvt] could not name the conversation', error);
     }
   }
 

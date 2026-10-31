@@ -24,6 +24,7 @@ import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
 import { isRoutableRequestId } from './requestId.js';
 import { payloadValidatorFor, projectInboundPayload } from './validate.js';
+import { VERSION } from '../version.generated.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
@@ -216,6 +217,19 @@ export class IframeTransport implements BlockTransport {
     this.initPromise = new Promise<BlockInitPayload>((resolve, reject) => {
       this.resolveInit = resolve;
       this.rejectInit = reject;
+    });
+    // 🔴 THE TRANSPORT HANDLES ITS OWN INIT TIMEOUT. Every hook connects the
+    // transport at mount, and most blocks never call `waitForInit()`, so without
+    // a handler here the 10s timeout is an UNHANDLED rejection. That fails the
+    // Vitest run of any block app whose tests mount a hook with no host. This
+    // handler makes the rejection handled and keeps the diagnostic (it names the
+    // configured and observed origins) on the console as a warning. It is a
+    // separate branch of the promise: `waitForInit()` still returns
+    // `initPromise` itself, so its callers still receive the rejection.
+    // Pinned by `test/initTimeoutUnhandled.test.tsx`.
+    this.initPromise.catch((err: unknown) => {
+      // eslint-disable-next-line no-console -- developer-facing diagnostic; the host shows its own fallback
+      console.warn(err instanceof Error ? err.message : err);
     });
     this.initTimeoutId = setTimeout(() => {
       if (!this.initResolved) {
@@ -731,7 +745,9 @@ export class IframeTransport implements BlockTransport {
         // block's root element mounts. Queued because the iframe's React
         // tree hasn't rendered yet at this point — the postMessage goes
         // out on the next microtask via the standard dispatch path.
-        this.dispatch('BLOCK_READY', { height: 0 });
+        // `sdkName`/`sdkVersion` are informational (the host counts versions
+        // in the wild); nothing is negotiated on them and older blocks omit them.
+        this.dispatch('BLOCK_READY', { height: 0, sdkName: 'blocks-react', sdkVersion: VERSION });
         this.resolveInit(data.payload);
       }
       return;

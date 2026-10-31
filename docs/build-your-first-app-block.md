@@ -13,6 +13,13 @@ review → deploy** — and the handful of gotchas that trip up first-timers.
 > [civitai.com](https://civitai.com) and the
 > [civitai/cli issues](https://github.com/civitai/cli/issues) for the general-
 > availability announcement.
+>
+> 🔴 **The preview gates two different things, and getting a block approved
+> clears only one of them.** The host API a *running* block calls — App Storage
+> especially — is gated on the **account**, separately from submission and
+> approval. Read [Preview access is on your ACCOUNT, not on your
+> app](#preview-access-is-on-your-account-not-on-your-app) before you debug a
+> `401` from a block that is live and approved.
 
 ## 0. Install + log in
 
@@ -54,9 +61,135 @@ civitai.com model page
 
 ## Prerequisites
 
-- Node ≥ 20, pnpm.
+- Node ≥ 20 and npm — the platform build runs `npm ci` (see §1).
 - A Civitai account. (Publishing is moderated; you submit a ZIP and a moderator
   approves it — you don't need any infra access.)
+- **For a block that calls the host API** (App Storage, and anything else the
+  host mediates on a viewer's behalf): that account enrolled in the App Blocks
+  preview — see the next section. This is a *separate* enablement from being
+  allowed to submit, and nothing about your manifest or your app's approval can
+  substitute for it.
+
+## Preview access is on your ACCOUNT, not on your app
+
+While Apps is pre-GA, the host API a running block calls is enabled **per
+account**, off by default. The gate is evaluated against a **user identity** —
+so it is orthogonal to whether your app exists, whether it is approved, which
+scopes your manifest declares, and which scopes your token carries.
+
+That means an app can be submitted, approved, built, DNS'd and serving live at
+`https://<blockId>.civit.ai/` while **every** `useAppStorage()` call it makes
+still answers `401`, because the account the call is made for is not enabled.
+Nothing is wrong with the app, and no change to the app can fix it.
+
+There are exactly two ways you will meet this gate, and they need different
+answers:
+
+1. **Your account is not in the preview** — the enablement step below, and
+   `civitai app doctor` tells you in one line.
+2. **The request reached the host with no session at all** — which is what
+   `npm run dev:live` does today, for everyone. That one is not about your
+   account; see [Why `dev:live` cannot exercise App
+   Storage](#why-devlive-cannot-exercise-app-storage).
+
+### The enablement step
+
+**Ask Civitai to add your account to the App Blocks preview.** There is no CLI
+command, dashboard toggle or manifest field that does it, and no self-serve
+request form yet (same channel as the submission access in the banner above —
+watch [civitai.com](https://civitai.com) and the
+[civitai/cli issues](https://github.com/civitai/cli/issues)). When you ask, say
+which account:
+
+```bash
+civitai whoami      # the account your CLI is authenticated as
+```
+
+The gate answers for the **account the call is made on behalf of** — the viewer
+with the host page open — not for the developer who submitted the app. On
+civitai.com those two facts line up in your favour: the same preview gate also
+decides whether a block **renders in its slot at all**, so a viewer who can see
+your block has already passed it. That is worth knowing because it narrows what
+a `401` can mean: during the preview it points at a request that reached the host
+**without a session** — the `dev:live` case below — far more often than at an
+unenrolled viewer.
+
+### Check it in one command
+
+```bash
+civitai app doctor          # prints an "App Blocks rollout:" line before the listings
+```
+
+Three outcomes — `enrolled`, `NOT ENROLLED`, and `COULD NOT CHECK` (kept
+distinct on purpose: an unreachable host is not a report that you are outside
+the preview; in `--json` that case is `null`, never `false`). It **never** sets
+the exit code — being outside a deliberately-dark preview is a supported state,
+not a broken listing — so it is safe in a release script. If your `civitai app
+doctor` prints no `App Blocks rollout:` line at all, the check is newer than
+your CLI: upgrade (it landed after `v0.1.113`).
+
+### Which gate refused you
+
+Each refusal below has text no other one uses, so the message *is* the
+diagnosis. The host forwards it verbatim into your block on the
+`APP_STORAGE_*_RESULT` reply, so you can read it from inside the iframe:
+
+| Message | Status | What it means | What fixes it |
+|---|---|---|---|
+| `Apps access is not enabled for this browser session` | 401 | The **session** account — whoever has the host page open — is not in the preview. Thrown before anything about your app is looked at. | Enrol that account. |
+| `Apps are not enabled` | 401 | The account the **block token was minted for** is not in the preview. | Enrol that account. |
+| `shared storage is not enabled` | 403 | The app-global *shared* datastore is a different surface behind its own gate. Per-viewer storage working says nothing about it. | Ask about shared storage specifically. |
+| `app block not found` | 404 | No app for that id — a slug/submission problem. | Submit, or fix the id. |
+| `app block is not approved` | 403 | The app exists and is **not** approved yet. | Wait for review. |
+| `block token subject could not be resolved` | 401 | The token's account could not be loaded (e.g. it no longer exists). | Re-mint the token / re-open the block. |
+
+Note the two independent axes: *authoring* (submit → review → approve) and
+*running* (the host API a live block calls). Approval clears neither account
+gate, which is why checking your app's status and your token's scopes explains
+nothing when you hit the first two rows — and it is why those two rows are the
+only ones an enrolment fixes.
+
+### Why `dev:live` cannot exercise App Storage
+
+🔴 **Its refusal is byte-identical to the one an unenrolled account gets, and it
+is not about your account.** Row 1's gate is keyed on the **browser session on
+the host page**. Under
+`npm run dev:live` there isn't one: the live host forwards the protocol to
+the backend's `apps.storage.*` procedures carrying
+`Authorization: Bearer <dev token>` and **no civitai session cookie** — either
+same-origin to your dev server's `/api` proxy (the examples and the `page-money`
+template), which has no civitai.com cookie to send, or cross-origin to
+`https://civitai.com`, where `createLiveHost` in
+[`@civitai/blocks-react`](../packages/civitai-blocks-react/src/internal/liveHost.ts)
+sets no `credentials` option and the browser default omits cookies.
+
+With no session the host evaluates the account gate **without an account**, and
+during the preview that path refuses. So App Storage under `dev:live` answers
+`401` for **every** developer, enrolled or not, before any app lookup and before
+your token's scopes are read. Do not read that `401` as a verdict on your
+enrolment, your approval, or your manifest.
+
+Where to test storage instead:
+
+- `npm run dev:harness` (mock host) for the storage flows and your error
+  branches — it backs the bridge with an in-memory store and enforces the caps;
+  see [`kv-storage`](../starters/examples/kv-storage) for what the harness can
+  and cannot reproduce.
+- the **block embedded on civitai.com**, opened by an enrolled account, for the
+  real thing. That is the only arm that exercises row 1 and row 2 as production
+  does.
+
+If the embedded block succeeds and `dev:live` refuses, nothing is wrong: you
+have reproduced the paragraph above.
+
+### Build for the refusal
+
+The preview makes a refused host call a **normal runtime state**, not an edge
+case. The `kv-storage` example's `storageFailureMessage()` is the shape to copy:
+these account refusals are *not* in the classified ceiling family, so they land
+on the classifier's `default:` arm — keep that arm, and don't have it tell a
+viewer to retry something a retry cannot fix. Degrade (session-only state plus
+an honest notice) rather than rendering nothing.
 
 ## 1. Scaffold
 
@@ -65,33 +198,55 @@ Scaffolding is handled by the Go **`civitai` CLI**
 §0:
 
 ```bash
-civitai app create my-block   # batteries-included page-money template
-# (or `civitai app init my-block` for a no-build static template)
+civitai app create my-block   # the default template: page-elements (web components)
+# (`civitai app init my-block` scaffolds the same default)
 cd my-block
-cp .env.example .env
-pnpm install
+npm install                   # writes package-lock.json — COMMIT it
 ```
+
+**Commit the lockfile.** The scaffold sets `"buildCommand": "npm run build"`,
+and the platform build installs strictly from the committed lockfile with
+`npm ci`, so without a committed `package-lock.json` the build hard-fails
+(`civitai app validate` says so). If you prefer pnpm or yarn, set
+`"buildCommand"` to `"pnpm run build"` / `"yarn run build"` (keeping the
+`"outputDir"` the schema requires beside it) and commit `pnpm-lock.yaml` /
+`yarn.lock` instead. No `.env` step is needed: the committed
+`.env.development` already allow-lists the dev harness's origin.
 
 The scaffolder writes a correct `block.manifest.json`; you then edit it by hand
 to set your slot and content rating (the manifest is the source of truth — see
-§2). Pick the template that fits: `--template static | page-vite | page-money`
-(`create` defaults to `page-money`, `init` defaults to `static`).
+§2). Pick the template that fits:
+`--template page-elements | page-money | page-vite | static`. Both `create` and
+`init` default to **`page-elements`** — Vite + TypeScript with no UI framework,
+`@civitai/sdk` for the host bridge and the `<civitai-*>` elements for the UI; it
+mirrors [`starters/civitai-block-starter`](../starters/civitai-block-starter),
+except that it declares a full `page` rather than a model-slot target.
+`page-money` and `page-vite` are the React alternatives; `static` is a no-build
+page.
 
-Or copy one of the [examples](../starters/examples) that's closest to what you're
-building (`hello-world` for a static UI, `buzz-workflow` for a generator).
+Or copy [`starters/civitai-block-starter`](../starters/civitai-block-starter)
+(web components, a model-page slot) or one of the React
+[examples](../starters/examples) that's closest to what you're building
+(`hello-world` for a static UI, `buzz-workflow` for a generator).
 
-This gives you:
+The default template gives you:
 
 ```
 my-block/
-├── block.manifest.json   # what you register — slot + scopes (NOT iframe.src; the platform stamps it)
-├── index.html
+├── block.manifest.json   # what you register — slot/page + scopes (NOT iframe.src; the platform stamps it)
+├── package-lock.json     # after `npm install` — commit it (the platform runs `npm ci`)
+├── .env.development      # dev-harness origin allowlist (http://localhost:5186)
+├── index.html            # boot skeleton + pre-paint theme script
 ├── vite.config.ts        # base: '/'  (important — see §6)
-└── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
-    ├── App.tsx           # your UI
-    ├── main.tsx
-    └── Harness.tsx       # local host simulator (dev only)
+├── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
+│   ├── block.ts          # your UI: initialize → build the view → update it on onChange
+│   ├── main.ts           # entry
+│   └── dev/harness.ts    # local host simulator (dev only)
+└── test/                 # vitest + happy-dom, driving the real bridge
 ```
+
+(The React templates and examples have `src/App.tsx`, `src/main.tsx` and a
+`Harness.tsx` instead.)
 
 ## 2. The manifest
 
@@ -100,7 +255,6 @@ my-block/
 ```jsonc
 {
   "$schema": "https://civitai.com/schemas/app-block/v1.json",
-  "appId": "app_REPLACE_ME",        // NOT a canonical field — see the note below
   "blockId": "my-block",            // /^[a-z][a-z0-9-]*[a-z0-9]$/, 3–40 chars — also your subdomain
   "version": "0.1.0",               // semver; bump on each new submission
   "name": "My Block",
@@ -109,7 +263,7 @@ my-block/
     { "slotId": "model.sidebar_top", "priority": 100,
       "requiredContext": ["modelId", "modelVersionId"] }
   ],
-  "scopes": ["models:read:self"],   // domain:verb:target lowercase
+  "scopes": [],                     // domain:verb:target lowercase — declare only what your calls need
   "iframe": {
     // NO "src" — it is SERVER-OWNED. The platform stamps the canonical bundle
     // URL (https://<blockId>.civit.ai/, root-served) at build/approve. Declaring
@@ -128,15 +282,17 @@ Only five of those are **required** by the
 [canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
 `version`, `name`, `contentRating`, `scopes`. The rest are optional.
 
-> **`appId` is not a manifest field.** Your app id lives in `civitai.app.json`
-> (`{"appId": "..."}`), which is what the `civitai` CLI reads. The scaffold still
-> carries an `appId` key in the manifest, the platform ignores it, and nothing
-> validates it; a future scaffold will drop it.
+> **There is no `appId` field.** The `civitai` CLI identifies your app by
+> `blockId`, and no project file holds a separate app id (an older
+> `civitai.app.json` is read by nothing current). None of the CLI's templates
+> writes an `appId` key; if a manifest you copied has one
+> (`starters/civitai-block-starter` still does), the platform ignores it and
+> nothing validates it.
 
 **You don't have to run the validator by hand** — the block scaffolds register
 `blockManifestPlugin` from `@civitai/app-sdk/vite` in their `vite.config.ts`,
-which validates `block.manifest.json` on every `pnpm dev`, `pnpm dev:harness` and
-`pnpm build`, and fails with the offending field path. It validates by compiling
+which validates `block.manifest.json` on every `npm run dev`, `npm run dev:harness`
+and `npm run build`, and fails with the offending field path. It validates by compiling
 the canonical schema above with Ajv, so what it enforces *is* the schema. It
 needs `ajv` in your devDependencies (an optional peer); the scaffolds already
 declare it.
@@ -158,9 +314,121 @@ registered slot, and the **tier-dependent sandbox allowlist** (the canonical say
 the unverified tier allows only `allow-scripts` and `allow-forms`; other tokens
 pass locally and may be refused at review).
 
+### The sandbox makes your origin opaque — design single-document
+
+The sandbox above withholds `allow-same-origin`, so **your block document's
+origin is opaque**: `window.origin` is the string `"null"`. That is the intended
+isolation, and one consequence catches game- and engine-shaped apps late:
+
+> 🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
+> load.** Not with a relative path, not root-absolute, not fully absolute, and
+> **no manifest change fixes it.**
+
+Two policies combine:
+
+1. Your origin is opaque, because `allow-same-origin` is refused at
+   `civitai app validate` time outside the internal trust tier.
+2. Every path served from `https://<blockId>.civit.ai/` — `.html`, `.js`,
+   `.wasm`, archive files, all of it — carries
+   `Content-Security-Policy: frame-ancestors …` and
+   `X-Frame-Options: SAMEORIGIN`. Both are stamped at the platform edge, not by
+   your own server, so your build cannot override them.
+
+`frame-ancestors` is checked against **every** ancestor of the framed document,
+and an opaque origin matches **no** source list — `frame-ancestors *` included,
+because the ancestor origin serializes to the string `"null"`, which fails the
+URL parse the check performs and returns *Blocked* before any matching happens.
+So widening the allowlist is not the fix, and `X-Frame-Options: SAMEORIGIN`
+would block it a second time anyway.
+
+**Prefer a single-document design.** An engine build — Defold, Unity WebGL,
+Phaser — is a `<canvas>` plus a JS loader, and those loaders normally mount
+straight into the host document you give them. Point the loader at your block's
+own root element instead of at an iframe and the whole problem class disappears,
+along with a frame boundary you would otherwise have to postMessage across.
+
+**When a separate document is genuinely required** (a third-party viewer that
+insists on owning `document`, a build you cannot alter), fetch the document and
+inline it as the iframe's `srcdoc`. A `srcdoc` frame inherits your opaque origin
+and carries no response headers of its own, so neither policy applies. The SDK
+ships the fetch-plus-rewrite:
+
+```tsx
+import { useNestedDocument } from '@civitai/blocks-react';
+
+export function Game() {
+  const { srcDoc, status, error } = useNestedDocument({ src: '/game/index.html' });
+
+  if (status === 'error') return <p>Could not load the game: {error?.message}</p>;
+  if (status !== 'ready') return <p>Loading…</p>;
+  // Your own sandbox on the nested frame — it does not inherit the outer one's.
+  return <iframe title="game" sandbox="allow-scripts" srcDoc={srcDoc ?? undefined} />;
+}
+```
+
+Outside React, `fetchNestedDocument` from `@civitai/app-sdk/blocks` does the same
+thing as a plain async function.
+
+The rewrite matters: a `srcdoc` document's base URL is `about:srcdoc`, inheriting
+*yours*, so every relative `src=` in the fetched markup would otherwise resolve
+to nothing. The helper injects an absolute `<base href="…/game/">` — the
+**directory of the response's final URL**, so a redirect is followed rather than
+resolved one directory too high — and that is the one thing that keeps relative
+asset loads working. If the fetched document already declares a `<base href>` of
+its own, that one is resolved against the final URL and **replaced**, so the base
+your document actually gets is absolute. It is not a de-duplication: if your
+markup declares two `<base href>` tags you get two back, the first — the only one
+a parser honours — rewritten and the second left inert. An **empty** `href`
+counts as declaring one, because that is what a parser does with it: `<base
+href="">` sets the base to the document's own URL, so it is the tag that gets
+rewritten and a later `<base href="/assets/">` stays inert behind it. Only real
+markup counts, so a `<base>` written inside a comment or an inline `<script>`
+string is left alone. **This is not sanitization**: the string is your own markup
+and scripts, verbatim, so only pass a `src` you control.
+
 ## 3. Write the block
 
-Read everything from the host with `useBlockContext()`; gate on `ready`:
+With the default template (no framework), `initialize()` from `@civitai/sdk`
+resolves once the host's `BLOCK_INIT` lands; read the context from `app` and
+update the page on `app.onChange`. The default template is a full **page**, so
+it narrows `app.context` with `isPageSlotContext` and does **not** size itself:
+
+```ts
+import '@civitai/components/register'; // the generic <civitai-*> kit
+import { initialize } from '@civitai/sdk';
+import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
+
+const root = document.getElementById('root')!;
+const app = await initialize(); // resolves on the host's BLOCK_INIT
+
+// Build the view ONCE and update it in place: `onChange` also fires on every
+// token rotation, and rebuilding would wipe whatever the viewer typed.
+const line = document.createElement('civitai-text');
+root.replaceChildren(line); // also removes the boot skeleton
+
+const update = () => {
+  // GOTCHA: data-theme on YOUR page — the host can't set it inside the iframe.
+  document.documentElement.dataset.theme = app.theme;
+  // `context` is a union keyed on slotId — narrow with the guard, not a cast.
+  // Sign-in gate: call `isSignedIn`, never an identity read.
+  line.textContent = isPageSlotContext(app.context)
+    ? `${app.context.slug} at /${app.context.subPath}, hi ${isSignedIn(app.viewer) ? 'there' : 'anon'}`
+    : 'Wrong slot.';
+};
+update();
+app.onChange(update);
+// No `app.host.autoResize(root)`: a page fills the host surface. A MODEL-SLOT
+// block (a `targets` entry, like `starters/civitai-block-starter`) narrows with
+// `isModelSlotContext` instead and calls `app.host.autoResize(root)`.
+```
+
+Host data goes in with `textContent`, never `innerHTML`. The starter's
+[`AGENTS.md`](../starters/civitai-block-starter/AGENTS.md) covers generation and
+digital goods on this path (consent, idempotency keys, and refused submits,
+which resolve rather than reject).
+
+With a React template or example, read everything from the host with
+`useBlockContext()`; gate on `ready`:
 
 ```tsx
 import { useRef } from 'react';
@@ -195,22 +463,23 @@ pattern including the cost-quote rule and the caller-driven poll loop.
 ## 4. Run it locally
 
 ```bash
-pnpm dev:harness    # → http://localhost:<port> with a mock host
+npm run dev:harness    # → http://localhost:5186 with a mock host
 # (the Go CLI has no `dev` command — run the project's own dev script)
 ```
 
-The harness (`src/Harness.tsx`) posts a fake `BLOCK_INIT`, intercepts your
+The harness (`src/dev/harness.ts` in the default template, `src/Harness.tsx` in
+the React ones) posts a fake `BLOCK_INIT`, intercepts your
 outbound messages into a debug log, and echoes token refreshes — so you iterate
 without civitai.com embedding your block.
 
-> The harness pins the parent origin (e.g. `http://localhost:5180`) and so does
-> `.env`. They MUST match, or the transport's origin allowlist drops `BLOCK_INIT`
-> and the block hangs on "Loading…".
+> The harness pins the parent origin (`http://localhost:5186` in the default
+> template) and so does `.env.development`. They MUST match, or the transport's
+> origin allowlist drops `BLOCK_INIT` and the block hangs on "Loading…".
 
 ## 5. Build
 
 ```bash
-pnpm build          # → dist/  (static SPA)
+npm run build       # → dist/  (static SPA)
 ```
 
 ## 6. The four gotchas that block first deploys
@@ -228,6 +497,9 @@ submit** (esp. the seed), or the quoted cost won't match the charge — see the
 
 ## 7. Submit
 
+Before `civitai app submit`, self-run the
+[first-review checklist](https://developer.civitai.com/apps/guide/first-review.md) — what a reviewer checks first.
+
 Use the Go CLI (after `civitai login`):
 
 ```bash
@@ -236,7 +508,7 @@ civitai app submit      # validates, ZIPs the project, and uploads it for review
 ```
 
 `civitai app submit` bundles the project (`block.manifest.json`, `index.html`,
-`src/`, `package.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
+`src/`, `package.json`, `package-lock.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
 `.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build)
 and uploads it. You're then redirected to **`/apps/build`** with status
 `pending`.

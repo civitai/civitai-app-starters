@@ -4,6 +4,26 @@ import type { BlockTransport } from './transport.js';
 let cached: BlockTransport | null = null;
 
 /**
+ * Whether a failed MOUNT-TIME connect (`useTransportConnection`) has already been
+ * logged. Lives here, not in the hook, so `__resetTransport()` clears it with the
+ * transport it describes: one log per transport lifecycle — once per page in
+ * production, once per reset in tests. A latch that outlived the reset would
+ * silence every misconfigured case in a test worker after the first.
+ */
+let connectFailureReported = false;
+
+/**
+ * Returns true the FIRST time it is called in this transport lifecycle, false
+ * after. Internal — used by `useTransportConnection` to log a failed connect
+ * once instead of once per hook instance.
+ */
+export function claimConnectFailureReport(): boolean {
+  if (connectFailureReported) return false;
+  connectFailureReported = true;
+  return true;
+}
+
+/**
  * Returns the process-wide transport, instantiating it on first call.
  *
  * Hooks call this with no arguments — they get whatever the detector chose
@@ -27,4 +47,5 @@ export function __resetTransport(): void {
   const disposable = cached as (BlockTransport & { dispose?: () => void }) | null;
   disposable?.dispose?.();
   cached = null;
+  connectFailureReported = false;
 }

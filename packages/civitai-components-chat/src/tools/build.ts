@@ -1,14 +1,20 @@
 import type { SiteClient } from '@civitai/sdk';
 import { dynamicTool, jsonSchema, tool, type ToolSet } from 'ai';
 
+import { CUSTOM_INSTRUCTIONS_MAX } from '../config.js';
 import type { McpConnection, McpTool } from '../mcp/clients.js';
-import { mcpResultToText, structuredOf } from '../mcp/result.js';
+import { mcpResultToText, structuredOf, textCapFor } from '../mcp/result.js';
+import { CACHE_HIT_NOTE, CACHED_TOOLS, cacheKey, cachedReply, forgetReply, rememberReply } from './fetch-cache.js';
 import { toolInfo } from '../orchestration/job.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import { POST_TOOL, isPostable, type PostManager } from '../posting/post.js';
+import type { PanelManager } from '../panels/panel.js';
+import { panelTools } from '../panels/tools.js';
+import { POST_TOOL, type PostManager } from '../posting/post.js';
+import { UPDATE_INSTRUCTIONS, proposedInstructions } from './instructions.js';
 import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
+import { CHOICE_INVALID, CHOICE_RETRY_NOTE, normalizeChoice } from './choice.js';
 import { FALLBACK_SEARCH_SCHEMA, searchModelsViaApi, type FallbackSearchArgs } from './site-fallback.js';
 
 export interface TurnToolContext {
@@ -19,6 +25,8 @@ export interface TurnToolContext {
   site: McpConnection;
   siteApi: SiteClient;
   posts: PostManager;
+  /** Panels are offered only where the assistant can make things. */
+  panels?: PanelManager;
   findAttachment(id: string): Attachment | undefined;
   resolveArgs(args: Record<string, unknown>): Promise<Record<string, unknown>>;
   onCaption(attachmentId: string, caption: string): void;
@@ -49,7 +57,8 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
         description: `${mcpTool.description ?? ''}${JOB_SUFFIX}`,
         inputSchema: jsonSchema(withoutControls(mcpTool.inputSchema)),
         execute: async (input, { toolCallId }) => {
-          // Taken before any await, so parallel calls number in call order.
+          // Taken before any await here, so parallel calls number in the order they start: call order,
+          // unless a page's beforeToolCall answers them out of order.
           const index = ++jobCount;
           const job = ctx.jobs.create({
             id: jobId(ctx.seq, index),
@@ -72,6 +81,8 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
     }
   }
 
+  if (ctx.panels && catalog.orchestration.some((t) => t.name === 'run_step')) Object.assign(tools, panelTools({ conversationId: ctx.conversationId, seq: ctx.seq, panels: ctx.panels }));
+
   if (catalog.site) {
     for (const siteTool of catalog.site) {
       if (!(siteTool.name in tools)) tools[siteTool.name] = passthrough(siteTool, ctx.site, ctx);
@@ -85,8 +96,7 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
   }
 
   if (ctx.posts.available) tools[POST_TOOL] = tool({
-    description:
-      "Post pictures made in this chat to Civitai, when the user asks to share or post them. Shows a card; the user confirms the post on Civitai themselves, and nothing goes public until they do. Only pictures this chat made can be posted, not uploads, videos or audio.",
+    description: `Post ${postableKinds(ctx.posts)} made in this chat to Civitai, when the user asks to share or post them. Shows a card; the user confirms the post themselves, and nothing goes public until they do. Uploads and audio cannot be posted.`,
     inputSchema: jsonSchema<{ files: string[]; title?: string; description?: string; tags?: string[] }>({
       type: 'object',
       properties: {
@@ -102,11 +112,25 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
       const items = input.files.map((id) => ctx.findAttachment(id));
       const missing = input.files.filter((_, index) => !items[index]);
       if (missing.length) return { error: `No such files in this chat: ${missing.join(', ')}`, note: FAILED_NOTE };
-      const unpostable = (items as Attachment[]).filter((item) => !isPostable(item)).map((item) => item.id);
-      if (unpostable.length) return { error: `Only pictures made in this chat can be posted; not ${unpostable.join(', ')}.`, note: 'Tell the user in plain words.' };
+      const unpostable = (items as Attachment[]).filter((item) => !ctx.posts.accepts(item)).map((item) => item.id);
+      if (unpostable.length) return { error: `Only ${postableKinds(ctx.posts)} made in this chat can be posted; not ${unpostable.join(', ')}.`, note: 'Tell the user in plain words.' };
       const post = ctx.posts.create({ id: toolCallId, items: items as Attachment[], title: input.title, detail: input.description, tags: input.tags });
       return post.summary();
     },
+  });
+
+  tools[UPDATE_INSTRUCTIONS] = tool({
+    description: `Propose new standing instructions for yourself, kept for every chat, when the user wants you to behave differently from now on: a personality, a tone, a name for you, something to always do or avoid. Pass the whole new text: the current <user_instructions> with their change made, or new ones when there are none. A card shows it; it applies from the next reply once the user presses Save there.`,
+    inputSchema: jsonSchema<{ instructions: string }>({
+      type: 'object',
+      properties: { instructions: { type: 'string', maxLength: CUSTOM_INSTRUCTIONS_MAX, description: `The complete instructions, at most ${CUSTOM_INSTRUCTIONS_MAX} characters, written to you ("Be playful…")` } },
+      required: ['instructions'],
+      additionalProperties: false,
+    }),
+    execute: async (input) =>
+      proposedInstructions(input)
+        ? { shown: true, note: 'A card shows the new instructions; the user can edit them there and they apply from the next reply only if the user presses Save. Do not say they are in effect. If the user asks to change them, call update_instructions again with the changed text.' }
+        : { error: `instructions must be 1 to ${CUSTOM_INSTRUCTIONS_MAX} characters.`, note: 'Nothing was shown. Shorten or fill in the text and call again.' },
   });
 
   tools[ASK_CHOICE] = tool({
@@ -135,13 +159,18 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
       required: ['question', 'options'],
       additionalProperties: false,
     }),
-    execute: async () => ({
-      shown: true,
-      note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.',
-    }),
+    // `awaitsUser` ends the reply; an input the card could not show does not, so the model can fix it.
+    execute: async (input) =>
+      normalizeChoice(input)
+        ? { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' }
+        : { error: CHOICE_INVALID, note: CHOICE_RETRY_NOTE },
   });
 
   return tools;
+}
+
+function postableKinds(posts: PostManager): string {
+  return posts.takesVideos ? 'pictures and videos' : 'pictures';
 }
 
 function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolContext) {
@@ -151,8 +180,33 @@ function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolC
     inputSchema: jsonSchema(withoutControls(mcpTool.inputSchema)),
     execute: async (input, { abortSignal }) => {
       const raw = (input ?? {}) as Record<string, unknown>;
-      const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal });
-      const text = mcpResultToText(result);
+      const call = async () => {
+        // Asking for progress keeps a call alive past the 60s timeout while its job waits in a queue.
+        const result = await connection.callTool(mcpTool.name, await ctx.resolveArgs(raw), { signal: abortSignal, onProgress: () => undefined });
+        return { result, text: mcpResultToText(result, textCapFor(mcpTool.name)) };
+      };
+      // A page read twice in one chat costs the viewer twice and tells the assistant nothing new.
+      const key = CACHED_TOOLS.has(mcpTool.name) ? cacheKey(mcpTool.name, raw) : undefined;
+      if (key !== undefined) {
+        const cached = cachedReply(connection, ctx.conversationId, key);
+        if (cached) {
+          try {
+            return `${CACHE_HIT_NOTE}\n\n${await cached}`;
+          } catch {
+            // That read failed or was stopped; this call asks again.
+          }
+        }
+      }
+      const pending = call();
+      if (key !== undefined) {
+        const reply = pending.then(({ result, text }) => {
+          if (result.isError) throw new Error(text);
+          return text;
+        });
+        reply.catch(() => forgetReply(connection, ctx.conversationId, key, reply));
+        rememberReply(connection, ctx.conversationId, key, reply);
+      }
+      const { result, text } = await pending;
       if (result.isError) return { error: text, note: FAILED_NOTE };
       if (CAPTION_TOOLS.has(mcpTool.name) && typeof raw.mediaUrl === 'string' && ATTACHMENT_ID.test(raw.mediaUrl)) {
         ctx.onCaption(raw.mediaUrl, text);

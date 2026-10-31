@@ -60,6 +60,7 @@ const HOOKS = join(SRC, 'hooks');
 const HOOK_FILES = [
   'useAppStorage',
   'useAppWorkflows',
+  'useBatchEstimate',
   'useBlockAnalytics',
   'useBlockBreakpoint',
   'useBlockContext',
@@ -86,18 +87,28 @@ const HOOK_FILES = [
   'useGenerationResources',
   'useGoodPurchase',
   'useHostOrigin',
+  'useImagePicker',
   'useImageUpload',
+  'useMediaUpload',
+  'useNestedDocument',
   'usePublishGenerationOutputs',
+  'useReactions',
   'useRequestConsent',
   'useRequestSequencer',
   'useRequestSignIn',
+  'useResourceFile',
   'useResourcePicker',
+  'useRunConfirmedStep',
+  'useRunTraining',
   'useSaveImage',
   'useSharedStorage',
   'useTip',
   'useTipAllowance',
+  'useTransportConnection',
+  'useUploadImageBytes',
   'useViewer',
   'useWildcardPack',
+  'useWorkflowBatch',
 ];
 
 /**
@@ -106,8 +117,12 @@ const HOOK_FILES = [
  * `useRequestSequencer` (#413) is the shared in-flight-request sequencer the
  * public hooks call; it has no standalone meaning to a block author and
  * publishing a return type for it would publish the helper.
+ *
+ * `useTransportConnection` is the mount-time `getTransport()` touch every
+ * public hook calls so that using ANY hook answers the host's handshake. It
+ * returns nothing and exists only to be called from inside this package.
  */
-const INTERNAL_HOOKS = ['useRequestSequencer'];
+const INTERNAL_HOOKS = ['useRequestSequencer', 'useTransportConnection'];
 
 /**
  * Hooks whose return annotation is NOT `Use<Hook>` because the hook is
@@ -118,6 +133,7 @@ const INTERNAL_HOOKS = ['useRequestSequencer'];
 const OVERLOADED_HOOKS = {
   useImageUpload: [
     'UseImageUploadGenerationSource',
+    'UseImageUploadTrainingData',
     'UseImageUploadAsyncScan',
     'UseImageUpload',
     // The implementation signature. Not a call shape any consumer can reach,
@@ -291,7 +307,7 @@ test('#380 — INTERNAL_HOOKS really are absent from the entry', () => {
 test('POSITIVE CONTROL — the annotation reader finds real annotations, including overloads', () => {
   // A reader that silently returned [] would make every check above vacuous.
   const upload = returnAnnotations(readFileSync(join(HOOKS, 'useImageUpload.ts'), 'utf8'), 'useImageUpload');
-  assert.equal(upload.length, 4, `expected 4 useImageUpload signatures, read ${upload.length}`);
+  assert.equal(upload.length, 5, `expected 5 useImageUpload signatures, read ${upload.length}`);
 
   const picker = returnAnnotations(
     readFileSync(join(HOOKS, 'useResourcePicker.ts'), 'utf8'),

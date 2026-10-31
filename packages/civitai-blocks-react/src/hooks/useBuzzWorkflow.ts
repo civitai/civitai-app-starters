@@ -7,14 +7,18 @@ import type {
   WorkflowBodyPassThroughStep,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
   WorkflowStatus,
 } from '@civitai/app-sdk/blocks';
 import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
 import { withConsentRetry } from '../internal/withConsentRetry.js';
+import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { resolveIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * The consent-gated scope {@link UseBuzzWorkflow.submit} requires.
@@ -59,7 +63,9 @@ type WorkflowBodyArms =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
-  | WorkflowBodyPassThroughStep;
+  | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining
+  | WorkflowBodyWorkflow;
 
 /** `[A] extends [B]` — bracketed so a union is compared whole, not distributed. */
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -85,6 +91,39 @@ type _WorkflowBodyArmsAreExhaustive = AssertTrue<
 >;
 
 /**
+ * Why {@link UseBuzzWorkflow.submit} refuses a `kind: 'training'` body.
+ *
+ * 🔴 REFUSED BEFORE THE SEND, NOT LEFT TO THE SERVER. The server charges a
+ * training run only against a quote the viewer confirmed from a signed-in
+ * session, and only `RUN_TRAINING`'s host-chrome dialog can record that — so a
+ * `SUBMIT_WORKFLOW` carrying this body can never start a run. Refusing here
+ * turns a server round-trip ending in a confusing refusal into an immediate
+ * error that names the hook to use. Nothing is sent and nothing is spent, which
+ * is why it is a plain `Error` and not a {@link WorkflowSubmitError} (every code
+ * on that class is money-ambiguous by design).
+ */
+export const TRAINING_BODY_SUBMIT_REFUSAL =
+  "useBuzzWorkflow.submit() does not run a kind:'training' body — estimate it here, then run it with useRunTraining().runTraining({ ...body, quoteId }). Nothing was sent.";
+
+/**
+ * Why {@link UseBuzzWorkflow.submit} refuses a pass-through `step` body that
+ * carries a `quoteId`.
+ *
+ * 🔴 REFUSED BEFORE THE SEND, for the same reason as
+ * {@link TRAINING_BODY_SUBMIT_REFUSAL}. A `quoteId` on a pass-through body means
+ * "charge this job against the price the viewer confirmed", and only
+ * `RUN_CONFIRMED_STEP`'s host-chrome dialog can record that confirmation — so a
+ * `SUBMIT_WORKFLOW` carrying one can never start the job; the server refuses it
+ * as unconfirmed. Nothing is sent and nothing is spent, which is why this too is
+ * a plain `Error` and not a {@link WorkflowSubmitError}.
+ *
+ * The same body WITHOUT `quoteId` is an ordinary pass-through submit and is not
+ * affected.
+ */
+export const CONFIRMED_STEP_BODY_SUBMIT_REFUSAL =
+  "useBuzzWorkflow.submit() does not run a step body that carries a quoteId — run it with useRunConfirmedStep().runConfirmedStep(body), or drop quoteId to submit it as an ordinary job. Nothing was sent.";
+
+/**
  * Snapshot statuses that mean "no further polling is needed."
  * Used by both `submit` (a host can return an instant-fail / cached result)
  * and `poll` so the hook can't get stuck in 'polling' after a terminal reply.
@@ -96,18 +135,16 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
   'expired',
 ]);
 
-/**
- * The workflow requests (estimate / submit / poll) are orchestrator-bound:
- * the host forwards them to the generation orchestrator and only replies
- * once it answers. `submit` is the slowest — server-side it does a whatif
- * cost-preflight AND the real submit (two orchestrator round-trips) plus a
- * prompt audit before responding, which legitimately exceeds the
- * transport's 30s `DEFAULT_REQUEST_TIMEOUT_MS` (tuned for fast bridge
- * messages) when the orchestrator queue is busy. Give these calls a
- * generous ceiling so a busy-but-healthy orchestrator doesn't surface as
- * a spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
- */
-const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+// The workflow requests (estimate / submit / poll) are orchestrator-bound:
+// the host forwards them to the generation orchestrator and only replies
+// once it answers. `submit` is the slowest — server-side it does a whatif
+// cost-preflight AND the real submit (two orchestrator round-trips) plus a
+// prompt audit before responding, which legitimately exceeds the
+// transport's 30s `DEFAULT_REQUEST_TIMEOUT_MS` (tuned for fast bridge
+// messages) when the orchestrator queue is busy. `WORKFLOW_REQUEST_TIMEOUT_MS`
+// (imported above, from `transport/requestTimeouts.ts`) gives these calls a
+// generous ceiling so a busy-but-healthy orchestrator doesn't surface as a
+// spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
 
 /**
  * Default orchestrator-side hold per {@link UseBuzzWorkflow.watch} poll,
@@ -337,7 +374,10 @@ export class WorkflowEstimateError extends Error {
    * rather than on prose. It is the ONLY stable branch target here:
    * `snapshot.error` is server-authored and can change without notice, and
    * {@link WorkflowEstimateError.message} is a generic developer-facing summary
-   * whose exact wording is not a contract either.
+   * whose exact wording is not a contract either. The one carve-out is a batch
+   * cell the host's time budget ran out on: it keeps `code: 'failed'`, and its
+   * stable signal is `timedOut: true` on the `useBatchEstimate()` cell, never a
+   * match on `snapshot.error`.
    *
    * 🔴 THIS IS WHAT A VIEWER-FACING MESSAGE MUST BE DERIVED FROM. Branch on
    * `code` and return a string your app owns and localises; never render
@@ -456,10 +496,11 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *
  *   - **budget / spend-cap REJECTION** — a legitimate OUTCOME. The server quotes
  *     the price it refused to charge, so the snapshot carries a numeric
- *     `cost.total`. Blocks recover from it (open a top-up flow), so it MUST keep
- *     RESOLVING. Every such exit on the server attaches a cost: the per-call
- *     `buzzBudget` gate, the per-user daily Buzz cap, the per-app aggregate and
- *     velocity caps, and the dev-tunnel session cap — on all three body kinds.
+ *     `cost.total`, and the block can tell the viewer what was refused and why,
+ *     so it MUST keep RESOLVING. It is NOT a top-up cue: these are app and
+ *     platform caps, and buying Buzz raises none of them. Every such exit on
+ *     the server attaches a cost; the complete list of them, and of the other
+ *     resolved `'failed'` replies, is on {@link UseBuzzWorkflow.submit}.
  *   - **caught server EXCEPTION** — `failureSnapshot(err)`, no `cost`, and the
  *     `'failed'` sentinel id. The host had no workflow to report — usually
  *     nothing was queued, but a lost response or an in-progress idempotency
@@ -507,8 +548,8 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *
  * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`, and do
  * not widen the guard to reject a budget rejection. The first re-opens #253; the
- * second breaks the top-up recovery flow, which is the one thing #251 says must
- * not break.
+ * second turns a priced, explainable refusal into an opaque exception, which is
+ * the one thing #251 says must not happen.
  */
 export class WorkflowSubmitError extends Error {
   /**
@@ -687,6 +728,21 @@ export interface UseBuzzWorkflow {
    * consent dialog with no user gesture behind it, once per edit. A missing
    * scope surfaces as an ordinary rejection; show no price and let `submit()`
    * do the asking.
+   *
+   * A `kind: 'training'` body's reply also carries
+   * {@link BlockWorkflowSnapshot.trainingQuote} — the `quoteId` to run it with
+   * through `useRunTraining()`.
+   *
+   * A pass-through `step` body's reply carries
+   * {@link BlockWorkflowSnapshot.stepQuote} when its FIXED price is above the
+   * token's per-call budget (and within the per-job ceiling). That job cannot
+   * run through {@link UseBuzzWorkflow.submit}; run it with
+   * `useRunConfirmedStep().runConfirmedStep({ ...body, quoteId:
+   * stepQuote.quoteId })`, which has the viewer confirm `stepQuote.total`. No
+   * `stepQuote` means the ordinary rules apply — it is also what a host without
+   * the feature sends. Where a quote would be granted, this REJECTS instead for
+   * a training `$type` or an `input` that is not plain JSON (see
+   * {@link BlockWorkflowSnapshot.stepQuote} for the two messages).
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -708,14 +764,67 @@ export interface UseBuzzWorkflow {
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
    * is a documented outcome, not an error: the server quotes what it refused to
    * charge, so the resolved snapshot has `status === 'failed'` AND a numeric
-   * `cost.total`. THAT is the shape to branch on when offering a top-up —
-   * `useBuzzPurchase().openPurchaseModal()` — not a `catch`.
+   * `cost.total`.
    *
-   * 🔴 BUT A RESOLVED `'failed'` IS NOT ALWAYS AN AFFORDABILITY PROBLEM, so do not
-   * wire every one of them to a purchase modal. The per-app **velocity** limit,
-   * the per-app **aggregate daily** cap, a fail-closed "temporarily unavailable"
-   * deny and a **missing price quote** are all priced, resolving outcomes that
-   * buying Buzz cannot fix.
+   * 🔴 WHAT A RESOLVED `status: 'failed'` CAN MEAN — THE ONE COMPLETE LIST. The
+   * `@civitai/blocks-react` README, the `civitai-block-starter` AGENTS.md and the
+   * changesets link here rather than restating it. Every case below RESOLVES
+   * (`blocks.submitWorkflow` returns it; the REST route answers it with HTTP
+   * 200):
+   *
+   * 1. **Refused before anything ran — the `'failed'` sentinel `workflowId`, a
+   *    `cost.total`, nothing charged, every reservation released.**
+   *    - the per-call budget, `token.buzzBudget` (`insufficient buzz budget: …`);
+   *    - the viewer's daily Buzz cap — or, in its place, the review-session cap
+   *      (a moderator's run-for-real) or the private-run cap;
+   *    - the viewer's consent budget (the ceiling they set when they granted the
+   *      scope);
+   *    - the app's velocity limit or aggregate daily cap, or a fail-closed
+   *      "temporarily unavailable" deny;
+   *    - the dev-session cap (`dev:tunnel`);
+   *    - a missing price quote for a step ("generation temporarily unavailable").
+   *
+   *    A training step with no price quote is refused the same way but with NO
+   *    `cost`, which on this hook REJECTS as `'exception'` instead.
+   * 2. **Not confirmed — Buzz may have been spent.** A training run whose
+   *    submission the server could not confirm: the sentinel id, a `cost.total`,
+   *    and `submissionUnconfirmed: true` on the REST reply. The reservation is NOT
+   *    refunded and the run may be going. 🔴 The host bridge forwards only the
+   *    snapshot, so on this hook that flag never arrives and the reply looks like
+   *    case 1 — never tell a viewer "nothing was charged" for a resolved failed
+   *    `kind: 'training'` submit; send them to their trainings instead.
+   * 3. **A run was created and came back failed — a REAL `workflowId`.** The
+   *    reservation is kept and Buzz may have been spent. Priced, it resolves;
+   *    unpriced, it rejects as `'workflow-failed'`.
+   *
+   * So only case 1 may be told "could not start, nothing was charged".
+   *
+   * 🔴 A RESOLVED `'failed'` IS NEVER A TOP-UP CUE — do not wire it to
+   * `useBuzzPurchase().openPurchaseModal()`. Case 1 is a set of caps that buying
+   * Buzz does not raise, and cases 2 and 3 are not about the wallet.
+   *
+   * 🔴 THE CASE A TOP-UP DOES FIX — THE VIEWER IS ACTUALLY OUT OF BUZZ — REJECTS.
+   * The orchestrator refuses the run, the server throws, and the host answers
+   * with its cost-less `failureSnapshot(err)`, so this rejects with
+   * {@link WorkflowSubmitError} code **`'exception'`** — the same code as every
+   * other thrown submit (a bad request, an outage, a rate limit, an idempotency
+   * conflict). Nothing structural marks it as insufficient funds: the code is
+   * shared, and `snapshot.error` is the upstream message, server-authored prose
+   * that is not a contract. So decide a top-up from the BALANCE, not from the
+   * rejection: on `'exception'`, read {@link useBuzzBalance} and offer
+   * `openPurchaseModal()` only if the viewer's SPENDABLE Buzz is below the quoted
+   * cost. Two things make that read correct:
+   * - `useBuzzBalance` needs `buzz:read:self` declared in `block.manifest.json`,
+   *   and that scope is consent-gated (it is not consent-exempt), so request it
+   *   like any other gated scope. An anonymous viewer is refused outright.
+   * - A block spends only blue plus ITS DOMAIN'S pool: blue + green under an SFW
+   *   ceiling, blue + yellow under a mature one. The server keys this on the
+   *   token's DOMAIN ceiling (`maxBrowsingLevel`), so compute it as
+   *   `isSfwCeiling(useDomainMaturity().maxBrowsingLevel)` (from
+   *   `@civitai/app-sdk/blocks`; an unknown ceiling counts as SFW) — NOT
+   *   `useDomainMaturity().isSfw`, which is narrowed by the viewer's own setting —
+   *   and compare `blue` plus that one pool, never blue + green + yellow, against
+   *   the quoted cost.
    *
    * 🔴 THIS ALSO INCLUDES MODERATOR REVIEW PREVIEW. While an app is under review
    * the host short-circuits every workflow request with
@@ -734,6 +843,12 @@ export interface UseBuzzWorkflow {
    * `CONSENT_UNAVAILABLE` environment is never retried, and a second consent
    * failure reaches you unchanged. Opt out with
    * {@link ConsentRetryOptions.autoRequestConsent}`: false`.
+   *
+   * 🔴 A `kind: 'training'` BODY IS REFUSED before anything is sent — it runs
+   * only through `useRunTraining()`. See {@link TRAINING_BODY_SUBMIT_REFUSAL}.
+   * So is a pass-through `step` body that carries a `quoteId` — it runs only
+   * through `useRunConfirmedStep()`. See
+   * {@link CONFIRMED_STEP_BODY_SUBMIT_REFUSAL}.
    */
   submit: (
     body: WorkflowBody,
@@ -795,15 +910,18 @@ export interface UseBuzzWorkflow {
  *
  * 🔴 A BUDGET REFUSAL DOES **NOT** REJECT — IT RESOLVES. It comes back as a
  * snapshot with `status: 'failed'`, an `error` string and the `cost` the server
- * declined to charge, and THAT resolved shape is the cue to call
- * `useBuzzPurchase().openPurchaseModal()`. What DOES reject is a submit with no
- * usable outcome — see {@link WorkflowSubmitError}. Routing a rejection into a
- * top-up sells Buzz for a failure Buzz cannot fix.
+ * declined to charge. It is NOT a cue to call
+ * `useBuzzPurchase().openPurchaseModal()`: every resolving refusal is a cap
+ * buying Buzz does not raise, or a reply that is not about the wallet at all —
+ * the complete list is on {@link UseBuzzWorkflow.submit}.
  *
- * 🔴 NOR IS EVERY RESOLVED `'failed'` AN AFFORDABILITY PROBLEM. The per-app
- * velocity limit, the per-app aggregate daily cap, a fail-closed "temporarily
- * unavailable" deny and a missing price quote are all priced, resolving outcomes
- * too. Branch on the message/your own policy before offering to sell anything.
+ * 🔴 RUNNING OUT OF BUZZ REJECTS, and is not marked as such. The orchestrator's
+ * refusal reaches the block as {@link WorkflowSubmitError} code `'exception'`,
+ * shared with every other thrown submit. Offer a top-up only after checking the
+ * viewer's SPENDABLE Buzz ({@link useBuzzBalance}: blue plus the block's domain
+ * pool, `buzz:read:self` declared) against the quoted cost — see
+ * {@link UseBuzzWorkflow.submit}, which also holds the complete list of resolved
+ * refusals.
  *
  * AFTER `submit` FLIPS `status` TO `'polling'`, USE `watch(workflowId)`. It owns
  * the loop, resolves on the terminal snapshot, and pushes every intermediate
@@ -847,6 +965,24 @@ export interface UseBuzzWorkflow {
  * the paragraph above records, one member over: an incomplete description of a
  * union, trusted because it read as authoritative.
  *
+ * 🔴 A MULTI-STEP `kind: 'workflow'` BODY CHANGES WHAT THE PRICE MEANS — again a
+ * capability claim, so it is stated here. `WorkflowBodyWorkflow` submits several
+ * orchestrator steps as one workflow through these same calls, and:
+ *  - `estimate()`'s `cost.total` is NOT a maximum: the orchestrator re-prices a
+ *    step once the values it references are known and charges the difference;
+ *  - a workflow the host cannot price FAILS `estimate()` with a
+ *    `workflow_quote_*` `errorCode` and no `cost`, yet still proceeds on
+ *    `submit()`, reserved at the app's per-generation budget × the number of
+ *    steps (one with a training step, or with a `repeat` step at any depth, is
+ *    refused on both); an older host returns that ceiling as the estimate;
+ *  - one author fee applies to the whole workflow, not one per step, and it is
+ *    reversed whole if the workflow does not succeed;
+ *  - `repeat` iterates only an array in the body's `arguments`, at most 16
+ *    times, nested repeats multiplied;
+ *  - a `failed` result can carry `cost.total > 0` and usable `imageUrls`, because
+ *    steps that succeeded before the failing one stay charged — read
+ *    `result.steps`.
+ *
  * @returns `{ estimate, submit, poll, watch, cancel, status, result, error }`.
  *
  * @example
@@ -881,8 +1017,9 @@ export interface UseBuzzWorkflow {
  * try {
  *   const snap = await submit(body); // status 'submitting' → 'polling'
  *   if (snap.status === 'failed') {
- *     // RESOLVED + priced = a server outcome (affordability, a cap, a velocity
- *     // limit, a transient deny). Only some of those are fixable by buying Buzz.
+ *     // RESOLVED = a server outcome: a cap, a limit, a missing quote — none of
+ *     // them fixed by buying Buzz — or a run that may have spent (see `submit`
+ *     // for the complete list). Never a top-up cue.
  *     showError(submitOutcomeMessage(snap));
  *   } else {
  *     const done = await watch(snap.workflowId, { onUpdate: render }); // → terminal
@@ -911,6 +1048,7 @@ export interface UseBuzzWorkflow {
  * }
  */
 export function useBuzzWorkflow(): UseBuzzWorkflow {
+  useTransportConnection();
   const [status, setStatus] = useState<WorkflowStatus>('idle');
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -1043,10 +1181,11 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // `submit` half of civitai/civitai#4159). Two producers report
       // `status:'failed'` and `status` separates neither:
       //
-      //   - a budget / spend-cap REJECTION is an OUTCOME the block recovers from
-      //     (open a top-up flow). The server quotes the price it refused to
-      //     charge, so `cost.total` is present. It RESOLVES — turning this arm
-      //     into a throw is the one change that would break the recovery path.
+      //   - a budget / spend-cap REJECTION is an OUTCOME the block reports (the
+      //     run did not start, at this quoted price). The server quotes the price
+      //     it refused to charge, so `cost.total` is present. It RESOLVES —
+      //     turning this arm into a throw would erase that. (It is not a top-up
+      //     cue: buying Buzz raises none of these caps.)
       //   - a failure-shaped reply with NO `cost` is not a usable outcome. It
       //     REJECTS — and the `code` says which kind, because they differ on
       //     whether money moved (see WorkflowSubmitError.code).
@@ -1083,6 +1222,23 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
 
   const submit = useCallback(
     async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
+      // See `TRAINING_BODY_SUBMIT_REFUSAL`. Before the status flip, the key
+      // mint and the consent retry: nothing about this call may reach the wire.
+      if (body.kind === 'training') {
+        const refused = new Error(TRAINING_BODY_SUBMIT_REFUSAL);
+        setError(refused);
+        setStatus('error');
+        throw refused;
+      }
+      // See `CONFIRMED_STEP_BODY_SUBMIT_REFUSAL`. Keyed on the PRESENCE of a
+      // `quoteId`, whatever its shape: a malformed one is no more submittable
+      // than a well-formed one, and the server would refuse both.
+      if (body.kind === 'step' && (body as { quoteId?: unknown }).quoteId !== undefined) {
+        const refused = new Error(CONFIRMED_STEP_BODY_SUBMIT_REFUSAL);
+        setError(refused);
+        setStatus('error');
+        throw refused;
+      }
       setError(null);
       setStatus('submitting');
       // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz

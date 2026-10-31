@@ -16,6 +16,9 @@ export interface MediaOptions {
   pending?: boolean;
   /** Withheld as mature content. */
   blocked?: boolean;
+  /** Known size, so an inline image holds its place while it downloads. */
+  width?: number;
+  height?: number;
   part?: string;
   /** Makes an image (or a thumbnail video) a button. */
   onOpen?: () => void;
@@ -27,7 +30,7 @@ const HIDDEN = html`<span slot="blocked">Hidden: mature content</span>`;
 const GONE = 'This file is no longer available';
 
 /** A result or upload as `<civitai-image>`, `<civitai-video>` or `<civitai-audio>`; each opens with a bubbling `open` event. */
-export function media({ kind, mode, src = '', alt = '', pending = false, blocked = false, part = 'media', onOpen, onError }: MediaOptions): TemplateResult {
+export function media({ kind, mode, src = '', alt = '', pending = false, blocked = false, part = 'media', width, height, onOpen, onError }: MediaOptions): TemplateResult {
   const waiting = pending || (!src && !blocked);
   const fit = mode === 'thumb' ? 'cover' : 'contain';
   // The element's own `open` carries no detail; the owner sends one that says which file.
@@ -62,6 +65,7 @@ export function media({ kind, mode, src = '', alt = '', pending = false, blocked
   return html`<civitai-image
     part=${part}
     data-mode=${mode}
+    style=${width && height ? `--cvt-media-ratio: ${width} / ${height}` : ''}
     .src=${src}
     .alt=${alt}
     .pending=${waiting}
@@ -79,5 +83,34 @@ export function media({ kind, mode, src = '', alt = '', pending = false, blocked
 export const mediaSizes = css`
   [data-mode='thumb'] { aspect-ratio: 1; }
   [data-mode='inline'] { --civitai-media-max-height: var(--cvt-media-max-height, 480px); }
+  /* A signed URL arrives long before its file; the box holds the image's place until it lands. */
+  [data-mode='inline'][status='loading'] {
+    aspect-ratio: var(--cvt-media-ratio, 1);
+    max-height: var(--civitai-media-max-height);
+    background: var(--civitai-color-border);
+    animation: cvt-media-pulse 1.4s ease-in-out infinite;
+  }
+  [data-mode='inline'][status='loading']::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 28px;
+    height: 28px;
+    margin: auto;
+    border: 3px solid var(--civitai-color-text-dimmed);
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: cvt-media-spin 0.8s linear infinite;
+  }
+  @keyframes cvt-media-spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes cvt-media-pulse {
+    50% { opacity: 0.55; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-mode='inline'][status='loading'],
+    [data-mode='inline'][status='loading']::after { animation: none; }
+  }
   [data-mode='full'] { --civitai-media-max-height: var(--cvt-media-max-height, 80vh); }
 `;

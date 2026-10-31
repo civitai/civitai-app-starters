@@ -20,6 +20,7 @@ export type {
   AppClient,
   BlockAppClient,
   BlockInitializeOptions,
+  StorageMode,
   TokenInitializeOptions,
 } from './app/index.js';
 
@@ -45,6 +46,86 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
+export { SubListingError } from './sub-listings/index.js';
+export type {
+  MySubListing,
+  SubListingCallOptions,
+  SubListingContentRating,
+  SubListingErrorCode,
+  SubListingStatus,
+  SubListingsClient,
+  SubListingUpsertInput,
+  SubListingUpsertResult,
+  SubListingWithdrawResult,
+} from './sub-listings/index.js';
+export { StorageError } from './doc-store/index.js';
+export type {
+  DocumentAuthor,
+  DocumentCallOptions,
+  DocumentListQuery,
+  DocumentPage,
+  DocumentStorage,
+  DocumentWhereValue,
+  StorageCollection,
+  StorageCollectionInfo,
+  StorageDocument,
+  StorageErrorCode,
+  StorageIndexType,
+  StorageInfo,
+  StorageLimits,
+  StorageUsage,
+  WriteOptions,
+} from './doc-store/index.js';
+export { estimatedCost, SubmissionUnconfirmedError } from './workflows/index.js';
+export type {
+  WorkflowCallOptions,
+  WorkflowGetOptions,
+  WorkflowListQuery,
+  WorkflowListResult,
+  WorkflowSubmitOptions,
+  WorkflowWatchOptions,
+  WorkflowsClient,
+} from './workflows/index.js';
+// The block workflow contract: the body `app.workflows` sends and the snapshot
+// it resolves. Every name in the generated copy, pinned as a set by
+// `test/workflows/seam.test.ts`.
+export type {
+  AiToolkitLrScheduler,
+  AiToolkitOptimizerType,
+  AiToolkitPlainEcosystem,
+  AiToolkitTrainingParams,
+  AiToolkitTrainingParamsBase,
+  AppWorkflow,
+  AppWorkflowImage,
+  BlockModel3dOutput,
+  BlockModelSubstitution,
+  BlockPublishedModel,
+  BlockSourceImage,
+  BlockStepQuote,
+  BlockStepToolCall,
+  BlockTextToImageParams,
+  BlockTrainedEpoch,
+  BlockTrainingDatasetItem,
+  BlockTrainingQuote,
+  BlockWorkflowSnapshot,
+  BlockWorkflowStepSnapshot,
+  BuzzAccountType,
+  InlineComfyNode,
+  KnownBlockWorkflowErrorCode,
+  ModelSubstitutionReason,
+  WithWorkflowStepRefs,
+  WorkflowBody,
+  WorkflowBodyCustomComfy,
+  WorkflowBodyCustomComfyInline,
+  WorkflowBodyCustomComfyRecipe,
+  WorkflowBodyPassThroughStep,
+  WorkflowBodyStep,
+  WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
+  WorkflowBodyWorkflow,
+  WorkflowBodyWorkflowStep,
+  WorkflowStepRef,
+} from './workflows/types.generated.js';
 export { isTerminal, isTerminalStatus } from './orchestration/index.js';
 export type {
   OrchestrationClient,
@@ -73,7 +154,7 @@ export type {
 } from './host/index.js';
 
 export { ApiError } from './http/index.js';
-export type { Query, QueryValue, RequestOptions } from './http/index.js';
+export type { Http, Query, QueryValue, RequestOptions } from './http/index.js';
 export { BridgeError, CivitaiError } from './core/errors.js';
 export type { BridgeErrorCode, BridgeFailureCode } from './core/errors.js';
 

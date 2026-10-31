@@ -135,11 +135,19 @@ describe('check-starter-pins', () => {
     assert.match(r.out, /npm was unreachable for all pins/);
   });
 
-  test('INVARIANT: workspace: pins in starters/examples are skipped by this guard', async () => {
-    // check-starter-pins only reasons about PUBLISHED ranges; the workspace:
-    // protocol is the other guard's business.
+  test('INVARIANT: starters/examples/* pins are checked like any starter', async () => {
+    // The examples are copied out of the repo like a starter, so a stale caret
+    // there births a stale app just the same. Positive control that the scan
+    // reaches them: every example pin gets its own OK line.
     const r = await run();
     assert.equal(r.code, 0, exitMsg(0, r));
+    assert.match(r.stdout, /OK {3}@civitai\/app-sdk \^0\.31\.0 admits published 0\.31\.0 {2}\(starters\/examples\/kv-storage\/package\.json\)/);
     assert.doesNotMatch(r.out, /workspace:/);
+  });
+
+  test('REGRESSION: a STALE pin in an example fails, naming the example', async () => {
+    const r = await run({ published: { '@civitai/blocks-react': '0.40.0' } });
+    assert.equal(r.code, 1, exitMsg(1, r));
+    assert.match(r.stderr, /starters\/examples\/hello-world\/package\.json/);
   });
 });

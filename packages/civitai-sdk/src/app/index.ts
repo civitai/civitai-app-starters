@@ -1,8 +1,9 @@
 import { BridgeError, CivitaiError } from '../core/errors.js';
 import { getTransport } from '../core/get-transport.js';
 import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/handshake.js';
-import type { BlockSnapshot, BlockTransport } from '../core/transport.js';
+import { isLocalPreviewStorage, type BlockSnapshot, type BlockTransport } from '../core/transport.js';
 import { createHost, createHostSession, type Host } from '../host/index.js';
+import { reportViewerActivity } from '../host/viewer-activity.js';
 import { ApiError, createHttp, type Http } from '../http/index.js';
 import {
   createOrchestrationClient,
@@ -21,11 +22,31 @@ import {
   createSharedStorageClient,
   type SharedStorageClient,
 } from '../shared-storage/index.js';
+import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
+import { createLocalPreviewStorage, readInjectedManifest } from '../doc-store/local-preview.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
+import { createSubListingsClient, type SubListingsClient } from '../sub-listings/index.js';
+import { createWorkflowsClient, type WorkflowsClient } from '../workflows/index.js';
 
 /** Long enough for a slow host page; short enough that a block opened on its own says so. */
 const DEFAULT_INIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Which store serves `app.storage.collection(name)` and `app.storage.info()`.
+ *
+ * - `'remote'` — the server's document store, `/api/v1/blocks/storage/…`.
+ * - `'local-preview'` — an in-memory store in this tab, because the host marked
+ *   the frame a dev-tunnel preview (which has no server-side storage). It
+ *   enforces the server's rules against the LOCAL manifest, models ONE viewer,
+ *   and is gone on reload. Show the viewer a "preview data is local to this tab"
+ *   badge.
+ *
+ * Latched when `initialize()` resolves. Only the document store switches: the
+ * deprecated key/value methods on `app.storage`, `app.sharedStorage` and the
+ * `@civitai/blocks-react` storage hooks keep calling the real routes.
+ */
+export type StorageMode = 'remote' | 'local-preview';
 
 export interface AppClient {
   /**
@@ -40,15 +61,26 @@ export interface AppClient {
    */
   readonly site: SiteClient;
   /**
-   * The viewer's own per-app key/value store.
+   * App storage. Two stores share this property while apps migrate:
    *
-   * 🔴 Requires the block token the host mints: an app that authenticated with
-   * an OAuth access token has no per-viewer app storage, and every call here is
-   * refused. An anonymous viewer is refused too — gate on `viewer` rather than
-   * reading an empty result as "nothing stored".
+   * - **The document store** — `collection(name)` and `info()`: the collections
+   *   the app declares under `storage.collections` in its manifest, private or
+   *   shared, with counters, marks, declared indexes and conditional writes.
+   *   Use this for anything new.
+   * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
+   *   `getQuota`, each `@deprecated`. It keeps working, unchanged, until the apps
+   *   that use it have moved; nothing is copied between the two.
+   *
+   * 🔴 Both require the block token the host mints: an app that authenticated
+   * with an OAuth access token is refused. The legacy store refuses an anonymous
+   * viewer outright; the document store lets one read SHARED collections only.
    */
-  readonly storage: StorageClient;
+  readonly storage: StorageClient & DocumentStorage & { readonly mode: StorageMode };
   /**
+   * @deprecated Declare a `shared` collection under `storage.collections` and use
+   * `app.storage.collection(name)`. This store keeps working, unchanged, until the
+   * apps that use it have moved.
+   *
    * This app's CROSS-USER store — one namespace every viewer of this app reads
    * and writes, which is what makes a shared feed or a "popular" rail possible.
    *
@@ -61,12 +93,35 @@ export interface AppClient {
    */
   readonly sharedStorage: SharedStorageClient;
   /**
+   * The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`
+   * over the `blocks/sub-listings/*` routes. A refusal the server explained is a
+   * `SubListingError` with a typed `code`.
+   *
+   * 🔴 Requires the block token and `apps:store:items:write`, which is never
+   * minted for dev-token, dev-tunnel or review sessions and is refused to an
+   * anonymous viewer — so build the publish path to degrade quietly.
+   */
+  readonly subListings: SubListingsClient;
+  /**
+   * Generation for a BLOCK: estimate, submit, watch and cancel through the
+   * host's `blocks/workflows/*` routes, which price, budget and attribute the
+   * work before it reaches the orchestrator. Multi-step `kind: 'workflow'`
+   * bodies included.
+   *
+   * 🔴 Requires the block token the host mints, like {@link AppClient.storage}:
+   * an OAuth access token is answered `401` here. It is NOT
+   * {@link AppClient.orchestration}: that one calls the orchestrator directly
+   * with an OAuth access token and applies none of those controls.
+   */
+  readonly workflows: WorkflowsClient;
+  /**
    * The orchestrator's workflows, as the viewer.
    *
    * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
    * {@link AppClient.site} this destination IS known ahead of the call: a block
    * holding one is refused here up front, with the manifest fix, rather than
-   * spending a request to be told.
+   * spending a request to be told. A block generates through
+   * {@link AppClient.workflows} instead.
    */
   readonly orchestration: OrchestrationClient;
   /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
@@ -118,11 +173,33 @@ export async function initialize(
 
   const transport = options.transport ?? getTransport();
   await ready(transport, options.timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, options.signal);
+  // The host page cannot see input in this frame; it learns of it from this (at most once a minute).
+  reportViewerActivity(transport);
 
   const snapshot = () => transport.snapshot.get();
   const holdsBlockTokenNow = holdsBlockToken(snapshot);
+  // Read live, like the predicate above: the host rotates the token.
+  const holdsOAuthTokenNow = () => snapshot().token.kind === 'oauth';
+  // 🔴 Latched here, ONCE, and only on the host's exact signal — never inferred
+  // from `token.scopes`. A published app whose manifest forgot `apps:storage`
+  // holds a token that looks the same as a preview's, and must keep getting the
+  // real route's `insufficient_scope` rather than a silent local store.
+  const localPreview = isLocalPreviewStorage(snapshot());
+  // The same latched answer configures the session below, so `requestGrants`
+  // and the store agree on whether the document store is local.
+  const local = localPreview
+    ? // The manifest arrives only from `blockManifestPlugin()`'s dev-server
+      // global: there is deliberately no option to pass one.
+      await createLocalPreviewStorage(readInjectedManifest(), snapshot().viewer)
+    : undefined;
   return {
-    ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow),
+    ...createAppClient(
+      createHostSession(transport, { localPreviewStorage: localPreview }),
+      options,
+      holdsBlockTokenNow,
+      holdsOAuthTokenNow,
+      local,
+    ),
     host: createHost(transport),
     get viewer() {
       return snapshot().viewer;
@@ -190,21 +267,40 @@ function createAppClient(
   session: Session,
   options: ClientOptions,
   holdsBlockTokenNow: () => boolean = () => false,
+  holdsOAuthTokenNow: () => boolean = () => false,
+  /** A local preview's document store; when present, the site HTTP client never reaches the document store. */
+  localDocuments?: DocumentStorage,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
-  // One instance for all three site-hosted surfaces: the two storage clients'
-  // routes live under the same base URL, so a `siteUrl` override redirects them
-  // together.
+  // One instance for every site-hosted surface: the storage, sub-listings and
+  // workflows clients' routes live under the same base URL, so a `siteUrl`
+  // override redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. Neither storage client needs an exemption of its own:
-  // their routes are `blocks/app-storage/*` and `blocks/shared-storage/*`, which
-  // that namespace already excludes, and `test/storage/seam.test.ts` plus
-  // `test/shared-storage/seam.test.ts` pin both `BASE` values there textually.
+  // diagnosis applies. None of the five `blocks/*` clients needs an exemption
+  // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`,
+  // `blocks/storage/*`, `blocks/sub-listings/*` and `blocks/workflows/*`, which that
+  // namespace already excludes, and `test/storage/seam.test.ts`,
+  // `test/shared-storage/seam.test.ts`, `test/doc-store/client.test.ts`,
+  // `test/sub-listings/sub-listings.test.ts` and `test/workflows/seam.test.ts` pin the
+  // five `BASE` values there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   return {
     site: createSiteClient(siteHttp),
-    storage: createStorageClient(siteHttp),
+    // One object, two stores, no shared names: the legacy five and the document
+    // store's `collection`/`info`. Spread rather than chained so neither keeps a
+    // reference to the other.
+    //
+    // In a local preview the document store is the in-memory one and is never
+    // handed `siteHttp`: zero `blocks/storage/*` requests by construction. The
+    // legacy key/value methods are out of scope and keep the real routes.
+    storage: {
+      ...createStorageClient(siteHttp),
+      ...(localDocuments ?? createDocumentStorage(siteHttp, { explainInsufficientScope: true })),
+      mode: localDocuments ? 'local-preview' : 'remote',
+    },
     sharedStorage: createSharedStorageClient(siteHttp),
+    subListings: createSubListingsClient(siteHttp),
+    workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),
     orchestration: createOrchestrationClient(
       refuseBlockToken(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL), holdsBlockTokenNow),
     ),
@@ -226,7 +322,8 @@ function refuseBlockToken(http: Http, holdsBlockTokenNow: () => boolean): Http {
           new CivitaiError(
             'The orchestrator does not accept a block-scoped token, and this block holds one. ' +
               `To run workflows as the viewer, ${OAUTH_OPT_IN} so the host mints an OAuth ` +
-              'access token; the block token reaches the `blocks/*` API routes and app storage only.',
+              'access token; the block token reaches the `blocks/*` API routes and app storage only. ' +
+              'To generate with the block token, use `app.workflows`.',
           ),
         )
       : http(method, path, opts);
@@ -272,6 +369,34 @@ function explainApiRefusal(http: Http, holdsBlockTokenNow: () => boolean): Http 
           `the \`blocks/*\` routes it was minted for; which others also accept it is the ` +
           `server's to say and is not known here. If \`${path}\` needs an OAuth access token, ` +
           `${OAUTH_OPT_IN}.`;
+      }
+      throw error;
+    }
+  };
+}
+
+/**
+ * The mirror image of {@link explainApiRefusal}: the `blocks/workflows/*` routes
+ * are served to the block-scoped token only, so a block that declared
+ * `auth: "oauth"` and was handed an OAuth access token is answered `401` there.
+ * Unlike the rest of `/api/v1` this destination IS known, so the message can
+ * say what the token is and where that token does work.
+ *
+ * Only a `401`, and only when the host said the token is an OAuth one: a `403`
+ * here is about the workflow or the scope, and `initialize({ token })` knows no
+ * kind, so neither is annotated.
+ */
+function explainWorkflowRefusal(http: Http, holdsOAuthTokenNow: () => boolean): Http {
+  return async (method, path, opts) => {
+    try {
+      return await http(method, path, opts);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && holdsOAuthTokenNow()) {
+        // Appended, as in `explainApiRefusal`: `status` and `body` stay as sent.
+        error.message =
+          `${error.message} — and this block holds an OAuth access token. \`app.workflows\` needs ` +
+          'the block-scoped token, which the host hands to a block that does not declare ' +
+          '`auth: "oauth"`. With an OAuth access token, run workflows through `app.orchestration`.';
       }
       throw error;
     }

@@ -8,8 +8,12 @@ import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
 import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
 import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
+import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
+import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
+import { useRunConfirmedStep } from '../src/hooks/useRunConfirmedStep.js';
+import { useRunTraining } from '../src/hooks/useRunTraining.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   HUMAN_GATED_REQUEST_TYPES,
@@ -74,9 +78,17 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => useCheckpointPicker());
     return () => result.current.open({ baseModelGroup: 'SDXL' });
   },
+  OPEN_IMAGE_PICKER: () => {
+    const { result } = renderHook(() => useImagePicker());
+    return () => result.current.open();
+  },
   OPEN_IMAGE_UPLOAD: () => {
     const { result } = renderHook(() => useImageUpload());
     return () => result.current.open();
+  },
+  OPEN_MEDIA_UPLOAD: () => {
+    const { result } = renderHook(() => useMediaUpload());
+    return () => result.current.open({ kind: 'video' });
   },
   OPEN_RESOURCE_PICKER: () => {
     const { result } = renderHook(() => useResourcePicker());
@@ -97,13 +109,56 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
         sources: [{ kind: 'workflow', workflowId: 'wf_app_1', imageIndexes: [0] }],
       });
   },
+  RUN_CONFIRMED_STEP: () => {
+    const { result } = renderHook(() => useRunConfirmedStep());
+    return () =>
+      result.current.runConfirmedStep({
+        kind: 'step',
+        $type: 'polyGen',
+        input: { prompt: 'a chair' },
+        maxBuzz: 250,
+        quoteId: `sq_${'0'.repeat(32)}`,
+      });
+  },
+  RUN_TRAINING: () => {
+    const { result } = renderHook(() => useRunTraining());
+    return () =>
+      result.current.runTraining({
+        kind: 'training',
+        items: [{ air: 'k1.png', caption: 'c' }],
+        engine: 'ai-toolkit',
+        model: 'sdxl',
+        params: {
+          engine: 'ai-toolkit',
+          ecosystem: 'sdxl',
+          resolution: 1024,
+          lr: 0.0001,
+          textEncoderLr: null,
+          trainTextEncoder: false,
+          lrScheduler: 'cosine',
+          optimizerType: 'adamw8bit',
+          networkDim: 32,
+          networkAlpha: 16,
+          noiseOffset: null,
+          minSnrGamma: null,
+          flipAugmentation: false,
+          shuffleTokens: false,
+          keepTokens: 0,
+        },
+        triggerWord: 'tok',
+        samplePrompts: [],
+        quoteId: `tq_${'0'.repeat(32)}`,
+      });
+  },
 };
 
 /** The reply message each request type is answered with, plus a minimal body. */
 const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> = {
   OPEN_BUZZ_PURCHASE: { type: 'BUZZ_PURCHASE_RESULT', extra: { purchased: false } },
   OPEN_CHECKPOINT_PICKER: { type: 'CHECKPOINT_PICKER_RESULT', extra: {} },
+  OPEN_IMAGE_PICKER: { type: 'IMAGE_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_UPLOAD: { type: 'IMAGE_UPLOAD_RESULT', extra: {} },
+  OPEN_MEDIA_UPLOAD: { type: 'MEDIA_UPLOAD_RESULT', extra: {} },
   OPEN_RESOURCE_PICKER: { type: 'RESOURCE_PICKER_RESULT', extra: {} },
   PUBLISH_GENERATION_OUTPUTS: {
     type: 'PUBLISH_RESULT',
@@ -116,6 +171,14 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   CREATE_POST_FROM_APP: {
     type: 'CREATE_POST_RESULT',
     extra: { result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1] } },
+  },
+  RUN_CONFIRMED_STEP: {
+    type: 'CONFIRMED_STEP_RESULT',
+    extra: { snapshot: { workflowId: 'wf_step_1', status: 'pending' } },
+  },
+  RUN_TRAINING: {
+    type: 'TRAINING_RESULT',
+    extra: { snapshot: { workflowId: 'wf_train_1', status: 'pending' } },
   },
 };
 
@@ -155,9 +218,21 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'CREATE_POST_FROM_APP',
       'OPEN_BUZZ_PURCHASE',
       'OPEN_CHECKPOINT_PICKER',
+      'OPEN_IMAGE_PICKER',
       'OPEN_IMAGE_UPLOAD',
+      'OPEN_MEDIA_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
+      // The host shows the viewer a job's price in its own confirm and submits
+      // only on their click. At the 30s default the request would reject with
+      // the dialog open, and a viewer who then confirmed would start a CHARGED
+      // job the block had reported as failed.
+      'RUN_CONFIRMED_STEP',
+      // The host opens a training CONSENT dialog and submits only on the
+      // viewer's click. At the 30s default the request would reject with the
+      // dialog open, and a viewer who then clicked Train would start a CHARGED
+      // run the block had reported as failed.
+      'RUN_TRAINING',
       // The host opens its OWN consent confirm naming the collection and replies
       // only on the viewer's click or dismiss. At the 30s default the request
       // would reject with the dialog still open, so a viewer who then confirmed

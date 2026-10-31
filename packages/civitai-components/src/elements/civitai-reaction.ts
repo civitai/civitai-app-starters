@@ -11,6 +11,12 @@ export interface ReactionDetail {
   emoji: string;
   reacted: boolean;
   count: number;
+  /**
+   * WHICH reaction this is, when the element was given a non-empty `reaction`.
+   * Absent otherwise, so an element without one dispatches exactly what it
+   * always did. Branch on this, never on `emoji`, which is display only.
+   */
+  reaction?: string;
 }
 
 export class CivitaiReaction extends CivitaiElement {
@@ -65,6 +71,7 @@ export class CivitaiReaction extends CivitaiElement {
     reacted: { type: Boolean, reflect: true },
     disabled: { type: Boolean, reflect: true },
     label: { reflect: true },
+    reaction: { reflect: true },
   };
 
   declare emoji: string;
@@ -74,6 +81,13 @@ export class CivitaiReaction extends CivitaiElement {
   declare disabled: boolean;
   /** Names the reaction for a screen reader, e.g. "Like". */
   declare label: string;
+  /**
+   * The reaction this element stands for, e.g. `Like` (civitai.com's reaction
+   * names). Any non-empty string is carried as-is in the `react` event's
+   * `detail.reaction`, and is the accessible name when `label` is empty; the
+   * element does not judge which reactions exist. `emoji` stays display only.
+   */
+  declare reaction: string;
 
   constructor() {
     super();
@@ -82,6 +96,7 @@ export class CivitaiReaction extends CivitaiElement {
     this.reacted = false;
     this.disabled = false;
     this.label = '';
+    this.reaction = '';
   }
 
   #toggle(): void {
@@ -91,6 +106,7 @@ export class CivitaiReaction extends CivitaiElement {
     this.reacted = reacted;
     this.count = Math.max(0, this.count + (reacted ? 1 : -1));
     const detail: ReactionDetail = { emoji: this.emoji, reacted, count: this.count };
+    if (this.reaction) detail.reaction = this.reaction;
     this.dispatchEvent(new CustomEvent('react', { detail, bubbles: true, composed: true }));
   }
 
@@ -99,7 +115,7 @@ export class CivitaiReaction extends CivitaiElement {
       part="button"
       type="button"
       aria-pressed=${this.reacted ? 'true' : 'false'}
-      aria-label=${this.label || this.emoji}
+      aria-label=${this.label || this.reaction || this.emoji}
       ?disabled=${this.disabled}
       @click=${() => this.#toggle()}
     >

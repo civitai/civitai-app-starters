@@ -1,7 +1,7 @@
 /**
  * Tests for `exports` SUBPATH PATTERN handling in
- * `scripts/check-public-type-closure.mjs` — the CI job
- * `Public type closure (built .d.ts)`.
+ * `scripts/check-public-type-closure.mjs` — the CI lane `public-types`
+ * (in the `Core (all packages)` job).
  *
  * ## The regression these exist for
  *
@@ -17,7 +17,7 @@
  * `ffe66fc` after a green root `pnpm build` (rc 0):
  * `packages/civitai-components-react/dist/elements/` held 44 `.d.ts` files,
  * `index.d.ts` among them at 2,413 B, while the guard called that path
- * missing. `Public type closure (built .d.ts)` is a REQUIRED check on `main`,
+ * missing. The `public-types` lane runs in `Core (all packages)`, a REQUIRED check on `main`,
  * so that is a permanently-red gate for any PR that declares a pattern.
  *
  * ## What is asserted, and why in this shape
@@ -67,7 +67,7 @@
  * The guard resolves the INSTALLED `typescript` before it does anything else,
  * so this suite needs `pnpm install` to have happened — exactly the reason
  * `ci.yml` gives for keeping `check:public-types` in its own job rather than in
- * `tests/guards/`. But `pnpm test:guards` runs in the required matrix job
+ * `tests/guards/`. But `pnpm test:guards` runs in the required `starters` job
  * BEFORE the install, so this file is executed in TWO tiers with different
  * environments:
  *

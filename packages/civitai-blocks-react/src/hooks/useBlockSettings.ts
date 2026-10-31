@@ -1,6 +1,7 @@
 import type { BlockSettings } from '@civitai/app-sdk/blocks';
 
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * What {@link useBlockSettings} returns. An alias — see
@@ -28,5 +29,6 @@ export type UseBlockSettings = BlockSettings;
  * const { publisherSettings, userSettings } = useBlockSettings();
  */
 export function useBlockSettings(): UseBlockSettings {
+  useTransportConnection();
   return useTransportSnapshot().settings;
 }

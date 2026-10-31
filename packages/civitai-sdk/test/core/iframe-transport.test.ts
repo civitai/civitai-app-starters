@@ -1,6 +1,15 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { HOST, init, mountTransport } from '../support/iframe-host.js';
+
+// Read from package.json, NOT from `src/version.generated.ts`: the expectation
+// must not come from the constant the transport sends, or a stale constant
+// would agree with itself.
+const PACKAGE_VERSION = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
 
 describe('IframeTransport handshake', () => {
   it('announces itself to each exact allowed origin', () => {
@@ -21,6 +30,15 @@ describe('IframeTransport handshake', () => {
 
     expect(sentTypes()).toEqual(['BLOCK_HELLO', 'RESIZE_IFRAME', 'RESIZE_IFRAME', 'BLOCK_READY']);
     expect(posted.slice(1).every((p) => p.origin === HOST)).toBe(true);
+  });
+
+  it('reports its package name and version in BLOCK_READY', () => {
+    const { posted, deliver } = mountTransport();
+    deliver(init());
+
+    expect(posted.filter((p) => p.msg.type === 'BLOCK_READY').map((p) => p.msg.payload)).toEqual([
+      { height: 0, sdkName: 'sdk', sdkVersion: PACKAGE_VERSION },
+    ]);
   });
 
   it('publishes the snapshot and tells subscribers once', () => {
@@ -64,12 +82,12 @@ describe('IframeTransport requests', () => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
     const sent = posted.at(-1)!.msg as { type: string; payload: { requestId: string } };
-    expect(sent.type).toBe('BUZZ_GET_ACCOUNTS');
+    expect(sent.type).toBe('GET_BUZZ_ACCOUNTS');
 
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId: sent.payload.requestId, result: { accounts: [] } },
     });
 
@@ -80,7 +98,7 @@ describe('IframeTransport requests', () => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
     const { requestId } = (posted.at(-1)!.msg as { payload: { requestId: string } }).payload;
 
     const scans: unknown[] = [];
@@ -90,7 +108,7 @@ describe('IframeTransport requests', () => {
     expect(scans).toEqual([{ requestId, blocked: true }]);
 
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId, result: { accounts: [{ type: 'blue', balance: 9 }] } },
     });
     await expect(pending).resolves.toEqual({ accounts: [{ type: 'blue', balance: 9 }] });
@@ -101,7 +119,7 @@ describe('IframeTransport requests', () => {
     deliver(init());
     const controller = new AbortController();
 
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {}, { signal: controller.signal });
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {}, { signal: controller.signal });
     controller.abort(new Error('caller gave up'));
 
     await expect(pending).rejects.toThrow('caller gave up');
@@ -109,14 +127,14 @@ describe('IframeTransport requests', () => {
 
   it('queues a request sent before init and answers it after', async () => {
     const { transport, posted, deliver } = mountTransport();
-    const pending = transport.request('BUZZ_GET_ACCOUNTS', {});
+    const pending = transport.request('GET_BUZZ_ACCOUNTS', {});
 
     deliver(init());
-    const sent = posted.find((p) => p.msg.type === 'BUZZ_GET_ACCOUNTS')!.msg as {
+    const sent = posted.find((p) => p.msg.type === 'GET_BUZZ_ACCOUNTS')!.msg as {
       payload: { requestId: string };
     };
     deliver({
-      type: 'BUZZ_GET_ACCOUNTS_RESULT',
+      type: 'BUZZ_ACCOUNTS_RESULT',
       payload: { requestId: sent.payload.requestId, result: { accounts: [{ type: 'blue', balance: 4 }] } },
     });
 
@@ -241,6 +259,16 @@ describe('IframeTransport legacy replies', () => {
     await expect(exchange('SAVE_IMAGE', () => ({ error: 'busy' }))).rejects.toMatchObject({
       code: 'rate-limited',
       operation: 'SAVE_IMAGE',
+    });
+  });
+
+  it('rejects a publish refused for an expired session as unauthenticated', async () => {
+    await expect(
+      exchange('PUBLISH_GENERATION_OUTPUTS', () => ({ error: 'UNAUTHORIZED' }), 'PUBLISH_RESULT'),
+    ).rejects.toMatchObject({
+      code: 'unauthenticated',
+      operation: 'PUBLISH_GENERATION_OUTPUTS',
+      message: 'UNAUTHORIZED',
     });
   });
 
