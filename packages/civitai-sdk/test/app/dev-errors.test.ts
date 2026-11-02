@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { reportDevErrors } from '../../src/host/dev-errors.js';
 import { initialize } from '../../src/index.js';
@@ -14,13 +14,13 @@ const T0 = 1_700_000_000_000;
 const realConsoleError = console.error;
 
 let win: EventTarget;
-let original: ReturnType<typeof vi.fn>;
+let original: Mock<(...args: unknown[]) => void>;
 const stops: (() => void)[] = [];
 
 beforeEach(() => {
   win = new EventTarget();
   vi.stubGlobal('window', win);
-  original = vi.fn();
+  original = vi.fn<(...args: unknown[]) => void>();
   console.error = original;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(T0);
