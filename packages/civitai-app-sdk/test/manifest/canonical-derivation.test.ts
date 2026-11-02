@@ -462,6 +462,11 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       'storage.collections.notes.schema.type',
     ],
     [
+      'storage schema: additionalProperties is a boolean or a schema',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { additionalProperties: 'no' } } } } }),
+      'storage.collections.notes.schema.additionalProperties',
+    ],
+    [
       'storage schema: a pattern needs a maxLength on the same schema',
       valid({
         storage: { collections: { notes: { visibility: 'private', schema: { properties: { t: { pattern: '^a' } } } } } },
@@ -622,15 +627,17 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are TWO sites, and only the first — the analytics
-   * property declaration — is discriminated. The second, a `write: "none"`
-   * storage collection's "at least one counter or mark", has no `const`
-   * discriminator, so the selection leaves its report alone; what
-   * `defineBlock` says for it is pinned in the DERIVED rejections above. This
+   * ever gains. Today there are FOUR sites, and only the first — the analytics
+   * property declaration — is discriminated. The other three have no `const`
+   * discriminator, so the selection leaves their reports alone, and what
+   * `defineBlock` says for each is pinned in the DERIVED rejections above: a
+   * `write: "none"` storage collection's "at least one counter or mark", and a
+   * collection schema's `type` (one name or a list) and `additionalProperties`
+   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly two oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly four oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -646,7 +653,9 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
     expect(sites).toEqual([
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
-      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/4/then/anyOf`,
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/then/anyOf`,
+      '#/$defs/storageCollectionSchema/properties/type/anyOf',
+      '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
     ]);
   });
 });
