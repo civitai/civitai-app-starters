@@ -103,6 +103,35 @@ describe('collection schema: the manifest', () => {
     expect(() => make({ cards: { visibility: 'private', schema } })).toThrow(message);
   });
 
+  it('caps the patterns of the whole manifest at 32, counting every site, over the collections that parse', () => {
+    const withPatterns = (prefix: string, n: number, same = false) => ({
+      visibility: 'private',
+      schema: {
+        type: 'object',
+        properties: Object.fromEntries(
+          Array.from({ length: n }, (_, i) => [`p${i}`, { pattern: same ? '^same' : `^${prefix}${i}`, maxLength: 9 }]),
+        ),
+      },
+    });
+    expect(() => make({ c0: withPatterns('a', 16), c1: withPatterns('b', 16) })).not.toThrow();
+    expect(() => make({ c0: withPatterns('a', 16), c1: withPatterns('b', 16), c2: withPatterns('c', 5) })).toThrow(
+      'storage.collections declare 37 patterns across their schemas — a manifest may declare at most 32 in all',
+    );
+    // The same source 33 times is 33 patterns: sites, not distinct sources.
+    expect(() =>
+      make({ c0: withPatterns('a', 11, true), c1: withPatterns('b', 11, true), c2: withPatterns('c', 11, true) }),
+    ).toThrow('storage.collections declare 33 patterns across their schemas');
+    // c0 is refused on its own (17 > 16), so only c1 and c2 count: 32, under the cap.
+    let message = '';
+    try {
+      make({ c0: withPatterns('a', 17), c1: withPatterns('b', 16), c2: withPatterns('c', 16) });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain('storage.collections.c0.schema declares 17 patterns');
+    expect(message).not.toContain('across their schemas');
+  });
+
   it('refuses a schema on a write "none" collection', () => {
     expect(() => make({ plays: { visibility: 'shared', write: 'none', counters: ['plays'], schema: {} } })).toThrow(
       'storage.collections.plays.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing',
