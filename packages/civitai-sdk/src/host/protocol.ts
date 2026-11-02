@@ -40,6 +40,9 @@ export interface DownloadRequest {
 /** Why consent can never be granted in this environment. */
 export type ConsentRefusal = 'ungrantable';
 
+/** What a dev-session `BLOCK_ERROR` caught: a window `error`, an `unhandledrejection`, or `console.error`. */
+export type DevErrorSource = 'error' | 'unhandledrejection' | 'console';
+
 /**
  * An uploaded image the host has finished moderating. `nsfwLevel` and
  * `contentRating` are the host's verdict, so a block renders by them rather
@@ -128,7 +131,19 @@ export type HostRequests = {
 
 export type HostNotifications = {
   RESIZE_IFRAME: { height: number };
-  BLOCK_ERROR: { message: string; fatal: boolean };
+  /**
+   * `host.reportError()` sends `{ message, fatal }` only. In a dev-tunnel preview
+   * `initialize()` also forwards uncaught errors, unhandled rejections and
+   * `console.error` calls as `fatal: false` with `source`, `stack` (when there is
+   * one) and `at` (epoch ms); see `reportDevErrors`.
+   */
+  BLOCK_ERROR: {
+    message: string;
+    fatal: boolean;
+    source?: DevErrorSource;
+    stack?: string;
+    at?: number;
+  };
   NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
   REQUEST_SIGN_IN: { returnUrl?: string };
   REQUEST_CONSENT: { scopes?: string[] };

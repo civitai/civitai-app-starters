@@ -986,6 +986,30 @@ are accepted against the approved manifest:
 - Fire-and-forget: there is no reply. Owners see aggregates in the app's
   analytics panel, never individual events.
 
+### Errors in a dev preview
+
+In a dev session only, `initialize()` forwards what would otherwise vanish
+inside the frame: an uncaught error (`window` `error`), an unhandled promise
+rejection, and every `console.error` call. Each goes to the host as a
+`BLOCK_ERROR` with `fatal: false`, `source` (`'error'`, `'unhandledrejection'`
+or `'console'`), `stack` when there is one, and `at` (epoch ms), so the person
+or the assistant building the app can see it.
+
+- A dev session is one the host mounted as a dev-tunnel preview, App Assistant's
+  live preview included: the same `BLOCK_INIT` `storageMode: 'local-preview'`
+  that switches the document store. A published app's frame never carries it
+  and sends nothing new.
+- `console.error` still reaches the console, first and unchanged. Nothing is
+  swallowed and no listener cancels the browser's default.
+- Before anything leaves the frame, JWT-shaped strings, `Bearer …` credentials
+  and the token this frame holds are redacted. Then `message` is cut to 2,000
+  characters and `stack` to 4,000.
+- At most 20 reports a minute; the same `message` again within 10 s of its last
+  report is dropped.
+- An error thrown before `initialize()` resolves is not forwarded.
+
+`host.reportError()` is unchanged: it sends `{ message, fatal }` and nothing else.
+
 ## Parent origins
 
 Messages are accepted only from an allowlisted parent origin. The allowlist is
