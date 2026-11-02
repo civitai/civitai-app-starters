@@ -31,6 +31,22 @@ import { BLOCK_SCOPES, BLOCK_TAGLINE_MAX_LENGTH } from '../../src/blocks/scopes.
 import type { BlockManifest } from '../../src/blocks/types.js';
 import { canonicalAccepts, shippedManifests, valid, without } from './fixtures.js';
 
+/** Every keyword of the collection-schema subset (civitai/civitai#7491), once. */
+const COLLECTION_SCHEMA = {
+  type: 'object',
+  description: 'A saved card.',
+  required: ['title'],
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[^<>]*$' },
+    rating: { type: 'integer', minimum: 1, maximum: 5 },
+    tags: { type: 'array', minItems: 0, maxItems: 6, items: { type: ['string', 'null'] } },
+    tone: { enum: ['warm', 'cool', 7, null] },
+    kind: { const: 'card' },
+    scores: { type: 'object', additionalProperties: { type: 'number' } },
+  },
+};
+
 const accept = (manifest: Record<string, unknown>) =>
   defineBlock({ manifest: manifest as unknown as BlockManifest });
 
@@ -169,6 +185,40 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
     [
       'storage: a RESERVED log collection with maxEntries (refused at submit, not here)',
       valid({ storage: { collections: { events: { kind: 'log', visibility: 'private', maxEntries: 50 } } } }),
+    ],
+    // A collection `schema` (civitai/civitai#7491). RED before the re-vendor: the
+    // collection object is `additionalProperties: false`, so `schema` was an
+    // unknown key whatever it held.
+    [
+      'storage: a collection schema using every keyword, on a private and a shared "own" collection',
+      valid({
+        storage: {
+          collections: {
+            cards: { visibility: 'private', schema: COLLECTION_SCHEMA },
+            posts: { visibility: 'shared', write: 'own', schema: COLLECTION_SCHEMA },
+            open: { visibility: 'private', schema: {} },
+          },
+        },
+      }),
+    ],
+    // The server-only bounds validate offline and are refused at submit
+    // (KNOWN_GAPS['storage-collection-schema-server-only-rules']).
+    [
+      'storage: a collection schema over the server-only pattern-count bound (refused at submit, not here)',
+      valid({
+        storage: {
+          collections: {
+            cards: {
+              visibility: 'private',
+              schema: {
+                properties: Object.fromEntries(
+                  Array.from({ length: 17 }, (_, i) => [`p${i}`, { pattern: '^x', maxLength: 5 }]),
+                ),
+              },
+            },
+          },
+        },
+      }),
     ],
   ];
 
@@ -400,6 +450,31 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none' } } } }),
       'storage.collections.tally.counters',
     ],
+    // -- a collection `schema` (civitai/civitai#7491): the keyword subset is the canonical's
+    [
+      'storage schema: a keyword outside the subset',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { format: 'date' } } } } }),
+      'storage.collections.notes.schema.format',
+    ],
+    [
+      'storage schema: an unknown type name',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { type: 'date' } } } } }),
+      'storage.collections.notes.schema.type',
+    ],
+    [
+      'storage schema: a pattern needs a maxLength on the same schema',
+      valid({
+        storage: { collections: { notes: { visibility: 'private', schema: { properties: { t: { pattern: '^a' } } } } } },
+      }),
+      'storage.collections.notes.schema.properties.t.maxLength',
+    ],
+    [
+      'storage schema: not on a write:"none" collection',
+      valid({
+        storage: { collections: { tally: { visibility: 'shared', write: 'none', counters: ['p'], schema: {} } } },
+      }),
+      'storage.collections.tally.schema',
+    ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
 
@@ -407,6 +482,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
     expect(rejection(manifest).field).toBe(field);
   });
+
+  // Before the canonical declared `schema`, it was an unknown key on every
+  // collection — refused at `….schema` itself, which is ALSO where the write:"none"
+  // rule refuses it. The field cannot tell the two apart; the message can.
+  it.each(cases.filter(([label]) => label.startsWith('storage schema: not on')))(
+    '%s — refused by the rule, not as an unknown key',
+    (_label, manifest) => {
+      expect(rejection(manifest).message).not.toContain('is not a known property');
+    },
+  );
 
   // Before the canonical declared `ownedModelVersions`, every case above that
   // names it was ALREADY refused at the same field — as an unknown key. The
