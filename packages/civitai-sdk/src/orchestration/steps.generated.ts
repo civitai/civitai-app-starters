@@ -3,7 +3,9 @@
 import type {
   AceStepAudioStepTemplate,
   AgeClassificationStepTemplate,
+  ArchiveExtractionStepTemplate,
   AudioCaptioningStepTemplate,
+  AudioModerationStepTemplate,
   BlobArchiveStepTemplate,
   ChatCompletionStepTemplate,
   ComfyNodepackSnapshotStepTemplate,
@@ -15,24 +17,31 @@ import type {
   ImageBackgroundRemovalStepTemplate,
   ImageGenStepTemplate,
   ImageResourceTrainingStepTemplate,
+  ImageScanningStepTemplate,
   ImageToSvgStepTemplate,
   ImageUploadStepTemplate,
   ImageUpscalerStepTemplate,
+  LiveTextToSpeechStepTemplate,
+  LiveTranscriptionStepTemplate,
   MediaCaptioningStepTemplate,
   MediaHashStepTemplate,
   MediaRatingStepTemplate,
+  MergeStepTemplate,
   MiniMaxMusic3StepTemplate,
   Model3dPreviewStepTemplate,
   ModelClamScanStepTemplate,
   ModelHashStepTemplate,
   ModelParseMetadataStepTemplate,
   ModelPickleScanStepTemplate,
+  MultimodalEmbeddingStepTemplate,
   PolyGenStepTemplate,
   PreprocessImageStepTemplate,
   PreprocessVideoStepTemplate,
   PromptEnhancementStepTemplate,
+  PromptModerationStepTemplate,
   QwenImageBenchStepTemplate,
   ShieldstralModerationStepTemplate,
+  SoniloAudioGenStepTemplate,
   TextToImageStepTemplate,
   TextToSpeechStepTemplate,
   TrainingStepTemplate,
@@ -49,9 +58,12 @@ import type {
   WebScrapeStepTemplate,
   WebSearchStepTemplate,
   XGuardModerationStepTemplate,
+  YuE2StepTemplate,
   AceStepAudioStep,
   AgeClassificationStep,
+  ArchiveExtractionStep,
   AudioCaptioningStep,
+  AudioModerationStep,
   BlobArchiveStep,
   ChatCompletionStep,
   ComfyNodepackSnapshotStep,
@@ -63,24 +75,31 @@ import type {
   ImageBackgroundRemovalStep,
   ImageGenStep,
   ImageResourceTrainingStep,
+  ImageScanningStep,
   ImageToSvgStep,
   ImageUploadStep,
   ImageUpscalerStep,
+  LiveTextToSpeechStep,
+  LiveTranscriptionStep,
   MediaCaptioningStep,
   MediaHashStep,
   MediaRatingStep,
+  MergeStep,
   MiniMaxMusic3Step,
   Model3dPreviewStep,
   ModelClamScanStep,
   ModelHashStep,
   ModelParseMetadataStep,
   ModelPickleScanStep,
+  MultimodalEmbeddingStep,
   PolyGenStep,
   PreprocessImageStep,
   PreprocessVideoStep,
   PromptEnhancementStep,
+  PromptModerationStep,
   QwenImageBenchStep,
   ShieldstralModerationStep,
+  SoniloAudioGenStep,
   TextToImageStep,
   TextToSpeechStep,
   TrainingStep,
@@ -97,13 +116,16 @@ import type {
   WebScrapeStep,
   WebSearchStep,
   XGuardModerationStep,
+  YuE2Step,
 } from '@civitai/orchestration-client/dist/generated/types.gen.js';
 
 /** Any step a workflow can be submitted with, discriminated by `$type`. */
 export type StepTemplate =
   | AceStepAudioStepTemplate
   | AgeClassificationStepTemplate
+  | ArchiveExtractionStepTemplate
   | AudioCaptioningStepTemplate
+  | AudioModerationStepTemplate
   | BlobArchiveStepTemplate
   | ChatCompletionStepTemplate
   | ComfyNodepackSnapshotStepTemplate
@@ -115,24 +137,31 @@ export type StepTemplate =
   | ImageBackgroundRemovalStepTemplate
   | ImageGenStepTemplate
   | ImageResourceTrainingStepTemplate
+  | ImageScanningStepTemplate
   | ImageToSvgStepTemplate
   | ImageUploadStepTemplate
   | ImageUpscalerStepTemplate
+  | LiveTextToSpeechStepTemplate
+  | LiveTranscriptionStepTemplate
   | MediaCaptioningStepTemplate
   | MediaHashStepTemplate
   | MediaRatingStepTemplate
+  | MergeStepTemplate
   | MiniMaxMusic3StepTemplate
   | Model3dPreviewStepTemplate
   | ModelClamScanStepTemplate
   | ModelHashStepTemplate
   | ModelParseMetadataStepTemplate
   | ModelPickleScanStepTemplate
+  | MultimodalEmbeddingStepTemplate
   | PolyGenStepTemplate
   | PreprocessImageStepTemplate
   | PreprocessVideoStepTemplate
   | PromptEnhancementStepTemplate
+  | PromptModerationStepTemplate
   | QwenImageBenchStepTemplate
   | ShieldstralModerationStepTemplate
+  | SoniloAudioGenStepTemplate
   | TextToImageStepTemplate
   | TextToSpeechStepTemplate
   | TrainingStepTemplate
@@ -148,13 +177,16 @@ export type StepTemplate =
   | WdTaggingStepTemplate
   | WebScrapeStepTemplate
   | WebSearchStepTemplate
-  | XGuardModerationStepTemplate;
+  | XGuardModerationStepTemplate
+  | YuE2StepTemplate;
 
 /** Any step a workflow reports back, discriminated by `$type`. */
 export type Step =
   | AceStepAudioStep
   | AgeClassificationStep
+  | ArchiveExtractionStep
   | AudioCaptioningStep
+  | AudioModerationStep
   | BlobArchiveStep
   | ChatCompletionStep
   | ComfyNodepackSnapshotStep
@@ -166,24 +198,31 @@ export type Step =
   | ImageBackgroundRemovalStep
   | ImageGenStep
   | ImageResourceTrainingStep
+  | ImageScanningStep
   | ImageToSvgStep
   | ImageUploadStep
   | ImageUpscalerStep
+  | LiveTextToSpeechStep
+  | LiveTranscriptionStep
   | MediaCaptioningStep
   | MediaHashStep
   | MediaRatingStep
+  | MergeStep
   | MiniMaxMusic3Step
   | Model3dPreviewStep
   | ModelClamScanStep
   | ModelHashStep
   | ModelParseMetadataStep
   | ModelPickleScanStep
+  | MultimodalEmbeddingStep
   | PolyGenStep
   | PreprocessImageStep
   | PreprocessVideoStep
   | PromptEnhancementStep
+  | PromptModerationStep
   | QwenImageBenchStep
   | ShieldstralModerationStep
+  | SoniloAudioGenStep
   | TextToImageStep
   | TextToSpeechStep
   | TrainingStep
@@ -199,4 +238,5 @@ export type Step =
   | WdTaggingStep
   | WebScrapeStep
   | WebSearchStep
-  | XGuardModerationStep;
+  | XGuardModerationStep
+  | YuE2Step;
