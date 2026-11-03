@@ -27,6 +27,8 @@ const CANONICAL_BLOCK_SCOPES = [
   // scope; `apps:storage:publish` is SENSITIVE + consent-gated.
   'apps:storage',
   'apps:storage:publish',
+  // Cross-app storage imports (civitai/civitai#7494). SENSITIVE + consent-GATED.
+  'apps:storage:import',
   // App Blocks Collections surface scopes.
   'collections:read:self',
   'collections:write:self',
@@ -76,6 +78,10 @@ describe('BLOCK_SCOPES', () => {
   it('includes the document-store scopes apps:storage and apps:storage:publish', () => {
     expect(BLOCK_SCOPES.APPS_STORAGE).toBe('apps:storage');
     expect(BLOCK_SCOPES.APPS_STORAGE_PUBLISH).toBe('apps:storage:publish');
+  });
+
+  it('includes the cross-app storage import scope apps:storage:import', () => {
+    expect(BLOCK_SCOPES.APPS_STORAGE_IMPORT).toBe('apps:storage:import');
   });
 
   it('BLOCK_SCOPE_PATTERN accepts 2 to 4 segments and nothing outside that', () => {
