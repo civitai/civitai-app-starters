@@ -113,6 +113,8 @@ export class CivitaiChatThread extends LightElement {
   #resize = new ResizeObserver(() => this.#onResize());
   /** A smooth scroll to the end under way: its own scroll events are not the viewer's. */
   #glide = 0;
+  /** Where the glide had got to: it only moves down, toward the end. */
+  #glideTop = 0;
   /** `scrollTop` right after the thread last set it: a scroll event still there is the thread's own. */
   #written?: number;
   /** What the viewer looks at, deepest first, each with its top relative to the visible area's top. */
@@ -165,6 +167,7 @@ export class CivitaiChatThread extends LightElement {
       return;
     }
     const glide = ++this.#glide;
+    this.#glideTop = el.scrollTop;
     // Landed (or given up on): the content may have grown on the way, so the end is caught up with.
     const landed = () => {
       if (this.#glide !== glide) return;
@@ -210,11 +213,21 @@ export class CivitaiChatThread extends LightElement {
    * frame later, by when a streaming reply may have added more than the threshold below the old end:
    * read as the viewer's, that unpinned the thread mid-reply and left it wherever it was. So only a move
    * away from where the thread last put it (a wheel, a touch, the scrollbar, a key, find in page) is
-   * the viewer's; a glide to the end is the thread's until the viewer acts or it lands.
+   * the viewer's; a glide to the end is the thread's until the viewer acts, it lands, or the view
+   * moves up under it.
    */
   #onScroll = (): void => {
     const el = this.#scroller;
-    if (!el || this.#glide) return;
+    if (!el) return;
+    if (this.#glide) {
+      // A glide only goes down. A move up under it is someone else's (the page, find in page): the
+      // glide is given up and that move counts as below.
+      if (el.scrollTop + 1 >= this.#glideTop) {
+        this.#glideTop = el.scrollTop;
+        return;
+      }
+      this.#glide = 0;
+    }
     const near = this.#distanceToEnd(el) < NEAR_BOTTOM_PX;
     if (this.#written !== undefined && Math.abs(el.scrollTop - this.#written) < 1) {
       if (this.atBottom && !near) this.#jumpToEnd();
@@ -250,15 +263,20 @@ export class CivitaiChatThread extends LightElement {
   }
 
   /**
-   * Notes what the viewer looks at: from the scroll area down, the first child reaching into the view,
-   * descending while it starts above the view's top. Deepest first, so the finest one still on the page
-   * is the one kept in place (a reply's text is drawn anew as it streams; its turn is not).
+   * Notes what the viewer looks at. First choice: the first element, in page order, that starts inside
+   * the view: anything above it changing height moves it, so keeping it in place keeps the view. An
+   * element straddling the view's top is a poor one (content inside it, above the view, changes height
+   * without moving its top), so those come after, deepest first, for when the first choice is drawn
+   * anew (a reply's text is, as it streams; its turn is not).
    */
   #capture(): void {
     const el = this.#scroller;
     if (!el) return;
     const top = el.getBoundingClientRect().top;
-    const chain: { el: Element; top: number }[] = [];
+    const anchor: { el: Element; top: number }[] = [];
+    const first = this.#firstInView(el, top, 0);
+    if (first) anchor.push({ el: first, top: first.getBoundingClientRect().top - top });
+    const straddling: { el: Element; top: number }[] = [];
     let parent: Element = el;
     for (let depth = 0; depth < ANCHOR_DEPTH; depth++) {
       const child = this.#kids(parent).find((kid) => {
@@ -267,14 +285,26 @@ export class CivitaiChatThread extends LightElement {
       });
       if (!child) break;
       const childTop = child.getBoundingClientRect().top - top;
-      chain.unshift({ el: child, top: childTop });
       if (childTop >= 0) break;
+      straddling.unshift({ el: child, top: childTop });
       parent = child;
     }
-    this.#anchor = chain;
+    this.#anchor = [...anchor, ...straddling];
     const turns = [...el.querySelectorAll<HTMLElement & { turn?: Turn }>('.cvt-thread-list > civitai-chat-turn')];
     const turn = turns.find((t) => t.getBoundingClientRect().bottom > top) ?? turns.at(-1);
     this.#place = turn?.turn ? { seq: turn.turn.seq, offset: turn.getBoundingClientRect().top - top } : undefined;
+  }
+
+  /** The first element under `parent`, in page order, whose top is at or below `top` (the view's). */
+  #firstInView(parent: Element, top: number, depth: number): Element | undefined {
+    for (const kid of this.#kids(parent)) {
+      const box = kid.getBoundingClientRect();
+      if (box.height === 0 || box.bottom <= top) continue;
+      if (box.top >= top) return kid;
+      const inner = depth < ANCHOR_DEPTH ? this.#firstInView(kid, top, depth + 1) : undefined;
+      if (inner) return inner;
+    }
+    return undefined;
   }
 
   /** Scrolled away: whatever changed size, the content the viewer looks at stays where it was on screen. */
