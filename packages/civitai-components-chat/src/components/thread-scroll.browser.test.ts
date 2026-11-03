@@ -214,7 +214,7 @@ describe('holding: scrolled away by the viewer, nothing moves their view', () =>
     const h = await mountThread(history());
     await stream(h, 10);
     await settle(h.scroller);
-    expectAtEnd(h.scroller, 'before the wheel');
+    // Wherever following left it ((a) is about that): this is about what happens once the viewer scrolls.
     await wheel(h.scroller, -400);
     // The control: the wheel did take them away from the end.
     expect(maxScroll(h.scroller) - h.scroller.scrollTop, where(h.scroller)).toBeGreaterThan(300);
@@ -253,13 +253,15 @@ describe('holding: scrolled away by the viewer, nothing moves their view', () =>
     expect(maxScroll(h.scroller) - h.scroller.scrollTop, where(h.scroller)).toBeGreaterThan(300);
     const before = end.getBoundingClientRect().top;
     const scrollTop = h.scroller.scrollTop;
+    const height = h.scroller.scrollHeight;
 
     await h.push((parts) => parts.push(call(2)));
     await settle(h.scroller);
     const group = h.thread.querySelector<HTMLElement>('civitai-chat-turn:last-of-type .cvt-tool-group')!;
     expect(group.dataset.count).toBe('2');
-    // The control: the content above the view did change height.
-    expect(opened - group.getBoundingClientRect().height).toBeGreaterThan(40);
+    // The control: the content above the view did change height (the open row is drawn anew as a group).
+    expect(row.isConnected).toBe(false);
+    expect(Math.abs(h.scroller.scrollHeight - height), `${where(h.scroller)} was ${height} tall`).toBeGreaterThan(40);
     expect(Math.abs(end.getBoundingClientRect().top - before), `moved: ${where(h.scroller)} was ${scrollTop}`).toBeLessThanOrEqual(2);
   });
 
