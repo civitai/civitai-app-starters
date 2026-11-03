@@ -498,6 +498,9 @@ civitai-chat-thread {
   height: 100%;
   overflow-y: auto;
   scroll-padding-bottom: 24px;
+  /* The thread keeps the viewer's content in place itself (civitai-chat-thread.ts, #hold), measured
+     after each change: the browser's own anchoring, picking its own element, would only compete. */
+  overflow-anchor: none;
 }
 
 .cvt-thread-list {
