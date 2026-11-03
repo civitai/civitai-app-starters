@@ -1,5 +1,28 @@
 # @civitai/app-sdk
 
+## 0.81.0
+
+### Minor Changes
+
+- d454618: Collection document schemas (civitai/civitai#7491). A storage collection may declare `schema`, a JSON Schema subset that every document's `data` must match. The server refuses a create or put that does not match with 400 `schema_violation`, and `details: { collection, pointer, keyword }` names the first failing JSON pointer. Counters and marks are not checked.
+
+  - `@civitai/sdk`: `StorageErrorCode` gains `'schema_violation'`. `createFakeStorage`, and with it the dev-tunnel local preview, now enforces a collection's `schema` the way the server does: the same messages, pointers and order, checked before the ownership check, the trust gate, the write budget and moderation. It also refuses at creation a schema the server would refuse at submit, with the server's text, including more than 32 patterns across the manifest. The vendored storage contract is re-vendored.
+  - `@civitai/app-sdk`: `schema?: BlockStorageCollectionSchema` is added on both collection declarations, with the new `BlockStorageCollectionSchema` and `BlockStorageSchemaType` types. The vendored `schemas/app-block/v1.json` is re-vendored, so `defineBlock` accepts `schema` and enforces the subset's shape. The server-only bounds (size, depth, pattern count per schema and per manifest, min above max, a pattern that compiles and cannot backtrack catastrophically) are refused at submit, not here: see `KNOWN_GAPS['storage-collection-schema-server-only-rules']`.
+
+- df49241: Publish consent in an import's source (civitai/civitai#7586). A create, put, counter, mark or unmark through `app.storage.collection(name, { from })` into one of the source's SHARED collections needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP. Needs the civitai.com release that serves imports and this prompt.
+
+  `@civitai/sdk`: when the source refuses such a write `consent_required` with `details: { scope: 'apps:storage:publish', from }`, `app.storage` asks the host once (`REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`) and sends the same call once more on the next host-pushed `TOKEN_REFRESH` — the grant is the source's, so the token's scopes do not change. That push follows an Allow but can also be the host's routine re-mint ("Not now" sends nothing), so the retried write's result is the authority; a `TOKEN_REFRESH_RESPONSE` to a `getToken({ fresh: true })` never counts. "Not now" (no push within 60 s) and `CONSENT_UNAVAILABLE` reject with the first refusal, a refused retry rejects with its own (second) refusal, and nothing is asked or retried again; a caller abort during the wait rejects with the abort. A delete never asks. `GrantOptions` gains `from`, so `app.requestGrants(['apps:storage:publish'], { from })` asks for it directly — `true` on that push, `false` on `CONSENT_UNAVAILABLE` or after 60 s by itself; any other scopes with `from` resolve `false` without asking, as does a local preview or a sign-in session. `IframeTransport` now also delivers a host-pushed `TOKEN_REFRESH` to `on('TOKEN_REFRESH')` subscribers, after applying it. `DocumentStorageOptions` gains `requestGrants`. `createFakeStorage` gains `requestGrants`, the host's prompt: `true` records the grant in that source.
+
+  `@civitai/app-sdk`: the `REQUEST_CONSENT` payload carries `from?: string`.
+
+  `@civitai/blocks-react`: `useRequestConsent()` accepts `from`; the mock and live dev hosts answer a `from` request with `CONSENT_UNAVAILABLE` (`ungrantable`, `['apps:storage:publish']`), since neither has another app to grant it in.
+
+- df49241: Cross-app storage imports (civitai/civitai#7494): an app reaches a viewer's data in another app — a fork reading and writing its parent's — through `app.storage.collection(name, { from: '<source blockId>' })`. Needs the civitai.com release that serves imports; until then a call with `from` is refused `invalid_request`.
+
+  `@civitai/sdk`: every collection call (`get`, `getMany`, `put`, `create`, `delete`, `list`, `increment`, `mark`, `unmark`) carries `?from=<blockId>` when the collection was opened with `from`, with the same path, body and reply. `info()` takes no `from`, and a `from` passed to it, or a `from` key that is not a string (`{ from: undefined }`), is refused before sending (`invalid_request`) rather than reaching this app's own collection. New `StorageErrorCode`s `import_not_declared` and `not_exportable`; `storageImportRefusal(error)` types the import refusals civitai/civitai@86334b30 can give (`import_consent`, `source_publish_consent`, `read_only`, `not_declared`, `not_exportable`, `source_collection_not_declared`, `not_eligible` with `import_dev_token` / `import_hub_token` / `import_in_review` / `import_namespace` / `source_not_approved` / `import_source_rating`); a `not_eligible` reason it does not list, on a call through an import, is returned as it is (`StorageImportNotEligibleReason` is open-ended — keep a `default` branch), except the reasons about the app or viewer themselves (`app_not_approved`, `account_too_new`, …); it returns `null` otherwise. New types `CollectionOptions`, `StorageImportRefusal`, `StorageImportNotEligibleReason`; `SCOPES` gains `apps:storage:import`. In a dev-tunnel preview an import is refused locally with the server's answer to a dev token (403 `not_eligible`, `import_dev_token`); nothing is sent. `createFakeStorage` (`@civitai/sdk/testing`) serves imports: `blockId`, `sources` (other apps, each with its own manifest, `status` and `consent`), `importGrants`, and `as({ app })` to act as a source; a `token: 'dev'` caller is refused every import. New types `FakeStorageSource`, `FakeStorageImportGrant`.
+
+  `@civitai/app-sdk`: the manifest's `storage.imports` (`BlockStorageImport`: `{ from, collections, access: 'read' | 'readwrite' }`), `exportable?: boolean` on a collection, and `BLOCK_SCOPES.APPS_STORAGE_IMPORT` (`apps:storage:import`). `storage.collections` is now optional on the type (a manifest declares collections, imports or both; `defineBlock` refuses neither). The vendored canonical schema carries civitai/civitai#7494's `storage.imports`, `exportable` and scope.
+
 ## 0.80.1
 
 ### Patch Changes
@@ -830,15 +853,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                    single measurements on one machine.
+                                                                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                        single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1746,10 +1769,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                  after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                           @civitai/components  0.4.2                   — 1 copy
+                                                                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                    after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                             @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
