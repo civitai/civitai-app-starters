@@ -198,10 +198,12 @@ export interface CollectionOptions {
    * A create, put, counter, mark or unmark in one of the source's SHARED collections also
    * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
    * On `app.storage` the client asks the host for it by itself when the source refuses
-   * for want of it: one prompt, then the same call ONCE more on the next token refresh,
-   * within 60 s. "Not now", a host that cannot prompt (only the app page does) and a second
-   * refusal all reject with the original `consent_required` (`source_publish_consent`).
-   * A delete never needs it.
+   * for want of it: one prompt, then the same call ONCE more on the next host-pushed token
+   * refresh, within 60 s. That push follows an Allow but can also be the host's routine
+   * re-mint ("Not now" sends nothing), so the retry's own result is the authority. "Not
+   * now" and a host that cannot prompt (only the app page does) reject with the first
+   * `consent_required` (`source_publish_consent`); a refused retry rejects with ITS
+   * refusal; nothing is asked or retried again. A delete never needs it.
    *
    * When the key is present its value must be a string: `{ from: undefined }` (a
    * parent blockId not loaded yet) is refused before sending rather than read as
@@ -309,18 +311,61 @@ export class StorageError extends ApiError {
 }
 
 /**
- * `details.reason` of a `not_eligible` that only an import gets: a review (run-for-real)
- * token, a dev token (a dev-tunnel preview) or a hub OAuth bearer reaches no other app;
- * `source_not_approved` — no approved app holds the source blockId.
+ * `details.reason` of a `not_eligible` that only an import gets — every one the server's
+ * `resolveImportAccess` emits (civitai/civitai@86334b30): a review (run-for-real) token, a
+ * dev token (a dev-tunnel preview) or a hub OAuth bearer reaches no other app;
+ * `source_not_approved` — no approved app holds the source blockId;
+ * `import_source_rating` — the source is mature-rated and this host may not show it;
+ * `import_namespace` — the token is outside the published namespace.
+ *
+ * OPEN-ENDED: a newer server may add a reason, and it reaches the app as it is (see
+ * {@link storageImportRefusal}), so a `switch` over this type keeps a `default` branch.
  */
-export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_token' | 'import_hub_token' | 'source_not_approved';
+export type StorageImportNotEligibleReason =
+  | 'import_in_review'
+  | 'import_dev_token'
+  | 'import_hub_token'
+  | 'source_not_approved'
+  | 'import_source_rating'
+  | 'import_namespace'
+  | (string & {});
 
 const IMPORT_NOT_ELIGIBLE: ReadonlySet<string> = new Set<StorageImportNotEligibleReason>([
   'import_in_review',
   'import_dev_token',
   'import_hub_token',
   'source_not_approved',
+  'import_source_rating',
+  'import_namespace',
 ]);
+
+/**
+ * The `not_eligible` reasons the server gives for the CONSUMER itself, which a call through
+ * an import can get too and which are not import refusals: the app's own approval and run
+ * gate (civitai `resolveStorageAccess`, the block-scope middleware) and the viewer's
+ * shared-write trust gate (`sharedWriteTrustRefusal`), as of civitai/civitai@86334b30.
+ */
+const CONSUMER_NOT_ELIGIBLE: ReadonlySet<string> = new Set([
+  'apps_disabled',
+  'review_inactive',
+  'author_required',
+  'app_not_approved',
+  'instance_revoked',
+  'context_binding',
+  'ineligible',
+  'restricted',
+  'onboarding_incomplete',
+  'email_unverified',
+  'account_too_new',
+  'membership_required',
+]);
+
+/**
+ * The refusals of calls that carried `?from=` (set where the reply is read). A
+ * `not_eligible` carries no `from`, so this is how {@link storageImportRefusal} tells an
+ * import's unknown reason from this app's own.
+ */
+const refusedThroughImport = new WeakSet<StorageError>();
 
 /**
  * A refusal only a call through an import (`collection(name, { from })`) gets, with its
@@ -348,7 +393,11 @@ const IMPORT_NOT_ELIGIBLE: ReadonlySet<string> = new Set<StorageImportNotEligibl
  * - `source_collection_not_declared` — 404 `collection_not_declared` with a `from`: the
  *   source app declares no such collection.
  * - `not_eligible` — 403 `not_eligible` with an import reason: the token cannot import at
- *   all (a dev, hub or review token), or no approved app holds `from`.
+ *   all (a dev, hub or review token, or one outside the published namespace), no approved
+ *   app holds `from`, or this host may not show it (`import_source_rating`). A reason this
+ *   SDK does not list, on a call through an import, is returned as it is — unless it is
+ *   one the server gives for this app or viewer themselves (`app_not_approved`, a trust
+ *   reason such as `account_too_new`), which is `null` like any non-import refusal.
  */
 export type StorageImportRefusal =
   | { kind: 'import_consent'; scope: 'apps:storage:import'; from: string }
@@ -361,8 +410,9 @@ export type StorageImportRefusal =
 
 /**
  * The import refusal `error` is, typed — or `null` for anything else (including the
- * same codes on this app's OWN collections, which carry no `from`). Reads only the
- * server's `code` and `details`.
+ * same codes on this app's OWN collections, which carry no `from`). Reads the server's
+ * `code` and `details`, and — for a `not_eligible` reason it does not list — whether the
+ * refused call went through an import.
  */
 export function storageImportRefusal(error: unknown): StorageImportRefusal | null {
   if (!(error instanceof StorageError)) return null;
@@ -386,10 +436,13 @@ export function storageImportRefusal(error: unknown): StorageImportRefusal | nul
       return from !== undefined && collection !== undefined
         ? { kind: 'source_collection_not_declared', from, collection }
         : null;
-    case 'not_eligible':
-      return typeof d.reason === 'string' && IMPORT_NOT_ELIGIBLE.has(d.reason)
-        ? { kind: 'not_eligible', reason: d.reason as StorageImportNotEligibleReason }
-        : null;
+    case 'not_eligible': {
+      const reason = d.reason;
+      if (typeof reason !== 'string') return null;
+      if (IMPORT_NOT_ELIGIBLE.has(reason)) return { kind: 'not_eligible', reason };
+      // A newer server's reason: an import's only when the call was one.
+      return refusedThroughImport.has(error) && !CONSUMER_NOT_ELIGIBLE.has(reason) ? { kind: 'not_eligible', reason } : null;
+    }
     default:
       return null;
   }
@@ -441,8 +494,9 @@ function isSourcePublishRefusal(error: unknown, from: string): boolean {
 /**
  * `attempt`; on the source's publish refusal, ask once and, granted, `attempt` ONCE more.
  * The refused call wrote nothing (the server refuses before the write), so the retry is
- * the first write, not a second one. A second refusal, a "no", the wait running out and
- * a caller abort during it all end here: the original refusal (or the abort) surfaces.
+ * the first write, not a second one. A "no" and the wait running out surface the first
+ * refusal, a refused retry surfaces ITS refusal (the second), and a caller abort during
+ * the wait surfaces the abort.
  */
 async function withSourcePublishGrant<R>(
   ask: DocumentStorageOptions['requestGrants'],
@@ -545,7 +599,9 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
     try {
       return await http<R>(method, path, opts);
     } catch (error) {
-      throw toStorageError(error, options);
+      const refused = toStorageError(error, options);
+      if (refused instanceof StorageError && typeof opts.query?.from === 'string') refusedThroughImport.add(refused);
+      throw refused;
     }
   };
 

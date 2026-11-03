@@ -201,10 +201,16 @@ export interface GrantOptions {
      * one of this app's `storage.imports` (its blockId), which a write through the import
      * into one of the source's shared collections needs. Pass exactly
      * `['apps:storage:publish']` with it; anything else resolves `false` without asking.
-     * The grant is the source's, so this app's token scopes do not change: on a host page
-     * the call resolves `true` on the next token refresh after the viewer allows, and only
-     * the app page (`/apps/run/<slug>`) prompts for it. `app.storage.collection(name, { from })`
+     * The grant is the source's, so this app's token scopes do not change, and only the app
+     * page (`/apps/run/<slug>`) prompts for it. `app.storage.collection(name, { from })`
      * asks for it by itself, so an app rarely needs to.
+     *
+     * 🔴 On a host page `true` means "the host PUSHED a token refresh after the prompt" —
+     * which follows an Allow, but can also be the host's routine re-mint, since "Not now"
+     * sends nothing. It is not proof of the grant: treat the result of the write you retry
+     * as authoritative (a refusal there means no grant). A `TOKEN_REFRESH_RESPONSE` to a
+     * `getToken({ fresh: true })` never counts. `false`: the host cannot prompt
+     * (`CONSENT_UNAVAILABLE`), or no answer within 60 s; `signal` can end the wait sooner.
      */
     from?: string;
 }
@@ -666,8 +672,9 @@ export declare class StorageError extends ApiError {
 
 /**
  * The import refusal `error` is, typed — or `null` for anything else (including the
- * same codes on this app's OWN collections, which carry no `from`). Reads only the
- * server's `code` and `details`.
+ * same codes on this app's OWN collections, which carry no `from`). Reads the server's
+ * `code` and `details`, and — for a `not_eligible` reason it does not list — whether the
+ * refused call went through an import.
  */
 export declare function storageImportRefusal(error: unknown): StorageImportRefusal | null;
 
@@ -856,10 +863,12 @@ export interface CollectionOptions {
      * A create, put, counter, mark or unmark in one of the source's SHARED collections also
      * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
      * On `app.storage` the client asks the host for it by itself when the source refuses
-     * for want of it: one prompt, then the same call ONCE more on the next token refresh,
-     * within 60 s. "Not now", a host that cannot prompt (only the app page does) and a second
-     * refusal all reject with the original `consent_required` (`source_publish_consent`).
-     * A delete never needs it.
+     * for want of it: one prompt, then the same call ONCE more on the next host-pushed token
+     * refresh, within 60 s. That push follows an Allow but can also be the host's routine
+     * re-mint ("Not now" sends nothing), so the retry's own result is the authority. "Not
+     * now" and a host that cannot prompt (only the app page does) reject with the first
+     * `consent_required` (`source_publish_consent`); a refused retry rejects with ITS
+     * refusal; nothing is asked or retried again. A delete never needs it.
      *
      * When the key is present its value must be a string: `{ from: undefined }` (a
      * parent blockId not loaded yet) is refused before sending rather than read as
@@ -902,11 +911,17 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  | 'local_preview_unavailable' | (string & {});
 
 /**
- * `details.reason` of a `not_eligible` that only an import gets: a review (run-for-real)
- * token, a dev token (a dev-tunnel preview) or a hub OAuth bearer reaches no other app;
- * `source_not_approved` — no approved app holds the source blockId.
+ * `details.reason` of a `not_eligible` that only an import gets — every one the server's
+ * `resolveImportAccess` emits (civitai/civitai@86334b30): a review (run-for-real) token, a
+ * dev token (a dev-tunnel preview) or a hub OAuth bearer reaches no other app;
+ * `source_not_approved` — no approved app holds the source blockId;
+ * `import_source_rating` — the source is mature-rated and this host may not show it;
+ * `import_namespace` — the token is outside the published namespace.
+ *
+ * OPEN-ENDED: a newer server may add a reason, and it reaches the app as it is (see
+ * {@link storageImportRefusal}), so a `switch` over this type keeps a `default` branch.
  */
-export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_token' | 'import_hub_token' | 'source_not_approved';
+export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_token' | 'import_hub_token' | 'source_not_approved' | 'import_source_rating' | 'import_namespace' | (string & {});
 
 /**
  * A refusal only a call through an import (`collection(name, { from })`) gets, with its
@@ -934,7 +949,11 @@ export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_to
  * - `source_collection_not_declared` — 404 `collection_not_declared` with a `from`: the
  *   source app declares no such collection.
  * - `not_eligible` — 403 `not_eligible` with an import reason: the token cannot import at
- *   all (a dev, hub or review token), or no approved app holds `from`.
+ *   all (a dev, hub or review token, or one outside the published namespace), no approved
+ *   app holds `from`, or this host may not show it (`import_source_rating`). A reason this
+ *   SDK does not list, on a call through an import, is returned as it is — unless it is
+ *   one the server gives for this app or viewer themselves (`app_not_approved`, a trust
+ *   reason such as `account_too_new`), which is `null` like any non-import refusal.
  */
 export type StorageImportRefusal = {
     kind: 'import_consent';

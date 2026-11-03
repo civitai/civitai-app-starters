@@ -163,6 +163,12 @@ export type HostPushes = {
   /** `scopes` is advisory and may be empty; the message itself is the refusal. */
   CONSENT_UNAVAILABLE: { reason: ConsentRefusal; scopes: string[] };
   /**
+   * The host re-minted this app's token unasked: after a consent Allow, or on its own
+   * schedule. The transport has already applied the token to the snapshot when this is
+   * delivered; never a `TOKEN_REFRESH_RESPONSE` (the answer to a `getToken`).
+   */
+  TOKEN_REFRESH: { token: unknown };
+  /**
    * The verdict on an `asyncScan` upload, once per upload the host accepted.
    * It arrives long after that upload's own reply, which is why it is a push.
    *

@@ -49,7 +49,9 @@ export interface UseRequestConsent {
  * source of one of this app's `storage.imports` (civitai/civitai#7586). Pass
  * exactly `{ scopes: ['apps:storage:publish'], from: '<source blockId>' }`. That
  * grant belongs to the source, so `useBlockToken().scopes` does NOT change: treat
- * the next token refresh as "allowed" and retry the write once. Only the app page
+ * the next host-pushed `TOKEN_REFRESH` as "maybe allowed" and retry the write once —
+ * the host also pushes its routine re-mint and sends nothing on "Not now", so the
+ * retried write's result is the authority, and a refused retry is final. Only the app page
  * prompts for it; every other host answers `CONSENT_UNAVAILABLE`. `@civitai/sdk`'s
  * document store does all of this itself.
  *

@@ -374,9 +374,12 @@ export class IframeTransport implements BlockTransport {
     }
 
     // Host-pushed token rotation (no requestId). Always apply to the
-    // snapshot; never matches a pending request.
+    // snapshot; never matches a pending request. Then tell `on('TOKEN_REFRESH')`,
+    // which is how a caller tells a PUSH (after a consent Allow, or the host's
+    // own re-mint) from a `TOKEN_REFRESH_RESPONSE` to a `getToken`.
     if (isHostMessage(data, 'TOKEN_REFRESH')) {
       this.#applyTokenRefresh(data.payload.token);
+      for (const handler of [...(this.#pushListeners.get('TOKEN_REFRESH') ?? [])]) handler(data.payload);
       return;
     }
 

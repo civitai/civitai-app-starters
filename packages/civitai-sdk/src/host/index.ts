@@ -526,15 +526,30 @@ const SOURCE_BLOCK_ID = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 const SOURCE_PUBLISH_SCOPE = 'apps:storage:publish';
 
 /**
+ * How long {@link requestGrantInSource} waits for an answer by itself: "Not now" sends
+ * nothing. The same bound as the document store's wait for this prompt.
+ */
+const SOURCE_GRANT_WAIT_MS = 60_000;
+
+/**
  * The viewer's `apps:storage:publish` grant IN THE SOURCE APP `from` (civitai/civitai#7586).
  *
  * The host records it for the source, so this app's token scopes do NOT change — the
  * consumer's own `apps:storage:publish` is not it, and no scope check can see it. After
- * Allow the host re-mints this app's token and pushes `TOKEN_REFRESH` anyway: a NEW token
- * object in the snapshot is the answer (a theme or route push keeps the old one).
- * `CONSENT_UNAVAILABLE` is a refusal; "Not now" sends nothing, so the caller bounds the wait.
+ * Allow the host re-mints this app's token and pushes `TOKEN_REFRESH` anyway, so the first
+ * host-PUSHED `TOKEN_REFRESH` after the prompt was posted resolves `true`. Only a push
+ * counts: a `TOKEN_REFRESH_RESPONSE` answers this app's own (or a concurrent)
+ * `getToken({ fresh: true })`, and a theme or route push carries no token.
  *
- * The host refuses any other payload carrying `from` and opens nothing, so one is never sent.
+ * 🔴 `true` is "the host pushed a token refresh after the prompt", NOT "the viewer allowed":
+ * the host also pushes its scheduled re-mint, and "Not now" sends nothing, so a routine
+ * re-mint while the prompt is open reads the same as an Allow. That is the host protocol's
+ * limit (the app's own consent prompt has it too); the caller's next write is the authority.
+ *
+ * `CONSENT_UNAVAILABLE` resolves `false`, and so does the wait running out
+ * ({@link SOURCE_GRANT_WAIT_MS}); a caller `signal` can end it sooner (rejecting with its
+ * reason). The host refuses any other payload carrying `from` and opens nothing, so one is
+ * never sent.
  */
 function requestGrantInSource(
   transport: BlockTransport,
@@ -548,15 +563,18 @@ function requestGrantInSource(
   if (signal?.aborted) return Promise.reject(signal.reason);
 
   return new Promise<boolean>((resolve, reject) => {
-    const asked = transport.snapshot.get().token;
     const release: (() => void)[] = [];
     const settle = (finish: () => void) => {
       for (const off of release) off();
       finish();
     };
 
-    release.push(transport.snapshot.subscribe(() => transport.snapshot.get().token !== asked && settle(() => resolve(true))));
+    // Subscribed before the prompt is posted, and pushes arrive as later events, so only a
+    // refresh after the prompt can count.
+    release.push(on(transport, 'TOKEN_REFRESH', () => settle(() => resolve(true))));
     release.push(on(transport, 'CONSENT_UNAVAILABLE', () => settle(() => resolve(false))));
+    const timer = setTimeout(() => settle(() => resolve(false)), SOURCE_GRANT_WAIT_MS);
+    release.push(() => clearTimeout(timer));
     if (signal) {
       const onAbort = () => settle(() => reject(signal.reason));
       signal.addEventListener('abort', onAbort, { once: true });

@@ -345,14 +345,21 @@ try {
   not it, and neither is this app's own `apps:storage:publish`). When the source refuses
   for want of it, `app.storage` asks the host by itself —
   `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`, which opens "<this app>
-  needs permission in <source>" — and on the next token refresh sends the same call ONCE
-  more. The token's scopes do not change (the grant is recorded for the source, which
-  can then publish as the viewer too, and the viewer revokes it from the source's card
-  under Apps → Permissions). "Not now" sends nothing, so after 60 s, as after a
-  `CONSENT_UNAVAILABLE` or a second refusal, the original `source_publish_consent`
-  refusal reaches the app. Only the app page (`/apps/run/<slug>`) prompts; every other
-  host refuses at once. A delete, and any write to a private source collection, never
-  needs it. To ask yourself: `app.requestGrants(['apps:storage:publish'], { from })`.
+  needs permission in <source>" — and on the next token refresh the host PUSHES
+  (`TOKEN_REFRESH`) sends the same call ONCE more. The token's scopes do not change (the
+  grant is recorded for the source, which can then publish as the viewer too, and the
+  viewer revokes it from the source's card under Apps → Permissions), so that push is
+  the only signal — and it is not proof: the host also pushes its routine re-mint, and
+  "Not now" sends nothing, so a re-mint while the prompt is open costs one retry that the
+  source refuses again. The retried write's result is the authority. "Not now" (no push
+  within 60 s) and a `CONSENT_UNAVAILABLE` surface the first `source_publish_consent`
+  refusal; a refused retry surfaces ITS refusal, and nothing is asked or retried again.
+  A `TOKEN_REFRESH_RESPONSE` to a `getToken({ fresh: true })` never counts. Only the app
+  page (`/apps/run/<slug>`) prompts; every other host refuses at once. A delete, and any
+  write to a private source collection, never needs it. To ask yourself:
+  `app.requestGrants(['apps:storage:publish'], { from })` — it resolves `true` on that
+  push (the same caveat: check the write you retry), `false` on `CONSENT_UNAVAILABLE` or
+  after 60 s.
 - **Refusals** — `storageImportRefusal(error)` reads each one, typed: `import_consent`
   (403 `consent_required`, `details: { scope: 'apps:storage:import', from }`),
   `source_publish_consent` (403 `consent_required`,
@@ -361,9 +368,13 @@ try {
   `import_not_declared`, `details: { from, collection }`), `not_exportable` (403, the
   source set `exportable: false` on it), `source_collection_not_declared` (404
   `collection_not_declared` with a `from`), and `not_eligible` (403 with
-  `details.reason` `import_dev_token`, `import_hub_token`, `import_in_review` or
-  `source_not_approved`). It returns `null` for every other error, including the same
-  codes on this app's own collections.
+  `details.reason` `import_dev_token`, `import_hub_token`, `import_in_review`,
+  `import_namespace`, `source_not_approved` or `import_source_rating` — every reason the
+  server's import check gives today). The reason type is open-ended: a reason a newer
+  server adds, on a call through an import, is returned as it is, so keep a `default`
+  branch. It returns `null` for every other error, including the same codes on this
+  app's own collections and the `not_eligible` reasons about this app or viewer
+  themselves (`app_not_approved`, `account_too_new`, …).
 - **Only an ordinary block token imports.** A dev token, a hub OAuth bearer and a review
   reach no other app. So in a [dev-tunnel preview](#in-a-dev-tunnel-preview-local-to-the-tab)
   an import is refused locally with the server's own answer to a dev token,
