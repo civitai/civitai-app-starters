@@ -1,7 +1,0 @@
----
-'@civitai/components-chat': patch
----
-
-`<civitai-chat>`'s thread follows a reply as it streams for as long as the viewer stays at the end, and moves nothing once they have scrolled away. Before, a reply that grew fast (words, a run of tool calls) could stop the thread following partway through, leaving the view wherever it was, because the thread read its own jump to the end, arriving a frame later, as the viewer scrolling away; and a gentle scroll up (less than 48px) while a reply streamed was undone by the next words. Now any scroll up by the viewer (wheel, touch, keys) leaves the end at once, other moves the thread did not make (the scrollbar, find in page) leave it once they land away from the end, and scrolling back to the end follows again.
-
-Scrolled away, the content the viewer is looking at stays where it is on screen while things above it change height (a group of calls opening, a picture sizing itself as it loads, a call row redrawn into a group), and a thread drawn again for the same chat (as it is read again behind the loader) opens where they were instead of at the end, or at the end if what they were looking at is no longer there. Sending a message now brings the end into view even when the viewer had scrolled up; opening another chat, and new page content in `thread-end`, do as before; picking the chat already open from the history no longer does. A call row the viewer was on is kept focused as it joins a group without scrolling the thread to it.
