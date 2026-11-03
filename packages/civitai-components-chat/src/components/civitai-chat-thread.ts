@@ -24,6 +24,8 @@ const ANCHOR_DEPTH = 8;
 
 /** Keys that scroll the thread when focus is not in a text field. */
 const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ']);
+/** Of those, the ones that scroll up (and Shift with the space bar). */
+const UP_KEYS = new Set(['PageUp', 'ArrowUp', 'Home']);
 
 /** Page content put after the last message that was already brought into view once (`thread-end`). */
 const endShown = new WeakSet<Element>();
@@ -115,6 +117,10 @@ export class CivitaiChatThread extends LightElement {
   #glide = 0;
   /** Where the glide had got to: it only moves down, toward the end. */
   #glideTop = 0;
+  /** Where the finger was on the last touch event: dragged down, the view scrolls up. */
+  #touchY?: number;
+  /** The root the thread is drawn in (the chat's shadow root): a kept place belongs to that chat. */
+  #root?: Node;
   /** `scrollTop` right after the thread last set it: a scroll event still there is the thread's own. */
   #written?: number;
   /** What the viewer looks at, deepest first, each with its top relative to the visible area's top. */
@@ -144,6 +150,7 @@ export class CivitaiChatThread extends LightElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.#root = this.getRootNode();
     document.addEventListener('visibilitychange', this.#onVisible);
     // Put back on the page after leaving it (moved, not made anew): watched again.
     for (const el of [this.#scroller?.querySelector('.cvt-thread-list'), this.#scroller, this.#end]) if (el) this.#resize.observe(el);
@@ -153,7 +160,7 @@ export class CivitaiChatThread extends LightElement {
     super.disconnectedCallback();
     this.#resize.disconnect();
     document.removeEventListener('visibilitychange', this.#onVisible);
-    if (this.conversationId) leaveThreadPlace(this.conversationId, this.atBottom ? undefined : (this.#restore ?? this.#place));
+    if (this.conversationId && this.#root) leaveThreadPlace(this.#root, this.conversationId, this.atBottom ? undefined : (this.#restore ?? this.#place));
   }
 
   /**
@@ -200,17 +207,40 @@ export class CivitaiChatThread extends LightElement {
     if (el) this.#write(el.scrollHeight);
   }
 
-  // The viewer's own scrolling input stops a glide to the end: from then on the scroll is theirs. Only
-  // input that scrolls: a key typed into an edit box in the thread, or a click on a button, is not.
+  /**
+   * The viewer's own scrolling input. Any of it stops a glide to the end: from then on the scroll is
+   * theirs. Input that scrolls UP leaves the end at once, however little it moves: a scroll event
+   * alone cannot tell a gentle 15px of the viewer's from the end moving, and a stream that adds a line
+   * between two of those would otherwise follow on and undo each one. Not keys typed into an edit box
+   * in the thread, nor a click on a button in it.
+   */
   #onInput = (event: Event): void => {
+    let up = false;
     if (event instanceof KeyboardEvent) {
       const target = event.composedPath()[0];
       const typing = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement || (target instanceof HTMLElement && target.isContentEditable);
       if (typing || !SCROLL_KEYS.has(event.key)) return;
+      up = UP_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey);
+    } else if (event.type === 'pointerdown') {
+      if (event.composedPath()[0] !== this.#scroller) return;
+    } else if (event.type === 'wheel') {
+      up = (event as WheelEvent).deltaY < 0;
+    } else if (event.type === 'touchstart' || event.type === 'touchmove') {
+      const y = (event as TouchEvent).touches[0]?.clientY;
+      up = event.type === 'touchmove' && y !== undefined && this.#touchY !== undefined && y > this.#touchY;
+      this.#touchY = y;
     }
-    if (event.type === 'pointerdown' && event.composedPath()[0] !== this.#scroller) return;
     this.#glide = 0;
+    if (up && (this.#scroller?.scrollTop ?? 0) > 0) this.#leaveEnd();
   };
+
+  /** The viewer goes up from the end: the thread stops following, and holds what they look at. */
+  #leaveEnd(): void {
+    this.atBottom = false;
+    this.#restore = undefined;
+    this.#written = undefined;
+    this.#anchor = [];
+  }
 
   /**
    * A scroll event says where the view is, not who moved it. The thread's own jumps come back here a
@@ -241,16 +271,16 @@ export class CivitaiChatThread extends LightElement {
     }
     this.#written = undefined;
     this.#restore = undefined;
-    this.atBottom = near;
-    if (near) this.#anchor = [];
+    // Following, a move that lands away from the end leaves it (the scrollbar, find in page). Not
+    // following, only reaching the end itself follows again: near it is not enough, as the viewer may
+    // have gone up just a little (see #onInput).
+    if (this.atBottom ? !near : this.#distanceToEnd(el) < 2) this.atBottom = !this.atBottom;
+    if (this.atBottom) this.#anchor = [];
     else this.#capture();
   };
 
   #onResize(): void {
-    if (this.#restore) {
-      this.#applyRestore();
-      return;
-    }
+    if (this.#restore) this.#applyRestore(true);
     // Under a glide too: it was aimed at the end as it was, and lands short of one that grew since.
     if (this.atBottom) {
       this.#jumpToEnd();
@@ -325,17 +355,27 @@ export class CivitaiChatThread extends LightElement {
     this.#capture();
   }
 
-  /** A thread made again for a chat whose viewer had scrolled away: back to their place, once it is there. */
-  #applyRestore(): void {
+  /**
+   * A thread made again for a chat whose viewer had scrolled away: back to their place, once its turns
+   * are drawn. A turn that is not there (the chat came back without it) gives the place up for the end,
+   * as a new thread opens. One whose content below has not laid out yet is tried again on the first
+   * size report (`laidOut`), and then kept as near as it gets: never left waiting, neither following
+   * nor holding.
+   */
+  #applyRestore(laidOut: boolean): void {
     const el = this.#scroller;
     const place = this.#restore;
     if (!el || !place) return;
     const turn = [...el.querySelectorAll<HTMLElement & { turn?: Turn }>('.cvt-thread-list > civitai-chat-turn')].find((t) => t.turn?.seq === place.seq);
-    if (!turn) return;
+    if (!turn) {
+      this.#restore = undefined;
+      this.atBottom = true;
+      this.#jumpToEnd();
+      return;
+    }
     const target = el.scrollTop + turn.getBoundingClientRect().top - el.getBoundingClientRect().top - place.offset;
     this.#write(target);
-    // Not all there yet (what follows has not laid out): tried again as it does.
-    if (Math.abs(el.scrollTop - target) > 1) return;
+    if (!laidOut && Math.abs(el.scrollTop - target) > 1) return;
     this.#restore = undefined;
     this.#capture();
   }
@@ -353,7 +393,7 @@ export class CivitaiChatThread extends LightElement {
     }
     this.#queuedStatus = status;
     // A thread made again for the chat the viewer had scrolled away in opens where they were.
-    const kept = !this.hasUpdated && this.conversationId ? threadPlaceFor(this.conversationId) : undefined;
+    const kept = !this.hasUpdated && this.conversationId ? threadPlaceFor(this.getRootNode(), this.conversationId) : undefined;
     if (kept) {
       this.#restore = kept;
       this.atBottom = false;
@@ -364,7 +404,7 @@ export class CivitaiChatThread extends LightElement {
     const scroller = this.querySelector<HTMLElement>('.cvt-thread-scroll');
     if (scroller && scroller !== this.#scroller) {
       this.#scroller = scroller;
-      for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) scroller.addEventListener(type, this.#onInput, { passive: true });
+      for (const type of ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown']) scroller.addEventListener(type, this.#onInput, { passive: true });
       // A new thread goes to the end (or back to the viewer's place) once its turns are drawn and laid
       // out: as they finish drawing, and on the first size report, which comes after layout (and in a
       // hidden tab only once it shows). Going there now as well is only a start: the turns are empty yet.
@@ -373,7 +413,7 @@ export class CivitaiChatThread extends LightElement {
       this.#resize.observe(scroller);
       if (this.atBottom) this.#jumpToEnd();
       const turns = [...scroller.querySelectorAll<CivitaiChatTurn>('civitai-chat-turn')];
-      void Promise.all(turns.map((turn) => turn.updateComplete)).then(() => this.#onResize());
+      void Promise.all(turns.map((turn) => turn.updateComplete)).then(() => (this.#restore ? this.#applyRestore(false) : this.#onResize()));
     }
     // A message that starts waiting is the newest thing in the chat: it is brought into view.
     // (Not a thread's first render: one made again for the same chat finds the same message waiting.)

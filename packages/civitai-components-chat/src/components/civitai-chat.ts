@@ -1253,7 +1253,7 @@ export class CivitaiChat extends LitElement {
     // Another chat than the one on screen opens at its end; the one on screen, read again, keeps the
     // viewer's place in it (its thread is rebuilt behind the loader).
     const fresh = id !== this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.conversationId;
-    if (fresh) forgetThreadPlace();
+    if (fresh) forgetThreadPlace(this.renderRoot);
     const ticket = ++this.#opening;
     this.#openingId = id;
     this.loading = true;
