@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHost, createHostSession } from '../../src/host/index.js';
 import { createFakeTransport } from '../../src/testing.js';
@@ -288,7 +288,7 @@ describe('session.requestGrants with `from`: publish consent in the source app',
   const SOURCE = 'parent-app';
   const ASK = { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage:publish'], from: SOURCE } };
 
-  it('sends exactly { scopes: [apps:storage:publish], from } and resolves on the next token refresh, scopes unchanged', async () => {
+  it('sends exactly { scopes: [apps:storage:publish], from } and resolves on the next host-PUSHED TOKEN_REFRESH, scopes unchanged', async () => {
     const t = createFakeTransport({ token: token(['apps:storage', 'apps:storage:import'], 'before') });
     let settled: boolean | undefined;
     const pending = createHostSession(t)
@@ -300,8 +300,55 @@ describe('session.requestGrants with `from`: publish consent in the source app',
     t.setSnapshot({ theme: 'dark' });
     await Promise.resolve();
     expect(settled).toBeUndefined();
+    // Nor is a new token that is not a push: a TOKEN_REFRESH_RESPONSE to this app's own
+    // (or a concurrent) `getToken({ fresh: true })` changes the snapshot and nothing else.
+    t.setSnapshot({ token: token(['apps:storage', 'apps:storage:import'], 'answered') });
+    await Promise.resolve();
+    expect(settled).toBeUndefined();
 
-    t.setSnapshot({ token: token(['apps:storage', 'apps:storage:import'], 'after') });
+    const after = token(['apps:storage', 'apps:storage:import'], 'after');
+    t.setSnapshot({ token: after });
+    t.push('TOKEN_REFRESH', { token: after });
+    await expect(pending).resolves.toBe(true);
+    expect(t.listenerCount('TOKEN_REFRESH')).toBe(0);
+  });
+
+  it('bounds the wait by itself: "Not now" sends nothing, so after 60 s it resolves false and stops listening', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = createFakeTransport({ token: token(['apps:storage:import']) });
+      let settled: boolean | undefined;
+      void createHostSession(t)
+        .requestGrants(['apps:storage:publish'], { from: SOURCE })
+        .then((v) => (settled = v));
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(settled).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(false);
+      expect([t.listenerCount('TOKEN_REFRESH'), t.listenerCount('CONSENT_UNAVAILABLE')]).toEqual([0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('over the real iframe transport: TOKEN_REFRESH_RESPONSE is not the answer, a host-pushed TOKEN_REFRESH is', async () => {
+    const { transport, posted, deliver } = mountTransport();
+    deliver(init());
+    let settled: boolean | undefined;
+    const pending = createHostSession(transport)
+      .requestGrants(['apps:storage:publish'], { from: SOURCE })
+      .then((v) => (settled = v));
+    expect(posted.at(-1)?.msg).toEqual(ASK);
+
+    // The reply to a `getToken({ fresh: true })` — correlated or not, it is not a push.
+    const wrapped = (raw: string) => ({ token: { raw, scopes: ['apps:storage:import'], expiresAt: '2031-01-01T00:00:00.000Z' } });
+    deliver({ type: 'TOKEN_REFRESH_RESPONSE', payload: { requestId: 'someone-elses', ...wrapped('jwt-response') } });
+    await Promise.resolve();
+    expect(transport.snapshot.get().token.raw).toBe('jwt-response');
+    expect(settled).toBeUndefined();
+
+    deliver({ type: 'TOKEN_REFRESH', payload: wrapped('jwt-pushed') });
     await expect(pending).resolves.toBe(true);
   });
 

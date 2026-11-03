@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initialize } from '../../src/app/index.js';
-import { createDocumentStorage, StorageError, storageImportRefusal } from '../../src/doc-store/index.js';
+import {
+  createDocumentStorage,
+  StorageError,
+  storageImportRefusal,
+  type StorageImportNotEligibleReason,
+} from '../../src/doc-store/index.js';
 import { LOCAL_PREVIEW_MANIFEST_GLOBAL } from '../../src/doc-store/local-preview.js';
 import { ApiError, type Http, type RequestOptions } from '../../src/http/index.js';
 import { createFakeStorage, createFakeTransport, type FakeStorageOptions } from '../../src/testing.js';
@@ -181,6 +186,10 @@ describe('storageImportRefusal: each import refusal, typed', () => {
     [err(403, 'not_eligible', { reason: 'import_hub_token' }), { kind: 'not_eligible', reason: 'import_hub_token' }],
     [err(403, 'not_eligible', { reason: 'import_in_review' }), { kind: 'not_eligible', reason: 'import_in_review' }],
     [err(403, 'not_eligible', { reason: 'source_not_approved' }), { kind: 'not_eligible', reason: 'source_not_approved' }],
+    // The other two `resolveImportAccess` emits (civitai/civitai@86334b30): a mature-rated
+    // source on a host that may not show it, and a token outside the published namespace.
+    [err(403, 'not_eligible', { reason: 'import_source_rating' }), { kind: 'not_eligible', reason: 'import_source_rating' }],
+    [err(403, 'not_eligible', { reason: 'import_namespace' }), { kind: 'not_eligible', reason: 'import_namespace' }],
   ])('%#: %o', (error, expected) => {
     expect(storageImportRefusal(error)).toEqual(expected);
   });
@@ -195,6 +204,38 @@ describe('storageImportRefusal: each import refusal, typed', () => {
     ['not an error at all', 'consent_required'],
   ])('null for %s', (_what, error) => {
     expect(storageImportRefusal(error)).toBeNull();
+  });
+
+  /** A store that refuses every call 403 `not_eligible` with `reason`. */
+  const refusingWith = (reason: string) =>
+    recorder(() => {
+      const message = `not eligible (${reason})`;
+      throw new ApiError(403, message, { code: 'not_eligible', message, error: message, details: { reason } });
+    }).storage;
+
+  it('a `not_eligible` reason this SDK does not know, on a call THROUGH AN IMPORT, is still typed — a newer server\'s reason is not dropped', async () => {
+    const error = await refusal(refusingWith('a_reason_from_a_newer_server').collection('notes', { from: PARENT }).get('n1'));
+    expect(storageImportRefusal(error)).toEqual({ kind: 'not_eligible', reason: 'a_reason_from_a_newer_server' });
+  });
+
+  // INVARIANT GUARDS, not regression coverage: these were `null` before the change too.
+  // An unknown reason on this app's OWN collection is not an import's; and the reasons the
+  // server gives for the consumer itself (its approval, the viewer's trust) are not import
+  // refusals even when the refused call carried `from`.
+  it.each([
+    ['an unknown reason on this app\'s own collection', 'a_reason_from_a_newer_server', undefined],
+    ['the consumer app not approved, through an import', 'app_not_approved', { from: PARENT }],
+    ['apps disabled for the viewer, through an import', 'apps_disabled', { from: PARENT }],
+    ['an account too new to write, through an import', 'account_too_new', { from: PARENT }],
+  ])('null for %s', async (_what, reason, options) => {
+    const error = await refusal(refusingWith(reason).collection('notes', options).get('n1'));
+    expect(storageImportRefusal(error)).toBeNull();
+  });
+
+  it('`StorageImportNotEligibleReason` is open-ended: a reason this SDK does not list still type-checks', () => {
+    // Compile-time: an exhaustive switch over the listed reasons must keep a default branch.
+    const future: StorageImportNotEligibleReason = 'a_reason_from_a_newer_server';
+    expect(future).toBe('a_reason_from_a_newer_server');
   });
 });
 
@@ -462,8 +503,16 @@ describe('the client: publish consent in the source — ask the host, then retry
       calls,
       transport,
       asks: () => transport.sent.filter((m) => m.type === 'REQUEST_CONSENT'),
-      // The host's re-mint after Allow: a NEW token, the SAME scopes.
-      refresh: () => transport.setSnapshot({ token: { ...transport.snapshot.get().token, raw: 'fork-token-2' } }),
+      // The host's re-mint after Allow — or a routine one — pushed as `TOKEN_REFRESH`: a NEW
+      // token, the SAME scopes. The transport applies it to the snapshot, then tells `on`.
+      refresh: () => {
+        const next = { ...transport.snapshot.get().token, raw: 'fork-token-2' };
+        transport.setSnapshot({ token: next });
+        transport.push('TOKEN_REFRESH', { token: next });
+      },
+      // The host's ANSWER to a `getToken({ fresh: true })` (`TOKEN_REFRESH_RESPONSE`): a new
+      // token in the snapshot, and no push.
+      answeredFresh: () => transport.setSnapshot({ token: { ...transport.snapshot.get().token, raw: 'fork-token-3' } }),
     };
   }
 
@@ -528,6 +577,37 @@ describe('the client: publish consent in the source — ask the host, then retry
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a fresh token the app ASKED for while the prompt is open is not an Allow: nothing is retried', async () => {
+    const s = await setup([REFUSED, { status: 200, body: WIRE_DOC }]);
+    const pending = refusal(s.app.storage.collection('board', { from: PARENT }).create({ t: 'f' }));
+    await vi.waitFor(() => expect(s.asks()).toEqual([ASK]));
+
+    s.answeredFresh();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(s.calls).toHaveLength(1);
+
+    s.transport.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+    expect([(await pending).code, s.calls.length, s.asks().length]).toEqual(['consent_required', 1, 1]);
+  });
+
+  // INVARIANT GUARD, not regression coverage: the retry was bounded to one before the change.
+  // A routine re-mint pushed while the prompt is open is indistinguishable from an Allow (the
+  // host sends nothing on "Not now"), so it costs exactly one retry — whose refusal surfaces —
+  // and never a second prompt or a loop.
+  it('a routine re-mint while the prompt is open (no Allow): exactly one retry, then ITS refusal, never a second prompt', async () => {
+    const SECOND = { status: 403, body: { ...envelope('consent_required', PUBLISH_IN_PARENT), message: 'refused again (scripted)' } };
+    const s = await setup([REFUSED, SECOND, { status: 200, body: WIRE_DOC }]);
+    const pending = refusal(s.app.storage.collection('board', { from: PARENT }).create({ t: 'r' }));
+    await vi.waitFor(() => expect(s.asks()).toEqual([ASK]));
+
+    s.refresh();
+    const error = await pending;
+    expect([error.code, error.message]).toEqual(['consent_required', 'refused again (scripted)']);
+    s.refresh();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect([s.calls.length, s.asks().length]).toEqual([2, 1]);
   });
 
   it('a second refusal after the retry is final: two requests, one ask, no loop', async () => {
@@ -606,6 +686,63 @@ describe('the fake: the publish prompt for the source, through `requestGrants`',
   it('without `requestGrants` the refusal surfaces as before', async () => {
     const fake = withoutPublishInParent(undefined);
     expect((await refusal(fake.storage.collection('board', { from: PARENT }).create({ t: 'n' }))).code).toBe('consent_required');
+  });
+});
+
+/**
+ * The SOURCE collection's schema governs a write through an import, even when the fork
+ * declares its OWN collection of the same name with a conflicting schema. INVARIANT GUARD,
+ * not regression coverage: the fake already resolved the source's declaration. The two
+ * schemas accept disjoint bodies, so a write checked against the wrong one flips both ways.
+ */
+describe('the fake: an import is validated against the SOURCE collection\'s schema', () => {
+  const PARENT_NOTES_SCHEMA = {
+    type: 'object',
+    properties: { text: { type: 'string' } },
+    required: ['text'],
+    additionalProperties: false,
+  };
+  const FORK_NOTES_SCHEMA = {
+    type: 'object',
+    properties: { count: { type: 'integer' } },
+    required: ['count'],
+    additionalProperties: false,
+  };
+  const withConflictingSchemas = () =>
+    forkAndParent({
+      manifest: {
+        ...FORK_MANIFEST,
+        storage: { ...FORK_MANIFEST.storage, collections: { notes: { visibility: 'private', schema: FORK_NOTES_SCHEMA } } },
+      },
+      sources: {
+        [PARENT]: {
+          manifest: {
+            ...PARENT_MANIFEST,
+            storage: {
+              collections: { ...PARENT_MANIFEST.storage.collections, notes: { visibility: 'private', schema: PARENT_NOTES_SCHEMA } },
+            },
+          },
+        },
+      },
+    });
+
+  it('a body only the SOURCE schema accepts is written through the import, into the source', async () => {
+    const fake = withConflictingSchemas();
+    await fake.storage.collection('notes', { from: PARENT }).put('s1', { text: 'parent-shaped' });
+    expect((await fake.as({ app: PARENT }).storage.collection('notes').get('s1'))?.data).toEqual({ text: 'parent-shaped' });
+    // The fork's own collection of that name refuses the same body, and holds nothing.
+    expect((await refusal(fake.storage.collection('notes').put('s1', { text: 'parent-shaped' }))).code).toBe('schema_violation');
+    expect(await fake.storage.collection('notes').get('s1')).toBeNull();
+  });
+
+  it('a body only the FORK\'s schema accepts is refused through the import 400 `schema_violation`, and nothing lands', async () => {
+    const fake = withConflictingSchemas();
+    const error = await refusal(fake.storage.collection('notes', { from: PARENT }).put('s2', { count: 7 }));
+    expect([error.status, error.code, error.details?.collection]).toEqual([400, 'schema_violation', 'notes']);
+    expect(await fake.as({ app: PARENT }).storage.collection('notes').get('s2')).toBeNull();
+    // The same body is fine in the fork's own collection.
+    await fake.storage.collection('notes').put('s2', { count: 7 });
+    expect((await fake.storage.collection('notes').get('s2'))?.data).toEqual({ count: 7 });
   });
 });
 

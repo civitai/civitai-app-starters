@@ -157,6 +157,19 @@ describe('IframeTransport pushes', () => {
     expect(transport.snapshot.get().token).toMatchObject({ raw: 'jwt-2', scopes: ['buzz:read'] });
   });
 
+  it('tells `on(\'TOKEN_REFRESH\')` of a host-pushed rotation, after the snapshot holds it — and never of a TOKEN_REFRESH_RESPONSE', () => {
+    const { transport, deliver } = mountTransport();
+    deliver(init());
+    const seen: string[] = [];
+    transport.on('TOKEN_REFRESH', () => seen.push(transport.snapshot.get().token.raw));
+
+    const wrapped = (raw: string) => ({ token: { raw, scopes: [], expiresAt: '2031-01-01T00:00:00.000Z' } });
+    deliver({ type: 'TOKEN_REFRESH_RESPONSE', payload: { requestId: 'r-1', ...wrapped('jwt-answer') } });
+    deliver({ type: 'TOKEN_REFRESH', payload: wrapped('jwt-push') });
+
+    expect(seen).toEqual(['jwt-push']);
+  });
+
   it('follows a theme change but stays quiet when the theme is unchanged', () => {
     const { transport, deliver } = mountTransport();
     deliver(init());
