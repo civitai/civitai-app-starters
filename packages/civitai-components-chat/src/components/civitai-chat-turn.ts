@@ -472,7 +472,8 @@ export class CivitaiChatTurn extends LightElement {
   }
 
   // A row that becomes part of a group as the reply streams is drawn anew inside it: a viewer on its
-  // button stays on the same call's button rather than falling to the page.
+  // button stays on the same call's button rather than falling to the page. Without moving the thread:
+  // they may have scrolled elsewhere since they opened it, and the regrouping is not theirs.
   protected override update(changed: PropertyValues): void {
     const root = this.getRootNode() as Document | ShadowRoot;
     const focused = root.activeElement;
@@ -480,7 +481,7 @@ export class CivitaiChatTurn extends LightElement {
     super.update(changed);
     if (call === undefined || focused!.isConnected) return;
     const again = [...this.querySelectorAll<HTMLElement>('.cvt-call-head')].find((head) => head.dataset.call === call);
-    again?.focus();
+    again?.focus({ preventScroll: true });
   }
 
   override render(): TemplateResult {

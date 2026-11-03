@@ -35,6 +35,7 @@ import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { ConversationView } from '../voice/conversation/index.js';
 import { DEFAULT_PLACEHOLDER, type CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatThread, QueuedView } from './civitai-chat-thread.js';
+import { forgetThreadPlace } from './thread-place.js';
 import type { BalanceView } from './civitai-chat-balance.js';
 import { chatStyles } from './chat.styles.js';
 import { mediaActions } from './media-actions.js';
@@ -1249,6 +1250,10 @@ export class CivitaiChat extends LitElement {
     const session = this.#session;
     // The chat being deleted stays listed until its delete settles; picking it then is not a pick.
     if (!session || id === this.#leaving) return;
+    // Another chat than the one on screen opens at its end; the one on screen, read again, keeps the
+    // viewer's place in it (its thread is rebuilt behind the loader).
+    const fresh = id !== this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.conversationId;
+    if (fresh) forgetThreadPlace(this.renderRoot);
     const ticket = ++this.#opening;
     this.#openingId = id;
     this.loading = true;
@@ -1270,7 +1275,7 @@ export class CivitaiChat extends LitElement {
       }
       this.historyOpen = false;
     }
-    this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+    if (fresh) this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
   }
 
   get #shareBase(): string | undefined {
@@ -1768,6 +1773,8 @@ export class CivitaiChat extends LitElement {
       const sent = edit ? session.agent.edit(text) : session.send(text, uploads, refs.map((ref) => ref.id));
       this.#sendingFor = undefined;
       this.requestUpdate();
+      // What the viewer sent, and the reply to it, are brought into view, wherever they had scrolled to.
+      void this.updateComplete.then(() => this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd({ smooth: false }));
       // An edit has gone once its reply started: the edit box closes now, not when the reply ends.
       if (edit) return void sent.catch((error: unknown) => this.#toast('That edit did not go through.', error));
       try {
@@ -2163,7 +2170,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit?.chatId === conversation?.id && this.#returnedEdit?.start === this.#sessionStart ? this.#returnedEdit : undefined} @cvt-edit-returned=${() => (this.#returnedEdit = undefined)} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} ?hosted=${hosted} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue-after-buzz=${() => this.#continueAfterBuzz()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .conversationId=${conversation?.id} .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} .instructions=${session.settings.customInstructions} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...session.mcpServerViews(), ...this.tools, ...this.toolViews }} .toolCalls=${this.toolCalls} .mcpServerIds=${new Set(session.mcpServers.servers.map((server) => server.id))} .subagents=${session.subagents} .queued=${this.#queuedView(session)} @cvt-queued-edit=${() => this.#editQueued()} ?can-retry=${this.canSend} ?can-edit=${this.#editable(session) !== undefined} .returnedEdit=${this.#returnedEdit?.chatId === conversation?.id && this.#returnedEdit?.start === this.#sessionStart ? this.#returnedEdit : undefined} @cvt-edit-returned=${() => (this.#returnedEdit = undefined)} @cvt-edit=${(e: CustomEvent<{ text: string; done: (sent: boolean) => void }>) => void this.#saveEdit(e.detail.text, e.detail.done)} ?awaiting-approval=${this.awaitingApproval} ?hosted=${hosted} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue-after-buzz=${() => this.#continueAfterBuzz()} @cvt-top-up=${(e: CustomEvent<{ auto: boolean }>) => void this.#topUp(e.detail.auto, true)} @cvt-retry=${() => this.#retryReply()} @cvt-recheck=${() => void this.#recheck(true)} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           ${this.#unsent.map(
             (unsent) => html`<civitai-alert color="warning" class="cvt-unsent" role="alert">
               <span class="cvt-unsent-text">This message was not sent: “${unsent.text}”</span>
