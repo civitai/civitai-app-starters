@@ -2916,6 +2916,8 @@ export interface BlockStoragePrivateCollectionDeclaration {
   ttlSeconds?: number;
   /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.maxEntries}. */
   maxEntries?: number;
+  /** See {@link BlockStorageSharedCollectionDeclaration.exportable}. */
+  exportable?: boolean;
 }
 
 /**
@@ -3011,6 +3013,12 @@ export interface BlockStorageSharedCollectionDeclaration {
    * model later changes hands or is deleted.
    */
   ownedModelVersions?: string[];
+  /**
+   * Whether OTHER apps may reach this collection through their `storage.imports`,
+   * with the viewer's consent (see {@link BlockStorageImport}). Default `true`;
+   * `false` refuses every import of it with 403 `not_exportable`.
+   */
+  exportable?: boolean;
 }
 
 /**
@@ -3024,8 +3032,44 @@ export type BlockStorageCollectionDeclaration =
   | BlockStorageSharedCollectionDeclaration;
 
 /**
+ * One entry of the manifest's `storage.imports` (civitai/civitai#7494): collections of
+ * ANOTHER app this app reaches as the viewer — for example a fork reading and writing its
+ * parent's data. The SDK reaches one with `app.storage.collection(name, { from })`.
+ *
+ * Through an import the app acts AS THE VIEWER IN THE SOURCE APP: a private collection
+ * gives that viewer's own documents, a shared one reads as the source shows it to them,
+ * writes follow the source collection's write policy and schema, and usage counts against
+ * the source app's ceilings. Nothing is reached until the viewer grants it: declaring any
+ * import requires the sensitive, consent-gated `apps:storage:import` scope with a
+ * `scopeJustifications` entry (and `apps:storage`), and the viewer's consent is recorded
+ * per (viewer, this app, source app). A source collection declared `exportable: false`
+ * refuses every import.
+ *
+ * Limits (the canonical's): at most 8 imports, one per source, never this app itself.
+ */
+export interface BlockStorageImport {
+  /** The source app's blockId (`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`, 3 to 40 characters). */
+  from: string;
+  /** 1 to 16 distinct names of collections the source declares. */
+  collections: string[];
+  /**
+   * `'read'`: reads only; every write, counter and mark is refused (`write_policy`).
+   * `'readwrite'`: also writes, under the source collection's own write policy. A write,
+   * counter or mark in one of the source's SHARED collections also needs the viewer's own
+   * `apps:storage:publish` grant IN THE SOURCE APP; a private collection needs only the
+   * import grant.
+   */
+  access: 'read' | 'readwrite';
+}
+
+/**
  * The manifest's `storage` object — see {@link BlockManifestV1.storage}.
  * Mirrors the canonical schema's `storage`; no other key is allowed.
+ *
+ * It declares `collections` (this app's own), `imports` (other apps'), or both.
+ * AT LEAST ONE is required, which this type does not express: each is optional
+ * here, and the canonical schema (so `defineBlock`) refuses a `storage` with
+ * neither.
  */
 export interface BlockStorageDeclaration {
   /**
@@ -3035,7 +3079,9 @@ export interface BlockStorageDeclaration {
    * its visibility, is a NEW collection: the old one's documents are not
    * carried over.
    */
-  collections: Record<string, BlockStorageCollectionDeclaration>;
+  collections?: Record<string, BlockStorageCollectionDeclaration>;
+  /** Other apps' collections this app reaches as the viewer, 1 to 8 entries. See {@link BlockStorageImport}. */
+  imports?: BlockStorageImport[];
 }
 
 /**
@@ -3186,8 +3232,11 @@ export interface BlockManifestV1 {
    * Declaring any collection requires the `apps:storage` scope; a shared
    * collection viewers write (`write` `'own'` or `'anyone'`) also requires the
    * sensitive, consent-gated `apps:storage:publish` scope with a
-   * `scopeJustifications` entry; and requesting either scope with nothing here
-   * for it to reach is rejected. Those couplings, and the RESERVED features
+   * `scopeJustifications` entry; declaring any `imports` (another app's
+   * collections, see {@link BlockStorageImport}) requires the sensitive,
+   * consent-gated `apps:storage:import` scope with a `scopeJustifications`
+   * entry; and requesting any of these scopes with nothing here for it to
+   * reach is rejected. Those couplings, and the RESERVED features
    * (`kind: 'log'`, `ttlSeconds`, `dailyWritesPerAuthor`, `write` `'anyone'` /
    * `'owner'`), are enforced by the platform's manifest validator at submit,
    * not by `defineBlock` — see `KNOWN_GAPS['storage-server-only-rules']`.

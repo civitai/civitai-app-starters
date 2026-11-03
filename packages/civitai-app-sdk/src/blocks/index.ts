@@ -229,6 +229,7 @@ export type {
   BlockSettings,
   BlockStorageCollectionDeclaration,
   BlockStorageDeclaration,
+  BlockStorageImport,
   BlockStorageIndexes,
   BlockStorageIndexType,
   BlockStoragePrivateCollectionDeclaration,

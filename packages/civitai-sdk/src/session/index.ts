@@ -2,6 +2,7 @@
 export const SCOPES = [
   'ai:write:budgeted',
   'apps:storage',
+  'apps:storage:import',
   'apps:storage:publish',
   'apps:storage:read',
   'apps:storage:shared:read',

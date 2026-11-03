@@ -282,6 +282,81 @@ before moderation and before any write budget. An absent field is allowed;
 ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
 owner-written documents yet.
 
+### Another app's collections: imports
+
+An app can reach a viewer's data in ANOTHER app — a fork reading and writing its
+parent's — by declaring the import in its manifest and passing `from` (the source
+app's blockId). This needs civitai.com to serve imports (civitai/civitai#7494); until it
+does, every call with a `from` is refused 400 `invalid_request` (`unknown query parameter
+from`).
+
+```json
+"scopes": ["apps:storage", "apps:storage:import"],
+"scopeJustifications": { "apps:storage:import": "Reads and edits your notes from the app this one was forked from." },
+"storage": {
+  "imports": [{ "from": "parent-app", "collections": ["notes", "board"], "access": "readwrite" }]
+}
+```
+
+```ts
+import { storageImportRefusal } from '@civitai/sdk';
+
+const parentNotes = app.storage.collection<{ text: string }>('notes', { from: 'parent-app' });
+
+try {
+  const page = await parentNotes.list({ limit: 20 });
+  await parentNotes.put('n1', { text: 'edited from the fork' });
+} catch (error) {
+  const refusal = storageImportRefusal(error);
+  if (refusal?.kind === 'import_consent') {
+    // Re-mint first: a token that already carries the scope may not cover this version's import.
+    await app.getToken({ fresh: true });
+    if (await app.requestGrants(['apps:storage:import'])) {
+      await parentNotes.put('n1', { text: 'edited from the fork' }); // retry once
+    }
+  } else if (refusal?.kind === 'source_publish_consent') {
+    showMessage(`Publishing in ${refusal.from} needs your permission there first.`);
+  } else {
+    throw error;
+  }
+}
+```
+
+- **Every call carries `?from=<blockId>`**: `get`, `getMany`, `put`, `create`,
+  `delete`, `list`, `increment`, `mark` (a report included) and `unmark`, with the same
+  path, body and reply as without it. `collection(name)` without `from` is this app's
+  own collection, even when it has the same name. `info()` takes no `from` — a source
+  app's limits and usage cannot be read through an import — and a `from` passed to it
+  (or a `from` key that is not a string, such as `{ from: undefined }`) is refused
+  before sending, `invalid_request`, rather than quietly reaching this app's own data.
+- **The call runs in the source app, as the viewer.** A private collection holds the
+  viewer's own documents there; a shared one reads as the source shows it; writes follow
+  the source collection's write policy and `schema`; usage counts against the source's
+  ceilings. Each call is also charged to THIS app's read rate limit first.
+- **Consent is per viewer, per source.** The viewer grants `apps:storage:import` through
+  the host's prompt (which lists what this app reads, and changes, in each source app)
+  and can remove it under Apps → Permissions; a new version that imports more is prompted
+  for again. A write, counter or mark in one of the source's SHARED collections also
+  needs the viewer's `apps:storage:publish` grant IN THE SOURCE — no prompt in this app
+  can supply it today.
+- **Refusals** — `storageImportRefusal(error)` reads each one, typed: `import_consent`
+  (403 `consent_required`, `details: { scope: 'apps:storage:import', from }`),
+  `source_publish_consent` (403 `consent_required`,
+  `details: { scope: 'apps:storage:publish', from }`), `read_only` (403 `write_policy`,
+  `reason: 'import_read_only'`: the import's `access` is `read`), `not_declared` (403
+  `import_not_declared`, `details: { from, collection }`), `not_exportable` (403, the
+  source set `exportable: false` on it), `source_collection_not_declared` (404
+  `collection_not_declared` with a `from`), and `not_eligible` (403 with
+  `details.reason` `import_dev_token`, `import_hub_token`, `import_in_review` or
+  `source_not_approved`). It returns `null` for every other error, including the same
+  codes on this app's own collections.
+- **Only an ordinary block token imports.** A dev token, a hub OAuth bearer and a review
+  reach no other app. So in a [dev-tunnel preview](#in-a-dev-tunnel-preview-local-to-the-tab)
+  an import is refused locally with the server's own answer to a dev token,
+  `not_eligible` / `import_dev_token` (403, nothing sent), while this app's own
+  collections keep working in the tab. To exercise a fork reading its parent, use
+  [the fake](#a-fake-document-store) with `sources`.
+
 ### In a dev-tunnel preview: local to the tab
 
 A dev-tunnel preview (`civitai app dev-tunnel`, the App Assistant's live
@@ -320,6 +395,9 @@ if (app.storage.mode === 'local-preview') {
 - **One viewer, one tab, gone on reload.** It cannot show other people's entries,
   real vote totals, ranking across users, the minimum-trust gate on shared writes,
   or moderation of real content.
+- **No imports.** `collection(name, { from })` is refused locally with the server's own
+  answer to a dev token, 403 `not_eligible` (`import_dev_token`); nothing is sent. Test
+  a fork reading its parent with [the fake's `sources`](#a-fake-document-store).
 - **Only the document store.** The deprecated `app.storage.get/set/…`,
   `app.sharedStorage` and `@civitai/blocks-react`'s `useAppStorage` /
   `useSharedStorage` keep calling the real routes, which refuse a preview.
@@ -1067,6 +1145,32 @@ Where it differs from the server on purpose:
   `fake.as({ viewer: { username: 'bob', modelVersions: [4317] } })`. It does not
   model the server's ownership lookup failing (a retryable 503
   `service_unavailable`).
+
+**Imports: a fork and its parent in one fake.** `sources` adds other apps by blockId,
+each with its own manifest, data, `status` and `consent`; `as({ app })` acts as one of
+them, so a test can seed the parent's data the fork then reads through
+`collection(name, { from })`. The fake checks what the server checks, in its order:
+the manifest's `storage.imports`, `access`, the source's approval, declaration and
+`exportable`, `apps:storage:import` on the token, and the viewer's grant
+(`importGrants`; by default exactly the manifest's imports, as if every prompt had been
+allowed — pass `{}` or a narrower grant to test the prompt). Revoke
+`apps:storage:publish` in a source's `consent` to reach the publish-in-source refusal.
+A `token: 'dev'` caller is refused every import, as the server refuses a dev token —
+which is why a dev-tunnel preview cannot show a fork its parent's data, and this is
+where a fork author tests that path instead.
+
+```ts
+import { createFakeStorage } from '@civitai/sdk/testing';
+
+const fake = createFakeStorage({
+  blockId: 'my-fork',
+  manifest: forkManifest, // declares storage.imports from 'parent-app'
+  sources: { 'parent-app': { manifest: parentManifest } },
+  viewer: { username: 'alice' },
+});
+await fake.as({ app: 'parent-app' }).storage.collection('notes').put('n1', { text: 'from the parent' });
+const doc = await fake.storage.collection('notes', { from: 'parent-app' }).get('n1'); // the parent's document
+```
 
 `fake.calls` records every request and answer. Options also cover smaller `limits`,
 `consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom

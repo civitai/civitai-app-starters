@@ -184,7 +184,7 @@ export interface SignIn extends TokenSessionOptions {
 }
 
 /** Every scope an app can hold, as the site names them. */
-export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'apps:store:items:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'goods:purchase:self', 'goods:read:self', 'models:read:self', 'posts:write:self', 'social:react:self', 'social:tip:self', 'user:read:self'];
+export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage', 'apps:storage:import', 'apps:storage:publish', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'apps:store:items:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'goods:purchase:self', 'goods:read:self', 'models:read:self', 'posts:write:self', 'social:react:self', 'social:tip:self', 'user:read:self'];
 
 export type Scope = (typeof SCOPES)[number];
 
@@ -648,6 +648,13 @@ export declare class StorageError extends ApiError {
     get retryAfter(): number | undefined;
 }
 
+/**
+ * The import refusal `error` is, typed — or `null` for anything else (including the
+ * same codes on this app's OWN collections, which carry no `from`). Reads only the
+ * server's `code` and `details`.
+ */
+export declare function storageImportRefusal(error: unknown): StorageImportRefusal | null;
+
 export interface DocumentCallOptions {
     signal?: AbortSignal;
 }
@@ -814,19 +821,52 @@ export interface StorageInfo {
     };
 }
 
+/** Options for {@link DocumentStorage.collection}. */
+export interface CollectionOptions {
+    /**
+     * Another app's blockId: reach THAT app's collection `name`, as the viewer, through
+     * an import this app's manifest declares under `storage.imports`
+     * (`{ from, collections, access }`), instead of this app's own collection of the
+     * same name. Every call then carries `?from=<blockId>`; the method, path, body and
+     * reply are unchanged.
+     *
+     * Through an import the call runs IN THE SOURCE APP: a private collection holds the
+     * viewer's own documents there, writes follow the source collection's write policy
+     * and schema, and usage counts against the source app's ceilings. It needs the
+     * consent-gated `apps:storage:import` scope, which the viewer grants per source app
+     * (refusals: {@link storageImportRefusal}). Only an ordinary block token imports: a
+     * dev-tunnel preview, a dev token, a hub token and a review are refused.
+     *
+     * When the key is present its value must be a string: `{ from: undefined }` (a
+     * parent blockId not loaded yet) is refused before sending rather than read as
+     * "this app's own collection".
+     */
+    from?: string;
+}
+
 /** The document store's surface on `app.storage`. */
 export interface DocumentStorage {
-    /** A declared collection. Nothing is sent until an operation is called. */
-    collection<T extends object = Record<string, unknown>>(name: string): StorageCollection<T>;
-    /** The declared collections, the limits and the usage so far. Signed-in viewers only. */
+    /**
+     * A declared collection — this app's own, or with `{ from }` another app's, through
+     * an import (see {@link CollectionOptions.from}). Nothing is sent until an operation
+     * is called.
+     */
+    collection<T extends object = Record<string, unknown>>(name: string, options?: CollectionOptions): StorageCollection<T>;
+    /**
+     * The declared collections, the limits and the usage so far. Signed-in viewers only.
+     * THIS app's only: it takes no `from` (the server refuses one), so a source app's
+     * info and usage cannot be read through an import. A `from` is refused before sending.
+     */
     info(opts?: DocumentCallOptions): Promise<StorageInfo>;
 }
 
 /**
  * Every code the server documents for these routes. The type stays open
  * (`string & {}`) so a code a later server adds still reaches the caller.
+ * `import_not_declared` and `not_exportable` (both 403) come only from a call
+ * through an import; {@link storageImportRefusal} types those and the others.
  */
-export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'import_not_declared' | 'not_exportable' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
 /**
  * LOCAL, never sent by the server: the host marked this frame a dev-tunnel
  * local preview, and no manifest reached the SDK to say which collections exist.
@@ -836,6 +876,65 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  | 'local_preview_invalid_manifest'
 /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
  | 'local_preview_unavailable' | (string & {});
+
+/**
+ * `details.reason` of a `not_eligible` that only an import gets: a review (run-for-real)
+ * token, a dev token (a dev-tunnel preview) or a hub OAuth bearer reaches no other app;
+ * `source_not_approved` — no approved app holds the source blockId.
+ */
+export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_token' | 'import_hub_token' | 'source_not_approved';
+
+/**
+ * A refusal only a call through an import (`collection(name, { from })`) gets, with its
+ * `details` typed. Each kind is a different fix:
+ *
+ * - `import_consent` — 403 `consent_required` naming `apps:storage:import`: the viewer has
+ *   not allowed this app to reach their data in `from`, or a newer version of this app
+ *   imports more than they allowed. Ask, then retry once: `await app.getToken({ fresh: true })`
+ *   (a token that already carries the scope is re-minted without it), then
+ *   `await app.requestGrants(['apps:storage:import'])`. `false` means "not now": do not loop.
+ * - `source_publish_consent` — 403 `consent_required` naming `apps:storage:publish` AND a
+ *   `from`: a write, counter or mark in one of the SOURCE app's shared collections needs
+ *   the viewer's publish consent IN THE SOURCE APP. An import grant is not that consent, and
+ *   no grant THIS app can request supplies it; tell the viewer.
+ * - `read_only` — 403 `write_policy` (`reason: 'import_read_only'`): the import's `access`
+ *   is `read`.
+ * - `not_declared` — 403 `import_not_declared`: this app's manifest does not import that
+ *   collection from `from` (`collection` is absent when `from` is this app itself).
+ * - `not_exportable` — 403 `not_exportable`: the source declares the collection
+ *   `exportable: false`.
+ * - `source_collection_not_declared` — 404 `collection_not_declared` with a `from`: the
+ *   source app declares no such collection.
+ * - `not_eligible` — 403 `not_eligible` with an import reason: the token cannot import at
+ *   all (a dev, hub or review token), or no approved app holds `from`.
+ */
+export type StorageImportRefusal = {
+    kind: 'import_consent';
+    scope: 'apps:storage:import';
+    from: string;
+} | {
+    kind: 'source_publish_consent';
+    scope: 'apps:storage:publish';
+    from: string;
+} | {
+    kind: 'read_only';
+    from: string;
+} | {
+    kind: 'not_declared';
+    from: string;
+    collection?: string;
+} | {
+    kind: 'not_exportable';
+    from: string;
+    collection: string;
+} | {
+    kind: 'source_collection_not_declared';
+    from: string;
+    collection: string;
+} | {
+    kind: 'not_eligible';
+    reason: StorageImportNotEligibleReason;
+};
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -3404,20 +3503,66 @@ export interface FakeStorageViewer {
 export interface FakeStorageCaller {
     /** Default: the fake's `viewer`. `null` is an anonymous viewer with a token. */
     viewer?: FakeStorageViewer | null;
-    /** `block` (default), `dev` (the developer's own namespace) or `none` (no token at all). */
+    /**
+     * `block` (default), `dev` (the developer's own namespace; refused every import, as the
+     * server refuses a dev token) or `none` (no token at all).
+     */
     token?: 'block' | 'dev' | 'none';
-    /** The token's scopes. Default: the manifest's `scopes`. */
+    /** The token's scopes. Default: that app's manifest `scopes`. */
     scopes?: readonly string[];
+    /**
+     * Which app's token: this app's blockId (the default) or one of `sources`, so a test can
+     * act as the source itself — seed the parent's data that a fork then reads.
+     */
+    app?: string;
+}
+
+/** Another app in the same fake, reachable through this app's `storage.imports`. */
+export interface FakeStorageSource {
+    /** Its manifest; `storage.collections` is what an import reaches. Its own imports are not followed. */
+    manifest: {
+        scopes?: readonly string[];
+        storage?: unknown;
+    };
+    /** Default `approved`; anything else refuses an import of it `not_eligible` (`source_not_approved`). */
+    status?: string;
+    /**
+     * Scopes the viewer revoked IN THIS SOURCE. Revoking `apps:storage:publish` here is how a
+     * test reaches the publish-in-source refusal: a write, counter or mark through a
+     * `readwrite` import into one of this source's shared collections is refused
+     * `consent_required` with `details: { scope: 'apps:storage:publish', from }`.
+     */
+    consent?: {
+        revoked: readonly string[];
+    };
+}
+
+/** What the viewer allowed for one source when the host's consent prompt showed the import. */
+export interface FakeStorageImportGrant {
+    collections: readonly string[];
+    access: 'read' | 'readwrite';
 }
 
 export type FakeModerationVerdict = 'blocked' | 'link' | 'unavailable' | null;
 
 export interface FakeStorageOptions {
-    /** The app's manifest; `storage.collections` is what the fake enforces. */
+    /** The app's manifest; `storage.collections` and `storage.imports` are what the fake enforces. */
     manifest: {
         scopes?: readonly string[];
         storage?: unknown;
     };
+    /** This app's blockId, which an import may not name. Default `this-app`. */
+    blockId?: string;
+    /** Other apps by blockId, for this app's `storage.imports` to reach (and `as({ app })` to act as). */
+    sources?: Record<string, FakeStorageSource>;
+    /**
+     * The viewer's import grants: source blockId → what they allowed. A grant covers an
+     * import when it names every collection the import names at an access at least as wide
+     * (`readwrite` covers `read`). Default: exactly the manifest's imports, as if the viewer
+     * had allowed every prompt; `{}` is none granted. The token must ALSO carry
+     * `apps:storage:import` (the caller's `scopes`, or `consent` revoking it).
+     */
+    importGrants?: Record<string, FakeStorageImportGrant>;
     /** The default caller's viewer. Default `{ username: 'viewer' }`; `null` for anonymous. */
     viewer?: FakeStorageViewer | null;
     /** Default `approved`; anything else refuses every call `not_eligible`. */
