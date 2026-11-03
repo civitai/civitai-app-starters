@@ -301,7 +301,13 @@ function createAppClient(
     // legacy key/value methods are out of scope and keep the real routes.
     storage: {
       ...createStorageClient(siteHttp),
-      ...(localDocuments ?? createDocumentStorage(siteHttp, { explainInsufficientScope: true })),
+      // `requestGrants`: a write through an import asks the host for the viewer's publish
+      // grant in the source by itself (civitai/civitai#7586).
+      ...(localDocuments ??
+        createDocumentStorage(siteHttp, {
+          explainInsufficientScope: true,
+          requestGrants: (scopes, opts) => session.requestGrants(scopes, opts),
+        })),
       mode: localDocuments ? 'local-preview' : 'remote',
     },
     sharedStorage: createSharedStorageClient(siteHttp),

@@ -6,7 +6,7 @@ import { useTransportConnection } from './useTransportConnection.js';
 
 /** What {@link useRequestConsent} returns. */
 export interface UseRequestConsent {
-  requestConsent: (payload?: { scopes?: string[] }) => void;
+  requestConsent: (payload?: { scopes?: string[]; from?: string }) => void;
 }
 
 /**
@@ -45,6 +45,16 @@ export interface UseRequestConsent {
  * `useBlockToken().scopes` and retry the action once the scope appears. Mirrors
  * {@link useRequestSignIn} (the anonymous-conversion analog).
  *
+ * `from` asks for the viewer's `apps:storage:publish` grant IN ANOTHER APP — the
+ * source of one of this app's `storage.imports` (civitai/civitai#7586). Pass
+ * exactly `{ scopes: ['apps:storage:publish'], from: '<source blockId>' }`. That
+ * grant belongs to the source, so `useBlockToken().scopes` does NOT change: treat
+ * the next host-pushed `TOKEN_REFRESH` as "maybe allowed" and retry the write once —
+ * the host also pushes its routine re-mint and sends nothing on "Not now", so the
+ * retried write's result is the authority, and a refused retry is final. Only the app page
+ * prompts for it; every other host answers `CONSENT_UNAVAILABLE`. `@civitai/sdk`'s
+ * document store does all of this itself.
+ *
  * @example
  * const { requestConsent } = useRequestConsent();
  * // viewer is logged in but the token lacks the spend scopes:
@@ -52,7 +62,7 @@ export interface UseRequestConsent {
  */
 export function useRequestConsent(): UseRequestConsent {
   useTransportConnection();
-  const requestConsent = useCallback((payload?: { scopes?: string[] }) => {
+  const requestConsent = useCallback((payload?: { scopes?: string[]; from?: string }) => {
     // Single-sourced with the SDK's own automatic prompt-and-retry
     // (`internal/withConsentRetry.ts`), which posts the identical message. The
     // helper arms the refusal buffer BEFORE the request goes out: a

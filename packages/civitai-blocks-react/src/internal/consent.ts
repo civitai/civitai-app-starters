@@ -113,3 +113,24 @@ export function consentUnavailablePayload(
 ): ConsentUnavailablePayload {
   return { reason: 'ungrantable', scopes: notice.scopes };
 }
+
+/**
+ * A `REQUEST_CONSENT` carrying `from` asks for the viewer's grant IN ANOTHER APP
+ * (civitai/civitai#7586: `apps:storage:publish` in the source of one of the
+ * block's `storage.imports`). Neither dev host has another app to grant it in,
+ * so each answers it as the real host answers a `from` request it will not
+ * prompt for: this refusal, ALWAYS — never the "already holds it" silence, since
+ * the block's own `apps:storage:publish` is not that grant, and never the grant
+ * branch, which would put the wrong app's grant on this block's token.
+ *
+ * Keyed on the KEY being present, as the host is: `from: undefined` is still a
+ * `from` request (the host refuses a malformed one the same way).
+ */
+export function isOtherAppConsentRequest(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && Object.prototype.hasOwnProperty.call(payload, 'from');
+}
+
+/** The host's answer to every `from` request it does not prompt for (a fresh object per push). */
+export function otherAppConsentRefusal(): ConsentUnavailablePayload {
+  return { reason: 'ungrantable', scopes: [BLOCK_SCOPES.APPS_STORAGE_PUBLISH] };
+}

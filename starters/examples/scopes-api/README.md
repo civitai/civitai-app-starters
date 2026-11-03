@@ -33,7 +33,7 @@ in its order — a guard test fails if the two ever differ:
 `models:read:self`, `user:read:self`, `ai:write:budgeted`, `buzz:read:self`,
 `social:tip:self`, `apps:storage:read`, `apps:storage:write`,
 `apps:storage:shared:read`, `apps:storage:shared:write`, `apps:storage`,
-`apps:storage:publish`, `collections:read:self`, `collections:write:self`, `collections:read:private`,
+`apps:storage:publish`, `apps:storage:import`, `collections:read:self`, `collections:write:self`, `collections:read:private`,
 `posts:write:self`, `goods:read:self`, `goods:purchase:self`,
 `apps:store:items:write`, `social:react:self`.
 <!-- scopes-enum:end -->

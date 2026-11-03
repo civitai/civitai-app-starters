@@ -8,8 +8,10 @@ export type {
   FakeStorage,
   FakeStorageCall,
   FakeStorageCaller,
+  FakeStorageImportGrant,
   FakeStorageOptions,
   FakeStorageSession,
+  FakeStorageSource,
   FakeStorageViewer,
 } from './doc-store/fake.js';
 

@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "d539d88259",
-  "capturedAt": "2026-10-25",
+  "capturedFrom": "4c13810287",
+  "capturedAt": "2026-11-03",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -865,6 +865,7 @@
   "scopes": [
     "ai:write:budgeted",
     "apps:storage",
+    "apps:storage:import",
     "apps:storage:publish",
     "apps:storage:read",
     "apps:storage:shared:read",

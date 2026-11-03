@@ -90,6 +90,8 @@ import {
 import {
   consentUnavailablePayload,
   isKnownBlockScope,
+  isOtherAppConsentRequest,
+  otherAppConsentRefusal,
   resolveUngrantableConsentNotice,
 } from './consent.js';
 import { PAGE_CHECKPOINT_PERSIST_ERROR, emulatesPageHost } from './hostSurface.js';
@@ -3595,6 +3597,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
 
           case 'REQUEST_CONSENT': {
+            // A grant IN ANOTHER APP (`from`): there is none here, so refuse it
+            // before either branch below — see `isOtherAppConsentRequest`.
+            if (isOtherAppConsentRequest(typed.payload)) {
+              after(0, () => {
+                dispatchToBlock({ type: 'CONSENT_UNAVAILABLE', payload: otherAppConsentRefusal() });
+              });
+              return;
+            }
             // TWO OUTCOMES, mirroring the real host's handler exactly (civitai
             // `PageBlockHost.tsx`): if anything is grantable-via-consent it
             // grants; otherwise it takes the un-grantable branch.

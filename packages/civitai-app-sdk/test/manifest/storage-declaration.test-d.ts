@@ -19,6 +19,7 @@ import type {
   BlockStorageCollectionDeclaration,
   BlockStorageCollectionSchema,
   BlockStorageDeclaration,
+  BlockStorageImport,
   BlockStorageIndexType,
   BlockStoragePrivateCollectionDeclaration,
   BlockStorageSchemaType,
@@ -36,8 +37,10 @@ const base: Pick<BlockManifestV1, 'blockId' | 'version' | 'name' | 'scopes' | 'c
 
 // --- the field is OPTIONAL and typed by the named declaration -----------------
 expectTypeOf<BlockManifestV1['storage']>().toEqualTypeOf<BlockStorageDeclaration | undefined>();
+// Optional since `imports` (civitai/civitai#7494): a manifest declares collections,
+// imports or both. "At least one" is the canonical's (`anyOf`), checked by Ajv, not here.
 expectTypeOf<BlockStorageDeclaration['collections']>().toEqualTypeOf<
-  Record<string, BlockStorageCollectionDeclaration>
+  Record<string, BlockStorageCollectionDeclaration> | undefined
 >();
 expectTypeOf<BlockStorageCollectionDeclaration['visibility']>().toEqualTypeOf<'private' | 'shared'>();
 expectTypeOf<BlockStorageSharedCollectionDeclaration['write']>().toEqualTypeOf<
@@ -76,9 +79,9 @@ defineBlock({
   },
 });
 
-// --- `collections` is REQUIRED on storage (gate) ------------------------------
-// @ts-expect-error — `storage` without `collections`
-defineBlock({ manifest: { ...base, storage: {} } });
+// --- `storage: {}` is NOT a type error any more: `collections` and `imports` are each
+// optional, and the canonical's "at least one of them" is refused by `defineBlock` at
+// runtime (canonical-derivation.test.ts, 'storage: collections required').
 
 // --- a shared collection must declare `write` (gate) --------------------------
 defineBlock({
@@ -238,6 +241,53 @@ defineBlock({
           ownedModelVersions: [123],
         },
       },
+    },
+  },
+});
+
+// --- imports: another app's collections (civitai/civitai#7494) ------------------
+expectTypeOf(BLOCK_SCOPES.APPS_STORAGE_IMPORT).toEqualTypeOf<'apps:storage:import'>();
+expectTypeOf<BlockStorageDeclaration['imports']>().toEqualTypeOf<BlockStorageImport[] | undefined>();
+expectTypeOf<BlockStorageImport['access']>().toEqualTypeOf<'read' | 'readwrite'>();
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['exportable']>().toEqualTypeOf<boolean | undefined>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['exportable']>().toEqualTypeOf<boolean | undefined>();
+
+// A fork: imports only, no collections of its own.
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_IMPORT],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_IMPORT]: 'Reads your notes from the app this one was forked from.' },
+    storage: { imports: [{ from: 'parent-app', collections: ['notes'], access: 'readwrite' }] },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: { notes: { visibility: 'private', exportable: false } },
+      imports: [{ from: 'parent-app', collections: ['notes'], access: 'read' }],
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      // @ts-expect-error — `write` is not an access level
+      imports: [{ from: 'parent-app', collections: ['notes'], access: 'write' }],
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      // @ts-expect-error — an import names its access
+      imports: [{ from: 'parent-app', collections: ['notes'] }],
     },
   },
 });

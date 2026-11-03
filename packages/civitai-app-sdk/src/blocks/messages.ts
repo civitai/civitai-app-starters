@@ -1899,9 +1899,21 @@ export type BlockToParentMessage =
   // Fire-and-forget — there is no host→block reply. On grant the host re-mints
   // and pushes a TOKEN_REFRESH carrying the now-granted scopes; the block sees
   // the new scope on its token and retries the action. Mirrors REQUEST_SIGN_IN.
+  //
+  // `from` (civitai/civitai#7586): the viewer's `apps:storage:publish` grant IN
+  // ANOTHER APP, the source this app writes to through a `storage.imports` entry
+  // (a create, update, counter, mark or unmark in one of the source's shared
+  // collections refused `consent_required` with `details.from`). Send exactly
+  // `{ scopes: ['apps:storage:publish'], from: <source blockId> }`; the host
+  // refuses any other payload carrying `from` with `CONSENT_UNAVAILABLE`
+  // (`ungrantable`, `['apps:storage:publish']`) and opens nothing. The grant is
+  // recorded for the SOURCE app, so this app's token scopes do not change: on
+  // Allow the host still re-mints and pushes TOKEN_REFRESH, and that refresh is
+  // the signal to retry. Only the page host prompts for it; the model-slot host
+  // refuses every `from` request.
   | {
       type: 'REQUEST_CONSENT';
-      payload?: { scopes?: string[] };
+      payload?: { scopes?: string[]; from?: string };
     }
   | {
       type: 'TRACK_EVENT';

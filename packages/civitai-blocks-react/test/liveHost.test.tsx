@@ -953,6 +953,21 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     });
   });
 
+  it('REQUEST_CONSENT with `from` (publish in another app) always pushes CONSENT_UNAVAILABLE, even when the token carries the scope', async () => {
+    // civitai/civitai#7586: the grant asked for belongs to the SOURCE app, and live
+    // mode has no other app to grant it in. The block's own `apps:storage:publish`
+    // is not that grant, so the "already holds it" silence must not apply — a
+    // silent host would leave the SDK waiting out its 60 s consent wait.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const publisher = fakeJwt({ ...DEFAULT_CLAIMS, scopes: ['apps:storage', 'apps:storage:publish', 'apps:storage:import'] });
+    install({ token: publisher });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'parent-app' });
+    const payload = await waitForMessage(inbound, 'CONSENT_UNAVAILABLE');
+    expect(payload).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+  });
+
   it('🔴 REQUEST_CONSENT naming only UNKNOWN scopes still pushes, with scopes: []', async () => {
     // The trap, at the live host. `notify` is decided on the UNFILTERED set, so
     // an un-grantable scope outside the platform vocabulary still refuses out

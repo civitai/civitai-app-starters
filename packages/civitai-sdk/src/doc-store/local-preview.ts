@@ -1,5 +1,5 @@
 import type { ViewerInfo } from '../core/handshake.js';
-import type { Http } from '../http/index.js';
+import { ApiError, type Http } from '../http/index.js';
 import type { Scope } from '../session/index.js';
 import { createDocumentStorage, StorageError, type DocumentStorage, type StorageCollection } from './index.js';
 
@@ -118,6 +118,8 @@ export async function createLocalPreviewStorage(
       viewer: localViewer,
     });
     const http: Http = (method, path, opts) => {
+      const from = opts?.query?.from;
+      if (from !== undefined && from !== null) return Promise.reject(importRefusal(String(from)));
       collectIds(opts?.body, owned);
       return fake.http(method, path, opts);
     };
@@ -129,6 +131,24 @@ export async function createLocalPreviewStorage(
         `${(error as Error).message}. Nothing was sent to the server.`,
     );
   }
+}
+
+/**
+ * A call through an import (`collection(name, { from })`) in a preview. The local store has
+ * no other apps, and the server would not serve one either: a preview's token is a dev
+ * token, which the server refuses for every import (403 `not_eligible`,
+ * `details.reason: 'import_dev_token'`). So this answers with that refusal, its code and
+ * reason exactly, rather than pretending — an app branches on it once for both. Nothing is
+ * sent anywhere. To exercise a fork reading its parent, use `createFakeStorage` with
+ * `sources` (`@civitai/sdk/testing`).
+ */
+function importRefusal(from: string): ApiError {
+  const message =
+    `local preview storage: a dev-tunnel preview cannot reach another app's data (\`from: ${JSON.stringify(from)}\`) — ` +
+    "the server refuses a development token's import, and the local store has no other apps. Test the import with " +
+    "createFakeStorage({ sources }) from '@civitai/sdk/testing'. Nothing was sent to the server.";
+  const details = { reason: 'import_dev_token' };
+  return new ApiError(403, message, { code: 'not_eligible', message, error: message, details });
 }
 
 /** Every integer a write body carries that could be a model version id. */

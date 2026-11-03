@@ -29,11 +29,22 @@
 import { expectTypeOf } from 'vitest';
 
 import type {
+  BlockToParentMessage,
   ConsentUnavailablePayload,
   ConsentUnavailableReason,
   ParentToBlockMessage,
   ParentToBlockMessageType,
 } from '../../src/blocks/messages.js';
+
+// ============================================================
+// REQUEST_CONSENT may name ANOTHER app (civitai/civitai#7586)
+// ============================================================
+
+// `from`: the viewer's `apps:storage:publish` grant in the source of an import.
+// RED before the field existed: the payload was `{ scopes?: string[] }` only.
+expectTypeOf<Extract<BlockToParentMessage, { type: 'REQUEST_CONSENT' }>['payload']>().toEqualTypeOf<
+  { scopes?: string[]; from?: string } | undefined
+>();
 
 // ============================================================
 // The union member exists and carries the exported payload type

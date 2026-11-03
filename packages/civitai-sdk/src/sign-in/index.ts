@@ -325,7 +325,9 @@ export async function createSignIn(options: SignInOptions): Promise<SignIn> {
       return tokens.expiresAt - EXPIRY_MARGIN_MS > Date.now() ? tokens.accessToken : refresh();
     },
     refresh,
-    requestGrants: async (scopes: readonly Scope[]) => {
+    requestGrants: async (scopes: readonly Scope[], opts?: GrantOptions) => {
+      // A grant in another app (`from`) is a block-host consent; no OAuth sign-in carries it.
+      if (opts?.from !== undefined) return false;
       const wanted = scopeBitmask(scopes);
       if (tokens && (tokens.scope & wanted) === wanted) return true;
       return signIn({ scopes });

@@ -25,6 +25,7 @@ export type {
   BlockStorageCollectionDeclaration,
   BlockStorageCollectionSchema,
   BlockStorageDeclaration,
+  BlockStorageImport,
   BlockStorageIndexes,
   BlockStorageIndexType,
   BlockStoragePrivateCollectionDeclaration,

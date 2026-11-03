@@ -146,7 +146,8 @@ export type HostNotifications = {
   };
   NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
   REQUEST_SIGN_IN: { returnUrl?: string };
-  REQUEST_CONSENT: { scopes?: string[] };
+  /** `from`: the viewer's publish grant in ANOTHER app (an import's source); see `requestGrants`. */
+  REQUEST_CONSENT: { scopes?: string[]; from?: string };
   TRACK_EVENT: { eventName: string; properties?: Record<string, unknown> };
   /**
    * The viewer pressed, typed, scrolled or focused something in the frame. Sent by
@@ -161,6 +162,12 @@ export type HostPushes = {
   RESUME: undefined;
   /** `scopes` is advisory and may be empty; the message itself is the refusal. */
   CONSENT_UNAVAILABLE: { reason: ConsentRefusal; scopes: string[] };
+  /**
+   * The host re-minted this app's token unasked: after a consent Allow, or on its own
+   * schedule. The transport has already applied the token to the snapshot when this is
+   * delivered; never a `TOKEN_REFRESH_RESPONSE` (the answer to a `getToken`).
+   */
+  TOKEN_REFRESH: { token: unknown };
   /**
    * The verdict on an `asyncScan` upload, once per upload the host accepted.
    * It arrives long after that upload's own reply, which is why it is a push.

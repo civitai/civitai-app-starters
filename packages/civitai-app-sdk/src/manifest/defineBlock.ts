@@ -166,8 +166,10 @@ export const KNOWN_GAPS = {
   'storage-server-only-rules':
     'The canonical `storage` description states rules it does not encode: declaring any ' +
     'collection requires the `apps:storage` scope, a shared collection viewers write (`write` ' +
-    '"own" or "anyone") also requires `apps:storage:publish`, requesting either scope with no ' +
-    'collection for it to reach is rejected, a counter may not share a name with a mark, and the ' +
+    '"own" or "anyone") also requires `apps:storage:publish`, declaring `imports` requires ' +
+    '`apps:storage:import` (and `apps:storage`), requesting any of these scopes with nothing for ' +
+    'it to reach is rejected, an import never names this app itself and names each source at ' +
+    'most once, a counter may not share a name with a mark, and the ' +
     'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `write` "anyone" / ' +
     '"owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
     'exactly; these are server-side.',

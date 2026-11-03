@@ -186,6 +186,41 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
       'storage: a RESERVED log collection with maxEntries (refused at submit, not here)',
       valid({ storage: { collections: { events: { kind: 'log', visibility: 'private', maxEntries: 50 } } } }),
     ],
+    // -- storage imports (civitai/civitai#7494). RED before the re-vendor: `storage`
+    // was `additionalProperties: false` with `collections` required, `exportable` was
+    // an unknown key on a collection, and `apps:storage:import` was not in the scope enum.
+    [
+      'storage: imports alone (no collections), with the apps:storage:import scope',
+      valid({
+        scopes: ['apps:storage', 'apps:storage:import'],
+        scopeJustifications: { 'apps:storage:import': 'Reads your notes from the app this one was forked from.' },
+        storage: { imports: [{ from: 'parent-app', collections: ['notes', 'prefs'], access: 'readwrite' }] },
+      }),
+    ],
+    [
+      'storage: collections and imports together; a read import; 8 imports of 16 collections at the bounds',
+      valid({
+        storage: {
+          collections: { notes: { visibility: 'private' } },
+          imports: Array.from({ length: 8 }, (_, i) => ({
+            from: `src-${i}${'x'.repeat(i === 7 ? 35 : 0)}`,
+            collections: Array.from({ length: i === 0 ? 16 : 1 }, (_, j) => `c${j}`),
+            access: i % 2 === 0 ? 'read' : 'readwrite',
+          })),
+        },
+      }),
+    ],
+    [
+      'storage: exportable false on a private and a shared collection',
+      valid({
+        storage: {
+          collections: {
+            notes: { visibility: 'private', exportable: false },
+            posts: { visibility: 'shared', write: 'own', exportable: true },
+          },
+        },
+      }),
+    ],
     // A collection `schema` (civitai/civitai#7491). RED before the re-vendor: the
     // collection object is `additionalProperties: false`, so `schema` was an
     // unknown key whatever it held.
@@ -320,7 +355,57 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       'analytics.events.timed.properties.seconds.values',
     ],
     // -- storage (document-store collections): every rule below is the canonical's
+    // `collections` OR `imports` (the canonical's `anyOf`, a third oneOf/anyOf site — see
+    // the LEDGER below). No member pins a `const`, so Ajv's first error is reported.
     ['storage: collections required', valid({ storage: {} }), 'storage.collections'],
+    [
+      'storage imports: at least one',
+      valid({ storage: { imports: [] } }),
+      'storage.imports',
+    ],
+    [
+      'storage imports: at most eight',
+      valid({
+        storage: {
+          imports: Array.from({ length: 9 }, (_, i) => ({ from: `src-${i}`, collections: ['notes'], access: 'read' })),
+        },
+      }),
+      'storage.imports',
+    ],
+    [
+      'storage imports: from is a blockId',
+      valid({ storage: { imports: [{ from: 'Parent_App', collections: ['notes'], access: 'read' }] } }),
+      'storage.imports[0].from',
+    ],
+    [
+      'storage imports: collection names are distinct',
+      valid({ storage: { imports: [{ from: 'parent-app', collections: ['notes', 'notes'], access: 'read' }] } }),
+      'storage.imports[0].collections',
+    ],
+    [
+      'storage imports: at most 16 collections',
+      valid({
+        storage: {
+          imports: [{ from: 'parent-app', collections: Array.from({ length: 17 }, (_, j) => `c${j}`), access: 'read' }],
+        },
+      }),
+      'storage.imports[0].collections',
+    ],
+    [
+      'storage imports: access is read or readwrite',
+      valid({ storage: { imports: [{ from: 'parent-app', collections: ['notes'], access: 'write' }] } }),
+      'storage.imports[0].access',
+    ],
+    [
+      'storage imports: an import names its access',
+      valid({ storage: { imports: [{ from: 'parent-app', collections: ['notes'] }] } }),
+      'storage.imports[0].access',
+    ],
+    [
+      'storage: exportable is a boolean',
+      valid({ storage: { collections: { notes: { visibility: 'private', exportable: 'no' } } } }),
+      'storage.collections.notes.exportable',
+    ],
     ['storage: at least one collection', valid({ storage: { collections: {} } }), 'storage.collections'],
     [
       'storage: a collection name must be lowercase snake_case',
@@ -488,6 +573,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     expect(rejection(manifest).field).toBe(field);
   });
 
+  // Before the canonical declared `imports` and `exportable`, each was an unknown key —
+  // refused at `storage.imports` / `….exportable` itself, the field several cases above
+  // name. The field cannot tell the rule from its absence; the message can.
+  it.each(cases.filter(([label]) => label.startsWith('storage imports:') || label.includes('exportable')))(
+    '%s — refused by the rule, not as an unknown key',
+    (_label, manifest) => {
+      expect(rejection(manifest).message).not.toContain('is not a known property');
+    },
+  );
+
   // Before the canonical declared `schema`, it was an unknown key on every
   // collection — refused at `….schema` itself, which is ALSO where the write:"none"
   // rule refuses it. The field cannot tell the two apart; the message can.
@@ -627,17 +722,18 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are FOUR sites, and only the first — the analytics
-   * property declaration — is discriminated. The other three have no `const`
+   * ever gains. Today there are FIVE sites, and only the first — the analytics
+   * property declaration — is discriminated. The other four have no `const`
    * discriminator, so the selection leaves their reports alone, and what
-   * `defineBlock` says for each is pinned in the DERIVED rejections above: a
+   * `defineBlock` says for each is pinned in the DERIVED rejections above:
+   * `storage`'s "collections or imports" (civitai/civitai#7494), a
    * `write: "none"` storage collection's "at least one counter or mark", and a
    * collection schema's `type` (one name or a list) and `additionalProperties`
    * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly four oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly five oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -653,6 +749,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
     expect(sites).toEqual([
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
+      '#/properties/storage/anyOf',
       `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/then/anyOf`,
       '#/$defs/storageCollectionSchema/properties/type/anyOf',
       '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
@@ -732,6 +829,8 @@ const SHAPE_LEDGER = [
   'storage',
   'storage.collections.*',
   'storage.collections.*.indexes',
+  // Each of `storage.imports` (civitai/civitai#7494), typed by `BlockStorageImport`.
+  'storage.imports[]',
   'targets[]',
 ];
 

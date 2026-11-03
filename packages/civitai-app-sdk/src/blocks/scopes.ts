@@ -39,6 +39,11 @@ export const BLOCK_SCOPES = {
   // civitai/civitai `src/shared/constants/block-scope.constants.ts`.
   APPS_STORAGE: 'apps:storage',
   APPS_STORAGE_PUBLISH: 'apps:storage:publish',
+  // apps:storage:import — reach ANOTHER app's collections as the viewer, through
+  // the manifest's `storage.imports` (civitai/civitai#7494; a fork reading its
+  // parent). SENSITIVE (needs a `scopeJustifications` entry) and CONSENT-GATED:
+  // the viewer's grant is recorded per (viewer, this app, source app).
+  APPS_STORAGE_IMPORT: 'apps:storage:import',
   // collections:* — the App Blocks Collections surface. These have no OAuth bit
   // (they never touch the user's civitai resources via the OAuth surface); the
   // server gates them per-op server-side (collection visibility/ownership +

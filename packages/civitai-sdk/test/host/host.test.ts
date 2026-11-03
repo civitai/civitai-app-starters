@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHost, createHostSession } from '../../src/host/index.js';
 import { createFakeTransport } from '../../src/testing.js';
@@ -271,6 +271,131 @@ describe('session.requestGrants on the host', () => {
       .requestGrants(['buzz:read:self'], { signal: ac.signal });
     ac.abort();
 
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+/**
+ * `requestGrants(['apps:storage:publish'], { from })` (civitai/civitai#7586): the viewer's
+ * publish grant IN THE SOURCE APP an import writes to. The grant is recorded for the
+ * source, so the consumer's token scopes do not change: the host re-mints and pushes
+ * `TOKEN_REFRESH` anyway, and that refresh is the answer.
+ *
+ * Fixtures: the consumer's token scopes differ from the requested scope, except where a
+ * case says it already carries `apps:storage:publish` (its OWN grant, which never counts).
+ */
+describe('session.requestGrants with `from`: publish consent in the source app', () => {
+  const SOURCE = 'parent-app';
+  const ASK = { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage:publish'], from: SOURCE } };
+
+  it('sends exactly { scopes: [apps:storage:publish], from } and resolves on the next host-PUSHED TOKEN_REFRESH, scopes unchanged', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage', 'apps:storage:import'], 'before') });
+    let settled: boolean | undefined;
+    const pending = createHostSession(t)
+      .requestGrants(['apps:storage:publish'], { from: SOURCE })
+      .then((v) => (settled = v));
+
+    expect(t.sent).toEqual([ASK]);
+    // A snapshot change that is not a new token (a theme push) is not the answer.
+    t.setSnapshot({ theme: 'dark' });
+    await Promise.resolve();
+    expect(settled).toBeUndefined();
+    // Nor is a new token that is not a push: a TOKEN_REFRESH_RESPONSE to this app's own
+    // (or a concurrent) `getToken({ fresh: true })` changes the snapshot and nothing else.
+    t.setSnapshot({ token: token(['apps:storage', 'apps:storage:import'], 'answered') });
+    await Promise.resolve();
+    expect(settled).toBeUndefined();
+
+    const after = token(['apps:storage', 'apps:storage:import'], 'after');
+    t.setSnapshot({ token: after });
+    t.push('TOKEN_REFRESH', { token: after });
+    await expect(pending).resolves.toBe(true);
+    expect(t.listenerCount('TOKEN_REFRESH')).toBe(0);
+  });
+
+  it('bounds the wait by itself: "Not now" sends nothing, so after 60 s it resolves false and stops listening', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = createFakeTransport({ token: token(['apps:storage:import']) });
+      let settled: boolean | undefined;
+      void createHostSession(t)
+        .requestGrants(['apps:storage:publish'], { from: SOURCE })
+        .then((v) => (settled = v));
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(settled).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(false);
+      expect([t.listenerCount('TOKEN_REFRESH'), t.listenerCount('CONSENT_UNAVAILABLE')]).toEqual([0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('over the real iframe transport: TOKEN_REFRESH_RESPONSE is not the answer, a host-pushed TOKEN_REFRESH is', async () => {
+    const { transport, posted, deliver } = mountTransport();
+    deliver(init());
+    let settled: boolean | undefined;
+    const pending = createHostSession(transport)
+      .requestGrants(['apps:storage:publish'], { from: SOURCE })
+      .then((v) => (settled = v));
+    expect(posted.at(-1)?.msg).toEqual(ASK);
+
+    // The reply to a `getToken({ fresh: true })` — correlated or not, it is not a push.
+    const wrapped = (raw: string) => ({ token: { raw, scopes: ['apps:storage:import'], expiresAt: '2031-01-01T00:00:00.000Z' } });
+    deliver({ type: 'TOKEN_REFRESH_RESPONSE', payload: { requestId: 'someone-elses', ...wrapped('jwt-response') } });
+    await Promise.resolve();
+    expect(transport.snapshot.get().token.raw).toBe('jwt-response');
+    expect(settled).toBeUndefined();
+
+    deliver({ type: 'TOKEN_REFRESH', payload: wrapped('jwt-pushed') });
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('asks even when the consumer\'s own token carries apps:storage:publish: that grant is not the source\'s', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage', 'apps:storage:publish', 'apps:storage:import']) });
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE });
+
+    expect(t.sent).toEqual([ASK]);
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('resolves false on CONSENT_UNAVAILABLE and leaves no listener behind', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage:import']) });
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE });
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+
+    await expect(pending).resolves.toBe(false);
+    expect(t.listenerCount('CONSENT_UNAVAILABLE')).toBe(0);
+  });
+
+  it.each([
+    ['another scope', ['buzz:read:self'], SOURCE],
+    ['two scopes', ['apps:storage:publish', 'apps:storage'], SOURCE],
+    ['no scope', [], SOURCE],
+    ['a `from` that is not a blockId', ['apps:storage:publish'], 'Parent_App'],
+    ['a one-character `from`', ['apps:storage:publish'], 'p'],
+  ])('%s with `from` resolves false and sends nothing (the host would refuse it)', async (_what, scopes, from) => {
+    const t = createFakeTransport({ token: token(['user:read:self']) });
+    await expect(createHostSession(t).requestGrants(scopes as never, { from })).resolves.toBe(false);
+    expect(t.sent).toEqual([]);
+  });
+
+  it('in a local preview resolves false without contacting the host: no other app exists there', async () => {
+    const t = createFakeTransport({ token: token(['user:read:self']) });
+    await expect(
+      createHostSession(t, { localPreviewStorage: true }).requestGrants(['apps:storage:publish'], { from: SOURCE }),
+    ).resolves.toBe(false);
+    expect(t.sent).toEqual([]);
+  });
+
+  // INVARIANT GUARD, not regression coverage: an abort already ended the wait.
+  it('ends the wait when the caller aborts', async () => {
+    const t = createFakeTransport({ token: token([]) });
+    const ac = new AbortController();
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE, signal: ac.signal });
+    ac.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
