@@ -1774,7 +1774,7 @@ export class CivitaiChat extends LitElement {
       this.#sendingFor = undefined;
       this.requestUpdate();
       // What the viewer sent, and the reply to it, are brought into view, wherever they had scrolled to.
-      void this.updateComplete.then(() => this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd());
+      void this.updateComplete.then(() => this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd({ smooth: false }));
       // An edit has gone once its reply started: the edit box closes now, not when the reply ends.
       if (edit) return void sent.catch((error: unknown) => this.#toast('That edit did not go through.', error));
       try {

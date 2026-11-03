@@ -156,13 +156,17 @@ export class CivitaiChatThread extends LightElement {
     if (this.conversationId) leaveThreadPlace(this.conversationId, this.atBottom ? undefined : (this.#restore ?? this.#place));
   }
 
-  /** Brings the end into view and follows it again: the viewer sent, opened a chat or asked to. */
-  scrollToEnd(): void {
+  /**
+   * Brings the end into view and follows it again: the viewer sent, opened a chat or asked to. With
+   * `smooth: false` it jumps there (a message just sent: no glide still under way as the reply comes).
+   */
+  scrollToEnd({ smooth = true }: { smooth?: boolean } = {}): void {
     const el = this.#scroller;
     this.atBottom = true;
     this.#restore = undefined;
     if (!el) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || this.#distanceToEnd(el) < NEAR_BOTTOM_PX) {
+    if (!smooth || window.matchMedia('(prefers-reduced-motion: reduce)').matches || this.#distanceToEnd(el) < NEAR_BOTTOM_PX) {
+      this.#glide = 0;
       this.#jumpToEnd();
       return;
     }
@@ -227,6 +231,8 @@ export class CivitaiChatThread extends LightElement {
         return;
       }
       this.#glide = 0;
+      // And stopped where it is, so the browser does not carry it on down past the move.
+      el.scrollTo({ top: el.scrollTop, behavior: 'instant' });
     }
     const near = this.#distanceToEnd(el) < NEAR_BOTTOM_PX;
     if (this.#written !== undefined && Math.abs(el.scrollTop - this.#written) < 1) {
