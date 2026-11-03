@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initialize } from '../../src/app/index.js';
 import { createDocumentStorage, StorageError, storageImportRefusal } from '../../src/doc-store/index.js';
@@ -413,6 +413,199 @@ describe('the fake: import refusals, in the server\'s order', () => {
     expect([error.code, error.details?.bucket]).toEqual(['rate_limited', 'read']);
     // The parent's own bucket for this viewer was never touched by those refusals.
     expect(await fake.as({ app: PARENT }).storage.collection('notes').get('k')).toBeNull();
+  });
+});
+
+/**
+ * Publish consent IN THE SOURCE (civitai/civitai#7586): a create, put, counter, mark or
+ * unmark through a `readwrite` import into one of the source's SHARED collections, refused
+ * 403 `consent_required` with `details: { scope: 'apps:storage:publish', from }`, asks the
+ * host once — `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }` — and retries
+ * ONCE on the next token refresh, within the 60 s consent wait. The grant is the source's,
+ * so the consumer's token scopes do not change; the refresh itself is the answer.
+ *
+ * Through `initialize()` with a scripted host and `fetch`, so the seam under test is the
+ * real one: the document-store client, the host session and the transport together.
+ * Fixtures: the token's raw values before and after the refresh, the source blockId, the
+ * document texts and the counter value are pairwise distinct.
+ */
+describe('the client: publish consent in the source — ask the host, then retry once', () => {
+  const PUBLISH_IN_PARENT = { scope: 'apps:storage:publish', from: PARENT };
+  const envelope = (code: string, details?: Record<string, unknown>) => ({
+    code,
+    message: `${code} (scripted)`,
+    error: `${code} (scripted)`,
+    ...(details ? { details } : {}),
+  });
+  const REFUSED = { status: 403, body: envelope('consent_required', PUBLISH_IN_PARENT) };
+  const ASK = { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage:publish'], from: PARENT } };
+
+  async function setup(answers: { status: number; body: unknown }[]) {
+    const calls: { method: string; url: string; body: unknown }[] = [];
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        method: init?.method ?? 'GET',
+        url: String(input),
+        body: typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined,
+      });
+      const next = answers.shift() ?? { status: 500, body: envelope('internal_error') };
+      return new Response(JSON.stringify(next.body), { status: next.status, headers: { 'content-type': 'application/json' } });
+    }) as typeof globalThis.fetch;
+    const transport = createFakeTransport({
+      token: { raw: 'fork-token-1', scopes: ['apps:storage', 'apps:storage:import'], expiresAt: new Date(0), kind: 'block' },
+      viewer: { id: 7, username: 'alice' },
+      context: { slotId: 'app.page' },
+    });
+    const app = await initialize({ transport, fetch });
+    return {
+      app,
+      calls,
+      transport,
+      asks: () => transport.sent.filter((m) => m.type === 'REQUEST_CONSENT'),
+      // The host's re-mint after Allow: a NEW token, the SAME scopes.
+      refresh: () => transport.setSnapshot({ token: { ...transport.snapshot.get().token, raw: 'fork-token-2' } }),
+    };
+  }
+
+  const BASE_URL = 'https://civitai.com/api/v1/blocks/storage';
+  const ops = [
+    ['create', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'c' }), 'POST', `${BASE_URL}/board?from=${PARENT}`, { data: { t: 'c' } }, WIRE_DOC],
+    ['put', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).put('b1', { t: 'p' }), 'PUT', `${BASE_URL}/board/b1?from=${PARENT}`, { data: { t: 'p' } }, WIRE_DOC],
+    ['increment', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('tally', { from: PARENT }).increment('m1', 'plays', 4), 'POST', `${BASE_URL}/tally/m1/counters/plays?from=${PARENT}`, { by: 4 }, { value: 9 }],
+    ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'vote'), 'PUT', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: true, count: 5 }],
+    ['unmark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).unmark('b1', 'vote'), 'DELETE', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: false, count: 4 }],
+  ] as const;
+
+  it.each(ops)('%s: asks once with { scopes, from }, waits for the refresh, then sends the SAME request once more', async (_op, run, method, url, body, reply) => {
+    const s = await setup([REFUSED, { status: 200, body: reply }]);
+    const pending = run(s);
+    await vi.waitFor(() => expect(s.asks()).toEqual([ASK]));
+    // Nothing is retried before the host answers.
+    expect(s.calls).toHaveLength(1);
+
+    s.refresh();
+    const result = await pending;
+    expect(s.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      [method, url, body],
+      [method, url, body],
+    ]);
+    expect(s.asks()).toHaveLength(1);
+    if ('value' in reply) expect(result).toEqual({ value: 9 });
+    else if ('marked' in reply) expect(result).toMatchObject({ marked: reply.marked, count: reply.count });
+    else expect(result).toMatchObject({ key: WIRE_DOC.key, data: WIRE_DOC.data });
+  });
+
+  it('CONSENT_UNAVAILABLE ends it at once: the original refusal surfaces, nothing is retried', async () => {
+    const s = await setup([REFUSED]);
+    const pending = refusal(s.app.storage.collection('board', { from: PARENT }).create({ t: 'u' }));
+    await vi.waitFor(() => expect(s.asks()).toEqual([ASK]));
+    s.transport.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+
+    const error = await pending;
+    expect([error.status, error.code, error.details]).toEqual([403, 'consent_required', PUBLISH_IN_PARENT]);
+    s.refresh();
+    await Promise.resolve();
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it('"Not now" sends nothing: after the 60 s consent wait the original refusal surfaces, and a late refresh retries nothing', async () => {
+    const s = await setup([REFUSED]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let settled: StorageError | undefined;
+      void refusal(s.app.storage.collection('board', { from: PARENT }).create({ t: 'n' })).then((e) => (settled = e));
+      for (let i = 0; i < 20 && s.asks().length === 0; i++) await vi.advanceTimersByTimeAsync(0);
+      expect(s.asks()).toEqual([ASK]);
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(settled).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect([settled?.code, settled?.details]).toEqual(['consent_required', PUBLISH_IN_PARENT]);
+
+      s.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a second refusal after the retry is final: two requests, one ask, no loop', async () => {
+    const s = await setup([REFUSED, REFUSED]);
+    const pending = refusal(s.app.storage.collection('board', { from: PARENT }).put('b2', { t: 'twice' }));
+    await vi.waitFor(() => expect(s.asks()).toHaveLength(1));
+    s.refresh();
+
+    expect((await pending).code).toBe('consent_required');
+    expect(s.calls).toHaveLength(2);
+    expect(s.asks()).toHaveLength(1);
+  });
+
+  it('a caller abort during the wait rejects with the abort, and the refresh retries nothing', async () => {
+    const s = await setup([REFUSED, { status: 200, body: WIRE_DOC }]);
+    const ac = new AbortController();
+    const pending = s.app.storage.collection('board', { from: PARENT }).create({ t: 'a' }, { signal: ac.signal });
+    await vi.waitFor(() => expect(s.asks()).toHaveLength(1));
+    ac.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    s.refresh();
+    await Promise.resolve();
+    expect(s.calls).toHaveLength(1);
+  });
+
+  // INVARIANT GUARDS, not regression coverage: none of these asked before the change either.
+  // They pin the predicate's edges: a delete never needs the grant, reads never write, the
+  // app's OWN publish scope (no `from`) keeps its existing path, and a refusal naming a
+  // different source than this collection imports from is not this import's.
+  it.each([
+    ['a delete', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).delete('b1'), REFUSED],
+    ['a read', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).list(), REFUSED],
+    ['this app\'s own collection', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board').create({ t: 'own' }), { status: 403, body: envelope('consent_required', { scope: 'apps:storage:publish' }) }],
+    ['a refusal naming another source', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'x' }), { status: 403, body: envelope('consent_required', { scope: 'apps:storage:publish', from: 'other-app' }) }],
+    ['the import scope', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'i' }), { status: 403, body: envelope('consent_required', { scope: 'apps:storage:import', from: PARENT }) }],
+  ])('%s refused consent_required does not ask the host', async (_what, run, answer) => {
+    const s = await setup([answer]);
+    expect((await refusal(run(s))).code).toBe('consent_required');
+    expect(s.asks()).toEqual([]);
+    expect(s.calls).toHaveLength(1);
+  });
+});
+
+describe('the fake: the publish prompt for the source, through `requestGrants`', () => {
+  const withoutPublishInParent = (requestGrants: FakeStorageOptions['requestGrants']) =>
+    forkAndParent({
+      sources: { [PARENT]: { manifest: PARENT_MANIFEST, consent: { revoked: ['apps:storage:publish'] } } },
+      requestGrants,
+    });
+
+  it('Allow records the grant IN THE PARENT and the write lands there on the one retry; the next write needs no prompt', async () => {
+    const asked: unknown[] = [];
+    const fake = withoutPublishInParent((scopes, opts) => {
+      asked.push([scopes, opts.from]);
+      return true;
+    });
+    const board = fake.storage.collection('board', { from: PARENT });
+    const first = await board.create({ t: 'allowed' });
+    await board.mark(first.key, 'vote');
+
+    expect(asked).toEqual([[['apps:storage:publish'], PARENT]]);
+    const inParent = await fake.as({ app: PARENT }).storage.collection('board').get(first.key);
+    expect(inParent?.data).toEqual({ t: 'allowed' });
+    expect(inParent?.marks).toEqual({ vote: 1 });
+  });
+
+  it('"Not now" surfaces the original refusal and writes nothing in the parent', async () => {
+    const fake = withoutPublishInParent(() => false);
+    const error = await refusal(fake.storage.collection('board', { from: PARENT }).create({ t: 'declined' }));
+    expect([error.code, error.details]).toEqual(['consent_required', { scope: 'apps:storage:publish', from: PARENT }]);
+    expect((await fake.as({ app: PARENT }).storage.collection('board').list()).items).toEqual([]);
+  });
+
+  // INVARIANT GUARD: without `requestGrants` nothing is asked, as before.
+  it('without `requestGrants` the refusal surfaces as before', async () => {
+    const fake = withoutPublishInParent(undefined);
+    expect((await refusal(fake.storage.collection('board', { from: PARENT }).create({ t: 'n' }))).code).toBe('consent_required');
   });
 });
 

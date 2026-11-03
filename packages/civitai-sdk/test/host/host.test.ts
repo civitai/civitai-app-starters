@@ -276,6 +276,84 @@ describe('session.requestGrants on the host', () => {
 });
 
 /**
+ * `requestGrants(['apps:storage:publish'], { from })` (civitai/civitai#7586): the viewer's
+ * publish grant IN THE SOURCE APP an import writes to. The grant is recorded for the
+ * source, so the consumer's token scopes do not change: the host re-mints and pushes
+ * `TOKEN_REFRESH` anyway, and that refresh is the answer.
+ *
+ * Fixtures: the consumer's token scopes differ from the requested scope, except where a
+ * case says it already carries `apps:storage:publish` (its OWN grant, which never counts).
+ */
+describe('session.requestGrants with `from`: publish consent in the source app', () => {
+  const SOURCE = 'parent-app';
+  const ASK = { type: 'REQUEST_CONSENT', payload: { scopes: ['apps:storage:publish'], from: SOURCE } };
+
+  it('sends exactly { scopes: [apps:storage:publish], from } and resolves on the next token refresh, scopes unchanged', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage', 'apps:storage:import'], 'before') });
+    let settled: boolean | undefined;
+    const pending = createHostSession(t)
+      .requestGrants(['apps:storage:publish'], { from: SOURCE })
+      .then((v) => (settled = v));
+
+    expect(t.sent).toEqual([ASK]);
+    // A snapshot change that is not a new token (a theme push) is not the answer.
+    t.setSnapshot({ theme: 'dark' });
+    await Promise.resolve();
+    expect(settled).toBeUndefined();
+
+    t.setSnapshot({ token: token(['apps:storage', 'apps:storage:import'], 'after') });
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('asks even when the consumer\'s own token carries apps:storage:publish: that grant is not the source\'s', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage', 'apps:storage:publish', 'apps:storage:import']) });
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE });
+
+    expect(t.sent).toEqual([ASK]);
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('resolves false on CONSENT_UNAVAILABLE and leaves no listener behind', async () => {
+    const t = createFakeTransport({ token: token(['apps:storage:import']) });
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE });
+    t.push('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+
+    await expect(pending).resolves.toBe(false);
+    expect(t.listenerCount('CONSENT_UNAVAILABLE')).toBe(0);
+  });
+
+  it.each([
+    ['another scope', ['buzz:read:self'], SOURCE],
+    ['two scopes', ['apps:storage:publish', 'apps:storage'], SOURCE],
+    ['no scope', [], SOURCE],
+    ['a `from` that is not a blockId', ['apps:storage:publish'], 'Parent_App'],
+    ['a one-character `from`', ['apps:storage:publish'], 'p'],
+  ])('%s with `from` resolves false and sends nothing (the host would refuse it)', async (_what, scopes, from) => {
+    const t = createFakeTransport({ token: token(['user:read:self']) });
+    await expect(createHostSession(t).requestGrants(scopes as never, { from })).resolves.toBe(false);
+    expect(t.sent).toEqual([]);
+  });
+
+  it('in a local preview resolves false without contacting the host: no other app exists there', async () => {
+    const t = createFakeTransport({ token: token(['user:read:self']) });
+    await expect(
+      createHostSession(t, { localPreviewStorage: true }).requestGrants(['apps:storage:publish'], { from: SOURCE }),
+    ).resolves.toBe(false);
+    expect(t.sent).toEqual([]);
+  });
+
+  // INVARIANT GUARD, not regression coverage: an abort already ended the wait.
+  it('ends the wait when the caller aborts', async () => {
+    const t = createFakeTransport({ token: token([]) });
+    const ac = new AbortController();
+    const pending = createHostSession(t).requestGrants(['apps:storage:publish'], { from: SOURCE, signal: ac.signal });
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+/**
  * A dev-tunnel preview (`storageMode: 'local-preview'`): the document store is
  * served by the in-tab local store, and the host never mints a document-store
  * scope onto the token. Asking the host for one can only be refused, so the

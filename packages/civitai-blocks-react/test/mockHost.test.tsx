@@ -285,6 +285,30 @@ describe('createMockHost', () => {
     expect(tokenHook.result.current.buzzBudget).toBeUndefined();
   });
 
+  it('a REQUEST_CONSENT with `from` (publish in another app) is refused, and grants nothing onto this token', async () => {
+    // civitai/civitai#7586: `from` asks for the viewer's grant IN THE SOURCE APP. The
+    // mock host has no other app, so it answers as for any un-grantable request —
+    // and must NOT take the grant branch, which would put `apps:storage:publish` on
+    // THIS block's token (the wrong app's grant, and a retry that then "works").
+    uninstall = createMockHost({ consentGranted: false }).install();
+    const tokenHook = renderHook(() => useBlockToken());
+    const consentHook = renderHook(() => useRequestConsent());
+    await waitFor(() => expect(tokenHook.result.current.raw).toBeTruthy());
+    const rawBefore = tokenHook.result.current.raw;
+    const received: unknown[] = [];
+    const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+    act(() => {
+      consentHook.result.current.requestConsent({ scopes: ['apps:storage:publish'], from: 'parent-app' });
+    });
+
+    await waitFor(() => expect(received).toHaveLength(1));
+    expect(received[0]).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+    expect(tokenHook.result.current.raw).toBe(rawBefore);
+    expect(tokenHook.result.current.scopes).not.toContain('apps:storage:publish');
+    off();
+  });
+
   it('a REQUEST_CONSENT with NO usable hint still grants the budgeted scope', async () => {
     // The compatibility arm of the test above, and the reason the grant is keyed
     // on "the hint named the budgeted scope" rather than on "the hint is
