@@ -17,8 +17,11 @@ import { defineBlock } from '../../src/manifest/index.js';
 import type {
   BlockManifestV1,
   BlockStorageCollectionDeclaration,
+  BlockStorageCollectionSchema,
   BlockStorageDeclaration,
   BlockStorageIndexType,
+  BlockStoragePrivateCollectionDeclaration,
+  BlockStorageSchemaType,
   BlockStorageSharedCollectionDeclaration,
 } from '../../src/manifest/index.js';
 import { BLOCK_SCOPES } from '../../src/blocks/index.js';
@@ -234,6 +237,78 @@ defineBlock({
           // @ts-expect-error — pointers are strings, not ids
           ownedModelVersions: [123],
         },
+      },
+    },
+  },
+});
+
+// --- schema: the per-collection document schema (civitai/civitai#7491) -----------
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['schema']>().toEqualTypeOf<
+  BlockStorageCollectionSchema | undefined
+>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['schema']>().toEqualTypeOf<
+  BlockStorageCollectionSchema | undefined
+>();
+expectTypeOf<BlockStorageSchemaType>().toEqualTypeOf<
+  'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null'
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers post cards to a shared board.' },
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: {
+            type: 'object',
+            description: 'A saved card.',
+            required: ['title'],
+            additionalProperties: false,
+            properties: {
+              title: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[^<>]*$' },
+              rating: { type: 'integer', minimum: 1, maximum: 5 },
+              tags: { type: 'array', minItems: 0, maxItems: 6, items: { type: ['string', 'null'] } },
+              tone: { enum: ['warm', 'cool', 7, null] },
+              kind: { const: 'card' },
+              scores: { type: 'object', additionalProperties: { type: 'number' } },
+            },
+          },
+        },
+        board: { visibility: 'shared', write: 'own', schema: { type: 'object' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: {
+            properties: {
+              // @ts-expect-error — `format` is not a keyword of the subset
+              when: { type: 'string', format: 'date-time' },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `date` is not a type the subset names
+        cards: { visibility: 'private', schema: { type: 'date' } },
       },
     },
   },

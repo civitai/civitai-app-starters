@@ -201,6 +201,7 @@ export type StorageErrorCode =
   | 'not_author'
   | 'write_policy'
   | 'resource_not_owned'
+  | 'schema_violation'
   | 'not_found'
   | 'collection_not_declared'
   | 'method_not_allowed'
@@ -233,7 +234,12 @@ export type StorageErrorCode =
  */
 export class StorageError extends ApiError {
   readonly code: StorageErrorCode;
-  /** E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. */
+  /**
+   * E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. On
+   * `schema_violation` (400: a document's `data` does not match its collection's declared
+   * `schema`): `collection`, `pointer` (the first failing JSON pointer into `data`, `""` for
+   * the root) and `keyword` (the schema keyword it failed, e.g. `required`).
+   */
   readonly details?: Record<string, unknown>;
 
   constructor(

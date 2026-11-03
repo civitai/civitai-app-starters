@@ -2897,6 +2897,63 @@ export interface BlockStorageIndexes {
   updatedAt?: never;
 }
 
+/** A JSON type name a {@link BlockStorageCollectionSchema} can require. */
+export type BlockStorageSchemaType = 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null';
+
+/**
+ * A collection's DOCUMENT SCHEMA (civitai/civitai#7491): a JSON Schema SUBSET that every
+ * document's `data` in the collection must match. Opt-in: without one, documents are not
+ * checked. The server checks every create and put, and refuses a document that does not match
+ * with 400 `schema_violation`. The refusal's message and `details.pointer` name the FIRST
+ * failing JSON pointer into `data` (for example `/title`), and `details.keyword` names the
+ * keyword it failed. Counters and marks are not checked. Changing a schema does not re-check
+ * stored documents; each is checked the next time it is written.
+ *
+ * Only these keywords exist; any other is refused at submit by name. Semantics: a keyword for
+ * another type is ignored (`minLength` on a number), `integer` is a number with no fraction,
+ * lengths count code points, `pattern` is an UNANCHORED JavaScript regular expression with the
+ * `u` flag, and `enum`/`const` compare JSON values. "First" is: `type`, `const`, `enum`, the
+ * string, number and array keywords (`maxLength` before `pattern`), `items` element by element,
+ * then `required` in declared order, then the object's own keys in ascending order.
+ *
+ * Bounds (the server's, refused at submit): at most 16 schemas nested in one another, 16384
+ * bytes of JSON and 16 patterns per collection schema, and 32 patterns across all of the
+ * manifest's collection schemas together; a `pattern` is at most 256 characters,
+ * must compile, needs a `maxLength` of at most 1000 on the same schema, and must not backtrack
+ * catastrophically; no `min*` above its `max*`. Not allowed on a `write: 'none'` collection,
+ * which has no document bodies. Mirrors the canonical schema's
+ * `$defs.storageCollectionSchema`.
+ */
+export interface BlockStorageCollectionSchema {
+  /** One type, or a non-empty list of them without repeats. */
+  type?: BlockStorageSchemaType | BlockStorageSchemaType[];
+  /** Property name → the schema its value must match. */
+  properties?: Record<string, BlockStorageCollectionSchema>;
+  /** Property names that must be present (own keys), checked in this order. */
+  required?: string[];
+  /** `false` refuses undeclared keys; a schema checks their values; `true` (the default) allows them. */
+  additionalProperties?: boolean | BlockStorageCollectionSchema;
+  /** One schema every array element must match. */
+  items?: BlockStorageCollectionSchema;
+  /** The allowed JSON values (at least one). */
+  enum?: unknown[];
+  /** The one allowed JSON value. */
+  const?: unknown;
+  /** In code points. */
+  minLength?: number;
+  /** In code points. Required, at most 1000, on any schema that declares `pattern`. */
+  maxLength?: number;
+  /** A JavaScript regular expression (`u` flag), unanchored, at most 256 characters. */
+  pattern?: string;
+  /** Inclusive. */
+  minimum?: number;
+  /** Inclusive. */
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  description?: string;
+}
+
 /**
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
@@ -2916,6 +2973,8 @@ export interface BlockStoragePrivateCollectionDeclaration {
   ttlSeconds?: number;
   /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.maxEntries}. */
   maxEntries?: number;
+  /** See {@link BlockStorageCollectionSchema}. */
+  schema?: BlockStorageCollectionSchema;
 }
 
 /**
@@ -3011,6 +3070,11 @@ export interface BlockStorageSharedCollectionDeclaration {
    * model later changes hands or is deleted.
    */
   ownedModelVersions?: string[];
+  /**
+   * The schema every document's `data` must match — see {@link BlockStorageCollectionSchema}.
+   * Not allowed with `write` `'none'` (no document bodies are written there).
+   */
+  schema?: BlockStorageCollectionSchema;
 }
 
 /**
