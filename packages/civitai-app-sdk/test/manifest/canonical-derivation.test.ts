@@ -735,6 +735,8 @@ const SHAPE_LEDGER = [
   'storage',
   'storage.collections.*',
   'storage.collections.*.indexes',
+  // Each of `storage.imports` (civitai/civitai#7494), typed by `BlockStorageImport`.
+  'storage.imports[]',
   'targets[]',
 ];
 
