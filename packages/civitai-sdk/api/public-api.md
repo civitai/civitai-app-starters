@@ -196,6 +196,17 @@ export interface TokenOptions {
 
 export interface GrantOptions {
     signal?: AbortSignal;
+    /**
+     * Ask for the viewer's grant IN ANOTHER APP: `apps:storage:publish` in the source of
+     * one of this app's `storage.imports` (its blockId), which a write through the import
+     * into one of the source's shared collections needs. Pass exactly
+     * `['apps:storage:publish']` with it; anything else resolves `false` without asking.
+     * The grant is the source's, so this app's token scopes do not change: on a host page
+     * the call resolves `true` on the next token refresh after the viewer allows, and only
+     * the app page (`/apps/run/<slug>`) prompts for it. `app.storage.collection(name, { from })`
+     * asks for it by itself, so an app rarely needs to.
+     */
+    from?: string;
 }
 
 export type TokenSource = string | ((opts: {
@@ -842,6 +853,14 @@ export interface CollectionOptions {
      * (refusals: {@link storageImportRefusal}). Only an ordinary block token imports: a
      * dev-tunnel preview, a dev token, a hub token and a review are refused.
      *
+     * A create, put, counter, mark or unmark in one of the source's SHARED collections also
+     * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
+     * On `app.storage` the client asks the host for it by itself when the source refuses
+     * for want of it: one prompt, then the same call ONCE more on the next token refresh,
+     * within 60 s. "Not now", a host that cannot prompt (only the app page does) and a second
+     * refusal all reject with the original `consent_required` (`source_publish_consent`).
+     * A delete never needs it.
+     *
      * When the key is present its value must be a string: `{ from: undefined }` (a
      * parent blockId not loaded yet) is refused before sending rather than read as
      * "this app's own collection".
@@ -899,9 +918,13 @@ export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_to
  *   (a token that already carries the scope is re-minted without it), then
  *   `await app.requestGrants(['apps:storage:import'])`. `false` means "not now": do not loop.
  * - `source_publish_consent` — 403 `consent_required` naming `apps:storage:publish` AND a
- *   `from`: a write, counter or mark in one of the SOURCE app's shared collections needs
- *   the viewer's publish consent IN THE SOURCE APP. An import grant is not that consent, and
- *   no grant THIS app can request supplies it; tell the viewer.
+ *   `from`: a create, put, counter, mark or unmark in one of the SOURCE app's shared
+ *   collections needs the viewer's publish consent IN THE SOURCE APP. An import grant is
+ *   not that consent. `app.storage` has ALREADY asked the host for it (see
+ *   {@link CollectionOptions.from}) by the time this reaches the app, so it means "not
+ *   now", a host that cannot prompt, or a refusal after the grant: do not loop. An app
+ *   may ask again later on the viewer's own action with
+ *   `app.requestGrants(['apps:storage:publish'], { from })`.
  * - `read_only` — 403 `write_policy` (`reason: 'import_read_only'`): the import's `access`
  *   is `read`.
  * - `not_declared` — 403 `import_not_declared`: this app's manifest does not import that
@@ -3568,6 +3591,17 @@ export interface FakeStorageOptions {
      * `apps:storage:import` (the caller's `scopes`, or `consent` revoking it).
      */
     importGrants?: Record<string, FakeStorageImportGrant>;
+    /**
+     * The host's consent prompt, for the one grant the client asks for by itself: the
+     * viewer's `apps:storage:publish` IN A SOURCE (`opts.from`), when a write through an
+     * import is refused for want of it (civitai/civitai#7586). Return `true` for Allow —
+     * the fake then records the grant in that source, as the host does, and the client
+     * sends the call once more — or `false` for "Not now". Absent, the client asks nothing
+     * and the refusal reaches the caller.
+     */
+    requestGrants?: (scopes: readonly string[], opts: {
+        from?: string;
+    }) => boolean | Promise<boolean>;
     /** The default caller's viewer. Default `{ username: 'viewer' }`; `null` for anonymous. */
     viewer?: FakeStorageViewer | null;
     /** Default `approved`; anything else refuses every call `not_eligible`. */

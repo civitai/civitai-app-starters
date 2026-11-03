@@ -1,5 +1,6 @@
 import { CivitaiError } from '../core/errors.js';
 import { ApiError, type Http, type Query } from '../http/index.js';
+import type { GrantOptions, Scope } from '../session/index.js';
 
 /**
  * The App Blocks DOCUMENT STORE: named collections of JSON documents, declared in
@@ -194,6 +195,14 @@ export interface CollectionOptions {
    * (refusals: {@link storageImportRefusal}). Only an ordinary block token imports: a
    * dev-tunnel preview, a dev token, a hub token and a review are refused.
    *
+   * A create, put, counter, mark or unmark in one of the source's SHARED collections also
+   * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
+   * On `app.storage` the client asks the host for it by itself when the source refuses
+   * for want of it: one prompt, then the same call ONCE more on the next token refresh,
+   * within 60 s. "Not now", a host that cannot prompt (only the app page does) and a second
+   * refusal all reject with the original `consent_required` (`source_publish_consent`).
+   * A delete never needs it.
+   *
    * When the key is present its value must be a string: `{ from: undefined }` (a
    * parent blockId not loaded yet) is refused before sending rather than read as
    * "this app's own collection".
@@ -323,9 +332,13 @@ const IMPORT_NOT_ELIGIBLE: ReadonlySet<string> = new Set<StorageImportNotEligibl
  *   (a token that already carries the scope is re-minted without it), then
  *   `await app.requestGrants(['apps:storage:import'])`. `false` means "not now": do not loop.
  * - `source_publish_consent` — 403 `consent_required` naming `apps:storage:publish` AND a
- *   `from`: a write, counter or mark in one of the SOURCE app's shared collections needs
- *   the viewer's publish consent IN THE SOURCE APP. An import grant is not that consent, and
- *   no grant THIS app can request supplies it; tell the viewer.
+ *   `from`: a create, put, counter, mark or unmark in one of the SOURCE app's shared
+ *   collections needs the viewer's publish consent IN THE SOURCE APP. An import grant is
+ *   not that consent. `app.storage` has ALREADY asked the host for it (see
+ *   {@link CollectionOptions.from}) by the time this reaches the app, so it means "not
+ *   now", a host that cannot prompt, or a refusal after the grant: do not loop. An app
+ *   may ask again later on the viewer's own action with
+ *   `app.requestGrants(['apps:storage:publish'], { from })`.
  * - `read_only` — 403 `write_policy` (`reason: 'import_read_only'`): the import's `access`
  *   is `read`.
  * - `not_declared` — 403 `import_not_declared`: this app's manifest does not import that
@@ -398,6 +411,67 @@ export const INSUFFICIENT_SCOPE_HINT =
 export interface DocumentStorageOptions {
   /** Append {@link INSUFFICIENT_SCOPE_HINT} to an `insufficient_scope` refusal. The server's `code` is unchanged. */
   explainInsufficientScope?: boolean;
+  /**
+   * How to ask the viewer for a grant — the session's `requestGrants`. Given, a write
+   * through an import that the source refuses for want of the viewer's publish grant
+   * THERE asks for it (`['apps:storage:publish']` with `{ from }`) and, granted, sends
+   * the same call once more (see {@link CollectionOptions.from}). Absent, that refusal
+   * reaches the caller as it is.
+   */
+  requestGrants?: (scopes: readonly Scope[], opts: GrantOptions) => Promise<boolean>;
+}
+
+/**
+ * How long a write through an import waits for the viewer to answer the source's
+ * publish prompt. "Not now" sends nothing, so the wait must end by itself; the same
+ * bound as `@civitai/blocks-react`'s consent wait.
+ */
+const SOURCE_PUBLISH_CONSENT_WAIT_MS = 60_000;
+
+/** The source's refusal of THIS import's write for want of the viewer's publish grant there. */
+function isSourcePublishRefusal(error: unknown, from: string): boolean {
+  return (
+    error instanceof StorageError &&
+    error.code === 'consent_required' &&
+    error.details?.scope === 'apps:storage:publish' &&
+    error.details?.from === from
+  );
+}
+
+/**
+ * `attempt`; on the source's publish refusal, ask once and, granted, `attempt` ONCE more.
+ * The refused call wrote nothing (the server refuses before the write), so the retry is
+ * the first write, not a second one. A second refusal, a "no", the wait running out and
+ * a caller abort during it all end here: the original refusal (or the abort) surfaces.
+ */
+async function withSourcePublishGrant<R>(
+  ask: DocumentStorageOptions['requestGrants'],
+  from: string | undefined,
+  signal: AbortSignal | undefined,
+  attempt: () => Promise<R>,
+): Promise<R> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (ask === undefined || from === undefined || signal?.aborted || !isSourcePublishRefusal(error, from)) throw error;
+    const waiting = new AbortController();
+    const stop = () => waiting.abort();
+    const timer = setTimeout(stop, SOURCE_PUBLISH_CONSENT_WAIT_MS);
+    signal?.addEventListener('abort', stop, { once: true });
+    let granted = false;
+    try {
+      granted = await ask(['apps:storage:publish'], { from, signal: waiting.signal });
+    } catch {
+      // The wait ran out or the caller left: no grant.
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+    }
+    // Work cancelled on purpose is never resurrected by a grant that came later.
+    if (signal?.aborted) throw signal.reason;
+    if (!granted) throw error;
+    return attempt();
+  }
 }
 
 /** An {@link ApiError} whose body is the store's envelope becomes a {@link StorageError}; anything else passes through. */
@@ -462,6 +536,7 @@ function segment(what: string, value: string): string {
 }
 
 export function createDocumentStorage(http: Http, options: DocumentStorageOptions = {}): DocumentStorage {
+  const ask = options.requestGrants;
   const call = async <R>(
     method: string,
     path: string,
@@ -483,6 +558,11 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       const q = (query?: Query): Query | undefined => withImport(options, query);
       const docPath = (key: string) => `${BASE}/${coll()}/${segment('key', key)}`;
       const doc = (reply: unknown, op: string) => toDocument<T>(reply, `${name}.${op}`);
+      // A write that may need the viewer's publish grant in the import's source. Only
+      // a string `from` is an import; any other value is refused before sending.
+      const from = typeof options?.from === 'string' ? options.from : undefined;
+      const authoring = <R>(signal: AbortSignal | undefined, attempt: () => Promise<R>) =>
+        withSourcePublishGrant(ask, from, signal, attempt);
 
       return {
         async get(key, { signal } = {}) {
@@ -511,11 +591,15 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         async put(key, data, { ifVersion, signal } = {}) {
           // Named rather than spread: `JSON.stringify` drops an undefined `ifVersion`,
           // so an unconditional put sends `{ data }` and nothing else.
-          return doc(await call('PUT', docPath(key), { query: q(), body: { data, ifVersion }, signal }), 'put');
+          return authoring(signal, async () =>
+            doc(await call('PUT', docPath(key), { query: q(), body: { data, ifVersion }, signal }), 'put'),
+          );
         },
 
         async create(data, { signal } = {}) {
-          return doc(await call('POST', `${BASE}/${coll()}`, { query: q(), body: { data }, signal }), 'create');
+          return authoring(signal, async () =>
+            doc(await call('POST', `${BASE}/${coll()}`, { query: q(), body: { data }, signal }), 'create'),
+          );
         },
 
         async delete(key, { ifVersion, signal } = {}) {
@@ -558,11 +642,13 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         },
 
         async increment(key, counter, by, { signal } = {}) {
-          const reply = await call<{ value?: unknown }>(
-            'POST',
-            `${docPath(key)}/counters/${segment('counter', counter)}`,
-            // No body at all when `by` is omitted: the server's default applies.
-            { query: q(), body: by === undefined ? undefined : { by }, signal },
+          const reply = await authoring(signal, () =>
+            call<{ value?: unknown }>(
+              'POST',
+              `${docPath(key)}/counters/${segment('counter', counter)}`,
+              // No body at all when `by` is omitted: the server's default applies.
+              { query: q(), body: by === undefined ? undefined : { by }, signal },
+            ),
           );
           if (typeof reply?.value !== 'number') {
             throw new CivitaiError(`storage ${name}.increment: reply carried no \`value\``);
@@ -571,15 +657,16 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         },
 
         async mark(key, markName, { signal } = {}) {
-          const reply = await call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal });
+          const reply = await authoring(signal, () =>
+            call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
+          );
           return toMarkResult(reply, true, `${name}.mark`);
         },
 
         async unmark(key, markName, { signal } = {}) {
-          const reply = await call('DELETE', `${docPath(key)}/marks/${segment('mark', markName)}`, {
-            query: q(),
-            signal,
-          });
+          const reply = await authoring(signal, () =>
+            call('DELETE', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
+          );
           return toMarkResult(reply, false, `${name}.unmark`);
         },
       };

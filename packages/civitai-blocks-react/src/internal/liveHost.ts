@@ -162,7 +162,12 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
-import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
+import {
+  consentUnavailablePayload,
+  isOtherAppConsentRequest,
+  otherAppConsentRefusal,
+  resolveUngrantableConsentNotice,
+} from './consent.js';
 import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
@@ -2571,6 +2576,13 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // The grantable set is `[]`: there is no consent UI to open and no
             // way to re-mint a token with a scope it does not carry, so NOTHING
             // is grantable here, ever.
+            //
+            // A grant IN ANOTHER APP (`from`) is refused whatever this token
+            // carries — see `isOtherAppConsentRequest`.
+            if (isOtherAppConsentRequest(typed.payload)) {
+              dispatchToBlock({ type: 'CONSENT_UNAVAILABLE', payload: otherAppConsentRefusal() });
+              return;
+            }
             {
               const notice = resolveUngrantableConsentNotice(
                 (typed.payload as unknown as { scopes?: unknown } | undefined)?.scopes,

@@ -146,7 +146,8 @@ export type HostNotifications = {
   };
   NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
   REQUEST_SIGN_IN: { returnUrl?: string };
-  REQUEST_CONSENT: { scopes?: string[] };
+  /** `from`: the viewer's publish grant in ANOTHER app (an import's source); see `requestGrants`. */
+  REQUEST_CONSENT: { scopes?: string[]; from?: string };
   TRACK_EVENT: { eventName: string; properties?: Record<string, unknown> };
   /**
    * The viewer pressed, typed, scrolled or focused something in the frame. Sent by

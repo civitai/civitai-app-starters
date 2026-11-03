@@ -32,6 +32,17 @@ export interface TokenOptions {
 
 export interface GrantOptions {
   signal?: AbortSignal;
+  /**
+   * Ask for the viewer's grant IN ANOTHER APP: `apps:storage:publish` in the source of
+   * one of this app's `storage.imports` (its blockId), which a write through the import
+   * into one of the source's shared collections needs. Pass exactly
+   * `['apps:storage:publish']` with it; anything else resolves `false` without asking.
+   * The grant is the source's, so this app's token scopes do not change: on a host page
+   * the call resolves `true` on the next token refresh after the viewer allows, and only
+   * the app page (`/apps/run/<slug>`) prompts for it. `app.storage.collection(name, { from })`
+   * asks for it by itself, so an app rarely needs to.
+   */
+  from?: string;
 }
 
 /** Where the app's token comes from. Everything that calls an API reads it here. */

@@ -212,7 +212,7 @@ export const CONSENT_GRANT_WAIT_MS = 60_000;
  */
 export function sendRequestConsent(
   transport: BlockTransport,
-  payload?: { scopes?: string[] },
+  payload?: { scopes?: string[]; from?: string },
 ): void {
   // BEFORE the send, always. See the module header of `consentRefusalLatch.ts`.
   armConsentRefusalLatch(transport);

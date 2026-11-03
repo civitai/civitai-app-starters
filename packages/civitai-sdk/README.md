@@ -315,7 +315,9 @@ try {
       await parentNotes.put('n1', { text: 'edited from the fork' }); // retry once
     }
   } else if (refusal?.kind === 'source_publish_consent') {
-    showMessage(`Publishing in ${refusal.from} needs your permission there first.`);
+    // The client already asked the host for it and the viewer did not allow it (or this
+    // host cannot ask). Ask again only on the viewer's own action, never in a loop.
+    showMessage(`Publishing in ${refusal.from} needs your permission there.`);
   } else {
     throw error;
   }
@@ -336,9 +338,21 @@ try {
 - **Consent is per viewer, per source.** The viewer grants `apps:storage:import` through
   the host's prompt (which lists what this app reads, and changes, in each source app)
   and can remove it under Apps → Permissions; a new version that imports more is prompted
-  for again. A write, counter or mark in one of the source's SHARED collections also
-  needs the viewer's `apps:storage:publish` grant IN THE SOURCE — no prompt in this app
-  can supply it today.
+  for again.
+- **Publishing in the source is the source's permission, and the client asks for it.**
+  A create, put, counter, mark or unmark in one of the source's SHARED collections also
+  needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (the import grant is
+  not it, and neither is this app's own `apps:storage:publish`). When the source refuses
+  for want of it, `app.storage` asks the host by itself —
+  `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`, which opens "<this app>
+  needs permission in <source>" — and on the next token refresh sends the same call ONCE
+  more. The token's scopes do not change (the grant is recorded for the source, which
+  can then publish as the viewer too, and the viewer revokes it from the source's card
+  under Apps → Permissions). "Not now" sends nothing, so after 60 s, as after a
+  `CONSENT_UNAVAILABLE` or a second refusal, the original `source_publish_consent`
+  refusal reaches the app. Only the app page (`/apps/run/<slug>`) prompts; every other
+  host refuses at once. A delete, and any write to a private source collection, never
+  needs it. To ask yourself: `app.requestGrants(['apps:storage:publish'], { from })`.
 - **Refusals** — `storageImportRefusal(error)` reads each one, typed: `import_consent`
   (403 `consent_required`, `details: { scope: 'apps:storage:import', from }`),
   `source_publish_consent` (403 `consent_required`,
@@ -1154,7 +1168,10 @@ the manifest's `storage.imports`, `access`, the source's approval, declaration a
 `exportable`, `apps:storage:import` on the token, and the viewer's grant
 (`importGrants`; by default exactly the manifest's imports, as if every prompt had been
 allowed — pass `{}` or a narrower grant to test the prompt). Revoke
-`apps:storage:publish` in a source's `consent` to reach the publish-in-source refusal.
+`apps:storage:publish` in a source's `consent` to reach the publish-in-source refusal,
+and pass `requestGrants` to answer the client's prompt for it: return `true` (Allow —
+the fake records the grant in that source and the client's one retry lands) or `false`
+("Not now").
 A `token: 'dev'` caller is refused every import, as the server refuses a dev token —
 which is why a dev-tunnel preview cannot show a fork its parent's data, and this is
 where a fork author tests that path instead.

@@ -464,8 +464,13 @@ export function createHostSession(
       const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
       return tokenFromWrapped(token).raw;
     },
-    requestGrants: (scopes, opts = {}) =>
-      requestGrants(
+    requestGrants: (scopes, opts = {}) => {
+      if (opts.from !== undefined) {
+        // A preview has no other app to hold the grant (its store refuses every
+        // import), so there is nothing to ask for.
+        return localPreviewStorage ? Promise.resolve(false) : requestGrantInSource(transport, scopes, opts.from, opts);
+      }
+      return requestGrants(
         transport,
         // A preview token never carries a document-store scope and no grant can
         // add one, so asking the host for it could only be refused — and the
@@ -475,7 +480,8 @@ export function createHostSession(
           ? scopes.filter((scope) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(scope))
           : scopes,
         opts,
-      ),
+      );
+    },
   };
 }
 
@@ -512,5 +518,51 @@ function requestGrants(
     }
 
     notify('REQUEST_CONSENT', { scopes: [...scopes] }, { transport });
+  });
+}
+
+/** A source app's blockId, as the host checks `from` (civitai/civitai#7586). */
+const SOURCE_BLOCK_ID = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+const SOURCE_PUBLISH_SCOPE = 'apps:storage:publish';
+
+/**
+ * The viewer's `apps:storage:publish` grant IN THE SOURCE APP `from` (civitai/civitai#7586).
+ *
+ * The host records it for the source, so this app's token scopes do NOT change — the
+ * consumer's own `apps:storage:publish` is not it, and no scope check can see it. After
+ * Allow the host re-mints this app's token and pushes `TOKEN_REFRESH` anyway: a NEW token
+ * object in the snapshot is the answer (a theme or route push keeps the old one).
+ * `CONSENT_UNAVAILABLE` is a refusal; "Not now" sends nothing, so the caller bounds the wait.
+ *
+ * The host refuses any other payload carrying `from` and opens nothing, so one is never sent.
+ */
+function requestGrantInSource(
+  transport: BlockTransport,
+  scopes: readonly Scope[],
+  from: string,
+  { signal }: GrantOptions,
+): Promise<boolean> {
+  if (scopes.length !== 1 || scopes[0] !== SOURCE_PUBLISH_SCOPE || typeof from !== 'string' || !SOURCE_BLOCK_ID.test(from)) {
+    return Promise.resolve(false);
+  }
+  if (signal?.aborted) return Promise.reject(signal.reason);
+
+  return new Promise<boolean>((resolve, reject) => {
+    const asked = transport.snapshot.get().token;
+    const release: (() => void)[] = [];
+    const settle = (finish: () => void) => {
+      for (const off of release) off();
+      finish();
+    };
+
+    release.push(transport.snapshot.subscribe(() => transport.snapshot.get().token !== asked && settle(() => resolve(true))));
+    release.push(on(transport, 'CONSENT_UNAVAILABLE', () => settle(() => resolve(false))));
+    if (signal) {
+      const onAbort = () => settle(() => reject(signal.reason));
+      signal.addEventListener('abort', onAbort, { once: true });
+      release.push(() => signal.removeEventListener('abort', onAbort));
+    }
+
+    notify('REQUEST_CONSENT', { scopes: [SOURCE_PUBLISH_SCOPE], from }, { transport });
   });
 }

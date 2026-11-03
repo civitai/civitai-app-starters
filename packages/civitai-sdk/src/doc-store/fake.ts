@@ -51,6 +51,8 @@ import {
  * grant, and the viewer's publish consent IN THE SOURCE for an authoring call into a shared
  * collection. A `dev` caller is refused every import, as the server refuses a dev token.
  * `as({ app })` acts as a source app itself, e.g. to seed the parent's data a fork then reads.
+ * `requestGrants` is the host's prompt for the publish grant in a source (civitai/civitai#7586):
+ * Allow records it there and the client's one retry lands, as on a real app page.
  *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
@@ -235,6 +237,15 @@ export interface FakeStorageOptions {
    * `apps:storage:import` (the caller's `scopes`, or `consent` revoking it).
    */
   importGrants?: Record<string, FakeStorageImportGrant>;
+  /**
+   * The host's consent prompt, for the one grant the client asks for by itself: the
+   * viewer's `apps:storage:publish` IN A SOURCE (`opts.from`), when a write through an
+   * import is refused for want of it (civitai/civitai#7586). Return `true` for Allow —
+   * the fake then records the grant in that source, as the host does, and the client
+   * sends the call once more — or `false` for "Not now". Absent, the client asks nothing
+   * and the refusal reaches the caller.
+   */
+  requestGrants?: (scopes: readonly string[], opts: { from?: string }) => boolean | Promise<boolean>;
   /** The default caller's viewer. Default `{ username: 'viewer' }`; `null` for anonymous. */
   viewer?: FakeStorageViewer | null;
   /** Default `approved`; anything else refuses every call `not_eligible`. */
@@ -1656,7 +1667,20 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         throw new ApiError(call.status, err.message, response);
       }
     }) as Http;
-    return { http, storage: createDocumentStorage(http) };
+    const prompt = options.requestGrants;
+    const requestGrants =
+      prompt &&
+      (async (scopes: readonly string[], { from }: { from?: string }) => {
+        const allowed = await prompt(scopes, { from });
+        // Allow records the publish grant IN THE SOURCE, which every later write there reads.
+        const source = from === undefined ? undefined : apps.get(from);
+        if (allowed && source && from !== ownId && scopes.length === 1 && scopes[0] === PUBLISH_SCOPE) {
+          const revoked = source.consent === undefined || source.consent === 'unavailable' ? [] : source.consent.revoked;
+          source.consent = { revoked: revoked.filter((s) => s !== PUBLISH_SCOPE) };
+        }
+        return allowed;
+      });
+    return { http, storage: createDocumentStorage(http, requestGrants ? { requestGrants } : {}) };
   }
 
   const own = session({});
