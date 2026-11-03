@@ -103,7 +103,7 @@ interface Harness {
  * A thread in a shadow root carrying the chat's styles (as `<civitai-chat>`'s is), `height` tall, its
  * older turns finished and the last one live.
  */
-async function mountThread(older: Turn[], options: { height?: number; views?: Record<string, unknown>; end?: HTMLElement } = {}): Promise<Harness> {
+async function mountThread(older: Turn[], options: { height?: number; views?: Record<string, unknown>; end?: HTMLElement; conversationId?: string } = {}): Promise<Harness> {
   const host = document.createElement('div');
   host.style.cssText = `width:420px;height:${options.height ?? 500}px;display:grid;`;
   const root = host.attachShadow({ mode: 'open' });
@@ -121,6 +121,7 @@ async function mountThread(older: Turn[], options: { height?: number; views?: Re
     views: options.views ?? {},
     mcpServerIds: new Set(['sandbox']),
     toolCalls: 'details',
+    ...(options.conversationId ? { conversationId: options.conversationId } : {}),
   });
   root.append(thread);
   document.body.append(host);
@@ -209,6 +210,31 @@ describe('following: at the end, new content keeps the end in view', () => {
 });
 
 describe('holding: scrolled away by the viewer, nothing moves their view', () => {
+  it('(h) the viewer wheels up a little at a time (under the 48px threshold) while a reply streams slowly: each step holds', async () => {
+    await page.viewport(1000, 900);
+    const h = await mountThread(history());
+    await h.push((parts) => parts.push({ kind: 'text', text: paragraph(10) }));
+    await settle(h.scroller);
+    expectAtEnd(h.scroller, 'before the viewer scrolls');
+    const steps: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const from = h.scroller.scrollTop;
+      await wheel(h.scroller, -15);
+      const put = h.scroller.scrollTop;
+      // The control: the wheel moved the view up, by less than the threshold.
+      expect(put, `step ${i}: the wheel did not scroll ${where(h.scroller)}`).toBeLessThan(from);
+      // The reply streams on: a few more words, one short line.
+      await h.push((parts) => {
+        const last = parts.at(-1)!;
+        if (last.kind === 'text') last.text += ` More words ${i}.`;
+      });
+      await settle(h.scroller);
+      steps.push(`${from}->${put}->${h.scroller.scrollTop}`);
+      expect(Math.abs(h.scroller.scrollTop - put), `step ${i}: the view was moved from where the viewer put it: ${steps.join(' ')} ${where(h.scroller)}`).toBeLessThanOrEqual(2);
+    }
+    expect(h.thread.querySelector('.cvt-jump'), 'Jump to latest shows once the viewer has scrolled up').not.toBeNull();
+  });
+
   it('(b) the viewer wheels up 400px and the reply streams on: what they look at stays put', async () => {
     await page.viewport(1000, 900);
     const h = await mountThread(history());
@@ -392,6 +418,31 @@ describe('a thread rebuilt for the same chat', () => {
     expectAtEnd(chatScroller(chat), 'before the rebuild');
     const rebuilt = await reopenSame(chat);
     expectAtEnd(rebuilt, 'after the rebuild');
+  });
+});
+
+describe('a thread made again for the same chat, without the turn the viewer was at', () => {
+  it('(i) opens at the end and follows, rather than staying at the top', async () => {
+    await page.viewport(1000, 900);
+    const first = await mountThread(history(), { conversationId: 'SAME' });
+    await stream(first, 10);
+    await settle(first.scroller);
+    await wheel(first.scroller, -600);
+    expect(first.thread.querySelector('.cvt-jump'), 'the viewer had scrolled away').not.toBeNull();
+    first.host.remove();
+    // Read again, the chat came back without those turns (other seqs only).
+    const later = [doneTurn(7, `${paragraph(1)}\n\n${paragraph(2)}\n\n${paragraph(3)}`), doneTurn(8, `${paragraph(4)}\n\n${paragraph(5)}`), doneTurn(9, paragraph(6))];
+    const second = await mountThread(later, { conversationId: 'SAME' });
+    await second.push((parts) => parts.push({ kind: 'text', text: paragraph(10) }));
+    await settle(second.scroller);
+    expectAtEnd(second.scroller, 'the rebuilt thread');
+    expect(second.thread.querySelector('.cvt-jump')).toBeNull();
+    await second.push((parts) => {
+      const last = parts.at(-1)!;
+      if (last.kind === 'text') last.text += `\n\n${paragraph(11)}`;
+    });
+    await settle(second.scroller);
+    expectAtEnd(second.scroller, 'after more of the reply');
   });
 });
 
