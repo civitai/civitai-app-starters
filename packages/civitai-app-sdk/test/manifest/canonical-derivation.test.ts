@@ -31,6 +31,22 @@ import { BLOCK_SCOPES, BLOCK_TAGLINE_MAX_LENGTH } from '../../src/blocks/scopes.
 import type { BlockManifest } from '../../src/blocks/types.js';
 import { canonicalAccepts, shippedManifests, valid, without } from './fixtures.js';
 
+/** Every keyword of the collection-schema subset (civitai/civitai#7491), once. */
+const COLLECTION_SCHEMA = {
+  type: 'object',
+  description: 'A saved card.',
+  required: ['title'],
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[^<>]*$' },
+    rating: { type: 'integer', minimum: 1, maximum: 5 },
+    tags: { type: 'array', minItems: 0, maxItems: 6, items: { type: ['string', 'null'] } },
+    tone: { enum: ['warm', 'cool', 7, null] },
+    kind: { const: 'card' },
+    scores: { type: 'object', additionalProperties: { type: 'number' } },
+  },
+};
+
 const accept = (manifest: Record<string, unknown>) =>
   defineBlock({ manifest: manifest as unknown as BlockManifest });
 
@@ -201,6 +217,40 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
           collections: {
             notes: { visibility: 'private', exportable: false },
             posts: { visibility: 'shared', write: 'own', exportable: true },
+          },
+        },
+      }),
+    ],
+    // A collection `schema` (civitai/civitai#7491). RED before the re-vendor: the
+    // collection object is `additionalProperties: false`, so `schema` was an
+    // unknown key whatever it held.
+    [
+      'storage: a collection schema using every keyword, on a private and a shared "own" collection',
+      valid({
+        storage: {
+          collections: {
+            cards: { visibility: 'private', schema: COLLECTION_SCHEMA },
+            posts: { visibility: 'shared', write: 'own', schema: COLLECTION_SCHEMA },
+            open: { visibility: 'private', schema: {} },
+          },
+        },
+      }),
+    ],
+    // The server-only bounds validate offline and are refused at submit
+    // (KNOWN_GAPS['storage-collection-schema-server-only-rules']).
+    [
+      'storage: a collection schema over the server-only pattern-count bound (refused at submit, not here)',
+      valid({
+        storage: {
+          collections: {
+            cards: {
+              visibility: 'private',
+              schema: {
+                properties: Object.fromEntries(
+                  Array.from({ length: 17 }, (_, i) => [`p${i}`, { pattern: '^x', maxLength: 5 }]),
+                ),
+              },
+            },
           },
         },
       }),
@@ -485,6 +535,36 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none' } } } }),
       'storage.collections.tally.counters',
     ],
+    // -- a collection `schema` (civitai/civitai#7491): the keyword subset is the canonical's
+    [
+      'storage schema: a keyword outside the subset',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { format: 'date' } } } } }),
+      'storage.collections.notes.schema.format',
+    ],
+    [
+      'storage schema: an unknown type name',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { type: 'date' } } } } }),
+      'storage.collections.notes.schema.type',
+    ],
+    [
+      'storage schema: additionalProperties is a boolean or a schema',
+      valid({ storage: { collections: { notes: { visibility: 'private', schema: { additionalProperties: 'no' } } } } }),
+      'storage.collections.notes.schema.additionalProperties',
+    ],
+    [
+      'storage schema: a pattern needs a maxLength on the same schema',
+      valid({
+        storage: { collections: { notes: { visibility: 'private', schema: { properties: { t: { pattern: '^a' } } } } } },
+      }),
+      'storage.collections.notes.schema.properties.t.maxLength',
+    ],
+    [
+      'storage schema: not on a write:"none" collection',
+      valid({
+        storage: { collections: { tally: { visibility: 'shared', write: 'none', counters: ['p'], schema: {} } } },
+      }),
+      'storage.collections.tally.schema',
+    ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
 
@@ -497,6 +577,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
   // refused at `storage.imports` / `….exportable` itself, the field several cases above
   // name. The field cannot tell the rule from its absence; the message can.
   it.each(cases.filter(([label]) => label.startsWith('storage imports:') || label.includes('exportable')))(
+    '%s — refused by the rule, not as an unknown key',
+    (_label, manifest) => {
+      expect(rejection(manifest).message).not.toContain('is not a known property');
+    },
+  );
+
+  // Before the canonical declared `schema`, it was an unknown key on every
+  // collection — refused at `….schema` itself, which is ALSO where the write:"none"
+  // rule refuses it. The field cannot tell the two apart; the message can.
+  it.each(cases.filter(([label]) => label.startsWith('storage schema: not on')))(
     '%s — refused by the rule, not as an unknown key',
     (_label, manifest) => {
       expect(rejection(manifest).message).not.toContain('is not a known property');
@@ -632,16 +722,18 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are THREE sites, and only the first — the analytics
-   * property declaration — is discriminated. The other two — `storage`'s
-   * "collections or imports" (civitai/civitai#7494) and a `write: "none"`
-   * storage collection's "at least one counter or mark" — have no `const`
-   * discriminator, so the selection leaves their reports alone; what
-   * `defineBlock` says for each is pinned in the DERIVED rejections above. This
+   * ever gains. Today there are FIVE sites, and only the first — the analytics
+   * property declaration — is discriminated. The other four have no `const`
+   * discriminator, so the selection leaves their reports alone, and what
+   * `defineBlock` says for each is pinned in the DERIVED rejections above:
+   * `storage`'s "collections or imports" (civitai/civitai#7494), a
+   * `write: "none"` storage collection's "at least one counter or mark", and a
+   * collection schema's `type` (one name or a list) and `additionalProperties`
+   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly three oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly five oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -658,7 +750,9 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
       '#/properties/storage/anyOf',
-      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/4/then/anyOf`,
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/then/anyOf`,
+      '#/$defs/storageCollectionSchema/properties/type/anyOf',
+      '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
     ]);
   });
 });

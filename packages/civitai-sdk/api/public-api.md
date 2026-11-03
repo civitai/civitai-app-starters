@@ -641,7 +641,12 @@ export interface SubListingsClient {
  */
 export declare class StorageError extends ApiError {
     readonly code: StorageErrorCode;
-    /** E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. */
+    /**
+     * E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. On
+     * `schema_violation` (400: a document's `data` does not match its collection's declared
+     * `schema`): `collection`, `pointer` (the first failing JSON pointer into `data`, `""` for
+     * the root) and `keyword` (the schema keyword it failed, e.g. `required`).
+     */
     readonly details?: Record<string, unknown>;
     constructor(status: number, code: StorageErrorCode, message: string, body: unknown, details?: Record<string, unknown>, options?: ErrorOptions);
     /** Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503). */
@@ -866,7 +871,7 @@ export interface DocumentStorage {
  * `import_not_declared` and `not_exportable` (both 403) come only from a call
  * through an import; {@link storageImportRefusal} types those and the others.
  */
-export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'import_not_declared' | 'not_exportable' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
+export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unauthenticated' | 'sign_in_required' | 'insufficient_scope' | 'consent_required' | 'import_not_declared' | 'not_exportable' | 'not_eligible' | 'not_author' | 'write_policy' | 'resource_not_owned' | 'schema_violation' | 'not_found' | 'collection_not_declared' | 'method_not_allowed' | 'version_conflict' | 'index_building' | 'cursor_expired' | 'too_large' | 'quota_exceeded' | 'content_rejected' | 'rate_limited' | 'internal_error' | 'storage_disabled' | 'moderation_unavailable' | 'consent_unavailable' | 'service_unavailable'
 /**
  * LOCAL, never sent by the server: the host marked this frame a dev-tunnel
  * local preview, and no manifest reached the SDK to say which collections exist.

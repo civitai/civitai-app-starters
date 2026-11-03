@@ -1,5 +1,13 @@
 import { ApiError, type Http, type RequestOptions } from '../http/index.js';
 import { createDocumentStorage, type DocumentStorage } from './index.js';
+import {
+  compileCollectionSchema,
+  countSchemaPatterns,
+  MANIFEST_MAX_PATTERNS,
+  parseCollectionSchema,
+  schemaViolationMessage,
+  type SchemaFailure,
+} from './schema.js';
 
 /**
  * An in-memory document store behind the `Http` seam the client takes, enforcing the
@@ -22,6 +30,11 @@ import { createDocumentStorage, type DocumentStorage } from './index.js';
  * A collection's `ownedModelVersions` rule is enforced; the fake has no model
  * versions of its own, so which ones a viewer owns is `FakeStorageViewer.modelVersions`
  * (default none).
+ *
+ * A collection's `schema` is enforced as the server enforces it (`./schema.ts`): every
+ * create and put whose `data` does not match is refused 400 `schema_violation`, before the
+ * ownership check, the trust gate, the write budget and moderation. A schema the server's
+ * manifest parser would refuse is refused when the fake is created, with the server's text.
  *
  * Moderation is the server's ENFORCE mode, which the contract's moderation cases
  * describe: a hit refuses `content_rejected` and a scanner outage
@@ -116,6 +129,7 @@ export const FAKE_STORAGE_MODERATION = Object.freeze({
 const STATUS: Record<string, number> = {
   invalid_request: 400,
   index_not_declared: 400,
+  schema_violation: 400,
   unauthenticated: 401,
   sign_in_required: 401,
   insufficient_scope: 403,
@@ -286,6 +300,8 @@ interface Decl {
   showAuthor: boolean;
   /** Pointers into `data` whose ids must be the writer's own model versions; empty when undeclared. */
   ownedModelVersions: string[];
+  /** The compiled `schema` every document's `data` must match; absent when none is declared. */
+  schema?: (data: unknown) => SchemaFailure | null;
   /** `false` refuses every import of this collection (`not_exportable`). */
   exportable: boolean;
 }
@@ -331,8 +347,11 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
   }
   const errors: string[] = [];
   const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === 'string') : []);
+  // The manifest-wide pattern cap counts the collections that parsed, as the server does.
+  let patterns = 0;
   for (const [name, raw] of Object.entries(isObject(storage.collections) ? storage.collections : {})) {
     const at = `storage.collections.${name}`;
+    const before = errors.length;
     if (!isObject(raw) || (raw.visibility !== 'private' && raw.visibility !== 'shared')) {
       errors.push(`${at}: needs visibility "private" or "shared"`);
       continue;
@@ -368,6 +387,18 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
         ownedModelVersions.push(...(list as string[]));
       }
     }
+    let schema: Decl['schema'];
+    let parsedSchema: ReturnType<typeof parseCollectionSchema> = null;
+    if (raw.schema !== undefined) {
+      if (shared && raw.write === 'none') {
+        errors.push(
+          `${at}.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing`,
+        );
+      } else {
+        parsedSchema = parseCollectionSchema(`${at}.schema`, raw.schema, errors);
+        if (parsedSchema) schema = compileCollectionSchema(parsedSchema);
+      }
+    }
     const decl: Decl = {
       visibility: raw.visibility,
       counters: shared ? names(raw.counters) : [],
@@ -378,7 +409,14 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
       ownedModelVersions,
     };
     if (shared && (raw.write === 'own' || raw.write === 'none')) decl.write = raw.write;
+    if (schema) decl.schema = schema;
+    if (parsedSchema && errors.length === before) patterns += countSchemaPatterns(parsedSchema);
     out.set(name, decl);
+  }
+  if (patterns > MANIFEST_MAX_PATTERNS) {
+    errors.push(
+      `storage.collections declare ${patterns} patterns across their schemas — a manifest may declare at most ${MANIFEST_MAX_PATTERNS} in all`,
+    );
   }
   if (errors.length > 0) throw new Error(`createFakeStorage: cannot serve this storage declaration:\n- ${errors.join('\n- ')}`);
   return out;
@@ -1266,6 +1304,20 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
   }
 
+  /**
+   * The collection's `schema`, against the WHOLE body the write would store (a put replaces
+   * it). The server checks it in the route layer first, so a refusal spends nothing.
+   */
+  function assertMatchesSchema(coll: string, decl: Decl, data: unknown) {
+    const failure = decl.schema?.(data);
+    if (!failure) return;
+    throw refuse('schema_violation', schemaViolationMessage(coll, failure), {
+      collection: coll,
+      pointer: failure.pointer,
+      keyword: failure.keyword,
+    });
+  }
+
   /** The server's refusals that are ITS fault: refunded without a rejection charge. */
   const isOurFault = (err: unknown) =>
     !(err instanceof Refusal) ||
@@ -1430,8 +1482,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           deleteVersion = Number(raw);
         }
         // Every write that sets `data`, before the trust gate, the write budget and the
-        // moderation scan (and so before the store's own checks), as the server orders it.
+        // moderation scan (and so before the store's own checks), as the server orders it:
+        // the collection's schema, then the owned-model-version rule.
         const newData = created?.data ?? putIn?.data;
+        if (newData) assertMatchesSchema(coll, decl, newData);
         if (newData) assertOwnedModelVersions(decl, newData as Record<string, unknown>, viewer!);
         const write = (moderated: boolean, landed: () => void) => {
           if (created) {

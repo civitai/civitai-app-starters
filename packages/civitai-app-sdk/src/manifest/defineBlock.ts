@@ -173,6 +173,15 @@ export const KNOWN_GAPS = {
     'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `write` "anyone" / ' +
     '"owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
     'exactly; these are server-side.',
+  'storage-collection-schema-server-only-rules':
+    'A collection `schema` (civitai/civitai#7491): the canonical encodes the keyword subset, each ' +
+    'keyword\'s shape, the 256-character `pattern` bound, "a pattern needs a maxLength of at most ' +
+    '1000" and "no schema on write none", and Ajv enforces those exactly. It states in prose only ' +
+    'the bounds the server checks at submit: at most 16384 bytes of JSON, 16 nested schemas and ' +
+    '16 patterns per collection schema, 32 patterns across the whole manifest, no min above ' +
+    'its max, a pattern that compiles as a JavaScript regular expression with the `u` flag, ' +
+    'and no pattern that can backtrack ' +
+    'catastrophically. Those validate here and are refused at submit.',
   'format-uri-not-enforced':
     '`assetBundleUrl` carries `format: "uri"` in addition to `pattern: "^https://"`. Ajv ignores ' +
     'unknown formats unless `ajv-formats` is installed, which would be a second optional peer for ' +
