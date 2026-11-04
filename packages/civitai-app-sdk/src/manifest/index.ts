@@ -28,6 +28,8 @@ export type {
   BlockStorageImport,
   BlockStorageIndexes,
   BlockStorageIndexType,
+  BlockStorageMigrationKeyword,
+  BlockStorageMigrationOp,
   BlockStoragePrivateCollectionDeclaration,
   BlockStorageSchemaType,
   BlockStorageSharedCollectionDeclaration,
