@@ -2955,6 +2955,57 @@ export interface BlockStorageCollectionSchema {
 }
 
 /**
+ * The schema keyword of the one breaking change an `acknowledge`
+ * {@link BlockStorageMigrationOp} accepts. `'required'` is not one: a newly required field can
+ * only be covered by a `default`.
+ */
+export type BlockStorageMigrationKeyword =
+  | 'type'
+  | 'const'
+  | 'enum'
+  | 'minimum'
+  | 'maximum'
+  | 'minLength'
+  | 'maxLength'
+  | 'minItems'
+  | 'maxItems'
+  | 'pattern'
+  | 'additionalProperties'
+  | 'properties';
+
+/**
+ * One declarative MIGRATION op on a collection's stored documents (civitai/civitai#7661),
+ * discriminated on `op`. Mirrors the canonical schema's `$defs.storageMigrationOp`.
+ *
+ * At submit, civitai.com compares the collection's `schema` with the previous approved
+ * version's (statically; stored documents are never read) and refuses every BREAKING change
+ * (a newly required property, a narrowed type / enum / const / bound / pattern,
+ * `additionalProperties` closed, a declared property removed under
+ * `additionalProperties: false`, or a schema added where there was none) that no op covers:
+ *
+ * - `default` covers a newly required property at `path`, setting `value` where the field is
+ *   missing (its parent object exists). `value` must match the new schema there; at most 4096
+ *   bytes of JSON. It is the only op that can cover a newly required property.
+ * - `rename` covers a declared property removed under `additionalProperties: false`, at `from`.
+ * - `remove` covers any breaking change at or under a field the new schema does not require.
+ * - `acknowledge` covers exactly the one breaking change whose pointer EQUALS `path` (never a
+ *   prefix) with that `keyword`, and changes nothing: documents that violate it are refused on
+ *   their next write until reshaped. Its `path` may be `""` (the document root) and may use the
+ *   segment `*` for a change inside `items` or an `additionalProperties` schema (`"/tags/*"`).
+ *
+ * The `path` / `from` / `to` of `default`, `rename` and `remove` are JSON Pointers to one field
+ * of a document's `data` (`"/meta/title"`): 1 to 15 non-empty segments, `~` written `~0` and `/`
+ * written `~1`, no `*` segment. Every op is idempotent, and the fields `default`, `rename` and
+ * `remove` touch must be disjoint. Only the ops that cover a breaking change of THIS version run,
+ * once, when it is approved; an op that covers nothing is reported at submit and never runs.
+ */
+export type BlockStorageMigrationOp =
+  | { op: 'default'; path: string; value: unknown }
+  | { op: 'rename'; from: string; to: string }
+  | { op: 'remove'; path: string }
+  | { op: 'acknowledge'; path: string; keyword: BlockStorageMigrationKeyword };
+
+/**
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
  * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
@@ -2977,6 +3028,8 @@ export interface BlockStoragePrivateCollectionDeclaration {
   exportable?: boolean;
   /** See {@link BlockStorageCollectionSchema}. */
   schema?: BlockStorageCollectionSchema;
+  /** See {@link BlockStorageSharedCollectionDeclaration.migrations}. */
+  migrations?: BlockStorageMigrationOp[];
 }
 
 /**
@@ -3083,6 +3136,12 @@ export interface BlockStorageSharedCollectionDeclaration {
    * Not allowed with `write` `'none'` (no document bodies are written there).
    */
   schema?: BlockStorageCollectionSchema;
+  /**
+   * 1 to 32 ops applied to the documents ALREADY STORED when this version is approved, for a
+   * `schema` change that would otherwise leave them unwritable — see
+   * {@link BlockStorageMigrationOp}. Not allowed with `write` `'none'`.
+   */
+  migrations?: BlockStorageMigrationOp[];
 }
 
 /**

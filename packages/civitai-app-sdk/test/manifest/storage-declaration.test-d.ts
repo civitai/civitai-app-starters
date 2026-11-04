@@ -21,6 +21,8 @@ import type {
   BlockStorageDeclaration,
   BlockStorageImport,
   BlockStorageIndexType,
+  BlockStorageMigrationKeyword,
+  BlockStorageMigrationOp,
   BlockStoragePrivateCollectionDeclaration,
   BlockStorageSchemaType,
   BlockStorageSharedCollectionDeclaration,
@@ -359,6 +361,92 @@ defineBlock({
       collections: {
         // @ts-expect-error — `date` is not a type the subset names
         cards: { visibility: 'private', schema: { type: 'date' } },
+      },
+    },
+  },
+});
+
+// --- migrations: declarative ops on stored documents (civitai/civitai#7661) -----------
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['migrations']>().toEqualTypeOf<
+  BlockStorageMigrationOp[] | undefined
+>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['migrations']>().toEqualTypeOf<
+  BlockStorageMigrationOp[] | undefined
+>();
+expectTypeOf<BlockStorageMigrationOp['op']>().toEqualTypeOf<'default' | 'rename' | 'remove' | 'acknowledge'>();
+expectTypeOf<BlockStorageMigrationKeyword>().toEqualTypeOf<
+  | 'type'
+  | 'const'
+  | 'enum'
+  | 'minimum'
+  | 'maximum'
+  | 'minLength'
+  | 'maxLength'
+  | 'minItems'
+  | 'maxItems'
+  | 'pattern'
+  | 'additionalProperties'
+  | 'properties'
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers post cards to a shared board.' },
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: { type: 'object', required: ['status'], properties: { status: { enum: ['draft', 'live'] } } },
+          migrations: [
+            { op: 'default', path: '/status', value: 'draft' },
+            { op: 'rename', from: '/name', to: '/title' },
+            { op: 'remove', path: '/legacy' },
+            { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+          ],
+        },
+        board: {
+          visibility: 'shared',
+          write: 'own',
+          migrations: [{ op: 'acknowledge', path: '', keyword: 'additionalProperties' }],
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `drop` is not an op
+        cards: { visibility: 'private', migrations: [{ op: 'drop', path: '/legacy' }] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a `default` needs its `value`
+        cards: { visibility: 'private', migrations: [{ op: 'default', path: '/status' }] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a newly required field cannot be acknowledged
+        cards: { visibility: 'private', migrations: [{ op: 'acknowledge', path: '/status', keyword: 'required' }] },
       },
     },
   },

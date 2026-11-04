@@ -47,6 +47,21 @@ const COLLECTION_SCHEMA = {
   },
 };
 
+/** One migration op of each kind (civitai/civitai#7661's worked example). */
+const MIGRATIONS = [
+  { op: 'default', path: '/title', value: 'Untitled' },
+  { op: 'rename', from: '/name', to: '/title' },
+  { op: 'remove', path: '/legacy' },
+  { op: 'acknowledge', path: '/rating', keyword: 'maximum' },
+];
+
+/** A manifest whose one private collection `cards` declares `migrations`. */
+const migrationsOn = (migrations: unknown) =>
+  valid({ storage: { collections: { cards: { visibility: 'private', schema: COLLECTION_SCHEMA, migrations } } } });
+
+/** `n` distinct `remove` ops. */
+const removeOps = (n: number) => Array.from({ length: n }, (_, i) => ({ op: 'remove', path: `/f${i}` }));
+
 const accept = (manifest: Record<string, unknown>) =>
   defineBlock({ manifest: manifest as unknown as BlockManifest });
 
@@ -236,6 +251,35 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
         },
       }),
     ],
+    // A collection's `migrations` (civitai/civitai#7661). RED before the re-vendor,
+    // for the same reason as `schema` above: an unknown key on a closed object.
+    [
+      'storage: migrations with one op of each kind, on a private and a shared "own" collection',
+      valid({
+        storage: {
+          collections: {
+            cards: { visibility: 'private', schema: COLLECTION_SCHEMA, migrations: MIGRATIONS },
+            posts: { visibility: 'shared', write: 'own', migrations: MIGRATIONS },
+          },
+        },
+      }),
+    ],
+    [
+      'storage: acknowledge at the document root and inside items (`""` and `*` are acknowledge-only)',
+      migrationsOn([
+        { op: 'acknowledge', path: '', keyword: 'additionalProperties' },
+        { op: 'acknowledge', path: '/tags/*', keyword: 'type' },
+      ]),
+    ],
+    [
+      'storage: a migration path with ~0 / ~1 escapes and 15 segments',
+      migrationsOn([{ op: 'remove', path: '/a~0b/c~1d' }, { op: 'remove', path: '/s'.repeat(15) }]),
+    ],
+    ['storage: exactly 32 migrations', migrationsOn(removeOps(32))],
+    // Whether an op COVERS a breaking change needs the previous approved
+    // manifest, so it validates here and is decided at submit
+    // (KNOWN_GAPS['storage-migrations-server-only-rules']).
+    ['storage: a migration that covers nothing (decided at submit, not here)', migrationsOn(removeOps(1))],
     // The server-only bounds validate offline and are refused at submit
     // (KNOWN_GAPS['storage-collection-schema-server-only-rules']).
     [
@@ -565,6 +609,18 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       }),
       'storage.collections.tally.schema',
     ],
+    // -- a collection's `migrations` (civitai/civitai#7661): placement is the canonical's
+    [
+      'storage migrations: not on a write:"none" collection',
+      valid({
+        storage: {
+          collections: {
+            tally: { visibility: 'shared', write: 'none', counters: ['p'], migrations: [{ op: 'remove', path: '/x' }] },
+          },
+        },
+      }),
+      'storage.collections.tally.migrations',
+    ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
 
@@ -583,10 +639,13 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     },
   );
 
-  // Before the canonical declared `schema`, it was an unknown key on every
-  // collection — refused at `….schema` itself, which is ALSO where the write:"none"
-  // rule refuses it. The field cannot tell the two apart; the message can.
-  it.each(cases.filter(([label]) => label.startsWith('storage schema: not on')))(
+  // Before the canonical declared `schema` (and, later, `migrations`), it was an
+  // unknown key on every collection — refused at `….schema` itself, which is ALSO
+  // where the write:"none" rule refuses it. The field cannot tell the two apart;
+  // the message can.
+  it.each(
+    cases.filter(([label]) => label.startsWith('storage schema: not on') || label.startsWith('storage migrations: not on')),
+  )(
     '%s — refused by the rule, not as an unknown key',
     (_label, manifest) => {
       expect(rejection(manifest).message).not.toContain('is not a known property');
@@ -607,6 +666,55 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     const err = rejection(valid({ scopes: ['ModelsReadSelf'] }));
     expect(err.field).toBe('scopes[0]');
     expect(err.message).toContain('colon-separated lowercase');
+  });
+});
+
+/**
+ * A migration op's SHAPE (civitai/civitai#7661) is the canonical's, reached
+ * through `$defs.storageMigrationOp` — a `oneOf` discriminated on `op` — and
+ * `$defs.storageMigrationPath`. Nothing in this package writes any of it down.
+ *
+ * Only the FIELD's prefix is pinned, not the whole field or the wording. The
+ * op is reached through `$ref`, and a path through a SECOND `$ref`
+ * (`storageMigrationPath`), so which error `preferDiscriminatedBranch` ends up
+ * reporting depends on the `schemaPath`s Ajv gives across those references
+ * (see its doc comment) — not measured when this block was written. What is
+ * pinned is the verdict, and that the refusal lands inside `migrations` rather
+ * than on the collection: before the re-vendor, `migrations` itself was refused
+ * as an unknown key, which the second assertion tells apart.
+ *
+ * Every row has an accept twin in NOT ABOVE THE CANONICAL.
+ */
+describe('DERIVED, NOT MIRRORED: a storage migration op is shaped by the canonical', () => {
+  const AT = 'storage.collections.cards.migrations';
+  const cases: Array<[string, unknown]> = [
+    // twin: one op of each kind
+    ['an op that does not exist', [{ op: 'drop', path: '/legacy' }]],
+    ['a default with no value', [{ op: 'default', path: '/title' }]],
+    ['a rename with no to', [{ op: 'rename', from: '/name' }]],
+    ['a remove with an extra key', [{ op: 'remove', path: '/legacy', value: 1 }]],
+    ['an acknowledge with no keyword', [{ op: 'acknowledge', path: '/rating' }]],
+    ['acknowledge of a newly required field (cover it with a default)', [{ op: 'acknowledge', path: '/title', keyword: 'required' }]],
+    // twin: acknowledge at the document root and inside items
+    ['a remove at the document root', [{ op: 'remove', path: '' }]],
+    ['a remove with a * segment', [{ op: 'remove', path: '/tags/*' }]],
+    ['a rename to a * segment', [{ op: 'rename', from: '/name', to: '/*' }]],
+    // twin: ~0 / ~1 escapes and 15 segments
+    ['a path with a bare ~', [{ op: 'remove', path: '/a~b' }]],
+    ['a path with no leading /', [{ op: 'remove', path: 'legacy' }]],
+    ['a 16-segment path', [{ op: 'remove', path: '/s'.repeat(16) }]],
+    // twin: exactly 32 migrations
+    ['33 migrations', removeOps(33)],
+    ['no migrations', []],
+    ['not an array', { op: 'remove', path: '/legacy' }],
+  ];
+
+  it.each(cases)('%s', (_label, migrations) => {
+    const manifest = migrationsOn(migrations);
+    expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
+    const err = rejection(manifest);
+    expect(err.field === AT || err.field.startsWith(`${AT}[`), `refused at ${err.field}: ${err.message}`).toBe(true);
+    expect(err.message).not.toBe(`manifest.${AT} is not a known property here`);
   });
 });
 
@@ -722,8 +830,12 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are FIVE sites, and only the first — the analytics
-   * property declaration — is discriminated. The other four have no `const`
+   * ever gains. Today there are SIX sites. Two are discriminated: the analytics
+   * property declaration (on `type`) and a storage migration op (on `op`,
+   * civitai/civitai#7661's `$defs.storageMigrationOp`). The first's messages are
+   * pinned whole below; the migration op is reached through `$ref` (its paths
+   * through a second one), so the DERIVED migration-op block above pins only
+   * the verdict and the field's prefix for it. The other four have no `const`
    * discriminator, so the selection leaves their reports alone, and what
    * `defineBlock` says for each is pinned in the DERIVED rejections above:
    * `storage`'s "collections or imports" (civitai/civitai#7494), a
@@ -733,7 +845,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly five oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly six oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -753,6 +865,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/then/anyOf`,
       '#/$defs/storageCollectionSchema/properties/type/anyOf',
       '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
+      '#/$defs/storageMigrationOp/oneOf',
     ]);
   });
 });

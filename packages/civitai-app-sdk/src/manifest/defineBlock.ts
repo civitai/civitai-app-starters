@@ -182,6 +182,16 @@ export const KNOWN_GAPS = {
     'its max, a pattern that compiles as a JavaScript regular expression with the `u` flag, ' +
     'and no pattern that can backtrack ' +
     'catastrophically. Those validate here and are refused at submit.',
+  'storage-migrations-server-only-rules':
+    'A collection\'s `migrations` (civitai/civitai#7661): the canonical encodes each op\'s shape ' +
+    '(`default` / `rename` / `remove` / `acknowledge`), the JSON Pointer form of its paths, the ' +
+    'acknowledge-only `""` and `*`, the `keyword` list, 1 to 32 ops and "no migrations on write ' +
+    'none", and Ajv enforces those exactly. The rest is the server\'s, at submit. Which schema ' +
+    'changes are breaking, and whether an op covers one, needs the PREVIOUS approved manifest, so ' +
+    'a breaking change no op covers and an op that covers nothing (reported, never run) are ' +
+    'decided there. So are the canonical\'s prose-only rules: a `default` value must match the new ' +
+    'schema at its path and be at most 4096 bytes of JSON, and the ops must touch disjoint ' +
+    'fields. All of those validate here.',
   'format-uri-not-enforced':
     '`assetBundleUrl` carries `format: "uri"` in addition to `pattern: "^https://"`. Ajv ignores ' +
     'unknown formats unless `ajv-formats` is installed, which would be a second optional peer for ' +
