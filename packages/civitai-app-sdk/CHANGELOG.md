@@ -1,5 +1,16 @@
 # @civitai/app-sdk
 
+## 0.82.0
+
+### Minor Changes
+
+- 646e948: Storage collection migrations (civitai/civitai#7661). A storage collection may declare `migrations`: 1 to 32 declarative ops civitai.com applies to the documents already stored when a version that narrows the collection's `schema` is approved. Without a covering op, a breaking schema change (a newly required property, a narrowed type, enum, const, bound or pattern, `additionalProperties` closed, a declared property removed under `additionalProperties: false`, or a first schema on a collection) is refused at submit. Needs the civitai.com release that serves it.
+
+  - New types `BlockStorageMigrationOp` (`{ op: 'default', path, value }` | `{ op: 'rename', from, to }` | `{ op: 'remove', path }` | `{ op: 'acknowledge', path, keyword }`) and `BlockStorageMigrationKeyword`, exported from `./blocks` and `./manifest`. `migrations?: BlockStorageMigrationOp[]` is added on both collection declarations.
+  - The vendored `schemas/app-block/v1.json` is re-vendored, so `defineBlock` accepts `migrations` and enforces each op's shape, its JSON Pointer paths, and that a `write: "none"` collection declares none. Whether an op covers a breaking change needs the previous approved manifest, so that is decided at submit: see `KNOWN_GAPS['storage-migrations-server-only-rules']`.
+
+  Additive for authors: a manifest that validated before still validates.
+
 ## 0.81.0
 
 ### Minor Changes
@@ -853,15 +864,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                        single measurements on one machine.
+                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1769,10 +1780,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                    after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                             @civitai/components  0.4.2                   — 1 copy
+                                                                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                      after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
