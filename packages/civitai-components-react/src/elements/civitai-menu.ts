@@ -16,3 +16,5 @@ export const CivitaiMenu = createComponent({
     onSelect: 'select' as EventName<CustomEvent<MenuSelectDetail>>,
   },
 });
+
+export type { MenuSelectDetail };

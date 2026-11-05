@@ -16,3 +16,5 @@ export const CivitaiTag = createComponent({
     onVote: 'vote' as EventName<CustomEvent<TagVoteDetail>>,
   },
 });
+
+export type { TagVoteDetail };

@@ -31,6 +31,34 @@ Handlers receive the **DOM event**, not an extracted value —
 elements re-dispatch the native `change`, which commits on blur/Enter exactly
 as a native input does.
 
+The `detail` types those events carry are exported alongside the bindings, so
+naming one does not mean adding `@civitai/components` as a second dependency:
+
+```tsx
+import {
+  CivitaiMenu,
+  CivitaiMenuItem,
+  CivitaiMenuLabel,
+  type MenuSelectDetail,
+} from '@civitai/components-react';
+
+function onPick(detail: MenuSelectDetail) {
+  console.log(detail.value);
+}
+
+<CivitaiMenu label="Contribute" onSelect={(e) => onPick(e.detail)}>
+  <button slot="trigger" type="button">Contribute</button>
+  <CivitaiMenuLabel>Add to the benchmark</CivitaiMenuLabel>
+  <CivitaiMenuItem value="combination">Submit a combination</CivitaiMenuItem>
+  <CivitaiMenuItem value="prompt">Submit a prompt</CivitaiMenuItem>
+</CivitaiMenu>;
+```
+
+`MenuSelectDetail`, `ReactionDetail` and `TagVoteDetail` are the three today —
+whichever `detail` types the event props are typed with, from both the root and
+the single-binding path. `test/entry-points.test.ts` fails if one of them stops
+being reachable.
+
 ## Entry points
 
 The root barrel re-exports every **presentational** binding, and importing it
