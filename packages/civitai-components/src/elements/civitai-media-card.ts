@@ -18,6 +18,38 @@ export class CivitaiMediaCard extends CivitaiElement {
         border-radius: var(--civitai-radius);
         background: var(--civitai-color-media-placeholder);
         aspect-ratio: var(--civitai-media-card-ratio, 2 / 3);
+        /*
+         * A card is a pure aspect-ratio box: it carries no intrinsic content
+         * width, and the overflow:hidden above already gives it an automatic
+         * minimum size of 0 (CSS Flexbox 4.5). So as a flex item in a ROW its
+         * auto basis resolves to zero and the card VANISHES -- not "looks
+         * broken", invisible, with the aspect ratio taking the height down with
+         * it. A gallery of these inside a civitai-group rendered as three 0x0
+         * boxes.
+         *
+         * THE INLINE AXIS IS DELIBERATE -- do not "simplify" this to
+         * flex-basis. civitai-stack is flex-direction:column, where a basis sets
+         * the MAIN size and would therefore set every stacked card's HEIGHT,
+         * silently relaying out every existing stack. min-width cannot reach the
+         * block axis, so stacks are untouched. Pinned by the column case in
+         * civitai-media-card.browser.test.ts, which asserts a stacked card's
+         * height still comes from the aspect ratio.
+         *
+         * min() against 100% is what keeps BLOCK layout safe: in a slot narrower
+         * than the floor the percentage wins, so a card still shrinks to fit
+         * instead of overflowing.
+         */
+        min-width: min(var(--civitai-media-card-min-width, 12rem), 100%);
+        /*
+         * The same floor, handed to civitai-group. A slotted element cannot win
+         * this property from its own :host rule -- for a slotted element the
+         * outer tree's declaration beats the inner tree's whatever the
+         * specificity -- and civitai-group zeroes every slotted child's
+         * min-width so a long label can shrink. That rule reads this property,
+         * defaulting to 0, so this is how a tile opts out of being zeroed
+         * without changing the behaviour of any other child.
+         */
+        --civitai-group-item-min-width: min(var(--civitai-media-card-min-width, 12rem), 100%);
       }
       .media,
       .media ::slotted(*) {
