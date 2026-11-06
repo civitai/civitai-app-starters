@@ -3009,7 +3009,7 @@ export type BlockStorageMigrationOp =
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
  * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
- * `ownedModelVersions`); the canonical
+ * `ownedModelVersions`, `registry`); the canonical
  * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
  * the fields both kinds share.
  */
@@ -3131,6 +3131,16 @@ export interface BlockStorageSharedCollectionDeclaration {
    * `false` refuses every import of it with 403 `not_exportable`.
    */
   exportable?: boolean;
+  /**
+   * RESERVED — civitai.com refuses this field until publishing to registries
+   * is enabled, so do not declare it yet. Shared collections only.
+   * `'public'` publishes the collection's visible shared documents, read-only,
+   * to every registry that follows Civitai's apps, as entities of the
+   * collection's schema; hidden documents and every private document never
+   * leave. Absent (the default): the collection is not published. A moderator
+   * sees the change at review.
+   */
+  registry?: 'public';
   /**
    * The schema every document's `data` must match — see {@link BlockStorageCollectionSchema}.
    * Not allowed with `write` `'none'` (no document bodies are written there).

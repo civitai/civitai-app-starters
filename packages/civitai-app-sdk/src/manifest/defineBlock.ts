@@ -170,8 +170,8 @@ export const KNOWN_GAPS = {
     '`apps:storage:import` (and `apps:storage`), requesting any of these scopes with nothing for ' +
     'it to reach is rejected, an import never names this app itself and names each source at ' +
     'most once, a counter may not share a name with a mark, and the ' +
-    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `write` "anyone" / ' +
-    '"owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
+    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `registry`, `write` ' +
+    '"anyone" / "owner") validate offline and are refused at submit. Ajv enforces the structural rules ' +
     'exactly; these are server-side.',
   'storage-collection-schema-server-only-rules':
     'A collection `schema` (civitai/civitai#7491): the canonical encodes the keyword subset, each ' +
