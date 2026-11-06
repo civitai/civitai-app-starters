@@ -247,6 +247,48 @@ defineBlock({
   },
 });
 
+// --- registry (civitai/civitai#7931) -------------------------------------------
+expectTypeOf<BlockStorageSharedCollectionDeclaration['registry']>().toEqualTypeOf<'public' | undefined>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: { visibility: 'shared', write: 'own', registry: 'public' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `registry` is shared-only
+        notes: { visibility: 'private', registry: 'public' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — the only value is 'public'
+          registry: 'private',
+        },
+      },
+    },
+  },
+});
+
 // --- imports: another app's collections (civitai/civitai#7494) ------------------
 expectTypeOf(BLOCK_SCOPES.APPS_STORAGE_IMPORT).toEqualTypeOf<'apps:storage:import'>();
 expectTypeOf<BlockStorageDeclaration['imports']>().toEqualTypeOf<BlockStorageImport[] | undefined>();

@@ -201,6 +201,19 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
       'storage: a RESERVED log collection with maxEntries (refused at submit, not here)',
       valid({ storage: { collections: { events: { kind: 'log', visibility: 'private', maxEntries: 50 } } } }),
     ],
+    // `registry` (civitai/civitai#7931). RED before the re-vendor: an unknown key on
+    // the closed collection object. RESERVED, so refused at submit, not here.
+    [
+      'storage: a RESERVED registry "public" on a shared "own" and a shared "none" collection',
+      valid({
+        storage: {
+          collections: {
+            posts: { visibility: 'shared', write: 'own', registry: 'public' },
+            tally: { visibility: 'shared', write: 'none', counters: ['plays'], registry: 'public' },
+          },
+        },
+      }),
+    ],
     // -- storage imports (civitai/civitai#7494). RED before the re-vendor: `storage`
     // was `additionalProperties: false` with `collections` required, `exportable` was
     // an unknown key on a collection, and `apps:storage:import` was not in the scope enum.
@@ -555,6 +568,18 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
         },
       }),
       'storage.collections.posts.ownedModelVersions[0]',
+    ],
+    // registry (civitai/civitai#7931): shared-only and a one-member enum, both the
+    // canonical's; nothing in this package writes either down.
+    [
+      'storage: no registry on a private collection',
+      valid({ storage: { collections: { notes: { visibility: 'private', registry: 'public' } } } }),
+      'storage.collections.notes.registry',
+    ],
+    [
+      'storage: registry is "public" or absent',
+      valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', registry: 'private' } } } }),
+      'storage.collections.posts.registry',
     ],
     [
       'storage: `key` is a built-in sort key, not an index name',
