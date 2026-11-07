@@ -169,7 +169,7 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * `type … = never;` or a union of quoted literals — the script refuses to
  * guess at any other shape and writes nothing.
  */
-type CatalogStepTypesWithoutAGeneratedType = 'archiveExtraction' | 'audioModeration' | 'imageScanning' | 'liveTextToSpeech' | 'liveTranscription' | 'merge' | 'multimodalEmbedding' | 'preprocessVideo' | 'promptModeration' | 'soniloAudioGen' | 'yuE2';
+type CatalogStepTypesWithoutAGeneratedType = 'archiveExtraction' | 'audioModeration' | 'imageScanning' | 'liveTextToSpeech' | 'liveTranscription' | 'merge' | 'modelAnalysis' | 'multimodalEmbedding' | 'preprocessVideo' | 'promptModeration' | 'soniloAudioGen' | 'yuE2';
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
   CatalogStepTypesWithoutAGeneratedType
 >();
@@ -208,6 +208,8 @@ export type _NoGeneratedTemplateFor_liveTextToSpeech = WorkflowStepTemplateFor<'
 export type _NoGeneratedTemplateFor_liveTranscription = WorkflowStepTemplateFor<'liveTranscription'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_merge = WorkflowStepTemplateFor<'merge'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_modelAnalysis = WorkflowStepTemplateFor<'modelAnalysis'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_multimodalEmbedding = WorkflowStepTemplateFor<'multimodalEmbedding'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
