@@ -58,7 +58,7 @@ export type {
   SubListingUpsertResult,
   SubListingWithdrawResult,
 } from './sub-listings/index.js';
-export { StorageError, storageImportRefusal } from './doc-store/index.js';
+export { StorageError, storageImportRefusal, storageUpdateRefusal } from './doc-store/index.js';
 export type {
   CollectionOptions,
   DocumentAuthor,
@@ -73,9 +73,14 @@ export type {
   StorageErrorCode,
   StorageImportNotEligibleReason,
   StorageImportRefusal,
+  StorageIncrementOp,
   StorageIndexType,
   StorageInfo,
   StorageLimits,
+  StorageMarkOp,
+  StorageUnmarkOp,
+  StorageUpdateOp,
+  StorageUpdateRefusalReason,
   StorageUsage,
   WriteOptions,
 } from './doc-store/index.js';

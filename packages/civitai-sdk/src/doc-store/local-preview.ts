@@ -176,6 +176,7 @@ function refusingStorage(code: string, message: string): DocumentStorage {
     create: refuse,
     delete: refuse,
     list: refuse,
+    update: refuse,
     increment: refuse,
     mark: refuse,
     unmark: refuse,

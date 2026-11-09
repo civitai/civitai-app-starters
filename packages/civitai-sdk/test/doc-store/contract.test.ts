@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { StorageError, type DocumentStorage } from '../../src/doc-store/index.js';
+import { StorageError, type DocumentStorage, type StorageUpdateOp } from '../../src/doc-store/index.js';
 import { ApiError } from '../../src/http/index.js';
 import {
   createFakeStorage,
@@ -102,7 +102,8 @@ const RAW_ONLY_STEPS = [
   'request errors #10 GET /prefs/k/extra: no client method for 3 segments',
   'request errors #9 GET /_get: client refuses collection name _get',
   'create with a server key, then batch get with a miss #3 GET /_get/prefs: client refuses collection name _get',
-  'request errors #11 PATCH /prefs/k: no client method for PATCH',
+  'request errors #11 POST /prefs/k: no client method for 2 segments',
+  'update operators: refused PATCH bodies #28 PATCH /posts/r1: query ifVersion',
 ];
 
 /** Cases the fake cannot model: none. A case added here must say why. */
@@ -269,7 +270,7 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
     return bad.length ? `query ${bad.join(',')}` : null;
   };
   const why = (reason: string | null, run: ClientOp): ClientOp => (reason ? { raw: reason } : run);
-  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return { raw: `no client method for ${method}` };
+  if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return { raw: `no client method for ${method}` };
   // A collection position the client refuses to send (`_get` used as a collection):
   // the client answers it locally, so the server's answer to it is a raw-only step.
   if (seg[0] !== undefined && !(seg[0] === '_get' && method === 'POST') && !/^[a-z][a-z0-9_]{0,31}$/.test(seg[0])) {
@@ -322,6 +323,11 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
       return why(strayQuery((x) => x === 'ifVersion'), {
         run: (s) => s.collection(c).delete(k, query.ifVersion === undefined ? {} : { ifVersion: Number(query.ifVersion) }),
       });
+    }
+    // Every body, malformed ones included: `update` sends the operator as written and
+    // the server (here the fake) refuses what is not one operator.
+    if (method === 'PATCH') {
+      return why(strayQuery(() => false), { run: (s) => s.collection(c).update(k, body as StorageUpdateOp) });
     }
   }
   if (seg.length === 4 && seg[2] === 'counters' && method === 'POST') {

@@ -8,7 +8,7 @@ import { build, type Rollup } from 'vite';
 import { initialize, StorageError, type BlockInitializeOptions } from '../../src/index.js';
 import { snapshotFromInit, type BlockSnapshot } from '../../src/core/transport.js';
 import type { BlockInitPayload } from '../../src/core/handshake.js';
-import { INSUFFICIENT_SCOPE_HINT } from '../../src/doc-store/index.js';
+import { INSUFFICIENT_SCOPE_HINT, storageUpdateRefusal } from '../../src/doc-store/index.js';
 import { isTransient } from '../../src/http/retry.js';
 import { LOCAL_PREVIEW_MANIFEST_GLOBAL } from '../../src/doc-store/local-preview.js';
 import { createFakeTransport } from '../../src/testing.js';
@@ -184,6 +184,70 @@ describe('dev-tunnel preview: what the local store does NOT check', () => {
     expect(second).toMatchObject({ value: { data: { workflow: { modelVersionId: 9001 } } } });
     // Shape is still the server's rule: a non-id at a declared field is refused.
     await expect(picks.put('b', { baseVersionId: 'not-an-id' })).rejects.toMatchObject({ code: 'resource_not_owned' });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('dev-tunnel preview: tallies as update operators (PATCH)', () => {
+  const TALLY_MANIFEST = {
+    scopes: ['apps:storage', 'apps:storage:publish', 'user:read:self'],
+    storage: {
+      collections: {
+        posts: { visibility: 'shared', write: 'own', marks: ['vote'], counters: ['views'] },
+        plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+      },
+    },
+  };
+
+  it('serves update() with each operator, and the deprecated methods, locally', async () => {
+    injectManifest(TALLY_MANIFEST);
+    const { fetch, calls } = realRoutes();
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const posts = app.storage.collection('posts');
+    const plays = app.storage.collection('plays');
+
+    const out = [
+      await settle(plays.update('m', { $inc: { plays: 4 } })),
+      await settle(plays.increment('m', 'plays')),
+      await settle(posts.put('p', { title: 'local' })),
+      await settle(posts.update('p', { $mark: 'vote' })),
+      await settle(posts.update('p', { $unmark: 'vote' })),
+      await settle(posts.mark('p', 'report')),
+    ];
+
+    expect(calls).toEqual([]);
+    expect(out[0]).toEqual({ value: { value: 4 } });
+    expect(out[1]).toEqual({ value: { value: 5 } });
+    expect(out[3]).toEqual({ value: { marked: true, count: 1 } });
+    expect(out[4]).toEqual({ value: { marked: false, count: 0 } });
+    expect(out[5]).toEqual({ value: { marked: true } });
+  });
+
+  it.each([
+    ['empty_patch', {}],
+    ['unknown_operator', { $set: { title: 'x' } }],
+    ['multiple_operators', { $inc: { views: 1 }, $mark: 'vote' }],
+    ['merge_patch_unsupported', { title: 'x' }],
+    ['malformed_operator', { $mark: 1 }],
+  ])('refuses a body that is not one operator locally: %s', async (reason, op) => {
+    injectManifest(TALLY_MANIFEST);
+    const { fetch, calls } = realRoutes();
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const error = await app.storage
+      .collection('posts')
+      .update('p', op as never)
+      .catch((e: unknown) => e);
+    expect(calls).toEqual([]);
+    expect(error).toBeInstanceOf(StorageError);
+    expect(error).toMatchObject({ status: 400, code: 'invalid_request', details: { reason } });
+    expect(storageUpdateRefusal(error)).toBe(reason);
+  });
+
+  it('without a manifest, update() fails with the same local error as every other method', async () => {
+    const { fetch, calls } = fakeFetch([]);
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const error = await app.storage.collection('posts').update('p', { $mark: 'vote' }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ name: 'StorageError', code: 'local_preview_no_manifest', status: 404 });
     expect(calls).toHaveLength(0);
   });
 });

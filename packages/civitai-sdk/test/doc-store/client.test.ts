@@ -46,9 +46,10 @@ const envelope = (status: number, code: string, details?: Record<string, unknown
 /**
  * Request shapes ONLY where the contract's client pass (`contract.test.ts`) cannot see
  * them: that pass already sends get, getMany, put/delete with a non-zero `ifVersion`,
- * create, list with `where`/`sort`/`author`/`limit`/`cursor`, increment with and
- * without `by`, mark, unmark and info through this client and checks the fake's
- * answer, so a wrong path, verb or body there fails it. What it does not reach:
+ * create, list with `where`/`sort`/`author`/`limit`/`cursor`, update with each operator
+ * (malformed bodies included), increment with and without `by`, mark, unmark and info
+ * through this client and checks the fake's answer, so a wrong path, verb or body there
+ * fails it. What it does not reach:
  * `ifVersion: 0`, a `Date` filter, `markedBy`/`mark`/`keyPrefix`, encoding, and the
  * segments a URL would rewrite (the fake sits below URL resolution).
  */
@@ -99,18 +100,19 @@ describe('request shapes the contract run does not cover', () => {
     expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/a', `blocks/storage/a${'_9'.repeat(15)}b`]);
   });
 
-  it('encodes every caller-supplied segment', async () => {
+  it('encodes every caller-supplied segment; a counter name travels in the body, not the path', async () => {
     const r = recorder(() => ({ value: 1 }));
     await r.storage.collection('c').increment('a:b/c d?e', 'n#1');
-    expect(r.sent[0]!.path).toBe('blocks/storage/c/a%3Ab%2Fc%20d%3Fe/counters/n%231');
+    expect(r.sent[0]!.method).toBe('PATCH');
+    expect(r.sent[0]!.path).toBe('blocks/storage/c/a%3Ab%2Fc%20d%3Fe');
+    expect(JSON.stringify(r.sent[0]!.opts.body)).toBe('{"$inc":{"n#1":1}}');
   });
 
   it.each([
     ['key', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').get('')],
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').put('.', {})],
     ['key', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').delete('..')],
-    ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.')],
-    ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', '')],
+    ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').update('.', { $mark: 'vote' })],
   ])('refuses a %s of %j before sending — a URL would rewrite it into another route', async (_what, _value, run) => {
     const r = recorder();
     const error = await run(r.storage).catch((e: unknown) => e);
@@ -118,6 +120,16 @@ describe('request shapes the contract run does not cover', () => {
     expect((error as StorageError).code).toBe('invalid_request');
     expect((error as StorageError).status).toBe(400);
     expect(r.sent).toEqual([]);
+  });
+
+  it.each([
+    ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.'), { $inc: { '.': 1 } }],
+    ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', ''), { $mark: '' }],
+    ['mark', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').unmark('k', '..'), { $unmark: '..' }],
+  ])('sends a %s of %j in the PATCH body (no URL rewrites it) and lets the server refuse it', async (_what, _value, run, body) => {
+    const r = recorder(() => envelope(400, 'invalid_request'));
+    await expect(run(r.storage)).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(r.sent.map((x) => [x.method, x.path, x.opts.body])).toEqual([['PATCH', 'blocks/storage/c/k', body]]);
   });
 
   it('sends a dot-only key that is NOT a path step (`...`) and lets the server refuse it', async () => {

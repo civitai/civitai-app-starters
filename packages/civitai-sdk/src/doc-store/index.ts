@@ -97,6 +97,39 @@ export interface WriteOptions extends DocumentCallOptions {
   ifVersion?: number;
 }
 
+/**
+ * Add `by` to ONE declared counter: `{ $inc: { plays: 1 } }`. `by` is required (the
+ * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
+ * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
+ * naming two is refused `invalid_request` (`malformed_operator`).
+ */
+export interface StorageIncrementOp {
+  $inc: Record<string, number>;
+  $mark?: never;
+  $unmark?: never;
+}
+
+/** Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`. */
+export interface StorageMarkOp {
+  $mark: string;
+  $inc?: never;
+  $unmark?: never;
+}
+
+/** Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn. */
+export interface StorageUnmarkOp {
+  $unmark: string;
+  $inc?: never;
+  $mark?: never;
+}
+
+/**
+ * ONE update operator for {@link StorageCollection.update}. Each member forbids the
+ * other two, so a second operator is a type error, and an unknown one is an excess
+ * property.
+ */
+export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** The document, or `null` when there is none (missing, hidden and absent read alike). */
   get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -111,9 +144,44 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** One page. Follow `nextCursor` with the same query for the next one. */
   list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
   /**
-   * Add `by` (the server's default when omitted) to a declared counter of a
-   * shared document. In a `write: "none"` collection the first increment of an
-   * absent key creates the document.
+   * Apply ONE update operator to a shared document — `PATCH …/:collection/:key` with
+   * the operator as the body. A tally never changes `data` or `version`.
+   *
+   * - `{ $inc: { [counter]: by } }` adds `by` to a declared counter and resolves
+   *   `{ value }`, the new total. In a `write: "none"` collection the first increment
+   *   of an absent key creates the document.
+   * - `{ $mark: name }` sets the viewer's mark (a declared mark, or the built-in
+   *   `report`) and resolves `{ marked: true, count }`. Idempotent. `count` is absent
+   *   for `report`, whose count is never exposed.
+   * - `{ $unmark: name }` removes it and resolves `{ marked: false, count }`.
+   *   Idempotent. A `report` cannot be withdrawn: the server refuses it
+   *   `invalid_request` (400) for every caller.
+   *
+   * A body the server cannot read as one operator is refused `invalid_request` with a
+   * `details.reason` ({@link storageUpdateRefusal}).
+   *
+   * @example
+   * ```ts
+   * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
+   * await requests.update('r1', { $mark: 'vote' }); // { marked: true, count }
+   * await requests.update('r1', { $unmark: 'vote' }); // { marked: false, count }
+   * ```
+   */
+  update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{ value: number }>;
+  update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
+  update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
+  /** An operator chosen at run time; the reply is the one its operator gives. */
+  update(
+    key: string,
+    op: StorageUpdateOp,
+    opts?: DocumentCallOptions,
+  ): Promise<{ value: number } | { marked: boolean; count?: number }>;
+  /**
+   * Add `by` (1 when omitted) to a declared counter of a shared document. In a
+   * `write: "none"` collection the first increment of an absent key creates the
+   * document. Sends `update(key, { $inc: { [counter]: by } })`.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
    */
   increment(
     key: string,
@@ -124,12 +192,17 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /**
    * Set the viewer's mark on a shared document — a declared mark, or the
    * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-   * never exposed.
+   * never exposed. Sends `update(key, { $mark: name })`.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
    */
   mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
   /**
    * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
-   * server refuses it `invalid_request` (400) for every caller.
+   * server refuses it `invalid_request` (400) for every caller. Sends
+   * `update(key, { $unmark: name })`.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
    */
   unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
 }
@@ -281,7 +354,9 @@ export type StorageErrorCode =
 export class StorageError extends ApiError {
   readonly code: StorageErrorCode;
   /**
-   * E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. On
+   * E.g. `currentVersion`, `reason` (on a refused `update` body:
+   * {@link StorageUpdateRefusalReason}, read with {@link storageUpdateRefusal}),
+   * `category`, `ceiling`, `bucket`, `retryAfter`. On
    * `schema_violation` (400: a document's `data` does not match its collection's declared
    * `schema`): `collection`, `pointer` (the first failing JSON pointer into `data`, `""` for
    * the root) and `keyword` (the schema keyword it failed, e.g. `required`).
@@ -308,6 +383,50 @@ export class StorageError extends ApiError {
     const value = this.details?.retryAfter;
     return typeof value === 'number' ? value : undefined;
   }
+}
+
+/**
+ * `details.reason` of the `invalid_request` (400) a PATCH body gets when it is not ONE
+ * update operator — every one the server's `parseTallyPatch` emits (civitai/civitai#8292):
+ *
+ * - `empty_patch` — no body, or `{}`.
+ * - `unknown_operator` — a `$` field that is not `$inc`, `$mark` or `$unmark`
+ *   (`details.operator` names it).
+ * - `multiple_operators` — two or more operators (`details.operators`).
+ * - `merge_patch_unsupported` — plain fields only: a merge-patch of `data` is reserved;
+ *   to change `data`, `put` the document.
+ * - `malformed_operator` — every other shape: a body that is not an object, an operator
+ *   beside any other field, `$inc` naming other than exactly one counter, or a
+ *   `$mark`/`$unmark` name that is not a string.
+ *
+ * A wrong VALUE inside a well-formed operator (a `by` out of range, an undeclared counter
+ * or mark) is refused `invalid_request` as the deprecated routes refuse it, with no
+ * `reason`.
+ */
+export type StorageUpdateRefusalReason =
+  | 'empty_patch'
+  | 'unknown_operator'
+  | 'multiple_operators'
+  | 'merge_patch_unsupported'
+  | 'malformed_operator';
+
+const UPDATE_REFUSAL_REASONS: ReadonlySet<string> = new Set<StorageUpdateRefusalReason>([
+  'empty_patch',
+  'unknown_operator',
+  'multiple_operators',
+  'merge_patch_unsupported',
+  'malformed_operator',
+]);
+
+/**
+ * The reason a PATCH body was refused, typed — or `null` for anything else: another
+ * code, an `invalid_request` without a reason (a wrong value inside a well-formed
+ * operator), and a reason this SDK does not list.
+ */
+export function storageUpdateRefusal(error: unknown): StorageUpdateRefusalReason | null {
+  if (!(error instanceof StorageError) || error.code !== 'invalid_request') return null;
+  const reason = error.details?.reason;
+  return typeof reason === 'string' && UPDATE_REFUSAL_REASONS.has(reason) ? (reason as StorageUpdateRefusalReason) : null;
 }
 
 /**
@@ -619,6 +738,10 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       const from = typeof options?.from === 'string' ? options.from : undefined;
       const authoring = <R>(signal: AbortSignal | undefined, attempt: () => Promise<R>) =>
         withSourcePublishGrant(ask, from, signal, attempt);
+      // Every tally: ONE update operator, PATCHed onto the document. The counter or mark
+      // name travels in the body, so no URL rewrites it and none is refused here.
+      const patch = (key: string, op: unknown, signal: AbortSignal | undefined) =>
+        authoring(signal, () => call<unknown>('PATCH', docPath(key), { query: q(), body: op, signal }));
 
       return {
         async get(key, { signal } = {}) {
@@ -697,33 +820,32 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           return { items: reply.items.map((item) => doc(item, 'list')), nextCursor: reply.nextCursor };
         },
 
+        update: (async (key: string, op: StorageUpdateOp, { signal }: DocumentCallOptions = {}) => {
+          const reply = await patch(key, op, signal);
+          // The reply is the one the operator gives. The operator is sent as the caller
+          // wrote it, so a body that is not one operator is the server's to refuse (with
+          // a `details.reason`) and never reaches this line.
+          const has = (field: string) => isRecord(op) && Object.prototype.hasOwnProperty.call(op, field);
+          if (has('$inc')) return toValueResult(reply, `${name}.update`);
+          if (has('$mark')) return toMarkResult(reply, true, `${name}.update`);
+          if (has('$unmark')) return toMarkResult(reply, false, `${name}.update`);
+          throw new CivitaiError(`storage ${name}.update: the server accepted a body with no update operator`);
+        }) as StorageCollection<T>['update'],
+
+        // The deprecated three: the same PATCH `update` sends, so their traffic leaves
+        // the deprecated per-tally routes. Signatures, replies and reply checks unchanged.
         async increment(key, counter, by, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call<{ value?: unknown }>(
-              'POST',
-              `${docPath(key)}/counters/${segment('counter', counter)}`,
-              // No body at all when `by` is omitted: the server's default applies.
-              { query: q(), body: by === undefined ? undefined : { by }, signal },
-            ),
-          );
-          if (typeof reply?.value !== 'number') {
-            throw new CivitaiError(`storage ${name}.increment: reply carried no \`value\``);
-          }
-          return { value: reply.value };
+          // `by` defaults HERE: the PATCH body requires it, as the old route's default did not.
+          const reply = await patch(key, { $inc: { [counter]: by === undefined ? 1 : by } }, signal);
+          return toValueResult(reply, `${name}.increment`);
         },
 
         async mark(key, markName, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
-          );
-          return toMarkResult(reply, true, `${name}.mark`);
+          return toMarkResult(await patch(key, { $mark: markName }, signal), true, `${name}.mark`);
         },
 
         async unmark(key, markName, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call('DELETE', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
-          );
-          return toMarkResult(reply, false, `${name}.unmark`);
+          return toMarkResult(await patch(key, { $unmark: markName }, signal), false, `${name}.unmark`);
         },
       };
     },
@@ -785,6 +907,12 @@ function refuseInfoImport(opts: object): void {
       (opts as { from?: unknown }).from,
     );
   }
+}
+
+function toValueResult(reply: unknown, op: string): { value: number } {
+  const value = (reply as { value?: unknown } | null | undefined)?.value;
+  if (typeof value !== 'number') throw new CivitaiError(`storage ${op}: reply carried no \`value\``);
+  return { value };
 }
 
 function toMarkResult<M extends boolean>(

@@ -222,7 +222,7 @@ const requests = app.storage.collection<Request>('requests');
 const created = await requests.create({ title: 'More lighting presets', status: 'open' });
 const doc = await requests.get(created.key); // null when there is none
 await requests.put(created.key, { title: 'More lighting presets', status: 'done' }, { ifVersion: doc?.version });
-await requests.mark(created.key, 'vote'); // { marked: true, count }
+await requests.update(created.key, { $mark: 'vote' }); // { marked: true, count }
 
 const page = await requests.list({ where: { status: 'open' }, sort: '-mark:vote', limit: 20 });
 for (const item of page.items) {
@@ -231,7 +231,7 @@ for (const item of page.items) {
 const mine = await requests.list({ author: 'me' });
 const voted = await requests.list({ markedBy: 'me', mark: 'vote' });
 
-await app.storage.collection('plays').increment('model-123', 'plays'); // creates the doc in a `none` collection
+await app.storage.collection('plays').update('model-123', { $inc: { plays: 1 } }); // { value }; creates the doc in a `none` collection
 const { limits, usage } = await app.storage.info();
 ```
 
@@ -241,6 +241,23 @@ const { limits, usage } = await app.storage.info();
   collection), `{ kind: 'counter' }` for a document a counter created, or
   `{ kind: 'app' }` — never a numeric user id. `viewer` is `null` for an anonymous
   viewer.
+- **Counters and marks are update operators.** `update(key, op)` sends ONE operator,
+  `PATCH /api/v1/blocks/storage/:collection/:key`: `{ $inc: { [counter]: by } }`
+  resolves `{ value }` (the new total; `by` is required, an integer from 1 to 100),
+  `{ $mark: name }` resolves `{ marked: true, count }` and `{ $unmark: name }`
+  `{ marked: false, count }` (`count` is absent for the built-in `report`, which
+  cannot be withdrawn). A tally never changes `data` or `version`. A second operator,
+  an unknown one, a mark name that is not a string and a `by` that is not a number
+  do not type-check; a body that still reaches the server as anything but one
+  operator is refused `invalid_request`, and `storageUpdateRefusal(error)` reads its
+  `details.reason`: `empty_patch`, `unknown_operator`, `multiple_operators`,
+  `merge_patch_unsupported` (plain fields: a merge-patch of `data` is reserved) or
+  `malformed_operator`.
+- **`increment`, `mark` and `unmark` are deprecated** for `update`. They keep their
+  signatures and replies (`increment`'s `by` still defaults to 1) and send the same
+  PATCH, so they no longer reach the deprecated per-tally routes
+  (`…/counters/:name`, `…/marks/:name`), which civitai.com still answers with a
+  `Deprecation` header.
 - **Conditional writes:** `put(key, data, { ifVersion })` and
   `delete(key, { ifVersion })` write only at that version (`0` = only if absent);
   a mismatch rejects `version_conflict` with `details.currentVersion`.
@@ -267,6 +284,27 @@ try {
   if (error instanceof StorageError && error.code === 'version_conflict') reloadAndRetry();
   else if (error instanceof StorageError && error.code === 'consent_required') askForPublishConsent();
   else throw error;
+}
+```
+
+A counter or mark through `update`, with a refused body told apart by its reason:
+
+```ts
+import { storageUpdateRefusal, type StorageCollection } from '@civitai/sdk';
+
+declare const board: StorageCollection<{ title: string }>;
+
+const { value } = await board.update('r1', { $inc: { views: 1 } });
+const { marked, count } = await board.update('r1', { $mark: 'vote' });
+console.log(value, marked, count);
+
+try {
+  await board.update('r1', { $unmark: 'vote' });
+} catch (error) {
+  // `null` for every other refusal, including a wrong value inside a good operator.
+  const reason = storageUpdateRefusal(error);
+  if (reason !== null) console.error('not one update operator:', reason);
+  throw error;
 }
 ```
 
@@ -325,7 +363,8 @@ try {
 ```
 
 - **Every call carries `?from=<blockId>`**: `get`, `getMany`, `put`, `create`,
-  `delete`, `list`, `increment`, `mark` (a report included) and `unmark`, with the same
+  `delete`, `list`, `update` (and the deprecated `increment`, `mark` — a report
+  included — and `unmark`), with the same
   path, body and reply as without it. `collection(name)` without `from` is this app's
   own collection, even when it has the same name. `info()` takes no `from` — a source
   app's limits and usage cannot be read through an import — and a `from` passed to it

@@ -83,6 +83,8 @@ const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOT_ONLY = /^\.+$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const REPORT = 'report';
+/** The update operators a PATCH may carry, and the deprecated tally route each one runs as. */
+const TALLY_OPERATORS = { $inc: 'increment', $mark: 'mark', $unmark: 'unmark' } as const;
 const INDEX_TYPES = ['string', 'number', 'boolean', 'time'] as const;
 
 const B = {
@@ -1143,7 +1145,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     | { op: 'info' }
     | { op: 'list' | 'create' | 'getMany'; collection: string }
     | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
-    | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string };
+    | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string }
+    // One update operator on one document; translated by `parseTallyPatch` before it runs.
+    | { op: 'patch'; collection: string; key: string };
+  type TallyRoute = Extract<Route, { op: 'increment' | 'mark' | 'unmark' }>;
 
   function match(method: string, s: string[]): { route: Route } | { methods: string[] } | null {
     const [a, b, c, d] = s;
@@ -1162,6 +1167,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           GET: { op: 'get', collection: a!, key: b! },
           PUT: { op: 'put', collection: a!, key: b! },
           DELETE: { op: 'delete', collection: a!, key: b! },
+          PATCH: { op: 'patch', collection: a!, key: b! },
         });
       case 4:
         if (a!.startsWith('_')) return null;
@@ -1176,6 +1182,48 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       default:
         return null;
     }
+  }
+
+  /**
+   * A PATCH body → the tally route it runs as, and the body that route's own parser reads:
+   * the server's `parseTallyPatch` (civitai/civitai#8292), with its messages and its
+   * `details.reason` values. Only the operator's SHAPE is checked here; every value (`by`,
+   * the counter or mark name, a report withdrawal) is the route's, checked where the
+   * deprecated route checks it.
+   */
+  function parseTallyPatch(at: { collection: string; key: string }, body: unknown): { route: TallyRoute; body: unknown } {
+    const refusal = (reason: string, message: string, extra?: Record<string, unknown>) =>
+      invalid(message, { reason, ...extra });
+    if (body === undefined) throw refusal('empty_patch', 'PATCH needs an update operator');
+    if (!isObject(body)) throw refusal('malformed_operator', 'PATCH body must be an object holding one update operator');
+    const fields = Object.keys(body);
+    if (fields.length === 0) throw refusal('empty_patch', 'PATCH needs an update operator');
+    const isOperator = (f: string): f is keyof typeof TALLY_OPERATORS =>
+      Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, f);
+    const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
+    if (unknown !== undefined) throw refusal('unknown_operator', `unknown update operator ${unknown}`, { operator: unknown });
+    const operators = fields.filter(isOperator);
+    if (operators.length > 1) throw refusal('multiple_operators', 'PATCH takes exactly one update operator', { operators });
+    const [operator] = operators;
+    if (operator === undefined) {
+      throw refusal(
+        'merge_patch_unsupported',
+        'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document',
+      );
+    }
+    if (fields.length > 1) throw refusal('malformed_operator', `${operator} cannot be combined with other fields`, { operator });
+    const value = body[operator];
+    const where = { collection: at.collection, key: at.key };
+    if (operator === '$inc') {
+      const counters = isObject(value) ? Object.entries(value) : [];
+      if (counters.length !== 1) throw refusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
+      const [[name, by]] = counters as [[string, unknown]];
+      // The deprecated route's own body, `{ by }`, read by its own parser.
+      return { route: { op: 'increment', ...where, name }, body: { by } };
+    }
+    if (typeof value !== 'string') throw refusal('malformed_operator', `${operator} takes a mark name`, { operator });
+    // A mark's body is empty on the deprecated route too.
+    return { route: { op: TALLY_OPERATORS[operator], ...where, name: value }, body: undefined };
   }
 
   type ListQuery = {
@@ -1351,9 +1399,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     } catch {
       throw refuse('not_found', 'no such storage route');
     }
-    // The wire: only POST and PUT bodies are read, and only what JSON carries.
-    const body =
-      (method === 'POST' || method === 'PUT') && sent !== undefined
+    // The wire: only POST, PUT and PATCH bodies are read, and only what JSON carries.
+    let body =
+      (method === 'POST' || method === 'PUT' || method === 'PATCH') && sent !== undefined
         ? (JSON.parse(JSON.stringify(sent)) as unknown)
         : undefined;
     const viewer = caller.viewer === undefined ? defaultViewer : caller.viewer;
@@ -1376,7 +1424,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const m = match(method, rest);
     if (!m) throw refuse('not_found', 'no such storage route');
     if ('methods' in m) throw refuse('method_not_allowed', 'method not allowed');
-    const route = m.route;
+    let route = m.route;
     // Every collection route also takes `from` (an import); `info` takes none.
     const allowedQuery =
       route.op === 'list' ? null : route.op === 'delete' ? ['ifVersion', 'from'] : route.op === 'info' ? [] : ['from'];
@@ -1404,6 +1452,14 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           : refuse('consent_required', `${PUBLISH_SCOPE} has not been granted in ${from}`, { scope: PUBLISH_SCOPE, from });
     if (body !== undefined && utf8Length(JSON.stringify(body)) > BODY_LIMIT_BYTES) {
       throw refuse('too_large', `request body exceeds ${BODY_LIMIT_BYTES} bytes`, { limit: BODY_LIMIT_BYTES });
+    }
+    // A PATCH runs AS the tally route its operator names, with that route's own body, so
+    // every check below is the deprecated route's. Translated once the body is read and
+    // before sign-in, any budget or the collection is looked at, as the server does.
+    if (route.op === 'patch') {
+      const tally = parseTallyPatch(route, body);
+      route = tally.route;
+      body = tally.body;
     }
     const requireSignedIn = (): number => {
       if (uid === null) throw refuse('sign_in_required', 'sign in required');
