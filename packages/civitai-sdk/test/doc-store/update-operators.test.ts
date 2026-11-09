@@ -257,11 +257,14 @@ describe('update: the types', () => {
       // @ts-expect-error plain fields (a merge-patch) are not an operator
       void posts.update('k', { status: 'closed' });
     };
-    expect(neverCalled).toBeTypeOf('function');
-    // Positive control: each operator alone compiles, with its own reply type.
-    expectTypeOf(posts.update('k', { $inc: { views: 2 } })).resolves.toEqualTypeOf<{ value: number }>();
-    expectTypeOf(posts.update('k', { $mark: 'vote' })).resolves.toEqualTypeOf<{ marked: true; count?: number }>();
-    expectTypeOf(posts.update('k', { $unmark: 'vote' })).resolves.toEqualTypeOf<{ marked: false; count?: number }>();
+    // Positive control: each operator alone compiles, with its own reply type. Also never
+    // called: `expectTypeOf(x)` evaluates `x`, and an un-awaited update would reject.
+    const positiveControl = () => {
+      expectTypeOf(posts.update('k', { $inc: { views: 2 } })).resolves.toEqualTypeOf<{ value: number }>();
+      expectTypeOf(posts.update('k', { $mark: 'vote' })).resolves.toEqualTypeOf<{ marked: true; count?: number }>();
+      expectTypeOf(posts.update('k', { $unmark: 'vote' })).resolves.toEqualTypeOf<{ marked: false; count?: number }>();
+    };
+    expect([neverCalled, positiveControl].map((f) => typeof f)).toEqual(['function', 'function']);
   });
 
   it('the deprecated methods keep their exact signatures', () => {
@@ -443,7 +446,7 @@ describe('the fake: PATCH happy paths', () => {
     const doc = (await posts.get('p'))!;
     expect(doc).toMatchObject({ data: { status: 'open' }, version: 1, marks: { vote: 1 } });
     expect(doc.marks).not.toHaveProperty('report');
-    expect((await bob.get('p'))!.viewer).toEqual({ marks: ['vote', 'report'] });
+    expect([...(await bob.get('p'))!.viewer!.marks].sort()).toEqual(['report', 'vote']);
   });
 
   it('the PATCH and the deprecated route tally the same counter', async () => {

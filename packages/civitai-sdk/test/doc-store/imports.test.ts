@@ -524,9 +524,10 @@ describe('the client: publish consent in the source — ask the host, then retry
   const ops = [
     ['create', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'c' }), 'POST', `${BASE_URL}/board?from=${PARENT}`, { data: { t: 'c' } }, WIRE_DOC],
     ['put', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).put('b1', { t: 'p' }), 'PUT', `${BASE_URL}/board/b1?from=${PARENT}`, { data: { t: 'p' } }, WIRE_DOC],
-    ['increment', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('tally', { from: PARENT }).increment('m1', 'plays', 4), 'POST', `${BASE_URL}/tally/m1/counters/plays?from=${PARENT}`, { by: 4 }, { value: 9 }],
-    ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'vote'), 'PUT', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: true, count: 5 }],
-    ['unmark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).unmark('b1', 'vote'), 'DELETE', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: false, count: 4 }],
+    ['increment', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('tally', { from: PARENT }).increment('m1', 'plays', 4), 'PATCH', `${BASE_URL}/tally/m1?from=${PARENT}`, { $inc: { plays: 4 } }, { value: 9 }],
+    ['update', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).update('b1', { $mark: 'vote' }), 'PATCH', `${BASE_URL}/board/b1?from=${PARENT}`, { $mark: 'vote' }, { marked: true, count: 6 }],
+    ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'vote'), 'PATCH', `${BASE_URL}/board/b1?from=${PARENT}`, { $mark: 'vote' }, { marked: true, count: 5 }],
+    ['unmark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).unmark('b1', 'vote'), 'PATCH', `${BASE_URL}/board/b1?from=${PARENT}`, { $unmark: 'vote' }, { marked: false, count: 4 }],
   ] as const;
 
   it.each(ops)('%s: asks once with { scopes, from }, waits for the refresh, then sends the SAME request once more', async (_op, run, method, url, body, reply) => {
