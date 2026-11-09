@@ -1203,7 +1203,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
     if (unknown !== undefined) throw refusal('unknown_operator', `unknown update operator ${unknown}`, { operator: unknown });
     const operators = fields.filter(isOperator);
-    // NEGATIVE CONTROL M1: two operators accepted (the first wins). Reverted by the next commit.
+    if (operators.length > 1) throw refusal('multiple_operators', 'PATCH takes exactly one update operator', { operators });
     const [operator] = operators;
     if (operator === undefined) {
       throw refusal(
@@ -1211,7 +1211,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document',
       );
     }
-    if (fields.length > operators.length) throw refusal('malformed_operator', `${operator} cannot be combined with other fields`, { operator });
+    if (fields.length > 1) throw refusal('malformed_operator', `${operator} cannot be combined with other fields`, { operator });
     const value = body[operator];
     const where = { collection: at.collection, key: at.key };
     if (operator === '$inc') {

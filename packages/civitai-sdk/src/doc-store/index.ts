@@ -835,15 +835,8 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         // The deprecated three: the same PATCH `update` sends, so their traffic leaves
         // the deprecated per-tally routes. Signatures, replies and reply checks unchanged.
         async increment(key, counter, by, { signal } = {}) {
-          // NEGATIVE CONTROL M2: an explicit `by` goes to the deprecated POST …/counters/:name.
-          if (by !== undefined) {
-            const legacy = await authoring(signal, () =>
-              call<unknown>('POST', `${docPath(key)}/counters/${segment('counter', counter)}`, { query: q(), body: { by }, signal }),
-            );
-            return toValueResult(legacy, `${name}.increment`);
-          }
-          // NEGATIVE CONTROL M3: no `by` default (sends `{ $inc: { [counter]: undefined } }`).
-          const reply = await patch(key, { $inc: { [counter]: by } }, signal);
+          // `by` defaults HERE: the PATCH body requires it, as the old route's default did not.
+          const reply = await patch(key, { $inc: { [counter]: by === undefined ? 1 : by } }, signal);
           return toValueResult(reply, `${name}.increment`);
         },
 
