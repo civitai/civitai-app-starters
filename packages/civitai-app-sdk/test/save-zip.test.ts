@@ -44,6 +44,9 @@ import {
   SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR,
   SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR,
   saveZipExtraFieldError,
+  SAVE_ZIP_INFLATE_SLICE_BYTES,
+  SAVE_ZIP_VERIFY_ABORTED_ERROR,
+  SaveZipVerifyAbortedError,
 } from '../src/save-zip/index.js';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────────
@@ -1171,6 +1174,126 @@ describe('round 1 — names', () => {
   });
 });
 
+// ── Round 1 (#8420 audit): bounded inflate work, and abort ────────────────────────────────────────
+
+/** Wraps the real DecompressionStream and counts what crosses it, per instance. */
+class CountingDecompressionStream {
+  static instances: CountingDecompressionStream[] = [];
+  static onFirstOutput: (() => void) | undefined;
+  fed = 0;
+  delivered = 0;
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  constructor(format: 'deflate-raw') {
+    CountingDecompressionStream.instances.push(this);
+    const real = new RealDecompressionStream(format);
+    const w = real.writable.getWriter();
+    const r = real.readable.getReader();
+    this.writable = new WritableStream({
+      write: (c) => {
+        this.fed += c.byteLength;
+        return w.write(c);
+      },
+      close: () => w.close(),
+      abort: (e) => w.abort(e),
+    });
+    this.readable = new ReadableStream({
+      pull: async (ctl) => {
+        const { done, value } = await r.read();
+        if (done) return ctl.close();
+        if (this.delivered === 0) CountingDecompressionStream.onFirstOutput?.();
+        this.delivered += value.byteLength;
+        ctl.enqueue(value);
+      },
+      cancel: (e) => r.cancel(e),
+    });
+  }
+}
+
+const withCountingEngine = async <T,>(fn: () => Promise<T>) => {
+  CountingDecompressionStream.instances = [];
+  (globalThis as { DecompressionStream: unknown }).DecompressionStream = CountingDecompressionStream;
+  try {
+    return await fn();
+  } finally {
+    (globalThis as { DecompressionStream: unknown }).DecompressionStream = RealDecompressionStream;
+    CountingDecompressionStream.onFirstOutput = undefined;
+  }
+};
+
+describe('round 1 (#8420) — verifySaveZipInflate bounds its work and can be aborted', () => {
+  // 128 MiB of zeros deflates ~1030:1 to ~127 KiB of input — many slices' worth, so a feed that
+  // writes it all at once is visible as `fed` far above one slice.
+  const plain = new Uint8Array(128 * MB);
+  const data = new Uint8Array(deflateRawSync(plain));
+  const entry = (size: number) => buildZip([{ name: 'z.txt', method: 8, data, size, plain }]);
+  // The bounds below use this LITERAL, not the exported constant: a bound computed from the
+  // constant would loosen with it and pass whatever the slice is (measured: it did, at 1 MiB).
+  const SLICE = 16 * 1024;
+
+  it('pins the slice size, and the fixture really is many slices of high-ratio input', () => {
+    expect(SAVE_ZIP_INFLATE_SLICE_BYTES).toBe(SLICE);
+    expect(data.length).toBeGreaterThan(6 * SLICE);
+  });
+
+  it('a lying high-ratio entry is refused after at most a few slices of input, not all of it', async () => {
+    const zip = entry(9_999); // under the 1 MiB ratio floor, so only the inflate check refuses it
+    const v = validateSaveZip(zip);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    const result = await withCountingEngine(() => verifySaveZipInflate(zip, v.deflated));
+    expect(result).toBe(SAVE_ZIP_INFLATE_ERROR);
+    const engines = CountingDecompressionStream.instances;
+    expect(engines.length).toBeGreaterThan(0); // POSITIVE CONTROL: the wrapper was used
+    for (const e of engines) {
+      // At most one slice being transformed plus the writable queue's one, and a third for timing.
+      expect(e.fed).toBeLessThanOrEqual(3 * SLICE);
+      // Deflate expands at most ~1032:1, so output is bounded by declared size + that much per slice.
+      expect(e.delivered).toBeLessThanOrEqual(9_999 + 3 * 1032 * SLICE);
+    }
+  });
+
+  it('an AbortSignal stops the verify promptly and rejects with SaveZipVerifyAbortedError', async () => {
+    // An honest 128 MiB entry: far over the ratio bound, so validateSaveZip would refuse it — the
+    // deflated list is built by hand to reach the long inflate the signal has to interrupt.
+    const zip = entry(plain.length);
+    const v = { deflated: [{ dataOffset: 30 + 'z.txt'.length, compressedSize: data.length, size: plain.length, crc: 0 }] };
+    expect(new Uint8Array(zip, v.deflated[0]!.dataOffset, 4)).toEqual(data.subarray(0, 4));
+    const ac = new AbortController();
+    CountingDecompressionStream.onFirstOutput = () => ac.abort();
+    const outcome = await withCountingEngine(() =>
+      verifySaveZipInflate(zip, v.deflated, ac.signal).then(
+        (r) => ({ resolved: r }),
+        (e: unknown) => ({ rejected: e })
+      )
+    );
+    expect(outcome).toHaveProperty('rejected');
+    const err = (outcome as { rejected: unknown }).rejected;
+    expect(err).toBeInstanceOf(SaveZipVerifyAbortedError);
+    expect((err as Error).message).toBe(SAVE_ZIP_VERIFY_ABORTED_ERROR);
+    for (const e of CountingDecompressionStream.instances) {
+      expect(e.fed).toBeLessThan(data.length); // it stopped before feeding everything
+    }
+  });
+
+  it('an already-aborted signal rejects without inflating anything', async () => {
+    const zip = await jszip(DATASET, { compression: 'DEFLATE' });
+    const v = validateSaveZip(zip);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    const ac = new AbortController();
+    ac.abort();
+    await withCountingEngine(async () => {
+      await expect(verifySaveZipInflate(zip, v.deflated, ac.signal)).rejects.toBeInstanceOf(
+        SaveZipVerifyAbortedError
+      );
+    });
+    expect(CountingDecompressionStream.instances).toHaveLength(0);
+    // CONTROL: the same call without a signal passes.
+    expect(await verifySaveZipInflate(zip, v.deflated)).toBeNull();
+  });
+});
+
 describe('error strings', () => {
   it('every zip refusal string is distinct (so a reply names exactly one guard)', () => {
     const all = [
@@ -1212,6 +1335,7 @@ describe('error strings', () => {
       saveZipEntryTypeError('exe'),
       saveZipMethodError(12),
       saveZipExtraFieldError(0x000d),
+      SAVE_ZIP_VERIFY_ABORTED_ERROR,
     ];
     expect(new Set(all).size).toBe(all.length);
     expect(saveZipEntryTypeError('exe')).toBe('zip entry type is not allowed: exe');

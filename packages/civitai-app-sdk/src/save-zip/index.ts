@@ -109,6 +109,18 @@ export const SAVE_ZIP_INFLATE_ERROR = 'zip entry does not inflate to its declare
 export const SAVE_ZIP_INFLATE_TRAILING_ERROR =
   'zip entry has data after the end of its deflate stream';
 export const SAVE_ZIP_CRC_ERROR = 'zip entry does not match its CRC-32';
+export const SAVE_ZIP_VERIFY_ABORTED_ERROR = 'zip verification was aborted';
+
+/** What {@link verifySaveZipInflate} rejects with when its `AbortSignal` fires. */
+export class SaveZipVerifyAbortedError extends Error {
+  constructor() {
+    super(SAVE_ZIP_VERIFY_ABORTED_ERROR);
+    this.name = 'SaveZipVerifyAbortedError';
+  }
+}
+
+/** How much compressed input {@link verifySaveZipInflate} hands the inflater at a time. */
+export const SAVE_ZIP_INFLATE_SLICE_BYTES = 1024 * 1024;
 export const SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR =
   'zip stored entry with a data descriptor contains a data-descriptor signature (PK\\x07\\x08); save it with DEFLATE or without streamFiles';
 export const SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR =
@@ -568,7 +580,7 @@ async function inflate(
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
   // Feed in slices so a bomb is caught after the first slice that overshoots, not after all of it.
-  const CHUNK = 1024 * 1024;
+  const CHUNK = SAVE_ZIP_INFLATE_SLICE_BYTES;
   const feed = (async () => {
     for (let off = 0; off < data.length; off += CHUNK) {
       await writer.write(data.subarray(off, Math.min(off + CHUNK, data.length)));
