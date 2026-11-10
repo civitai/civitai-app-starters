@@ -2716,7 +2716,10 @@ Pass exactly ONE of three inputs, each gated differently by the host:
     `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
   - no entry name is absolute, has a `..`, `.` or empty segment, a backslash, a
     colon / drive letter, or a control or bidi character, and no two names are
-    the same ignoring case and Unicode normalisation;
+    the same ignoring case and Unicode normalisation. A non-ASCII name (`画像/001.png`,
+    `café.txt`) must be UTF-8 with the zip's UTF-8 flag set, which JSZip does;
+    the Info-ZIP Unicode Path field JSZip adds beside it is accepted only when
+    it restates that exact name;
   - entries are stored or deflated, not encrypted, not symlinks;
   - the archive is not zip64 and has no archive comment, and every central
     directory record matches its local header;

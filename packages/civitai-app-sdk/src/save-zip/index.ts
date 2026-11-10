@@ -169,8 +169,61 @@ function refuse(error: string): never {
 
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
-/** Walk an extra field block; refuse a malformed one, zip64, an alternate path, or encryption. */
-function checkExtraFields(view: DataView, start: number, len: number): void {
+let crcTable: Uint32Array | undefined;
+
+/** CRC-32 (IEEE 802.3, the zip one) of `bytes`. */
+function crc32(bytes: Uint8Array): number {
+  if (!crcTable) {
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+  }
+  let c = 0xffffffff;
+  for (const b of bytes) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * The Info-ZIP Unicode Path extra field (0x7075): `version (1) · CRC-32 of the header name (4) ·
+ * the name in UTF-8`. An extractor may take the entry's path from HERE instead of the header, so it
+ * is the one extra field that can make two readers see two different names. jszip writes it for
+ * every non-ASCII name — with the UTF-8 flag set and the SAME name in both places — so it is
+ * accepted in exactly that shape and refused in every other: the entry sets the UTF-8 flag,
+ * version is 1, the CRC is the header name's, and the UTF-8 name is byte-identical to the header
+ * name (which {@link decodeName} then holds to valid UTF-8). Any reader therefore extracts the one
+ * name every rule below was applied to.
+ */
+function checkUnicodePath(
+  view: DataView,
+  p: number,
+  size: number,
+  name: Uint8Array,
+  flags: number
+): void {
+  if (!(flags & FLAG_UTF8) || size < 5 || view.getUint8(p) !== 1) {
+    refuse(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+  }
+  if (view.getUint32(p + 1, true) !== crc32(name)) refuse(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+  const alt = new Uint8Array(view.buffer, view.byteOffset + p + 5, size - 5);
+  if (alt.length !== name.length || alt.some((b, i) => b !== name[i])) {
+    refuse(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+  }
+}
+
+/**
+ * Walk the extra field block of the header whose name bytes and flags are `name` / `flags`; refuse
+ * a malformed block, zip64, encryption, or a Unicode Path field that does not restate `name`.
+ */
+function checkExtraFields(
+  view: DataView,
+  start: number,
+  len: number,
+  name: Uint8Array,
+  flags: number
+): void {
   let p = start;
   const end = start + len;
   while (p < end) {
@@ -180,7 +233,7 @@ function checkExtraFields(view: DataView, start: number, len: number): void {
     p += 4;
     if (p + size > end) refuse(SAVE_ZIP_EXTRA_FIELD_ERROR);
     if (id === EXTRA_ZIP64) refuse(SAVE_ZIP64_ERROR);
-    if (id === EXTRA_UNICODE_PATH) refuse(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+    if (id === EXTRA_UNICODE_PATH) checkUnicodePath(view, p, size, name, flags);
     if (id === EXTRA_STRONG_ENCRYPTION || id === EXTRA_AES) refuse(SAVE_ZIP_ENCRYPTED_ERROR);
     p += size;
   }
@@ -291,7 +344,13 @@ function validate(bytes: ArrayBuffer): SaveZipValidation {
       refuse(SAVE_ZIP64_ERROR);
     }
     if (diskStart !== 0) refuse(SAVE_ZIP_MULTIDISK_ERROR);
-    checkExtraFields(view, p + CENTRAL_LEN + nameLen, extraLen);
+    checkExtraFields(
+      view,
+      p + CENTRAL_LEN + nameLen,
+      extraLen,
+      u8.subarray(p + CENTRAL_LEN, p + CENTRAL_LEN + nameLen),
+      flags
+    );
     if (flags & (FLAG_ENCRYPTED | FLAG_STRONG_ENCRYPTION | FLAG_MASKED_HEADERS)) {
       refuse(SAVE_ZIP_ENCRYPTED_ERROR);
     }
@@ -376,7 +435,7 @@ function validate(bytes: ArrayBuffer): SaveZipValidation {
       refuse(SAVE_ZIP_HEADER_MISMATCH_ERROR);
     }
     if (flags !== e.flags || method !== e.method) refuse(SAVE_ZIP_HEADER_MISMATCH_ERROR);
-    checkExtraFields(view, nameStart + nameLen, extraLen);
+    checkExtraFields(view, nameStart + nameLen, extraLen, localName, flags);
     const hasDescriptor = (e.flags & FLAG_DATA_DESCRIPTOR) !== 0;
     const localZero = crc === 0 && compressedSize === 0 && size === 0;
     const localMatches = crc === e.crc && compressedSize === e.compressedSize && size === e.size;
