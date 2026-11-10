@@ -3064,7 +3064,8 @@ export interface BlockStoragePrivateCollectionDeclaration {
   schema?: BlockStorageCollectionSchema;
   /** See {@link BlockStorageSharedCollectionDeclaration.migrations}. */
   migrations?: BlockStorageMigrationOp[];
-  // NEGATIVE CONTROL 2: `hook` removed from the PRIVATE declaration only. Reverted by the next commit.
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.hook}. */
+  hook?: BlockStorageCollectionHook;
 }
 
 /**
