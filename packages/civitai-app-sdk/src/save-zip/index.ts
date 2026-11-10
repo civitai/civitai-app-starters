@@ -106,10 +106,25 @@ export const SAVE_ZIP_STORED_SIZE_ERROR = 'zip stored entry sizes disagree';
 export const SAVE_ZIP_TOTAL_SIZE_ERROR = 'zip total uncompressed size exceeds the limit';
 export const SAVE_ZIP_RATIO_ERROR = 'zip entry compression ratio exceeds the limit';
 export const SAVE_ZIP_INFLATE_ERROR = 'zip entry does not inflate to its declared size';
+export const SAVE_ZIP_INFLATE_TRAILING_ERROR =
+  'zip entry has data after the end of its deflate stream';
+export const SAVE_ZIP_CRC_ERROR = 'zip entry does not match its CRC-32';
+export const SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR =
+  'zip stored entry with a data descriptor contains a data-descriptor signature (PK\\x07\\x08); save it with DEFLATE or without streamFiles';
+export const SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR =
+  'zip stored entry with a data descriptor contains a local-header signature (PK\\x03\\x04); save it with DEFLATE or without streamFiles';
+export const SAVE_ZIP_SEGMENT_DOT_SPACE_ERROR =
+  'zip entry path has a segment that ends in a dot or space';
+export const SAVE_ZIP_EXTRA_FIELD_NOT_ALLOWED_ERROR = 'zip extra field is not allowed';
 
 /** `zip compression method is not allowed: 12` */
 export function saveZipMethodError(method: number): string {
   return `${SAVE_ZIP_METHOD_NOT_ALLOWED_ERROR}: ${method}`;
+}
+
+/** `zip extra field is not allowed: 0x000d`. */
+export function saveZipExtraFieldError(id: number): string {
+  return `${SAVE_ZIP_EXTRA_FIELD_NOT_ALLOWED_ERROR}: 0x${id.toString(16).padStart(4, '0')}`;
 }
 
 /** `zip entry type is not allowed: exe` (`(none)` for a file with no extension). */

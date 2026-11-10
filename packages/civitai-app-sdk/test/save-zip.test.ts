@@ -38,6 +38,12 @@ import {
   saveZipMethodError,
   validateSaveZip,
   verifySaveZipInflate,
+  SAVE_ZIP_CRC_ERROR,
+  SAVE_ZIP_INFLATE_TRAILING_ERROR,
+  SAVE_ZIP_SEGMENT_DOT_SPACE_ERROR,
+  SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR,
+  SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR,
+  saveZipExtraFieldError,
 } from '../src/save-zip/index.js';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────────
@@ -75,6 +81,8 @@ type Raw = {
   /** The central record's "disk number start". */
   diskStart?: number;
   descriptorValues?: { crc: number; compressedSize: number; size: number };
+  /** The UNCOMPRESSED bytes of a deflated entry, so its default CRC is the real one. */
+  plain?: Uint8Array;
   extra?: Uint8Array;
   localExtra?: Uint8Array;
   externalAttrs?: number;
@@ -130,6 +138,16 @@ class W {
   }
 }
 
+/**
+ * The CRC an entry declares unless the case sets one: the REAL CRC-32 of its uncompressed bytes —
+ * the stored data, or `plain` for a deflated entry. An entry with fake deflate data (bounds cases,
+ * never inflated) keeps a placeholder.
+ */
+function defaultCrc(e: Raw): number {
+  if ((e.method ?? 0) === 0) return crc32(e.data ?? new Uint8Array(0));
+  return e.plain ? crc32(e.plain) : 0x1234abcd;
+}
+
 function buildZip(entries: Raw[], opts: Opts = {}): ArrayBuffer {
   const w = new W();
   if (opts.prefix) w.bytes(opts.prefix);
@@ -139,7 +157,7 @@ function buildZip(entries: Raw[], opts: Opts = {}): ArrayBuffer {
     const name = bytesOf(e.name);
     const localName = e.localName != null ? bytesOf(e.localName) : name;
     const flags = e.flags ?? (e.descriptor ? 1 << 3 : 0);
-    const crc = e.crc ?? 0x1234abcd;
+    const crc = e.crc ?? defaultCrc(e);
     const csize = e.compressedSize ?? data.length;
     const usize = e.size ?? data.length;
     const zeroLocal = e.descriptor != null;
@@ -181,7 +199,7 @@ function buildZip(entries: Raw[], opts: Opts = {}): ArrayBuffer {
     w.u16(e.method ?? 0);
     w.u16(0);
     w.u16(0x21);
-    w.u32(e.crc ?? 0x1234abcd);
+    w.u32(e.crc ?? defaultCrc(e));
     w.u32(e.compressedSize ?? data.length);
     w.u32(e.size ?? data.length);
     w.u16(name.length);
@@ -222,7 +240,7 @@ const extraField = (id: number, body: number[] = [0, 0, 0, 0]) => {
 const file = (name: string, content = 'caption text') => ({ name, data: enc.encode(content) });
 const deflated = (name: string, content: Uint8Array) => {
   const data = new Uint8Array(deflateRawSync(content));
-  return { name, method: 8, data, size: content.length };
+  return { name, method: 8, data, size: content.length, plain: content };
 };
 
 /** Rewrite a single-entry zip's declared uncompressed size in BOTH headers (a consistent lie). */
@@ -365,7 +383,6 @@ describe('validateSaveZip — real zips written by jszip', () => {
     ['photo.png.exe', 'exe'],
     ['run.sh', 'sh'],
     ['README', ''],
-    ['trailing-dot.png.', ''],
   ])('refuses a %s entry (allowlist): %s', async (name, ext) => {
     const zip = await jszip({ 'ok.png': new Uint8Array(PNG_HEAD), [name]: 'x' });
     expect(refusal(zip)).toBe(saveZipEntryTypeError(ext));
@@ -974,6 +991,186 @@ describe('verifySaveZipInflate — the inflate check', () => {
   });
 });
 
+// ── Round-1 hardening ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * A DecompressionStream that, like some engines, does NOT throw on bytes after the deflate end-of-
+ * stream marker: it closes cleanly instead. Node throws (`ERR_TRAILING_JUNK_AFTER_STREAM_END`), so
+ * without this wrapper a trailing-data test passes here for the engine's reason, not the validator's.
+ */
+class LenientDecompressionStream {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  constructor(format: 'deflate-raw') {
+    const real = new RealDecompressionStream(format);
+    const junk = (e: unknown) => (e as { code?: string })?.code === 'ERR_TRAILING_JUNK_AFTER_STREAM_END';
+    const w = real.writable.getWriter();
+    const r = real.readable.getReader();
+    let ended = false;
+    this.writable = new WritableStream({
+      write: (c) => (ended ? undefined : w.write(c).catch((e) => (junk(e) ? void (ended = true) : Promise.reject(e)))),
+      close: () => w.close().catch((e) => (junk(e) ? undefined : Promise.reject(e))),
+      abort: (e) => w.abort(e),
+    });
+    this.readable = new ReadableStream({
+      pull: async (ctl) => {
+        try {
+          const { done, value } = await r.read();
+          if (done) ctl.close();
+          else ctl.enqueue(value);
+        } catch (e) {
+          if (junk(e)) ctl.close();
+          else ctl.error(e);
+        }
+      },
+      cancel: (e) => r.cancel(e),
+    });
+  }
+}
+const RealDecompressionStream = globalThis.DecompressionStream;
+
+describe('round 1 — stored entries behind a data descriptor', () => {
+  it('MEASURED: jszip STORE + streamFiles writes bit 3 with ZERO local sizes (so this shape must stay accepted)', async () => {
+    const zip = await jszip({ 'a.png': new Uint8Array(PNG_HEAD) }, { compression: 'STORE', streamFiles: true });
+    const v = new DataView(zip);
+    expect(v.getUint16(8, true)).toBe(0); // stored
+    expect(v.getUint16(6, true) & 8).toBe(8); // data descriptor
+    expect([v.getUint32(18, true), v.getUint32(22, true)]).toEqual([0, 0]);
+    expect(refusal(zip)).toBe('ok');
+  });
+
+  const sig = (b2: number, b3: number) => new Uint8Array([0x61, 0x50, 0x4b, b2, b3, 0x62]);
+  it.each([
+    ['a data-descriptor signature', 0x07, 0x08, SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR],
+    ['a local-header signature', 0x03, 0x04, SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR],
+  ])('refuses stored + descriptor data that contains %s (a streaming reader could stop there)', (_n, b2, b3, error) => {
+    for (const descriptor of ['sig', 'nosig'] as const) {
+      expect(refusal(buildZip([{ name: 'a.png', data: sig(b2, b3), descriptor }]))).toBe(error);
+    }
+  });
+
+  it('CONTROL: the same bytes are accepted without a descriptor (the local header carries the size), and near misses pass', () => {
+    expect(refusal(buildZip([{ name: 'a.png', data: sig(0x07, 0x08) }]))).toBe('ok');
+    expect(refusal(buildZip([{ name: 'a.png', data: sig(0x03, 0x04) }]))).toBe('ok');
+    for (const [b2, b3] of [[0x07, 0x07], [0x03, 0x05], [0x05, 0x06], [0x01, 0x02]]) {
+      expect(refusal(buildZip([{ name: 'a.png', data: sig(b2!, b3!), descriptor: 'sig' }]))).toBe('ok');
+    }
+  });
+
+  it('a signature split ACROSS the end of the data is not inside the data (no false refusal)', () => {
+    // `...P K` at the very end, the descriptor's own `PK\x07\x08` right after: only 2 of 4 bytes are data.
+    expect(refusal(buildZip([{ name: 'a.png', data: new Uint8Array([1, 2, 0x50, 0x4b]), descriptor: 'nosig' }]))).toBe('ok');
+  });
+});
+
+describe('round 1 — CRC-32', () => {
+  it('refuses a STORED entry whose data does not match its CRC (central and local agree on the wrong one)', () => {
+    expect(refusal(buildZip([{ ...file('a.txt', 'hello'), crc: crc32(enc.encode('hellp')) }]))).toBe(
+      SAVE_ZIP_CRC_ERROR
+    );
+    // CONTROL: the real CRC is accepted, and a REAL jszip stored zip (its own CRCs) passes.
+    expect(refusal(buildZip([{ ...file('a.txt', 'hello'), crc: crc32(enc.encode('hello')) }]))).toBe('ok');
+  });
+
+  it('refuses a DEFLATED entry that inflates to the right SIZE but the wrong bytes', async () => {
+    const zip = buildZip([{ ...deflated('a.txt', enc.encode('hellp')), crc: crc32(enc.encode('hello')) }]);
+    const v = validateSaveZip(zip);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(await verifySaveZipInflate(zip, v.deflated)).toBe(SAVE_ZIP_CRC_ERROR);
+    // CONTROL: the right CRC passes the same path.
+    const good = buildZip([deflated('a.txt', enc.encode('hellp'))]);
+    const g = validateSaveZip(good);
+    expect(g.ok && (await verifySaveZipInflate(good, g.deflated))).toBeNull();
+  });
+});
+
+describe('round 1 — bytes after the deflate end-of-stream, on an engine that does not throw on them', () => {
+  const withLenientEngine = async <T,>(fn: () => Promise<T>) => {
+    (globalThis as { DecompressionStream: unknown }).DecompressionStream = LenientDecompressionStream;
+    try {
+      return await fn();
+    } finally {
+      (globalThis as { DecompressionStream: unknown }).DecompressionStream = RealDecompressionStream;
+    }
+  };
+
+  it('POSITIVE CONTROL: the lenient engine really does inflate trailing junk without an error', async () => {
+    const data = new Uint8Array([...deflateRawSync(enc.encode('hello')), 0x50, 0x4b, 0x03, 0x04]);
+    const out = await withLenientEngine(async () => {
+      const ds = new DecompressionStream('deflate-raw');
+      const w = ds.writable.getWriter();
+      void w.write(data).then(() => w.close());
+      return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+    });
+    expect(new TextDecoder().decode(out)).toBe('hello');
+  });
+
+  it('refuses a deflated entry with bytes after its end-of-stream marker, inside compressedSize', async () => {
+    const plain = enc.encode('hello');
+    const data = new Uint8Array([...deflateRawSync(plain), 0x50, 0x4b, 0x03, 0x04, 9, 9]);
+    const zip = buildZip([{ name: 'a.txt', method: 8, data, size: plain.length, plain }]);
+    const v = validateSaveZip(zip);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(await withLenientEngine(() => verifySaveZipInflate(zip, v.deflated))).toBe(SAVE_ZIP_INFLATE_TRAILING_ERROR);
+  });
+
+  it('CONTROL: an exact deflate stream (and a real jszip DEFLATE dataset) passes on the lenient engine too', async () => {
+    const zip = await jszip(DATASET, { compression: 'DEFLATE' });
+    const v = validateSaveZip(zip);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(await withLenientEngine(() => verifySaveZipInflate(zip, v.deflated))).toBeNull();
+  });
+});
+
+describe('round 1 — extra fields are an ALLOW-list', () => {
+  it.each([
+    ['0x5455', 'extended timestamp'],
+    ['0x000a', 'NTFS times'],
+    ['0x7875', 'Info-ZIP Unix UID/GID'],
+  ])('accepts %s (%s) in both headers', (hex) => {
+    const x = extraField(Number(hex), [1, 2, 3, 4, 5]);
+    expect(refusal(buildZip([{ ...file('a.txt'), extra: x, localExtra: x }]))).toBe('ok');
+  });
+
+  it.each([
+    ['0x000d', 'PKWARE Unix (mode / link target)'],
+    ['0x6c78', 'Info-ZIP symlink-ish'],
+    ['0x5855', 'Info-ZIP Unix (old)'],
+    ['0x9999', 'unknown'],
+  ])('refuses %s (%s) in the central header, and in the local header', (hex) => {
+    const id = Number(hex);
+    const x = extraField(id);
+    expect(refusal(buildZip([{ ...file('a.txt'), extra: x }]))).toBe(saveZipExtraFieldError(id));
+    expect(refusal(buildZip([{ ...file('a.txt'), localExtra: x }]))).toBe(saveZipExtraFieldError(id));
+  });
+
+  it('names the field in hex', () => {
+    expect(saveZipExtraFieldError(0x000d)).toBe('zip extra field is not allowed: 0x000d');
+  });
+});
+
+describe('round 1 — names', () => {
+  it('refuses a name that STARTS with a byte-order mark (the decoder must not strip it)', () => {
+    expect(refusal(buildZip([{ ...file('x'), name: '﻿a.txt', flags: 1 << 11 }]))).toBe(SAVE_ZIP_CONTROL_CHAR_ERROR);
+    // and in a later segment (never stripped, so this was refused before too — control)
+    expect(refusal(buildZip([{ ...file('x'), name: 'd/﻿a.txt', flags: 1 << 11 }]))).toBe(SAVE_ZIP_CONTROL_CHAR_ERROR);
+  });
+
+  it.each(['a.txt ', 'a.txt.', 'dir./a.txt', 'dir /a.txt', '.../a.txt', ' /a.txt', '. ./a.txt', 'trailing-dot.png.'])(
+    'refuses %j (Windows drops a trailing dot or space, so it collides with another name)',
+    (name) => {
+      expect(refusal(buildZip([{ ...file('x'), name }]))).toBe(SAVE_ZIP_SEGMENT_DOT_SPACE_ERROR);
+    }
+  );
+
+  it('CONTROL: dots and spaces INSIDE a segment are fine', () => {
+    expect(refusal(buildZip([{ ...file('x'), name: 'my set/a b.c.txt' }, { ...file('y'), name: '.hidden/x.txt' }]))).toBe('ok');
+  });
+});
+
 describe('error strings', () => {
   it('every zip refusal string is distinct (so a reply names exactly one guard)', () => {
     const all = [
@@ -1007,8 +1204,14 @@ describe('error strings', () => {
       SAVE_ZIP_TOTAL_SIZE_ERROR,
       SAVE_ZIP_TRAVERSAL_ERROR,
       SAVE_ZIP_TRUNCATED_ERROR,
+      SAVE_ZIP_CRC_ERROR,
+      SAVE_ZIP_INFLATE_TRAILING_ERROR,
+      SAVE_ZIP_SEGMENT_DOT_SPACE_ERROR,
+      SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR,
+      SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR,
       saveZipEntryTypeError('exe'),
       saveZipMethodError(12),
+      saveZipExtraFieldError(0x000d),
     ];
     expect(new Set(all).size).toBe(all.length);
     expect(saveZipEntryTypeError('exe')).toBe('zip entry type is not allowed: exe');
