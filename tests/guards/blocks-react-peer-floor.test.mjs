@@ -327,6 +327,24 @@ const PEER_VALUE_SYMBOL_SINCE = {
   // control (0.56.1 on 2026-10-04 — read the registry rather than trusting
   // that), and record both here.
   fetchNestedDocument: '0.57.0',
+  // 🔴 PREDICTED, 2026-11-10 — civitai-app-starters#815 moves the SAVE_IMAGE zip
+  // validator out of `blocks-react/src/internal/saveZip.ts` (a copy of the
+  // civitai.com host's) into the new `@civitai/app-sdk/save-zip` subpath, so the
+  // host and `createMockHost` import ONE copy. `internal/saveBytes.ts` (reached
+  // from the MAIN entry through `useSaveImage`) and `internal/mockHost.ts` value-
+  // import these five. They ship for the first time in the app-sdk minor that
+  // branch's changeset publishes: in-tree app-sdk 0.84.0 + `minor` = 0.85.0, and
+  // `src/save-zip/` is ADDED by that branch, so no published version can carry
+  // them. Cross-checked on the registry the same day: `npm view @civitai/app-sdk
+  // version` = 0.84.0, and its `exports` (11 keys) have no `./save-zip`, while
+  // `./blocks` IS present (positive control — the read sees the exports map).
+  // Listed in PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH below; the subpath rides the
+  // same release in PEER_SUBPATH_SINCE.
+  SAVE_ZIP_INFLATE_ERROR: '0.85.0',
+  SAVE_ZIP_MAX_BYTES: '0.85.0',
+  looksLikeSaveZip: '0.85.0',
+  validateSaveZip: '0.85.0',
+  verifySaveZipInflate: '0.85.0',
 };
 
 /**
@@ -465,7 +483,17 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` stays at `0.57.0`
 // and the floor stays at `>=0.57.0` — step 4, "leave it alone if the
 // measurement agrees". Nothing here is owed.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
+// POPULATED AGAIN 2026-11-10 by civitai-app-starters#815 (the zip validator move;
+// see the `SAVE_ZIP_*` entries above). Retire on the Version Packages PR that
+// releases app-sdk 0.85.0, per `PREDICTION HAS COME TRUE`: empty the list, leave
+// the floor, re-read the five off the real tarball with 0.84.0 as the ABSENT row.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [
+  'SAVE_ZIP_INFLATE_ERROR',
+  'SAVE_ZIP_MAX_BYTES',
+  'looksLikeSaveZip',
+  'validateSaveZip',
+  'verifySaveZipInflate',
+];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`
@@ -484,6 +512,8 @@ const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 const PEER_SUBPATH_SINCE = {
   '@civitai/app-sdk/blocks': '0.6.0',
   '@civitai/app-sdk/safe-storage': '0.27.0',
+  // PREDICTED with the five SAVE_ZIP_* symbols above (#815): new in app-sdk 0.85.0.
+  '@civitai/app-sdk/save-zip': '0.85.0',
 };
 
 const readJson = (rel) => JSON.parse(readFileSync(join(REPO_ROOT, rel), 'utf8'));

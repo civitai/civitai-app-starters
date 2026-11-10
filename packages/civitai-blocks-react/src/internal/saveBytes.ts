@@ -9,7 +9,12 @@
  * block that GIFs save.
  */
 
-import { looksLikeSaveZip, SAVE_ZIP_MAX_BYTES, validateSaveZip, type SaveZipDeflatedEntry } from './saveZip.js';
+import {
+  looksLikeSaveZip,
+  SAVE_ZIP_MAX_BYTES,
+  validateSaveZip,
+  type SaveZipDeflatedEntry,
+} from '@civitai/app-sdk/save-zip';
 
 /**
  * The cap on a `bytes` payload: 50 MiB of raw bytes (`ArrayBuffer.byteLength`,
@@ -19,15 +24,16 @@ import { looksLikeSaveZip, SAVE_ZIP_MAX_BYTES, validateSaveZip, type SaveZipDefl
  * `saveImageDownload.ts`), and the two MUST match. Nothing in this repository
  * can read the host's value, so a drift is invisible here until a block hits
  * the host's refusal on a buffer this hook let through, or the hook refuses one
- * the host would have saved. Kept local to this package (not exported from
- * `@civitai/app-sdk`) so the hook needs no newer app-sdk peer.
+ * the host would have saved. (The zip cap below has no such copy: it comes from
+ * `@civitai/app-sdk/save-zip`, which the host imports too.)
  */
 export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * The cap on a `bytes` payload that STARTS like a zip (a local file header at
- * byte 0, or an empty archive): 256 MiB. Same 🔴 as {@link SAVE_BYTES_MAX_BYTES}:
- * the host spells its own copy (`SAVE_BYTES_ZIP_MAX_BYTES`) and they must match.
+ * byte 0, or an empty archive): 256 MiB. Not a copy — it IS the validator's own
+ * `SAVE_ZIP_MAX_BYTES`, from `@civitai/app-sdk/save-zip`, the module the host
+ * imports too.
  */
 export const SAVE_BYTES_ZIP_MAX_BYTES = SAVE_ZIP_MAX_BYTES;
 
@@ -130,8 +136,8 @@ export function sniffImageBytes(view: Uint8Array): SniffedImageType | null {
  * Classify a `bytes` payload by CONTENT, with the refusal reason — the host's
  * `classifySaveBytesContent`: an image by magic bytes first (so a PNG with a zip
  * appended is a PNG); then a buffer that STARTS like a zip must pass the zip
- * validator (./saveZip.ts, a copy of the host's) and is refused with the zip's
- * own reason otherwise; then text.
+ * validator (`@civitai/app-sdk/save-zip`, the module the host imports) and is
+ * refused with the zip's own reason otherwise; then text.
  */
 export function classifySaveBytesContent(
   bytes: ArrayBuffer,
@@ -141,36 +147,32 @@ export function classifySaveBytesContent(
   | { ok: true; type: 'application/zip'; deflated: SaveZipDeflatedEntry[] }
   | { ok: false; error: string } {
   const view = new Uint8Array(bytes);
-  if (!sniffImageBytes(view) && looksLikeSaveZip(view)) {
+  const image = sniffImageBytes(view);
+  if (image) return { ok: true, type: image };
+  if (looksLikeSaveZip(view)) {
     const zip = validateSaveZip(bytes);
     if (!zip.ok) return zip;
     return { ok: true, type: 'application/zip', deflated: zip.deflated };
   }
-  const type = classifySaveBytes(bytes, filename);
-  if (!type || type === 'application/zip') return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
-  return { ok: true, type };
+  const text = classifySaveBytesText(view, filename);
+  return text ? { ok: true, type: text } : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
 }
 
 /**
- * Classify a `bytes` payload by CONTENT — the host's `classifySaveBytes`.
- * `filename` is the only hint and must already be CLEANED
- * ({@link sanitizeSaveBytesFilename}): a name ending `.json` (case-insensitive)
- * chooses JSON over text/plain for bytes that already parse as JSON, and it can
- * never make a binary payload acceptable. Returns `null` for anything the host
- * refuses (`file type is not allowed`).
+ * The text step of {@link classifySaveBytesContent} — the host's
+ * `classifySaveBytesText`. `filename` is the only hint and must already be
+ * CLEANED ({@link sanitizeSaveBytesFilename}): a name ending `.json`
+ * (case-insensitive) chooses JSON over text/plain for bytes that already parse
+ * as JSON, and it can never make a binary payload acceptable. `null` = not text
+ * (`file type is not allowed`).
  */
-export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
-  const view = new Uint8Array(bytes);
-  const image = sniffImageBytes(view);
-  if (image) return image;
-  if (looksLikeSaveZip(view)) return validateSaveZip(bytes).ok ? 'application/zip' : null;
-
+function classifySaveBytesText(view: Uint8Array, filename: string): 'application/json' | 'text/plain' | null {
   if (view.includes(0)) return null;
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(view);
   } catch {
-    return null; // not valid UTF-8 — random binary, a GIF, a zip, …
+    return null; // not valid UTF-8 — random binary, a GIF, …
   }
   if (filename.toLowerCase().endsWith('.json')) {
     try {

@@ -98,7 +98,7 @@ const ROWS: Row[] = [
   { name: 'meta.json + ZWSP is text', bytes: JSON_TEXT, filename: 'meta.json\u200b', expected: ok('text/plain', 'meta.txt') },
   { name: 'meta.json + trailing spaces is JSON (trimmed first)', bytes: JSON_TEXT, filename: 'meta.json  ', expected: ok('application/json', 'meta.json') },
   { name: 'path ending .json is cut to its last segment', bytes: JSON_TEXT, filename: 'a.json/b', expected: ok('text/plain', 'b.txt') },
-  // zip — host saveZipValidate.test.ts cases
+  // zip — cases from the validator's own suite (@civitai/app-sdk test/save-zip.test.ts)
   { name: 'zip dataset, named .zip', bytes: DATASET_ZIP, filename: 'dataset.zip', expected: okZip('dataset.zip') },
   { name: 'zip named .png is still .zip', bytes: DATASET_ZIP, filename: 'dataset.png', expected: okZip('dataset.zip') },
   { name: 'zip with traversal in the filename', bytes: DATASET_ZIP, filename: '../../evil.exe', expected: okZip('evil.zip') },

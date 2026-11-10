@@ -33,12 +33,13 @@ pnpm add @civitai/app-sdk
 | `blocks/*` — `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic and **zero runtime dependencies** — no React, no DOM types, nothing in your install graph. Hooks and the iframe transport live in a separate package. |
 | `manifest/*` — `defineBlock`, `SCHEMA_DIVERGENCES`, `KNOWN_GAPS` (**Node only**) | Build-time manifest validation. `defineBlock(config)` compiles the vendored canonical schema with [Ajv](https://ajv.js.org) and validates a `BlockManifestV1` against it, so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. It is **derived from the schema, not a hand-written mirror of it** — that mirror is what produced [#330](https://github.com/civitai/civitai-app-starters/issues/330). Needs `node:fs` and the optional peer `ajv`, which is why it is not on the browser-facing `./blocks` surface. |
 | `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. On the dev server only, it also exposes the manifest's `scopes` + `storage` to `@civitai/sdk` for a dev-tunnel local preview. Optional peers: `ajv` (runtime) and `vite` (types only). |
+| `save-zip/*` — `validateSaveZip`, `verifySaveZipInflate`, `looksLikeSaveZip`, `SAVE_ZIP_MAX_BYTES`, `SAVE_ZIP_LIMITS`, `SAVE_ZIP_ALLOWED_EXTENSIONS`, the `SAVE_ZIP_*_ERROR` strings | The `.zip` validator behind `SAVE_IMAGE { bytes }` — the ONE copy: the civitai.com host runs it before it starts a download, and `@civitai/blocks-react`'s `createMockHost` imports it, so a block's tests accept and refuse the zips production does. Structure (local headers, central directory and EOCD laid end to end, cross-checked), entry names and types, declared sizes, then an inflate check (`DecompressionStream`). The rules an app author needs are in `@civitai/blocks-react`'s README under `useSaveImage()`. Dependency-free, browser and Node. |
 
 ## Entry points, and what the root barrel is
 
 The root — `import … from '@civitai/app-sdk'` — is **exactly the union of four subpaths**: `@civitai/app-sdk/oauth`, `/scopes`, `/cookies` and `/orchestrator`. All of each, and nothing else. Import from the root when you want the OAuth-app surface in one specifier; import a subpath when you want only that slice. The two are the same symbols either way, which is asserted in both directions by `test/export-surface.test.ts` — the root cannot quietly gain a symbol none of those four exports, or miss one they do.
 
-The other five subpaths are **deliberately not on the root**, each for a concrete cost it would push onto every consumer:
+The other six subpaths are **deliberately not on the root**, each for a concrete cost it would push onto every consumer:
 
 | Subpath | Why it is not on the root |
 |---|---|
@@ -47,6 +48,7 @@ The other five subpaths are **deliberately not on the root**, each for a concret
 | `@civitai/app-sdk/orchestrator/steps` | Type-only, and its declarations name `@civitai/client` — an **optional** peer that the root would make mandatory for everyone. |
 | `@civitai/app-sdk/manifest` | **Node only** — needs `node:fs` and the optional peer `ajv`. |
 | `@civitai/app-sdk/vite` | **Node only** — optional peers `ajv` (runtime) and `vite` (types). |
+| `@civitai/app-sdk/save-zip` | The host's `SAVE_IMAGE` zip validator, shared by the civitai.com host and `@civitai/blocks-react`'s `createMockHost`. An OAuth app never needs it. |
 
 > One name is declared twice on purpose: `BuzzAccountType` is the full set of Civitai Buzz pools on the root and `/oauth`, and a narrower three-pool union on `/blocks` — a block can neither prefer nor read the others. Same name, two subpaths, two types; the divergence is pinned rather than merged.
 

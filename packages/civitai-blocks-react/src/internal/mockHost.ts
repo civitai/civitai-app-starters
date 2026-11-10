@@ -86,6 +86,7 @@ import {
   type WorkflowBody,
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
+import { SAVE_ZIP_INFLATE_ERROR, verifySaveZipInflate } from '@civitai/app-sdk/save-zip';
 
 import {
   consentUnavailablePayload,
@@ -112,7 +113,6 @@ import {
   prepareSaveBytes,
   saveImageRequestKind,
 } from './saveBytes.js';
-import { SAVE_ZIP_INFLATE_ERROR, verifySaveZipInflate } from './saveZip.js';
 import {
   UPLOAD_BYTES_INVALID_ERROR,
   admitUploadBytes,
@@ -5558,7 +5558,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               };
               if (prepared.deflated) {
                 // A zip: the host inflates every deflated entry and refuses one that does not
-                // yield exactly its declared size, BEFORE the download (./saveZip.ts).
+                // yield exactly its declared size, BEFORE the download (@civitai/app-sdk/save-zip,
+                // the same module the host runs).
                 const deflated = prepared.deflated;
                 void verifySaveZipInflate(bytes, deflated).then(
                   (error) => (error ? saveReply({ ok: false, error }) : accept()),

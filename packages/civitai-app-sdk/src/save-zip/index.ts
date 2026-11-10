@@ -1,12 +1,14 @@
-/*
- * 🔴 A COPY of the host's zip validator: civitai/civitai
- * `src/components/AppBlocks/saveZipValidate.ts` at 630c993f81 (civitai/civitai#8420), byte for byte
- * below this comment. It exists so `createMockHost` accepts and refuses the same zips production
- * does. Change it only together with the host, and keep test/saveBytesParity.test.ts green.
- */
-
 /**
- * App Blocks `SAVE_IMAGE { bytes }` — the `.zip` validator (host side, top frame).
+ * `@civitai/app-sdk/save-zip` — the App Blocks `SAVE_IMAGE { bytes }` `.zip` validator.
+ *
+ * 🔴 THE ONE COPY. The civitai.com host (top frame, before it starts the download) and
+ * `@civitai/blocks-react`'s `createMockHost` both import this module, so the mock accepts and
+ * refuses exactly the zips production does. There is no second copy to keep in step: change the
+ * rules here, release, and bump the host's `@civitai/app-sdk` dependency.
+ *
+ * Runtime-agnostic and dependency-free: plain `DataView` / `Uint8Array` / `TextDecoder`, plus
+ * `DecompressionStream('deflate-raw')` for {@link verifySaveZipInflate} only (every current
+ * browser, Node >= 18). No `node:` import, so it is safe in a browser bundle.
  *
  * An app can save a zip (e.g. an image dataset plus caption files) through the host save path; it
  * gets no `allow-downloads` / `allow-popups` sandbox token for it. A zip is recognised by its

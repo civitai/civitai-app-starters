@@ -2732,6 +2732,12 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   archive — e.g. JSZip `generateAsync({ type: 'arraybuffer' })`, stored or
   `DEFLATE`, with or without `streamFiles`.
 
+  The validator is `@civitai/app-sdk/save-zip`, and it is the same module in
+  both places: the host runs it and `createMockHost` imports it, so your tests
+  accept and refuse the zips the host does (the host pins its own
+  `@civitai/app-sdk` release). That import is why this package needs
+  `@civitai/app-sdk` 0.85.0 or later.
+
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
 with `invalid save-image request`.** The host also replies that when the input
 is not exactly one variant, or when `bytes` is empty or not an `ArrayBuffer`.

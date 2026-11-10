@@ -12,7 +12,44 @@ half of that lives in [`tests/guards/blocks-react-peer-floor.test.mjs`](../../te
 — `PEER_VALUE_SYMBOL_SINCE`, `PEER_SUBPATH_SINCE`, and the assertions over them.
 This file is the prose half: why the number is what it is, and how to move it.
 
-Declared today: `">=0.57.0 <1.0.0"`.
+Declared today: `">=0.85.0 <1.0.0"`.
+
+---
+
+## 🔴 RAISED 0.57.0 → 0.85.0 (the seventh time), 2026-11-10 — the zip validator moved into app-sdk
+
+`internal/saveBytes.ts` and `internal/mockHost.ts` value-import five symbols from
+the NEW subpath `@civitai/app-sdk/save-zip`: `looksLikeSaveZip`,
+`SAVE_ZIP_MAX_BYTES`, `validateSaveZip`, `verifySaveZipInflate` and
+`SAVE_ZIP_INFLATE_ERROR` (civitai-app-starters#815).
+
+Why it was needed at all: `SAVE_IMAGE { bytes }` can save a validated `.zip`,
+and the validator existed twice — the civitai.com host's and a byte-for-byte copy
+in `internal/saveZip.ts` for `createMockHost`. Two copies of a security
+validator drift silently, so the operator's call was ONE copy, in the published
+app-sdk, imported by both. That copy is deleted.
+
+🔴 **The blast radius is the MAIN entry, not just `./testing`.** `saveBytes.ts`
+is reached from `useSaveImage` (the hook's pre-send cap check calls
+`looksLikeSaveZip`), so against app-sdk `0.84.0` or older
+`import '@civitai/blocks-react'` itself fails with
+`ERR_PACKAGE_PATH_NOT_EXPORTED` for `./save-zip`. That is why the floor jumps
+28 minors at once: nothing between `0.57.0` and `0.84.0` has the subpath.
+
+**`0.85.0` is a PREDICTION, pinned as one** — `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`
+plus the `PREDICTED ENTRY` test, as before. Derived from the release plan:
+in-tree app-sdk `0.84.0`; this branch's changeset bumps app-sdk `minor`; the
+only other pending changeset on `main` (`sdk-legacy-stores-removed-docs.md`)
+bumps `@civitai/sdk` alone. Measured, not predicted: `src/save-zip/` is ADDED by
+this branch, so no published version can carry the subpath, and the registry
+agreed on 2026-11-10 — `npm view @civitai/app-sdk version` = `0.84.0`, whose
+`exports` (11 keys) have no `./save-zip` while `./blocks` is present (positive
+control).
+
+🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
+`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the five symbols and the
+subpath off the real `0.85.0` tarball with `0.84.0` as the ABSENT control, and
+record both here. Leave the floor where it is if they agree.
 
 ---
 

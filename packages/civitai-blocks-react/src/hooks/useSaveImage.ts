@@ -33,14 +33,11 @@ import { useTransportConnection } from './useTransportConnection.js';
  *    (case-insensitive) after the host replaces each `?` and `#` with `_` (so
  *    `data.json?v=2` saves as text), else as text/plain. A `.zip` is recognised
  *    by its structure (it must START with a zip local header — not a filename)
- *    and saved as `application/zip` only if the host's validator accepts every
- *    entry: names ending .png / .jpg / .jpeg / .webp / .txt / .json / .csv (or
- *    folders), no absolute / `..` / backslash / drive-letter / control-character
- *    paths, no duplicates, stored or deflate only, not encrypted, not zip64, no
- *    archive comment, at most 10,000 entries and 1 GiB uncompressed, and every
- *    deflated entry must inflate to exactly its declared size. A refused zip
- *    rejects with the specific reason (e.g. `zip entry type is not allowed: exe`).
- *    Anything else — a GIF, random binary — is refused with
+ *    and saved as `application/zip` only if the host's validator
+ *    (`@civitai/app-sdk/save-zip`) accepts it; a refused zip rejects with the
+ *    specific reason (e.g. `zip entry type is not allowed: exe`). The rules are
+ *    listed once, in this package's README: `useSaveImage()`, "`{ bytes }`
+ *    holding a `.zip`". Anything else — a GIF, random binary — is refused with
  *    `file type is not allowed`, and an empty buffer with
  *    `invalid save-image request`. The saved extension is forced from the
  *    classified type, whatever `filename` says. The cap is 50 MiB of raw bytes,

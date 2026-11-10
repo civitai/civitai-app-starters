@@ -43,6 +43,19 @@ await check('@civitai/app-sdk/vite resolves and exports blockManifestPlugin', as
   assert.equal(mod.blockManifestPlugin().name, 'civitai-block-manifest');
 });
 
+// The zip validator's consumers (the civitai.com host, @civitai/blocks-react) import it BY
+// SPECIFIER, so a typo in `exports` or an unemitted dist file breaks them with every test here
+// green. Runs it once on the 22-byte empty archive, which it must refuse with its own reason.
+await check('@civitai/app-sdk/save-zip resolves and its validator runs', async () => {
+  const mod = await import('@civitai/app-sdk/save-zip');
+  assert.equal(typeof mod.validateSaveZip, 'function');
+  assert.equal(typeof mod.verifySaveZipInflate, 'function');
+  const empty = new Uint8Array(22);
+  new DataView(empty.buffer).setUint32(0, 0x06054b50, true);
+  assert.equal(mod.looksLikeSaveZip(empty), true);
+  assert.deepEqual(mod.validateSaveZip(empty.buffer), { ok: false, error: mod.SAVE_ZIP_EMPTY_ERROR });
+});
+
 await check('the vendored schema is reachable from dist/ (defineBlock actually runs)', async () => {
   const { defineBlock } = await import('@civitai/app-sdk/manifest');
   const manifest = {
