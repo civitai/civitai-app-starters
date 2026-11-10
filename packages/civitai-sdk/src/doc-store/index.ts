@@ -779,7 +779,13 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         },
 
         update: (async (key: string, op: StorageUpdateOp, { signal }: DocumentCallOptions = {}) => {
-          const reply = await patch(key, op, signal);
+          // NEGATIVE CONTROL N2: update's $inc calls the old POST …/counters/:name route.
+          const inc = isRecord(op) && isRecord(op.$inc) ? Object.entries(op.$inc)[0] : undefined;
+          const reply = inc
+            ? await authoring(signal, () =>
+                call<unknown>('POST', `${docPath(key)}/counters/${segment('counter', inc[0])}`, { query: q(), body: { by: inc[1] }, signal }),
+              )
+            : await patch(key, op, signal);
           // The reply is the one the operator gives. The operator is sent as the caller
           // wrote it, so a body that is not one operator is the server's to refuse (with
           // a `details.reason`) and never reaches this line.
@@ -805,9 +811,8 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
         },
 
         async mark(key, markName, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
-          );
+          // NEGATIVE CONTROL N1: deprecated mark sent over PATCH. Reverted by the next commit.
+          const reply = await patch(key, { $mark: markName }, signal);
           return toMarkResult(reply, true, `${name}.mark`);
         },
 
