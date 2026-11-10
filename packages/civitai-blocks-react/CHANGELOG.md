@@ -1,5 +1,15 @@
 # @civitai/blocks-react
 
+## 0.80.0
+
+### Minor Changes
+
+- 4cc9e40: `useSaveImage({ bytes })` can save a `.zip` (e.g. an image dataset with caption files): a buffer that starts like a zip is held to a 256 MiB cap instead of 50 MiB before sending, and the host validates the archive (entry types png/jpg/jpeg/webp/txt/json/csv, safe paths, UTF-8 names as JSZip writes them, no duplicates, stored or deflate, matching CRC-32s, an allow-list of extra fields, no encryption or zip64, at most 10,000 entries and 1 GiB uncompressed) and saves it as `<name>.zip`. `createMockHost` runs the same validator and reports `application/zip` through `onSaveBytes`. **Build zips with `DEFLATE`** (JSZip `compression: 'DEFLATE'`), **or without `streamFiles` if entries are stored uncompressed.** An uncompressed entry written with `streamFiles` has no size in its header, so it is refused if its bytes contain a zip header signature (`PK\x03\x04` / `PK\x07\x08`) — which random image data does in roughly 1 in 8 files of 256 MiB; the refusal says the same (`… save it with DEFLATE or without streamFiles`). Behavior change: a `bytes` payload that STARTS with `PK\x03\x04` (or `PK\x05\x06`) is now handled as a zip — validated, and refused with the zip's reason if it is not a valid one — where before it was classified as text (and saved as `.txt` if it was valid UTF-8 without NUL). Needs a host with civitai/civitai#8420; an older host refuses a zip with `file type is not allowed` (or `file exceeds the maximum save size` over 50 MiB).
+
+  `@civitai/app-sdk`: new subpath `@civitai/app-sdk/save-zip` — the zip validator (`validateSaveZip`, `verifySaveZipInflate`, `looksLikeSaveZip`, `SAVE_ZIP_MAX_BYTES`, `SAVE_ZIP_LIMITS`, `SAVE_ZIP_ALLOWED_EXTENSIONS` and the `SAVE_ZIP_*_ERROR` strings). It is the one copy: the civitai.com host and `createMockHost` both import it. `verifySaveZipInflate(bytes, deflated, signal?)` takes an optional `AbortSignal` and rejects with `SaveZipVerifyAbortedError` when it fires (a caller's deadline, not a verdict on the zip); it feeds the inflater 16 KiB at a time (`SAVE_ZIP_INFLATE_SLICE_BYTES`), which bounds output produced past a lying entry's declared size. Dependency-free; needs `DecompressionStream` (browsers, Node >= 18) for the inflate check.
+
+  `@civitai/blocks-react`: the `@civitai/app-sdk` peer floor is unchanged (`>=0.57.0`), and `import '@civitai/blocks-react'` / `'@civitai/blocks-react/testing'` still load on any app-sdk it admits. Only `createMockHost`'s zip validation needs `@civitai/app-sdk` >= 0.85.0: it loads `@civitai/app-sdk/save-zip` on the first zip save, and on an older app-sdk that save rejects with `createMockHost validates a zip with @civitai/app-sdk/save-zip, which needs @civitai/app-sdk >= 0.85.0`.
+
 ## 0.79.0
 
 ### Minor Changes
@@ -853,15 +863,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                    single measurements on one machine.
+                                                                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                        single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2681,10 +2691,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                            after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                     @civitai/components  0.4.2                   — 1 copy
+                                                                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                              after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
