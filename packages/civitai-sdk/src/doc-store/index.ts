@@ -783,7 +783,14 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           // The reply is the one the operator gives. The operator is sent as the caller
           // wrote it, so a body that is not one operator is the server's to refuse (with
           // a `details.reason`) and never reaches this line.
-          const has = (field: string) => isRecord(op) && Object.prototype.hasOwnProperty.call(op, field);
+          //
+          // Read the operator from the body AS SENT, not from `op`: JSON drops a key whose
+          // value is `undefined`, and `?: never` admits `undefined` without
+          // `exactOptionalPropertyTypes`, so `{ $unmark: 'v', $mark: undefined }` puts only
+          // `$unmark` on the wire and must read the `$unmark` reply. The http layer sends
+          // `JSON.stringify(op)`; this is that same serialisation, read back.
+          const sent: unknown = op === undefined ? undefined : JSON.parse(JSON.stringify(op));
+          const has = (field: string) => isRecord(sent) && Object.prototype.hasOwnProperty.call(sent, field);
           if (has('$inc')) return toValueResult(reply, `${name}.update`);
           if (has('$mark')) return toMarkResult(reply, true, `${name}.update`);
           if (has('$unmark')) return toMarkResult(reply, false, `${name}.update`);
