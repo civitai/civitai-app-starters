@@ -73,9 +73,13 @@ export type {
   StorageErrorCode,
   StorageImportNotEligibleReason,
   StorageImportRefusal,
+  StorageIncrementOp,
   StorageIndexType,
   StorageInfo,
   StorageLimits,
+  StorageMarkOp,
+  StorageUnmarkOp,
+  StorageUpdateOp,
   StorageUsage,
   WriteOptions,
 } from './doc-store/index.js';

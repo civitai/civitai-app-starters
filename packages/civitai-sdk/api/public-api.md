@@ -754,6 +754,39 @@ export interface WriteOptions extends DocumentCallOptions {
     ifVersion?: number;
 }
 
+/**
+ * Add `by` to ONE declared counter: `{ $inc: { plays: 1 } }`. `by` is required (the
+ * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
+ * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
+ * naming two is refused `invalid_request` (`malformed_operator`).
+ */
+export interface StorageIncrementOp {
+    $inc: Record<string, number>;
+    $mark?: never;
+    $unmark?: never;
+}
+
+/** Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`. */
+export interface StorageMarkOp {
+    $mark: string;
+    $inc?: never;
+    $unmark?: never;
+}
+
+/** Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn. */
+export interface StorageUnmarkOp {
+    $unmark: string;
+    $inc?: never;
+    $mark?: never;
+}
+
+/**
+ * ONE update operator for {@link StorageCollection.update}. Each member forbids the
+ * other two, so a second operator is a type error, and an unknown one is an excess
+ * property.
+ */
+export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
     /** The document, or `null` when there is none (missing, hidden and absent read alike). */
     get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -770,9 +803,57 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     /** One page. Follow `nextCursor` with the same query for the next one. */
     list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
     /**
-     * Add `by` (the server's default when omitted) to a declared counter of a
-     * shared document. In a `write: "none"` collection the first increment of an
-     * absent key creates the document.
+     * Apply ONE update operator to a shared document — `PATCH …/:collection/:key` with
+     * the operator as the body. A tally never changes `data` or `version`.
+     *
+     * - `{ $inc: { [counter]: by } }` adds `by` to a declared counter and resolves
+     *   `{ value }`, the new total. In a `write: "none"` collection the first increment
+     *   of an absent key creates the document.
+     * - `{ $mark: name }` sets the viewer's mark (a declared mark, or the built-in
+     *   `report`) and resolves `{ marked: true, count }`. Idempotent. `count` is absent
+     *   for `report`, whose count is never exposed.
+     * - `{ $unmark: name }` removes it and resolves `{ marked: false, count }`.
+     *   Idempotent. A `report` cannot be withdrawn: the server refuses it
+     *   `invalid_request` (400) for every caller.
+     *
+     * A body the server cannot read as one operator is refused `invalid_request`, with
+     * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
+     * `merge_patch_unsupported` or `malformed_operator`).
+     *
+     * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
+     * deprecated methods below keep their own routes and do not.
+     *
+     * @example
+     * ```ts
+     * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
+     * await requests.update('r1', { $mark: 'vote' }); // { marked: true, count }
+     * await requests.update('r1', { $unmark: 'vote' }); // { marked: false, count }
+     * ```
+     */
+    update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{
+        value: number;
+    }>;
+    update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{
+        marked: true;
+        count?: number;
+    }>;
+    update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{
+        marked: false;
+        count?: number;
+    }>;
+    /** An operator chosen at run time; the reply is the one its operator gives. */
+    update(key: string, op: StorageUpdateOp, opts?: DocumentCallOptions): Promise<{
+        value: number;
+    } | {
+        marked: boolean;
+        count?: number;
+    }>;
+    /**
+     * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
+     * `write: "none"` collection the first increment of an absent key creates the
+     * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
+     *
+     * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
      */
     increment(key: string, counter: string, by?: number, opts?: DocumentCallOptions): Promise<{
         value: number;
@@ -780,7 +861,9 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     /**
      * Set the viewer's mark on a shared document — a declared mark, or the
      * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-     * never exposed.
+     * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
+     *
+     * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
      */
     mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
         marked: true;
@@ -788,7 +871,10 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     }>;
     /**
      * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
-     * server refuses it `invalid_request` (400) for every caller.
+     * server refuses it `invalid_request` (400) for every caller. Sends
+     * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
+     *
+     * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
      */
     unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
         marked: false;

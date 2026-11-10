@@ -97,6 +97,39 @@ export interface WriteOptions extends DocumentCallOptions {
   ifVersion?: number;
 }
 
+/**
+ * Add `by` to ONE declared counter: `{ $inc: { plays: 1 } }`. `by` is required (the
+ * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
+ * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
+ * naming two is refused `invalid_request` (`malformed_operator`).
+ */
+export interface StorageIncrementOp {
+  $inc: Record<string, number>;
+  $mark?: never;
+  $unmark?: never;
+}
+
+/** Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`. */
+export interface StorageMarkOp {
+  $mark: string;
+  $inc?: never;
+  $unmark?: never;
+}
+
+/** Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn. */
+export interface StorageUnmarkOp {
+  $unmark: string;
+  $inc?: never;
+  $mark?: never;
+}
+
+/**
+ * ONE update operator for {@link StorageCollection.update}. Each member forbids the
+ * other two, so a second operator is a type error, and an unknown one is an excess
+ * property.
+ */
+export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** The document, or `null` when there is none (missing, hidden and absent read alike). */
   get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -111,9 +144,48 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** One page. Follow `nextCursor` with the same query for the next one. */
   list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
   /**
-   * Add `by` (the server's default when omitted) to a declared counter of a
-   * shared document. In a `write: "none"` collection the first increment of an
-   * absent key creates the document.
+   * Apply ONE update operator to a shared document — `PATCH …/:collection/:key` with
+   * the operator as the body. A tally never changes `data` or `version`.
+   *
+   * - `{ $inc: { [counter]: by } }` adds `by` to a declared counter and resolves
+   *   `{ value }`, the new total. In a `write: "none"` collection the first increment
+   *   of an absent key creates the document.
+   * - `{ $mark: name }` sets the viewer's mark (a declared mark, or the built-in
+   *   `report`) and resolves `{ marked: true, count }`. Idempotent. `count` is absent
+   *   for `report`, whose count is never exposed.
+   * - `{ $unmark: name }` removes it and resolves `{ marked: false, count }`.
+   *   Idempotent. A `report` cannot be withdrawn: the server refuses it
+   *   `invalid_request` (400) for every caller.
+   *
+   * A body the server cannot read as one operator is refused `invalid_request`, with
+   * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
+   * `merge_patch_unsupported` or `malformed_operator`).
+   *
+   * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
+   * deprecated methods below keep their own routes and do not.
+   *
+   * @example
+   * ```ts
+   * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
+   * await requests.update('r1', { $mark: 'vote' }); // { marked: true, count }
+   * await requests.update('r1', { $unmark: 'vote' }); // { marked: false, count }
+   * ```
+   */
+  update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{ value: number }>;
+  update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
+  update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
+  /** An operator chosen at run time; the reply is the one its operator gives. */
+  update(
+    key: string,
+    op: StorageUpdateOp,
+    opts?: DocumentCallOptions,
+  ): Promise<{ value: number } | { marked: boolean; count?: number }>;
+  /**
+   * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
+   * `write: "none"` collection the first increment of an absent key creates the
+   * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
    */
   increment(
     key: string,
@@ -124,12 +196,17 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /**
    * Set the viewer's mark on a shared document — a declared mark, or the
    * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-   * never exposed.
+   * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
    */
   mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
   /**
    * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
-   * server refuses it `invalid_request` (400) for every caller.
+   * server refuses it `invalid_request` (400) for every caller. Sends
+   * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
+   *
+   * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
    */
   unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
 }
@@ -619,6 +696,10 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       const from = typeof options?.from === 'string' ? options.from : undefined;
       const authoring = <R>(signal: AbortSignal | undefined, attempt: () => Promise<R>) =>
         withSourcePublishGrant(ask, from, signal, attempt);
+      // `update`: ONE update operator, PATCHed onto the document. The counter or mark name
+      // travels in the body, so no URL rewrites it and none is refused here.
+      const patch = (key: string, op: unknown, signal: AbortSignal | undefined) =>
+        authoring(signal, () => call<unknown>('PATCH', docPath(key), { query: q(), body: op, signal }));
 
       return {
         async get(key, { signal } = {}) {
@@ -697,6 +778,27 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           return { items: reply.items.map((item) => doc(item, 'list')), nextCursor: reply.nextCursor };
         },
 
+        update: (async (key: string, op: StorageUpdateOp, { signal }: DocumentCallOptions = {}) => {
+          const reply = await patch(key, op, signal);
+          // The reply is the one the operator gives. The operator is sent as the caller
+          // wrote it, so a body that is not one operator is the server's to refuse (with
+          // a `details.reason`) and never reaches this line.
+          //
+          // Read the operator from the body AS SENT, not from `op`: JSON drops a key whose
+          // value is `undefined`, and `?: never` admits `undefined` without
+          // `exactOptionalPropertyTypes`, so `{ $unmark: 'v', $mark: undefined }` puts only
+          // `$unmark` on the wire and must read the `$unmark` reply. The http layer sends
+          // `JSON.stringify(op)`; this is that same serialisation, read back.
+          const sent: unknown = op === undefined ? undefined : JSON.parse(JSON.stringify(op));
+          const has = (field: string) => isRecord(sent) && Object.prototype.hasOwnProperty.call(sent, field);
+          if (has('$inc')) return toValueResult(reply, `${name}.update`);
+          if (has('$mark')) return toMarkResult(reply, true, `${name}.update`);
+          if (has('$unmark')) return toMarkResult(reply, false, `${name}.update`);
+          throw new CivitaiError(`storage ${name}.update: the server accepted a body with no update operator`);
+        }) as StorageCollection<T>['update'],
+
+        // The deprecated three: their pre-PR routes and request shapes, unchanged, so they
+        // do not depend on a civitai.com that serves PATCH. Only `update` sends PATCH.
         async increment(key, counter, by, { signal } = {}) {
           const reply = await authoring(signal, () =>
             call<{ value?: unknown }>(
@@ -706,10 +808,7 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
               { query: q(), body: by === undefined ? undefined : { by }, signal },
             ),
           );
-          if (typeof reply?.value !== 'number') {
-            throw new CivitaiError(`storage ${name}.increment: reply carried no \`value\``);
-          }
-          return { value: reply.value };
+          return toValueResult(reply, `${name}.increment`);
         },
 
         async mark(key, markName, { signal } = {}) {
@@ -785,6 +884,12 @@ function refuseInfoImport(opts: object): void {
       (opts as { from?: unknown }).from,
     );
   }
+}
+
+function toValueResult(reply: unknown, op: string): { value: number } {
+  const value = (reply as { value?: unknown } | null | undefined)?.value;
+  if (typeof value !== 'number') throw new CivitaiError(`storage ${op}: reply carried no \`value\``);
+  return { value };
 }
 
 function toMarkResult<M extends boolean>(

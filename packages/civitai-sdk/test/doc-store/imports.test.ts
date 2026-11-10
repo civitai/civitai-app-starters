@@ -91,9 +91,13 @@ const WIRE_DOC = {
 };
 
 describe('the client: `from` on every collection call', () => {
-  const answer = (method: string, path: string) => {
+  const answer = (method: string, path: string, opts: RequestOptions) => {
     if (path.includes('/counters/')) return { value: 3 };
     if (path.includes('/marks/')) return { marked: method === 'PUT', count: 1 };
+    if (method === 'PATCH') {
+      const op = opts.body as Record<string, unknown>;
+      return '$inc' in op ? { value: 3 } : { marked: '$mark' in op, count: 1 };
+    }
     if (path.startsWith('blocks/storage/_get/')) return { items: [WIRE_DOC] };
     if (method === 'DELETE') return { deleted: true };
     if (method === 'GET' && path === 'blocks/storage/notes') return { items: [], nextCursor: null };
@@ -102,7 +106,7 @@ describe('the client: `from` on every collection call', () => {
   const queryOf = (opts: RequestOptions) =>
     Object.fromEntries(Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined));
 
-  it('sends ?from=<blockId> on get, getMany, put, create, delete, list, increment, mark and unmark — path, verb and body unchanged', async () => {
+  it('sends ?from=<blockId> on get, getMany, put, create, delete, list, update, increment, mark and unmark — path, verb and body unchanged', async () => {
     const r = recorder(answer);
     const notes = r.storage.collection('notes', { from: PARENT });
     await notes.get('n1');
@@ -111,6 +115,7 @@ describe('the client: `from` on every collection call', () => {
     await notes.create({ text: 'c' });
     await notes.delete('n1', { ifVersion: 3 });
     await notes.list({ sort: '-updatedAt', limit: 5 });
+    await notes.update('n1', { $inc: { views: 4 } });
     await notes.increment('n1', 'views', 2);
     await notes.mark('n1', 'vote');
     await notes.unmark('n1', 'vote');
@@ -122,6 +127,7 @@ describe('the client: `from` on every collection call', () => {
       ['POST', 'blocks/storage/notes', { from: PARENT }, { data: { text: 'c' } }],
       ['DELETE', 'blocks/storage/notes/n1', { ifVersion: 3, from: PARENT }, undefined],
       ['GET', 'blocks/storage/notes', { sort: '-updatedAt', limit: 5, from: PARENT }, undefined],
+      ['PATCH', 'blocks/storage/notes/n1', { from: PARENT }, { $inc: { views: 4 } }],
       ['POST', 'blocks/storage/notes/n1/counters/views', { from: PARENT }, { by: 2 }],
       ['PUT', 'blocks/storage/notes/n1/marks/vote', { from: PARENT }, undefined],
       ['DELETE', 'blocks/storage/notes/n1/marks/vote', { from: PARENT }, undefined],
@@ -521,6 +527,7 @@ describe('the client: publish consent in the source — ask the host, then retry
     ['create', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'c' }), 'POST', `${BASE_URL}/board?from=${PARENT}`, { data: { t: 'c' } }, WIRE_DOC],
     ['put', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).put('b1', { t: 'p' }), 'PUT', `${BASE_URL}/board/b1?from=${PARENT}`, { data: { t: 'p' } }, WIRE_DOC],
     ['increment', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('tally', { from: PARENT }).increment('m1', 'plays', 4), 'POST', `${BASE_URL}/tally/m1/counters/plays?from=${PARENT}`, { by: 4 }, { value: 9 }],
+    ['update', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).update('b1', { $mark: 'vote' }), 'PATCH', `${BASE_URL}/board/b1?from=${PARENT}`, { $mark: 'vote' }, { marked: true, count: 6 }],
     ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'vote'), 'PUT', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: true, count: 5 }],
     ['unmark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).unmark('b1', 'vote'), 'DELETE', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: false, count: 4 }],
   ] as const;
