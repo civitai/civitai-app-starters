@@ -644,8 +644,9 @@ string other viewers will read in `title`/`body`, which the server moderates;
 
 ## Store sub-listings
 
-`app.subListings` publishes an item a viewer made in your app — a row they
-authored in [shared storage](#shared-storage) — as its **own App Store card**,
+`app.subListings` publishes an item a viewer made in your app — a document they
+authored in a `shared` [document-storage](#document-storage) collection whose
+`write` is `own` or `anyone` — as its **own App Store card**,
 under the viewer's name, badged "in ‹your app›". Three methods over
 `/api/v1/blocks/sub-listings/*`: `upsert`, `withdraw`, `mine`.
 
@@ -654,7 +655,7 @@ import { SubListingError } from '@civitai/sdk';
 
 try {
   const { id, status, pendingEdit } = await app.subListings.upsert({
-    itemKey: 'preset-7f3a',   // the key of the viewer's own shared-storage row
+    itemKey: 'preset-7f3a',   // the key of a document the viewer authored
     title: 'Moody film portraits',
     subPath: 'p/preset-7f3a', // opens /apps/run/<your-app-slug>/p/preset-7f3a
     tagline: null,            // a left-out optional is CLEARED: re-send what you want to keep
@@ -669,6 +670,16 @@ const { withdrawn } = await app.subListings.withdraw('preset-7f3a');
 const { items } = await app.subListings.mine(); // oldest first, with review status
 ```
 
+- **`itemKey` is the document's key, not its collection**, at most 64
+  characters. The server looks it up in every `shared` `own`/`anyone` collection
+  your approved manifest declares, in the production namespace only (a dev or
+  review document never resolves), so the key must be unique across those
+  collections: one held by two of them reads as not found (`item_not_found`), as
+  does a hidden or missing document, and a document someone else authored is
+  `not_your_item`. Deleting the document withdraws its card; a moderator hiding
+  it hides the card. An app whose approved manifest declares no such collection
+  is still on legacy [shared storage](#shared-storage): its keys resolve old
+  shared-storage rows, which can no longer be created.
 - **`upsert` replaces the whole item, it does not patch it.** An optional that is
   `null` or `undefined` is left out of the request, and the server stores a
   left-out optional as empty — so an edit that sends only `title` clears the
