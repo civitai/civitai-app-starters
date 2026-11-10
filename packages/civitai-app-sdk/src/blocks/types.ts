@@ -3006,6 +3006,40 @@ export type BlockStorageMigrationOp =
   | { op: 'acknowledge'; path: string; keyword: BlockStorageMigrationKeyword };
 
 /**
+ * RESERVED — civitai.com refuses this field until permission hooks are enabled,
+ * so do not declare it yet. A collection's permission hook: one ES module of the
+ * bundle whose default export decides, for every write to the collection,
+ * whether the write is allowed. It runs after the collection `schema` check,
+ * never instead of it. Mirrors the canonical schema's
+ * `$defs.storageCollectionHook`; this package adds no hook behaviour.
+ *
+ * Checked by the server, not by the schema: whether `file` is inside
+ * `outputDir`, whether it exists in the bundle with this `sha256`, its size (one
+ * self-contained module with no imports, at most 65536 bytes of UTF-8 text),
+ * and two collections pinning one file with different digests.
+ */
+export interface BlockStorageCollectionHook {
+  /**
+   * The hook's relative path in the submitted bundle, shipped verbatim (a
+   * committed source file, not a build output): `/`-separated segments, each
+   * starting with a letter, digit, `_` or `-` and then letters, digits, `_`, `.`
+   * or `-` (so no `.` or `..` segment, no hidden file, no leading `/`), ending
+   * `.js` or `.mjs`, at most 200 characters, with no `node_modules` segment.
+   * Pattern `^([A-Za-z0-9_-][A-Za-z0-9_.-]*\/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`.
+   */
+  file: string;
+  /**
+   * The SHA-256 of the file's bytes as 64 lowercase hex characters
+   * (`^[0-9a-f]{64}$`). Submit, the git-push path and approve each refuse a
+   * version whose file is missing or does not match it. One file used by several
+   * collections must be pinned with the same digest in each.
+   */
+  sha256: string;
+  /** The most milliseconds one call may take: an integer from 1 to 500. Omitted means 50. */
+  timeoutMs?: number;
+}
+
+/**
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
  * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
@@ -3030,6 +3064,8 @@ export interface BlockStoragePrivateCollectionDeclaration {
   schema?: BlockStorageCollectionSchema;
   /** See {@link BlockStorageSharedCollectionDeclaration.migrations}. */
   migrations?: BlockStorageMigrationOp[];
+  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.hook}. */
+  hook?: BlockStorageCollectionHook;
 }
 
 /**
@@ -3152,6 +3188,14 @@ export interface BlockStorageSharedCollectionDeclaration {
    * {@link BlockStorageMigrationOp}. Not allowed with `write` `'none'`.
    */
   migrations?: BlockStorageMigrationOp[];
+  /**
+   * RESERVED — civitai.com refuses this field until permission hooks are
+   * enabled, so do not declare it yet. A permission hook that decides, for every
+   * write to this collection, whether it is allowed — see
+   * {@link BlockStorageCollectionHook}. Allowed on every collection kind,
+   * private and shared alike.
+   */
+  hook?: BlockStorageCollectionHook;
 }
 
 /**

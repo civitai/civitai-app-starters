@@ -228,6 +228,7 @@ export type {
   BlockManifestV1,
   BlockSettings,
   BlockStorageCollectionDeclaration,
+  BlockStorageCollectionHook,
   BlockStorageCollectionSchema,
   BlockStorageDeclaration,
   BlockStorageImport,
