@@ -120,7 +120,8 @@ function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
  * // a file produced in the tab (classified by content host-side; page apps only):
  * await saveImage({ bytes: healedPng, filename: 'healed.png' });
  * // a dataset zip built in the tab (validated host-side; saved as dataset.zip):
- * await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer' }), filename: 'dataset.zip' });
+ * // DEFLATE, or stored without streamFiles (README: "Build the zip with DEFLATE"):
+ * await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }), filename: 'dataset.zip' });
  */
 export function useSaveImage(): UseSaveImage {
   useTransportConnection();

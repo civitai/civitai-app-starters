@@ -2712,6 +2712,17 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   and always saved as `<name>.zip`, whatever `filename` says. The host checks
   the whole archive before it starts the download, and refuses it with a
   specific reason (such as `zip entry type is not allowed: exe`) unless:
+
+  > 🔴 **Build the zip with `DEFLATE`** — JSZip
+  > `generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })` — **or, if
+  > you store entries uncompressed, without `streamFiles`.** An uncompressed
+  > entry written with `streamFiles: true` has no size in its header, so a
+  > streaming extractor finds its end by looking for the next zip header; the
+  > host therefore refuses such an entry if its bytes happen to contain a zip
+  > header signature (`PK\x03\x04` or `PK\x07\x08`). Random image data does
+  > that by chance in roughly **1 in 8 files of 256 MiB**, so a large stored +
+  > streamed dataset can be refused at random. `DEFLATE`, or stored without
+  > `streamFiles`, is never affected.
   - every entry is a folder or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.txt`,
     `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
   - no entry name is absolute, has a `..`, `.` or empty segment, a segment
@@ -2727,9 +2738,8 @@ Pass exactly ONE of three inputs, each gated differently by the host:
     (`0x7875`) or the Unicode Path field above — anything else (e.g. `0x000d`
     Unix mode / link) is refused;
   - a STORED entry written with a data descriptor (JSZip `streamFiles: true`)
-    must not contain the bytes `PK\x07\x08` or `PK\x03\x04`: a streaming
-    extractor could stop there. Image data hits that by chance roughly once per
-    2 GiB, so for large stored datasets prefer `DEFLATE` or drop `streamFiles`;
+    must not contain the bytes `PK\x07\x08` or `PK\x03\x04` (see the note
+    above: use `DEFLATE`, or no `streamFiles`);
   - the archive is not zip64 and has no archive comment, and every central
     directory record matches its local header;
   - there are at most 10,000 entries, at most 1 GiB uncompressed in total, no
@@ -2742,8 +2752,9 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   in the next ~10 seconds replies `busy`. The whole buffer sits in the viewer's
   tab and is copied once across `postMessage` (and once more into the download),
   so build it once and save it once. Any zip writer works that produces a plain
-  archive — e.g. JSZip `generateAsync({ type: 'arraybuffer' })`, stored or
-  `DEFLATE`, with or without `streamFiles`.
+  archive — e.g. JSZip `generateAsync({ type: 'arraybuffer', compression:
+  'DEFLATE' })` (with or without `streamFiles`), or stored without
+  `streamFiles`.
 
   The validator is `@civitai/app-sdk/save-zip`, and it is the same module in
   both places: the host runs it and `createMockHost` loads it, so your tests
@@ -2787,7 +2798,11 @@ for (const item of dataset) {
   zip.file(`images/${item.name}`, item.imageBytes);
   zip.file(`images/${item.stem}.txt`, item.caption);
 }
-await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer' }), filename: 'dataset.zip' });
+// DEFLATE (or stored without streamFiles): see "Build the zip with DEFLATE" above.
+await saveImage({
+  bytes: await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }),
+  filename: 'dataset.zip',
+});
 
 // The block's own generation output, or another user's image.
 await saveImage({ url: output.url, filename: 'render.png' });
