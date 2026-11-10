@@ -7,7 +7,9 @@ import type { GrantOptions, Scope } from '../session/index.js';
  * the app's manifest under `storage.collections`, served by `/api/v1/blocks/storage/…`.
  *
  * It replaces the two key/value stores (`app.storage.get/set/…` and
- * `app.sharedStorage`), which keep working, unchanged, until every app has moved.
+ * `app.sharedStorage`). civitai.com removed both on 2026-11-10: their routes answer
+ * `410` `legacy_store_removed`. See
+ * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
  *
  * The rules — who may read or write which collection, the limits, the error codes
  * — are the server's, and this client re-spells none of them. It sends a request,

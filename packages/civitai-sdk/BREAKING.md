@@ -18,8 +18,8 @@ messages have no destination yet.
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `app.workflows`, over `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist**, and `app.workflows` wraps all five (`estimate`, `submit`, `get`/`watch`/`wait`, `cancel`, `list`). 🔴 Use it, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
-| `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
-| `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
+| `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | 🔴 **Removed 2026-11-10: `410` `legacy_store_removed`.** Move to the document store. The routes exist — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
+| `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | 🔴 **Removed 2026-11-10: `410` `legacy_store_removed`.** Move to the document store. The routes exist — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
@@ -63,6 +63,14 @@ first.
 
 ## Shared storage
 
+🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that date. A request to any of
+these eleven routes that passes the block-token and scope checks is answered **`410`** with
+`{ error: 'legacy_store_removed', message, docs }`, so every `app.sharedStorage` call rejects with an
+`ApiError` whose `status` is `410`. The bridge path (`useSharedStorage`) is refused too, with a message that
+starts `legacy_store_removed:`. Move the app to the document store:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this section
+describes the routes as they behaved before the removal.
+
 Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
 `apps:storage:shared:write` — both scopes already existed; neither is new.
 
@@ -73,12 +81,10 @@ tRPC twin `apps.shared.get`), `append`, `update`, `withdraw`. An app no longer n
 `app.site.get('blocks/shared-storage/…')`, and the shape traps below are handled for it.
 
 🔴 **`vote`, `unvote`, `counts`, `top`, `increment` and `report` are DELIBERATELY ABSENT from the client.**
-The platform serves all eleven routes and will keep doing so — this is a surface decision, not a gap, and not
-an oversight to be "fixed". Shared storage is scoped to generic key/value operations; the higher-level ops
-belong at the app layer, where an app that wants voting, counters or reporting builds them on top of these
-five. If demand shows up, the platform-side surface can be expanded again and the client can follow — but
-**the routes existing is not a reason to add a method here.** Do not add one back without that decision being
-revisited.
+This was a surface decision, not a gap, and not an oversight to be "fixed". Shared storage is scoped to generic
+key/value operations; the higher-level ops belong at the app layer, where an app that wants voting, counters
+or reporting builds them on top of these five. Do not add one back: since 2026-11-10 none of the eleven routes
+serves data (see the removal note above).
 
 What survives the cut, and why: `SharedItem` still carries **`count` and `viewerVoted`** exactly as the two
 read routes project them. Reading a tally is what makes an app-layer vote feature possible; only the
@@ -231,6 +237,11 @@ The chokepoint does matter for one thing, and that part stands: the newer routes
 error string, which on this surface can name the app's schema and the offending row value.
 
 ## App storage
+
+🔴 **Removed on 2026-11-10**, with the shared store. A request to any of these five routes that passes the
+block-token and scope checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
+and the bridge path (`useAppStorage`) is refused the same way as `useSharedStorage`. Move the app to the
+document store: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 
 Five routes under `/api/v1/blocks/app-storage/` — `get`, `set`, `delete`, `list`, `quota` (civitai#5085).
 Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps them as `AppClient.storage`.

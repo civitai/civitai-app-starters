@@ -118,8 +118,9 @@ export interface SharedListResult {
  *
  * @deprecated The legacy cross-user store. Declare a `shared` collection under
  * `storage.collections` and use `app.storage.collection(name)`, which has counters,
- * marks and authorship built in. This keeps working, unchanged, until the apps that
- * use it have moved.
+ * marks and authorship built in. civitai.com removed this store on 2026-11-10: its
+ * routes answer `410` `legacy_store_removed`, so every method rejects. See
+ * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
  */
 export interface SharedStorageClient {
   /**
