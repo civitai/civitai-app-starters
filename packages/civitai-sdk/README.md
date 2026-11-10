@@ -483,6 +483,13 @@ https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 > **Deprecated** in favour of [document storage](#document-storage): declare a
 > `private` collection and use `app.storage.collection(name)`.
 
+🔴 **Removed on 2026-11-10**, with the shared store. A request to any of its five
+routes that passes the block-token and scope checks is answered **`410`** with
+`{ error: 'legacy_store_removed', message, docs }`, so `get`, `set`, `delete`,
+`list` and `getQuota` reject. Move the app to the document store:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
+section describes the store as it behaved before the removal.
+
 `app.storage`'s `get`/`set`/`delete`/`list`/`getQuota` are the viewer's own key/value store, scoped to this app and this
 block instance. It needs the block token the host mints — an app holding an
 OAuth access token has no per-viewer app storage — and an anonymous viewer is
@@ -529,6 +536,14 @@ try {
 
 > **Deprecated** in favour of [document storage](#document-storage): declare a
 > `shared` collection, which has authorship, counters and marks built in.
+
+🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that
+date. A request to any of its eleven routes that passes the block-token and scope
+checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
+so every `app.sharedStorage` call rejects with an `ApiError` whose `status` is
+`410`. Move the app to the document store:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
+section describes the store as it behaved before the removal.
 
 `app.sharedStorage` is this app's **cross-user** key/value store — one namespace
 every viewer reads and writes, unlike `app.storage`, which is private per viewer.

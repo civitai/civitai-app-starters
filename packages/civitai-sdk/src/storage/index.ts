@@ -71,8 +71,10 @@ export interface StorageClient {
    * The value, or `null` when the key is unset. Rejects on any refusal.
    *
    * @deprecated The legacy per-viewer key/value store. Declare a `private`
-   * collection under `storage.collections` and use `app.storage.collection(name)`;
-   * this keeps working, unchanged, until the apps that use it have moved.
+   * collection under `storage.collections` and use `app.storage.collection(name)`.
+   * civitai.com removed this store on 2026-11-10: the route answers `410`
+   * `legacy_store_removed`, so this rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    */
   get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
 
@@ -87,8 +89,10 @@ export interface StorageClient {
    * the server writes `null` for an absent value rather than refusing.
    *
    * @deprecated The legacy per-viewer key/value store. Declare a `private`
-   * collection under `storage.collections` and use `app.storage.collection(name)`;
-   * this keeps working, unchanged, until the apps that use it have moved.
+   * collection under `storage.collections` and use `app.storage.collection(name)`.
+   * civitai.com removed this store on 2026-11-10: the route answers `410`
+   * `legacy_store_removed`, so this rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    */
   set<T = unknown>(
     key: string,
@@ -100,8 +104,10 @@ export interface StorageClient {
    * Idempotent. `deleted: false` means the key was already absent — a success.
    *
    * @deprecated The legacy per-viewer key/value store. Declare a `private`
-   * collection under `storage.collections` and use `app.storage.collection(name)`;
-   * this keeps working, unchanged, until the apps that use it have moved.
+   * collection under `storage.collections` and use `app.storage.collection(name)`.
+   * civitai.com removed this store on 2026-11-10: the route answers `410`
+   * `legacy_store_removed`, so this rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    */
   delete(key: string, opts?: StorageCallOptions): Promise<{ ok: true; deleted: boolean }>;
 
@@ -109,8 +115,10 @@ export interface StorageClient {
    * One page of keys, ordered by key ascending. Values are not returned.
    *
    * @deprecated The legacy per-viewer key/value store. Declare a `private`
-   * collection under `storage.collections` and use `app.storage.collection(name)`;
-   * this keeps working, unchanged, until the apps that use it have moved.
+   * collection under `storage.collections` and use `app.storage.collection(name)`.
+   * civitai.com removed this store on 2026-11-10: the route answers `410`
+   * `legacy_store_removed`, so this rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    */
   list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
 
@@ -121,8 +129,10 @@ export interface StorageClient {
    * that fits the numbers here can still be refused.
    *
    * @deprecated The legacy per-viewer key/value store. Declare a `private`
-   * collection under `storage.collections` and use `app.storage.collection(name)`;
-   * this keeps working, unchanged, until the apps that use it have moved.
+   * collection under `storage.collections` and use `app.storage.collection(name)`.
+   * civitai.com removed this store on 2026-11-10: the route answers `410`
+   * `legacy_store_removed`, so this rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    */
   getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
 }

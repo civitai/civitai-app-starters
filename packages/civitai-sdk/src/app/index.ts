@@ -69,8 +69,10 @@ export interface AppClient {
    *   shared, with counters, marks, declared indexes and conditional writes.
    *   Use this for anything new.
    * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
-   *   `getQuota`, each `@deprecated`. It keeps working, unchanged, until the apps
-   *   that use it have moved; nothing is copied between the two.
+   *   `getQuota`, each `@deprecated`. civitai.com removed it on 2026-11-10: its
+   *   routes answer `410` `legacy_store_removed`, so these reject. Nothing is
+   *   copied between the two. See
+   *   https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    *
    * 🔴 Both require the block token the host mints: an app that authenticated
    * with an OAuth access token is refused. The legacy store refuses an anonymous
@@ -79,8 +81,9 @@ export interface AppClient {
   readonly storage: StorageClient & DocumentStorage & { readonly mode: StorageMode };
   /**
    * @deprecated Declare a `shared` collection under `storage.collections` and use
-   * `app.storage.collection(name)`. This store keeps working, unchanged, until the
-   * apps that use it have moved.
+   * `app.storage.collection(name)`. civitai.com removed this store on 2026-11-10:
+   * its routes answer `410` `legacy_store_removed`, so every method rejects. See
+   * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
    *
    * This app's CROSS-USER store — one namespace every viewer of this app reads
    * and writes, which is what makes a shared feed or a "popular" rail possible.
