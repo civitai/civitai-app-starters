@@ -60,6 +60,8 @@ const migrationsOn = (migrations: unknown) =>
   valid({ storage: { collections: { cards: { visibility: 'private', schema: COLLECTION_SCHEMA, migrations } } } });
 
 /** `n` distinct `remove` ops. */
+/** A `hook.sha256`: 64 lowercase hex characters, not all one digit. */
+const HOOK_SHA = '0123456789abcdef'.repeat(4);
 const removeOps = (n: number) => Array.from({ length: n }, (_, i) => ({ op: 'remove', path: `/f${i}` }));
 
 const accept = (manifest: Record<string, unknown>) =>
@@ -210,6 +212,26 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
           collections: {
             posts: { visibility: 'shared', write: 'own', registry: 'public' },
             tally: { visibility: 'shared', write: 'none', counters: ['plays'], registry: 'public' },
+          },
+        },
+      }),
+    ],
+    // `hook` (civitai/civitai#7832). RED before the re-vendor: an unknown key on the
+    // closed collection object. RESERVED, so refused at submit, not here. The canonical
+    // allows it on every collection kind; `timeoutMs` at both bounds.
+    [
+      'storage: a RESERVED hook on a private, a shared "own" and a shared "none" collection',
+      valid({
+        storage: {
+          collections: {
+            notes: { visibility: 'private', hook: { file: 'hooks/notes.mjs', sha256: HOOK_SHA } },
+            posts: { visibility: 'shared', write: 'own', hook: { file: 'a_b/c-d/x.y.js', sha256: HOOK_SHA, timeoutMs: 1 } },
+            tally: {
+              visibility: 'shared',
+              write: 'none',
+              counters: ['plays'],
+              hook: { file: 'tally.js', sha256: HOOK_SHA, timeoutMs: 500 },
+            },
           },
         },
       }),
@@ -710,6 +732,51 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
  *
  * Every row has an accept twin in NOT ABOVE THE CANONICAL.
  */
+/**
+ * A collection `hook`'s SHAPE (civitai/civitai#7832) is the canonical's, reached through
+ * `$defs.storageCollectionHook`. Nothing in this package writes any of it down, and this
+ * package adds no hook behaviour. As for migrations, only the field's prefix is pinned (the
+ * shape is reached through `$ref`), plus that the refusal is not `hook` being an unknown key,
+ * which is what every row was before the re-vendor. Every row has an accept twin in NOT ABOVE
+ * THE CANONICAL.
+ */
+describe('DERIVED, NOT MIRRORED: a storage collection hook is shaped by the canonical', () => {
+  const AT = 'storage.collections.posts.hook';
+  const cases: Array<[string, unknown]> = [
+    ['no sha256', { file: 'hooks/a.js' }],
+    ['no file', { sha256: HOOK_SHA }],
+    ['an unknown key', { file: 'hooks/a.js', sha256: HOOK_SHA, entry: 'default' }],
+    ['an uppercase sha256', { file: 'hooks/a.js', sha256: HOOK_SHA.toUpperCase() }],
+    ['a 63-character sha256', { file: 'hooks/a.js', sha256: HOOK_SHA.slice(1) }],
+    ['a file that is not .js or .mjs', { file: 'hooks/a.ts', sha256: HOOK_SHA }],
+    ['a file with a leading /', { file: '/hooks/a.js', sha256: HOOK_SHA }],
+    ['a file with a .. segment', { file: 'hooks/../a.js', sha256: HOOK_SHA }],
+    ['a hidden file', { file: 'hooks/.a.js', sha256: HOOK_SHA }],
+    ['a file under node_modules', { file: 'node_modules/x/a.js', sha256: HOOK_SHA }],
+    ['a 201-character file', { file: `${'a'.repeat(198)}.js`, sha256: HOOK_SHA }],
+    ['timeoutMs 0', { file: 'hooks/a.js', sha256: HOOK_SHA, timeoutMs: 0 }],
+    ['timeoutMs 501', { file: 'hooks/a.js', sha256: HOOK_SHA, timeoutMs: 501 }],
+    ['a fractional timeoutMs', { file: 'hooks/a.js', sha256: HOOK_SHA, timeoutMs: 1.5 }],
+    ['not an object', 'hooks/a.js'],
+  ];
+
+  it.each(cases)('%s', (_label, hook) => {
+    const manifest = valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', hook } } } });
+    expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
+    const err = rejection(manifest);
+    expect(err.field === AT || err.field.startsWith(`${AT}.`), `refused at ${err.field}: ${err.message}`).toBe(true);
+    expect(err.message).not.toBe(`manifest.${AT} is not a known property here`);
+  });
+
+  it('a 200-character file is the bound, accepted (the twin of the 201 row)', () => {
+    const manifest = valid({
+      storage: { collections: { posts: { visibility: 'shared', write: 'own', hook: { file: `${'a'.repeat(197)}.js`, sha256: HOOK_SHA } } } },
+    });
+    expect(canonicalAccepts(manifest)).toBe(true);
+    expect(() => accept(manifest)).not.toThrow();
+  });
+});
+
 describe('DERIVED, NOT MIRRORED: a storage migration op is shaped by the canonical', () => {
   const AT = 'storage.collections.cards.migrations';
   const cases: Array<[string, unknown]> = [

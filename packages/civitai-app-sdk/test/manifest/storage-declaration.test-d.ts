@@ -17,6 +17,7 @@ import { defineBlock } from '../../src/manifest/index.js';
 import type {
   BlockManifestV1,
   BlockStorageCollectionDeclaration,
+  BlockStorageCollectionHook,
   BlockStorageCollectionSchema,
   BlockStorageDeclaration,
   BlockStorageImport,
@@ -284,6 +285,93 @@ defineBlock({
           // @ts-expect-error — the only value is 'public'
           registry: 'private',
         },
+      },
+    },
+  },
+});
+
+// --- hook (civitai/civitai#7832), RESERVED -------------------------------------
+expectTypeOf<BlockStorageCollectionHook>().toEqualTypeOf<{ file: string; sha256: string; timeoutMs?: number }>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['hook']>().toEqualTypeOf<BlockStorageCollectionHook | undefined>();
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['hook']>().toEqualTypeOf<BlockStorageCollectionHook | undefined>();
+
+// The canonical shape, on every collection kind it allows.
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        notes: { visibility: 'private', hook: { file: 'hooks/notes.mjs', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+        posts: { visibility: 'shared', write: 'own', hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', timeoutMs: 120 } },
+        tally: { visibility: 'shared', write: 'none', counters: ['plays'], hook: { file: 'tally.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `sha256` is required
+        posts: { visibility: 'shared', write: 'own', hook: { file: 'hooks/posts.js' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `file` is required
+        notes: { visibility: 'private', hook: { sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — `timeoutMs` is a number of milliseconds
+          hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', timeoutMs: '50' },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — the hook object is closed: no `entry` key
+          hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', entry: 'default' },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a hook is an object, not a bare path
+        notes: { visibility: 'private', hook: 'hooks/notes.mjs' },
       },
     },
   },

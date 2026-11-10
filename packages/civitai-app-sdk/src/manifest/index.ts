@@ -23,6 +23,7 @@ export type {
   BlockManifestGood,
   BlockManifestV1,
   BlockStorageCollectionDeclaration,
+  BlockStorageCollectionHook,
   BlockStorageCollectionSchema,
   BlockStorageDeclaration,
   BlockStorageImport,
