@@ -3064,8 +3064,7 @@ export interface BlockStoragePrivateCollectionDeclaration {
   schema?: BlockStorageCollectionSchema;
   /** See {@link BlockStorageSharedCollectionDeclaration.migrations}. */
   migrations?: BlockStorageMigrationOp[];
-  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.hook}. */
-  hook?: BlockStorageCollectionHook;
+  // NEGATIVE CONTROL: `hook` removed from the private declaration. Reverted by the next commit.
 }
 
 /**
@@ -3188,14 +3187,7 @@ export interface BlockStorageSharedCollectionDeclaration {
    * {@link BlockStorageMigrationOp}. Not allowed with `write` `'none'`.
    */
   migrations?: BlockStorageMigrationOp[];
-  /**
-   * RESERVED — civitai.com refuses this field until permission hooks are
-   * enabled, so do not declare it yet. A permission hook that decides, for every
-   * write to this collection, whether it is allowed — see
-   * {@link BlockStorageCollectionHook}. Allowed on every collection kind,
-   * private and shared alike.
-   */
-  hook?: BlockStorageCollectionHook;
+  // NEGATIVE CONTROL: `hook` removed from the shared declaration. Reverted by the next commit.
 }
 
 /**
