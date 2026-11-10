@@ -119,8 +119,15 @@ export class SaveZipVerifyAbortedError extends Error {
   }
 }
 
-/** How much compressed input {@link verifySaveZipInflate} hands the inflater at a time. */
-export const SAVE_ZIP_INFLATE_SLICE_BYTES = 1024 * 1024;
+/**
+ * How much compressed input {@link verifySaveZipInflate} hands the inflater at a time: 16 KiB.
+ * The overshoot check runs between reads, and one slice can expand by deflate's maximum (~1032:1)
+ * before it does, so the slice bounds the output produced past an entry's declared size: ~16.5 MiB
+ * here, where 1 MiB slices allowed ~1 GiB. Smaller slices cost more `write()` round trips:
+ * measured on Node 24, verifying one honest 256 MiB entry (both inflates + CRC) took ~2.0 s at
+ * 16 KiB against ~1.3-1.8 s at 1 MiB.
+ */
+export const SAVE_ZIP_INFLATE_SLICE_BYTES = 16 * 1024;
 export const SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR =
   'zip stored entry with a data descriptor contains a data-descriptor signature (PK\\x07\\x08); save it with DEFLATE or without streamFiles';
 export const SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR =
@@ -574,8 +581,10 @@ export function validateSaveZip(bytes: ArrayBuffer): SaveZipValidation {
  */
 async function inflate(
   data: Uint8Array<ArrayBuffer>,
-  limit: number
+  limit: number,
+  signal: AbortSignal | undefined
 ): Promise<{ produced: number; crc: number } | null> {
+  if (signal?.aborted) throw new SaveZipVerifyAbortedError();
   const ds = new DecompressionStream('deflate-raw');
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
@@ -588,6 +597,12 @@ async function inflate(
     await writer.close();
   })();
   feed.catch(() => undefined);
+  // An abort cancels both ends at once, so the pending read settles promptly.
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+    void writer.abort().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
   let produced = 0;
   let crc = 0;
   try {
@@ -604,8 +619,12 @@ async function inflate(
     }
     await feed;
   } catch {
+    if (signal?.aborted) throw new SaveZipVerifyAbortedError();
     return null;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
+  if (signal?.aborted) throw new SaveZipVerifyAbortedError();
   return { produced, crc };
 }
 
@@ -618,11 +637,15 @@ async function inflate(
  * it completes, the stream ended earlier and the remaining bytes are not deflate data. That costs a
  * second inflate, run alongside the first.
  */
-async function checkDeflatedEntry(u8: Uint8Array<ArrayBuffer>, e: SaveZipDeflatedEntry): Promise<string | null> {
+async function checkDeflatedEntry(
+  u8: Uint8Array<ArrayBuffer>,
+  e: SaveZipDeflatedEntry,
+  signal: AbortSignal | undefined
+): Promise<string | null> {
   const data = u8.subarray(e.dataOffset, e.dataOffset + e.compressedSize);
   const [full, short] = await Promise.all([
-    inflate(data, e.size),
-    data.length > 0 ? inflate(data.subarray(0, data.length - 1), e.size) : Promise.resolve(null),
+    inflate(data, e.size, signal),
+    data.length > 0 ? inflate(data.subarray(0, data.length - 1), e.size, signal) : Promise.resolve(null),
   ]);
   if (!full || full.produced !== e.size) return SAVE_ZIP_INFLATE_ERROR;
   if (short && short.produced === e.size) return SAVE_ZIP_INFLATE_TRAILING_ERROR;
@@ -635,15 +658,19 @@ async function checkDeflatedEntry(u8: Uint8Array<ArrayBuffer>, e: SaveZipDeflate
  * yields exactly its declared size and CRC-32, with nothing after its end-of-stream marker — so the
  * declared-size bounds cannot be walked by lying about them, and no bytes ride along unchecked.
  * Work is bounded by twice the declared total ({@link SAVE_ZIP_LIMITS}; two inflates per entry)
- * plus one slice each. Returns the error string, or `null` when every entry checks out.
+ * plus one {@link SAVE_ZIP_INFLATE_SLICE_BYTES} slice each. Returns the error string, or `null`
+ * when every entry checks out. When `signal` fires (or has already) it stops promptly and REJECTS
+ * with {@link SaveZipVerifyAbortedError} — a caller's deadline, not a verdict on the zip.
  */
 export async function verifySaveZipInflate(
   bytes: ArrayBuffer,
-  deflated: readonly SaveZipDeflatedEntry[]
+  deflated: readonly SaveZipDeflatedEntry[],
+  signal?: AbortSignal
 ): Promise<string | null> {
+  if (signal?.aborted) throw new SaveZipVerifyAbortedError();
   const u8 = new Uint8Array(bytes);
   for (const e of deflated) {
-    const error = await checkDeflatedEntry(u8, e);
+    const error = await checkDeflatedEntry(u8, e, signal);
     if (error) return error;
   }
   return null;
