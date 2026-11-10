@@ -7,4 +7,4 @@
 
 `@civitai/app-sdk`: new subpath `@civitai/app-sdk/save-zip` — the zip validator (`validateSaveZip`, `verifySaveZipInflate`, `looksLikeSaveZip`, `SAVE_ZIP_MAX_BYTES`, `SAVE_ZIP_LIMITS`, `SAVE_ZIP_ALLOWED_EXTENSIONS` and the `SAVE_ZIP_*_ERROR` strings). It is the one copy: the civitai.com host and `createMockHost` both import it. Dependency-free; needs `DecompressionStream` (browsers, Node >= 18) for the inflate check.
 
-`@civitai/blocks-react`: the `@civitai/app-sdk` peer floor rises from `>=0.57.0` to `>=0.85.0`, because `useSaveImage` and `createMockHost` now import `@civitai/app-sdk/save-zip`. Upgrade `@civitai/app-sdk` together with this release.
+`@civitai/blocks-react`: the `@civitai/app-sdk` peer floor is unchanged (`>=0.57.0`), and `import '@civitai/blocks-react'` / `'@civitai/blocks-react/testing'` still load on any app-sdk it admits. Only `createMockHost`'s zip validation needs `@civitai/app-sdk` >= 0.85.0: it loads `@civitai/app-sdk/save-zip` on the first zip save, and on an older app-sdk that save rejects with `createMockHost validates a zip with @civitai/app-sdk/save-zip, which needs @civitai/app-sdk >= 0.85.0`.

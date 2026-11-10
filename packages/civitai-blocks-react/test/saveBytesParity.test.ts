@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { prepareSaveBytes, saveImageRequestKind } from '../src/internal/saveBytes.js';
+import { saveImageRequestKind } from '../src/internal/saveBytes.js';
+import * as saveZipRules from '@civitai/app-sdk/save-zip';
+
+import { prepareSaveBytes } from '../src/internal/saveBytesPrepare.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
@@ -114,7 +117,7 @@ const ROWS: Row[] = [
 
 describe('saveBytes parity with the host (prepareSaveBytes)', () => {
   it.each(ROWS.map((r) => [r.name, r] as const))('%s', (_n, row) => {
-    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename })).toEqual(row.expected);
+    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename }, saveZipRules)).toEqual(row.expected);
   });
 });
 

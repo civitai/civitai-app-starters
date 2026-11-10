@@ -9,12 +9,16 @@
  * block that GIFs save.
  */
 
-import {
-  looksLikeSaveZip,
-  SAVE_ZIP_MAX_BYTES,
-  validateSaveZip,
-  type SaveZipDeflatedEntry,
-} from '@civitai/app-sdk/save-zip';
+/*
+ * 🔴 NO import of `@civitai/app-sdk/save-zip` in this file. It is reached from the MAIN entry
+ * (`useSaveImage`), and the main entry must load on every app-sdk the peer floor admits (>=0.57.0),
+ * while `./save-zip` first ships in 0.85.0. The two things the hook needs from the zip rules — the
+ * zip-candidate test and the 256 MiB cap — are restated below and pinned EQUAL to app-sdk's own
+ * (`looksLikeSaveZip`, `SAVE_ZIP_MAX_BYTES`) by test/saveBytesZipParity.test.ts, against the
+ * workspace app-sdk, so a drift fails CI. Everything that needs the validator itself lives in
+ * ./saveBytesPrepare.ts, which only `createMockHost` (the `./testing` entry) reaches;
+ * test/mainEntryNoSaveZip.test.ts checks that on the BUILT entries.
+ */
 
 /**
  * The cap on a `bytes` payload: 50 MiB of raw bytes (`ArrayBuffer.byteLength`,
@@ -24,25 +28,34 @@ import {
  * `saveImageDownload.ts`), and the two MUST match. Nothing in this repository
  * can read the host's value, so a drift is invisible here until a block hits
  * the host's refusal on a buffer this hook let through, or the hook refuses one
- * the host would have saved. (The zip cap below has no such copy: it comes from
- * `@civitai/app-sdk/save-zip`, which the host imports too.)
+ * the host would have saved. (The zip cap below is pinned to app-sdk's own by a test.)
  */
 export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * The cap on a `bytes` payload that STARTS like a zip (a local file header at
- * byte 0, or an empty archive): 256 MiB. Not a copy — it IS the validator's own
- * `SAVE_ZIP_MAX_BYTES`, from `@civitai/app-sdk/save-zip`, the module the host
- * imports too.
+ * byte 0, or an empty archive): 256 MiB. A restatement of app-sdk's
+ * `SAVE_ZIP_MAX_BYTES` (see the note at the top of this file), pinned equal to it.
  */
-export const SAVE_BYTES_ZIP_MAX_BYTES = SAVE_ZIP_MAX_BYTES;
+export const SAVE_BYTES_ZIP_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Does this buffer START like a zip — a local file header (`PK\x03\x04`) or
+ * the 22-byte empty archive's end record (`PK\x05\x06`) at byte 0? The same
+ * predicate as app-sdk's `looksLikeSaveZip` (pinned equal to it), restated so
+ * the main entry needs no `./save-zip`.
+ */
+export function startsLikeZip(view: Uint8Array): boolean {
+  if (view.length < 4 || view[0] !== 0x50 || view[1] !== 0x4b) return false;
+  return (view[2] === 0x03 && view[3] === 0x04) || (view[2] === 0x05 && view[3] === 0x06);
+}
 
 /**
  * The cap that applies to this buffer, decided on its first four bytes alone —
  * the host's order, so the hook can refuse an over-cap buffer before copying it.
  */
 export function saveBytesMaxBytes(bytes: ArrayBuffer): number {
-  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
+  return startsLikeZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
     ? SAVE_BYTES_ZIP_MAX_BYTES
     : SAVE_BYTES_MAX_BYTES;
 }
@@ -132,59 +145,6 @@ export function sniffImageBytes(view: Uint8Array): SniffedImageType | null {
   return null;
 }
 
-/**
- * Classify a `bytes` payload by CONTENT, with the refusal reason — the host's
- * `classifySaveBytesContent`: an image by magic bytes first (so a PNG with a zip
- * appended is a PNG); then a buffer that STARTS like a zip must pass the zip
- * validator (`@civitai/app-sdk/save-zip`, the module the host imports) and is
- * refused with the zip's own reason otherwise; then text.
- */
-export function classifySaveBytesContent(
-  bytes: ArrayBuffer,
-  filename = '',
-):
-  | { ok: true; type: Exclude<SaveBytesType, 'application/zip'> }
-  | { ok: true; type: 'application/zip'; deflated: SaveZipDeflatedEntry[] }
-  | { ok: false; error: string } {
-  const view = new Uint8Array(bytes);
-  const image = sniffImageBytes(view);
-  if (image) return { ok: true, type: image };
-  if (looksLikeSaveZip(view)) {
-    const zip = validateSaveZip(bytes);
-    if (!zip.ok) return zip;
-    return { ok: true, type: 'application/zip', deflated: zip.deflated };
-  }
-  const text = classifySaveBytesText(view, filename);
-  return text ? { ok: true, type: text } : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
-}
-
-/**
- * The text step of {@link classifySaveBytesContent} — the host's
- * `classifySaveBytesText`. `filename` is the only hint and must already be
- * CLEANED ({@link sanitizeSaveBytesFilename}): a name ending `.json`
- * (case-insensitive) chooses JSON over text/plain for bytes that already parse
- * as JSON, and it can never make a binary payload acceptable. `null` = not text
- * (`file type is not allowed`).
- */
-function classifySaveBytesText(view: Uint8Array, filename: string): 'application/json' | 'text/plain' | null {
-  if (view.includes(0)) return null;
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(view);
-  } catch {
-    return null; // not valid UTF-8 — random binary, a GIF, …
-  }
-  if (filename.toLowerCase().endsWith('.json')) {
-    try {
-      JSON.parse(text);
-      return 'application/json';
-    } catch {
-      // A `.json` name on text that does not parse saves as text, not a refusal.
-    }
-  }
-  return 'text/plain';
-}
-
 /*
  * 🔴 The three functions below are a LINE-FOR-LINE port of the host's bytes
  * filename rules (civitai/civitai `src/components/AppBlocks/saveImageDownload.ts`:
@@ -235,27 +195,4 @@ export function forceSaveBytesExtension(filename: string, type: SaveBytesType): 
   const name = cleaned.length > 0 ? cleaned : 'download';
   const m = name.match(/^(.+)\.([a-zA-Z0-9]{1,5})$/);
   return `${m ? m[1] : name}${SAVE_BYTES_EXTENSION[type]}`;
-}
-
-/**
- * Size-cap, clean the name, classify on the CLEANED name, and force the
- * extension — the host's `prepareSaveBytes`, in its order. Every refusal is the
- * reply's error string. An accepted zip also carries the deflated entries the
- * host inflate-checks before it downloads (`verifySaveZipInflate`).
- */
-export function prepareSaveBytes(req: {
-  bytes: ArrayBuffer;
-  filename?: string;
-}):
-  | { ok: true; type: SaveBytesType; filename: string; deflated?: SaveZipDeflatedEntry[] }
-  | { ok: false; error: string } {
-  if (req.bytes.byteLength > saveBytesMaxBytes(req.bytes)) {
-    return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
-  }
-  const filename = sanitizeSaveBytesFilename(req.filename);
-  const c = classifySaveBytesContent(req.bytes, filename);
-  if (!c.ok) return c;
-  const name = forceSaveBytesExtension(filename, c.type);
-  if (c.type === 'application/zip') return { ok: true, type: c.type, filename: name, deflated: c.deflated };
-  return { ok: true, type: c.type, filename: name };
 }

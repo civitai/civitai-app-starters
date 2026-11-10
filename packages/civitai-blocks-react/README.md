@@ -2736,10 +2736,14 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   `DEFLATE`, with or without `streamFiles`.
 
   The validator is `@civitai/app-sdk/save-zip`, and it is the same module in
-  both places: the host runs it and `createMockHost` imports it, so your tests
+  both places: the host runs it and `createMockHost` loads it, so your tests
   accept and refuse the zips the host does (the host pins its own
-  `@civitai/app-sdk` release). That import is why this package needs
-  `@civitai/app-sdk` 0.85.0 or later.
+  `@civitai/app-sdk` release). 🔴 **`createMockHost` needs `@civitai/app-sdk`
+  0.85.0 or later to validate a zip.** It loads the validator only on the first
+  zip save, so on an older app-sdk everything else works and a zip save rejects
+  with `createMockHost validates a zip with @civitai/app-sdk/save-zip, which
+  needs @civitai/app-sdk >= 0.85.0`. The hook itself (`useSaveImage`) needs no
+  newer app-sdk.
 
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
 with `invalid save-image request`.** The host also replies that when the input
