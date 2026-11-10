@@ -410,6 +410,28 @@ describe('the fake: PATCH refusals, as the server gives them', () => {
   });
 });
 
+describe('update: an operator key holding `undefined` is not sent, and does not pick the reply', () => {
+  // Without `exactOptionalPropertyTypes`, `?: never` accepts `undefined`, so these type-check.
+  // `JSON.stringify` drops the undefined key: the wire carries ONE operator, and the reply
+  // must be read as that operator's.
+  it('{ $unmark, $mark: undefined } unmarks and resolves { marked: false, count }', async () => {
+    const fake = make();
+    const posts = fake.storage.collection('posts');
+    await posts.put('p', { t: 1 });
+    await posts.update('p', { $mark: 'vote' });
+    expect(await posts.update('p', { $unmark: 'vote', $mark: undefined })).toEqual({ marked: false, count: 0 });
+    expect(JSON.stringify(fake.calls.at(-1)!.body)).toBe('{"$unmark":"vote"}');
+  });
+
+  it('{ $mark, $inc: undefined } marks and resolves { marked: true, count }', async () => {
+    const fake = make();
+    const posts = fake.storage.collection('posts');
+    await posts.put('p', { t: 1 });
+    expect(await posts.update('p', { $mark: 'vote', $inc: undefined })).toEqual({ marked: true, count: 1 });
+    expect(JSON.stringify(fake.calls.at(-1)!.body)).toBe('{"$mark":"vote"}');
+  });
+});
+
 describe('the fake: PATCH happy paths', () => {
   it('$inc: creates the document in a write:none collection, then adds; data and version never move', async () => {
     const fake = make();
