@@ -24,8 +24,14 @@ export type SubListingContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
  */
 export interface SubListingUpsertInput {
   /**
-   * The key of a row in this app's SHARED storage (`app.sharedStorage`) that the
-   * viewer authored and that is not hidden. One sub-listing per key: publishing
+   * The key (not the collection, at most 64 characters) of a document the viewer
+   * authored in one of this app's `shared` document-storage collections whose
+   * `write` is `own` or `anyone`, and that is not hidden. The server looks the
+   * key up in every such collection the approved manifest declares, production
+   * namespace only, so it must be unique across them: a key two of them hold
+   * reads as `item_not_found`. An app that declares no such collection is still
+   * on legacy shared storage (`app.sharedStorage`) and resolves its old rows,
+   * which can no longer be created. One sub-listing per key: publishing
    * the same key again edits it, and every call REPLACES the whole item — an
    * optional you leave out is cleared, so re-send the ones you want to keep.
    */
