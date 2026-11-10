@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useSaveImage } from '../src/hooks/useSaveImage.js';
-import { SAVE_BYTES_MAX_BYTES } from '../src/internal/saveBytes.js';
+import { SAVE_BYTES_MAX_BYTES, SAVE_BYTES_ZIP_MAX_BYTES } from '../src/internal/saveBytes.js';
+import { zipLookingBuffer } from './zipFixtures.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { isValidSaveImageResult } from '../src/transport/validate.js';
 import { resetTransport } from '../src/testing.js';
@@ -283,6 +284,30 @@ describe('useSaveImage — the bytes variant', () => {
 
   it('pins the cap to the contract value, 50 MiB', () => {
     expect(SAVE_BYTES_MAX_BYTES).toBe(52_428_800);
+  });
+
+  it('a buffer that STARTS like a zip gets the 256 MiB cap: one byte over is refused before sending', async () => {
+    const err = await refusedLocally({ bytes: zipLookingBuffer(SAVE_BYTES_ZIP_MAX_BYTES + 1) });
+    expect(err.message).toBe('file exceeds the maximum save size');
+  });
+
+  it('SENDS a zip-looking buffer of exactly 256 MiB, and one over the 50 MiB cap', () => {
+    const { result } = renderHook(() => useSaveImage());
+    for (const size of [SAVE_BYTES_ZIP_MAX_BYTES, SAVE_BYTES_MAX_BYTES + 7]) {
+      act(() => {
+        void result.current.saveImage({ bytes: zipLookingBuffer(size) }).catch(() => {});
+      });
+      expect(lastSave(postMessageMock).payload.bytes!.byteLength).toBe(size);
+    }
+  });
+
+  it('the zip cap is decided by CONTENT: a 50 MiB + 7 buffer that does not start like a zip is refused', async () => {
+    const err = await refusedLocally({ bytes: new ArrayBuffer(SAVE_BYTES_MAX_BYTES + 7) });
+    expect(err.message).toBe('file exceeds the maximum save size');
+  });
+
+  it('pins the zip cap to the contract value, 256 MiB', () => {
+    expect(SAVE_BYTES_ZIP_MAX_BYTES).toBe(268_435_456);
   });
 
   it('surfaces a pre-variant host refusal verbatim', async () => {

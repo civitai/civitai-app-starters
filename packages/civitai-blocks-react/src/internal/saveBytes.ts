@@ -9,6 +9,17 @@
  * block that GIFs save.
  */
 
+/*
+ * 🔴 NO import of `@civitai/app-sdk/save-zip` in this file. It is reached from the MAIN entry
+ * (`useSaveImage`), and the main entry must load on every app-sdk the peer floor admits (>=0.57.0),
+ * while `./save-zip` first ships in 0.85.0. The two things the hook needs from the zip rules — the
+ * zip-candidate test and the 256 MiB cap — are restated below and pinned EQUAL to app-sdk's own
+ * (`looksLikeSaveZip`, `SAVE_ZIP_MAX_BYTES`) by test/saveBytesZipParity.test.ts, against the
+ * workspace app-sdk, so a drift fails CI. Everything that needs the validator itself lives in
+ * ./saveBytesPrepare.ts, which only `createMockHost` (the `./testing` entry) reaches;
+ * test/mainEntryNoSaveZip.test.ts checks that on the BUILT entries.
+ */
+
 /**
  * The cap on a `bytes` payload: 50 MiB of raw bytes (`ArrayBuffer.byteLength`,
  * so a text or JSON payload is counted after UTF-8 encoding).
@@ -17,10 +28,37 @@
  * `saveImageDownload.ts`), and the two MUST match. Nothing in this repository
  * can read the host's value, so a drift is invisible here until a block hits
  * the host's refusal on a buffer this hook let through, or the hook refuses one
- * the host would have saved. Kept local to this package (not exported from
- * `@civitai/app-sdk`) so the hook needs no newer app-sdk peer.
+ * the host would have saved. (The zip cap below is pinned to app-sdk's own by a test.)
  */
 export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * The cap on a `bytes` payload that STARTS like a zip (a local file header at
+ * byte 0, or an empty archive): 256 MiB. A restatement of app-sdk's
+ * `SAVE_ZIP_MAX_BYTES` (see the note at the top of this file), pinned equal to it.
+ */
+export const SAVE_BYTES_ZIP_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Does this buffer START like a zip — a local file header (`PK\x03\x04`) or
+ * the 22-byte empty archive's end record (`PK\x05\x06`) at byte 0? The same
+ * predicate as app-sdk's `looksLikeSaveZip` (pinned equal to it), restated so
+ * the main entry needs no `./save-zip`.
+ */
+export function startsLikeZip(view: Uint8Array): boolean {
+  if (view.length < 4 || view[0] !== 0x50 || view[1] !== 0x4b) return false;
+  return (view[2] === 0x03 && view[3] === 0x04) || (view[2] === 0x05 && view[3] === 0x06);
+}
+
+/**
+ * The cap that applies to this buffer, decided on its first four bytes alone —
+ * the host's order, so the hook can refuse an over-cap buffer before copying it.
+ */
+export function saveBytesMaxBytes(bytes: ArrayBuffer): number {
+  return startsLikeZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
+    ? SAVE_BYTES_ZIP_MAX_BYTES
+    : SAVE_BYTES_MAX_BYTES;
+}
 
 /** Host refusal for a buffer over `SAVE_BYTES_MAX_BYTES`. Also the hook's own pre-send refusal. */
 export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
@@ -59,8 +97,14 @@ export function saveImageRequestKind(p: {
   return hasUrl ? 'url' : 'id';
 }
 
-/** The five types the host can classify a `bytes` payload as. */
-export type SaveBytesType = 'image/png' | 'image/webp' | 'image/jpeg' | 'application/json' | 'text/plain';
+/** The six types the host can classify a `bytes` payload as. */
+export type SaveBytesType =
+  | 'image/png'
+  | 'image/webp'
+  | 'image/jpeg'
+  | 'application/json'
+  | 'text/plain'
+  | 'application/zip';
 
 /** The extension the host forces for each classified type. */
 export const SAVE_BYTES_EXTENSION: Record<SaveBytesType, string> = {
@@ -69,6 +113,7 @@ export const SAVE_BYTES_EXTENSION: Record<SaveBytesType, string> = {
   'image/jpeg': '.jpg',
   'application/json': '.json',
   'text/plain': '.txt',
+  'application/zip': '.zip',
 };
 
 function startsWith(view: Uint8Array, sig: readonly number[], offset = 0): boolean {
@@ -98,37 +143,6 @@ export function sniffImageBytes(view: Uint8Array): SniffedImageType | null {
   if (startsWith(view, RIFF) && startsWith(view, WEBP, 8)) return 'image/webp';
   if (startsWith(view, JPEG)) return 'image/jpeg';
   return null;
-}
-
-/**
- * Classify a `bytes` payload by CONTENT — the host's `classifySaveBytes`.
- * `filename` is the only hint and must already be CLEANED
- * ({@link sanitizeSaveBytesFilename}): a name ending `.json` (case-insensitive)
- * chooses JSON over text/plain for bytes that already parse as JSON, and it can
- * never make a binary payload acceptable. Returns `null` for anything the host
- * refuses (`file type is not allowed`).
- */
-export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
-  const view = new Uint8Array(bytes);
-  const image = sniffImageBytes(view);
-  if (image) return image;
-
-  if (view.includes(0)) return null;
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(view);
-  } catch {
-    return null; // not valid UTF-8 — random binary, a GIF, a zip, …
-  }
-  if (filename.toLowerCase().endsWith('.json')) {
-    try {
-      JSON.parse(text);
-      return 'application/json';
-    } catch {
-      // A `.json` name on text that does not parse saves as text, not a refusal.
-    }
-  }
-  return 'text/plain';
 }
 
 /*
@@ -181,22 +195,4 @@ export function forceSaveBytesExtension(filename: string, type: SaveBytesType): 
   const name = cleaned.length > 0 ? cleaned : 'download';
   const m = name.match(/^(.+)\.([a-zA-Z0-9]{1,5})$/);
   return `${m ? m[1] : name}${SAVE_BYTES_EXTENSION[type]}`;
-}
-
-/**
- * Size-cap, clean the name, classify on the CLEANED name, and force the
- * extension — the host's `prepareSaveBytes`, in its order. Every refusal is the
- * reply's error string.
- */
-export function prepareSaveBytes(req: {
-  bytes: ArrayBuffer;
-  filename?: string;
-}): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
-  if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
-    return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
-  }
-  const filename = sanitizeSaveBytesFilename(req.filename);
-  const type = classifySaveBytes(req.bytes, filename);
-  if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
-  return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
 }

@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { prepareSaveBytes, saveImageRequestKind } from '../src/internal/saveBytes.js';
+import { saveImageRequestKind } from '../src/internal/saveBytes.js';
+import * as saveZipRules from '@civitai/app-sdk/save-zip';
+
+import { prepareSaveBytes } from '../src/internal/saveBytesPrepare.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
+import { zipFixture } from './zipFixtures.js';
 
 /**
  * PARITY between the mock host's `bytes` rules and the production host's
@@ -32,10 +36,28 @@ type Row = {
   name: string;
   bytes: () => ArrayBuffer;
   filename: string | undefined;
-  expected: { ok: true; type: string; filename: string } | { ok: false; error: string };
+  expected:
+    | { ok: true; type: string; filename: string; deflated?: unknown[] }
+    | { ok: false; error: string };
 };
 
 const ok = (type: string, filename: string) => ({ ok: true as const, type, filename });
+// A stored-only zip: an accepted one carries no deflated entries to inflate-check.
+const okZip = (filename: string) => ({ ok: true as const, type: 'application/zip', filename, deflated: [] });
+const enc = (s: string) => new TextEncoder().encode(s);
+const DATASET_ZIP = () =>
+  zipFixture([
+    { name: 'images/001.png', data: new Uint8Array(PNG) },
+    { name: 'images/001.txt', data: enc('a cat, sitting') },
+    { name: 'meta.json', data: enc('{}') },
+  ]);
+const PNG_WITH_ZIP = () => {
+  const zip = new Uint8Array(zipFixture([{ name: 'payload.exe', data: enc('MZ') }]));
+  const out = new Uint8Array(PNG.byteLength + zip.length);
+  out.set(new Uint8Array(PNG));
+  out.set(zip, PNG.byteLength);
+  return out.buffer as ArrayBuffer;
+};
 
 // prettier-ignore
 const ROWS: Row[] = [
@@ -79,11 +101,23 @@ const ROWS: Row[] = [
   { name: 'meta.json + ZWSP is text', bytes: JSON_TEXT, filename: 'meta.json\u200b', expected: ok('text/plain', 'meta.txt') },
   { name: 'meta.json + trailing spaces is JSON (trimmed first)', bytes: JSON_TEXT, filename: 'meta.json  ', expected: ok('application/json', 'meta.json') },
   { name: 'path ending .json is cut to its last segment', bytes: JSON_TEXT, filename: 'a.json/b', expected: ok('text/plain', 'b.txt') },
+  // zip — cases from the validator's own suite (@civitai/app-sdk test/save-zip.test.ts)
+  { name: 'zip dataset, named .zip', bytes: DATASET_ZIP, filename: 'dataset.zip', expected: okZip('dataset.zip') },
+  { name: 'zip named .png is still .zip', bytes: DATASET_ZIP, filename: 'dataset.png', expected: okZip('dataset.zip') },
+  { name: 'zip with traversal in the filename', bytes: DATASET_ZIP, filename: '../../evil.exe', expected: okZip('evil.zip') },
+  { name: 'zip holding an .exe', bytes: () => zipFixture([{ name: 'setup.exe', data: enc('MZ') }]), filename: 'a.zip', expected: { ok: false, error: 'zip entry type is not allowed: exe' } },
+  { name: 'zip holding a nested .zip', bytes: () => zipFixture([{ name: 'inner.zip' }]), filename: 'a.zip', expected: { ok: false, error: 'zip entry type is not allowed: zip' } },
+  { name: 'zip entry with ..', bytes: () => zipFixture([{ name: '../evil.txt' }]), filename: 'a.zip', expected: { ok: false, error: 'zip entry path contains a .. segment' } },
+  { name: 'zip entry with a backslash', bytes: () => zipFixture([{ name: '..\\evil.txt' }]), filename: 'a.zip', expected: { ok: false, error: 'zip entry path contains a backslash' } },
+  { name: 'zip with duplicate names', bytes: () => zipFixture([{ name: 'a.txt' }, { name: 'A.TXT' }]), filename: 'a.zip', expected: { ok: false, error: 'zip has duplicate entry names' } },
+  { name: 'empty zip', bytes: () => zipFixture([]), filename: 'a.zip', expected: { ok: false, error: 'zip has no entries' } },
+  { name: 'PNG with a zip appended is a PNG', bytes: PNG_WITH_ZIP, filename: 'x.zip', expected: ok('image/png', 'x.png') },
+  { name: 'text named .zip is text', bytes: () => textAb('not a zip'), filename: 'd.zip', expected: ok('text/plain', 'd.txt') },
 ];
 
 describe('saveBytes parity with the host (prepareSaveBytes)', () => {
   it.each(ROWS.map((r) => [r.name, r] as const))('%s', (_n, row) => {
-    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename })).toEqual(row.expected);
+    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename }, saveZipRules)).toEqual(row.expected);
   });
 });
 

@@ -2702,11 +2702,69 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   CONTENT. It accepts PNG, WebP and JPEG by magic bytes. Anything else must be
   valid UTF-8 with no NUL byte: it is saved as JSON when it parses and
   `filename` ends `.json` (any case) once the host has replaced each `?` and
-  `#` with `_`, and as plain text otherwise. A GIF, a zip
-  or other binary is refused with `file type is not allowed`. The host forces
-  the extension from the classified type. The cap is 50 MiB, and the hook
-  refuses a larger buffer before sending it: `file exceeds the maximum save
-  size`. The buffer is copied, not transferred, so you can keep displaying it.
+  `#` with `_`, and as plain text otherwise. A GIF or other binary is refused
+  with `file type is not allowed`. The host forces the extension from the
+  classified type. The cap is 50 MiB, and the hook refuses a larger buffer
+  before sending it: `file exceeds the maximum save size`. The buffer is
+  copied, not transferred, so you can keep displaying it.
+- **`{ bytes }` holding a `.zip`** (e.g. an image dataset with caption files):
+  recognised by its STRUCTURE — the buffer must start with a zip local header —
+  and always saved as `<name>.zip`, whatever `filename` says. The host checks
+  the whole archive before it starts the download, and refuses it with a
+  specific reason (such as `zip entry type is not allowed: exe`) unless:
+
+  > 🔴 **Build the zip with `DEFLATE`** — JSZip
+  > `generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })` — **or, if
+  > you store entries uncompressed, without `streamFiles`.** An uncompressed
+  > entry written with `streamFiles: true` has no size in its header, so a
+  > streaming extractor finds its end by looking for the next zip header; the
+  > host therefore refuses such an entry if its bytes happen to contain a zip
+  > header signature (`PK\x03\x04` or `PK\x07\x08`). Random image data does
+  > that by chance in roughly **1 in 8 files of 256 MiB**, so a large stored +
+  > streamed dataset can be refused at random. `DEFLATE`, or stored without
+  > `streamFiles`, is never affected.
+  - every entry is a folder or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.txt`,
+    `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
+  - no entry name is absolute, has a `..`, `.` or empty segment, a segment
+    ending in a dot or space, a backslash, a colon / drive letter, or a control,
+    bidi or byte-order-mark character, and no two names are
+    the same ignoring case and Unicode normalisation. A non-ASCII name (`画像/001.png`,
+    `café.txt`) must be UTF-8 with the zip's UTF-8 flag set, which JSZip does;
+    the Info-ZIP Unicode Path field JSZip adds beside it is accepted only when
+    it restates that exact name;
+  - entries are stored or deflated, not encrypted, not symlinks, and every
+    entry's CRC-32 matches its content;
+  - extra fields are only timestamps (`0x5455`, `0x000a`), Unix owner
+    (`0x7875`) or the Unicode Path field above — anything else (e.g. `0x000d`
+    Unix mode / link) is refused;
+  - a STORED entry written with a data descriptor (JSZip `streamFiles: true`)
+    must not contain the bytes `PK\x07\x08` or `PK\x03\x04` (see the note
+    above: use `DEFLATE`, or no `streamFiles`);
+  - the archive is not zip64 and has no archive comment, and every central
+    directory record matches its local header;
+  - there are at most 10,000 entries, at most 1 GiB uncompressed in total, no
+    entry over 1 MiB declares more than 100× its compressed size, and every
+    deflated entry inflates to exactly its declared size with nothing after the
+    end of its deflate stream.
+
+  The cap for a zip is 256 MiB (the hook refuses a larger one before sending),
+  and one 256 MiB zip uses up the host's per-window save budget: a further save
+  in the next ~10 seconds replies `busy`. The whole buffer sits in the viewer's
+  tab and is copied once across `postMessage` (and once more into the download),
+  so build it once and save it once. Any zip writer works that produces a plain
+  archive — e.g. JSZip `generateAsync({ type: 'arraybuffer', compression:
+  'DEFLATE' })` (with or without `streamFiles`), or stored without
+  `streamFiles`.
+
+  The validator is `@civitai/app-sdk/save-zip`, and it is the same module in
+  both places: the host runs it and `createMockHost` loads it, so your tests
+  accept and refuse the zips the host does (the host pins its own
+  `@civitai/app-sdk` release). 🔴 **`createMockHost` needs `@civitai/app-sdk`
+  0.85.0 or later to validate a zip.** It loads the validator only on the first
+  zip save, so on an older app-sdk everything else works and a zip save rejects
+  with `createMockHost validates a zip with @civitai/app-sdk/save-zip, which
+  needs @civitai/app-sdk >= 0.85.0`. The hook itself (`useSaveImage`) needs no
+  newer app-sdk.
 
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
 with `invalid save-image request`.** The host also replies that when the input
@@ -2733,6 +2791,18 @@ try {
   // 'invalid save-image request' here means this host cannot save bytes yet.
   setStatus(`Could not save the sidecar: ${(err as Error).message}`);
 }
+
+// A captioned dataset, zipped in the tab. Saved as dataset.zip after the host validates it.
+const zip = new JSZip();
+for (const item of dataset) {
+  zip.file(`images/${item.name}`, item.imageBytes);
+  zip.file(`images/${item.stem}.txt`, item.caption);
+}
+// DEFLATE (or stored without streamFiles): see "Build the zip with DEFLATE" above.
+await saveImage({
+  bytes: await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }),
+  filename: 'dataset.zip',
+});
 
 // The block's own generation output, or another user's image.
 await saveImage({ url: output.url, filename: 'render.png' });

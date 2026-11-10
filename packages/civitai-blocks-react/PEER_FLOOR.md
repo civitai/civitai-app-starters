@@ -16,6 +16,44 @@ Declared today: `">=0.57.0 <1.0.0"`.
 
 ---
 
+## ✅ NOT RAISED, 2026-11-10 — `createMockHost`'s zip validation loads `@civitai/app-sdk/save-zip` LAZILY (#815)
+
+civitai-app-starters#815 moved the `SAVE_IMAGE` zip validator into the new
+app-sdk subpath `./save-zip` (first in app-sdk `0.85.0`) so the host and
+`createMockHost` share one copy. A first cut value-imported it statically and
+raised this floor to `>=0.85.0`. That was rejected, because a STATIC import of a
+subpath above the floor fails at MODULE LOAD (`ERR_PACKAGE_PATH_NOT_EXPORTED`)
+on every older app-sdk:
+
+- from the main entry (`useSaveImage` reaches `internal/saveBytes.ts`), it breaks
+  `import '@civitai/blocks-react'` for every block app, zip or not;
+- from `./testing` (`createMockHost`), it breaks every downstream test suite —
+  the #344 shape.
+
+What shipped instead:
+
+- **Main entry:** `internal/saveBytes.ts` restates the two rules the hook needs —
+  the zip-candidate test (`startsLikeZip`) and the 256 MiB cap — and
+  `test/saveBytesZipParity.test.ts` pins them EQUAL to app-sdk's
+  `looksLikeSaveZip` / `SAVE_ZIP_MAX_BYTES` against the workspace copy.
+- **`./testing`:** `internal/saveBytesPrepare.ts` loads the validator with a
+  dynamic `import('@civitai/app-sdk/save-zip')` on the first zip save. On an
+  older app-sdk only that save is refused (`SAVE_ZIP_NEEDS_NEWER_APP_SDK_ERROR`,
+  naming `>= 0.85.0`); every other save, and the entry itself, still work
+  (`test/mockHostSaveZipOldSdk.test.tsx`).
+- **Proof on the built package:** `test/mainEntryNoSaveZip.test.ts` walks `dist/`
+  from each `exports` entry — `.`, `./ui`, `./live` never reach the subpath;
+  `./testing` reaches it only dynamically (and must, as the positive control).
+
+So nothing this package imports at load time is above `0.57.0`, and the ledger
+records no `./save-zip` entry: the guard reads only module-load imports, and a
+static one would go red there as an unledgered subpath (checked: a probe import
+added to `internal/mockHost.ts` failed `DERIVED FLOOR`). The README's
+`useSaveImage()` section and the changeset say that `createMockHost` needs
+app-sdk `>= 0.85.0` to validate a zip.
+
+---
+
 ## 🔴 RAISED 0.55.0 → 0.57.0 (the sixth time), 2026-10-03 — the nested-document helper
 
 `hooks/useNestedDocument.ts` value-imports one new peer symbol from

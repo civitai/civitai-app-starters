@@ -6,6 +6,7 @@ import { SAVE_BYTES_MAX_BYTES } from '../src/internal/saveBytes.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
+import { zipFixture } from './zipFixtures.js';
 
 /**
  * `createMockHost`'s SAVE_IMAGE handler, driven through the REAL hook and
@@ -82,6 +83,34 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]!.mimeType).toBe(mime);
     expect(saved[0]!.filename).toBe(name);
+  });
+
+  // Raw deflate of the 5 ASCII bytes "hello".
+  const HELLO_DEFLATED = new Uint8Array([0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00]);
+
+  it('saves a valid zip (stored + deflated entries) as application/zip under .zip', async () => {
+    const zip = zipFixture([
+      { name: 'images/001.png', data: PNG },
+      { name: 'images/001.txt', data: HELLO_DEFLATED, method: 8, size: 5, plain: new TextEncoder().encode('hello') },
+    ]);
+    const err = await save({ bytes: zip, filename: 'dataset.png' });
+    expect(err).toBeNull();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.mimeType).toBe('application/zip');
+    expect(saved[0]!.filename).toBe('dataset.zip');
+  });
+
+  it('refuses a zip with a disallowed entry, with the specific reason', async () => {
+    const err = await save({ bytes: zipFixture([{ name: 'setup.exe', data: new TextEncoder().encode('MZ') }]) });
+    expect(err?.message).toBe('zip entry type is not allowed: exe');
+    expect(saved).toHaveLength(0);
+  });
+
+  it('refuses a zip whose deflated entry inflates past its declared size, before saving', async () => {
+    const zip = zipFixture([{ name: 'a.txt', data: HELLO_DEFLATED, method: 8, size: 4 }]);
+    const err = await save({ bytes: zip, filename: 'dataset.zip' });
+    expect(err?.message).toBe('zip entry does not inflate to its declared size');
+    expect(saved).toHaveLength(0);
   });
 
   it('saves JSON bytes as JSON when the filename ends .json', async () => {

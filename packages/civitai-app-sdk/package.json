@@ -51,6 +51,10 @@
       "types": "./dist/vite/index.d.ts",
       "import": "./dist/vite/index.js"
     },
+    "./save-zip": {
+      "types": "./dist/save-zip/index.d.ts",
+      "import": "./dist/save-zip/index.js"
+    },
     "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
   "comment-packaging": "`!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
@@ -133,6 +137,7 @@
     "@civitai/client": "0.2.0-beta.98",
     "@types/node": "^25.9.1",
     "ajv": "^8.17.1",
+    "jszip": "^3.10.1",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
     "vitest": "^4.1.11"

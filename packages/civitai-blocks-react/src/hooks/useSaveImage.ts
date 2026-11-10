@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
-import { SAVE_BYTES_MAX_BYTES, SAVE_BYTES_TOO_LARGE_ERROR } from '../internal/saveBytes.js';
+import { SAVE_BYTES_TOO_LARGE_ERROR, saveBytesMaxBytes } from '../internal/saveBytes.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
 
@@ -31,11 +31,17 @@ import { useTransportConnection } from './useTransportConnection.js';
  *    acceptable: PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with
  *    no NUL byte, saved as JSON when it parses AND `filename` ends `.json`
  *    (case-insensitive) after the host replaces each `?` and `#` with `_` (so
- *    `data.json?v=2` saves as text), else as text/plain. Anything else — a GIF, a zip,
- *    random binary — is refused with `file type is not allowed`, and an empty
- *    buffer with `invalid save-image request`. The saved extension is forced
- *    from the classified type, whatever `filename` says. The cap is 50 MiB of
- *    raw bytes.
+ *    `data.json?v=2` saves as text), else as text/plain. A `.zip` is recognised
+ *    by its structure (it must START with a zip local header — not a filename)
+ *    and saved as `application/zip` only if the host's validator
+ *    (`@civitai/app-sdk/save-zip`) accepts it; a refused zip rejects with the
+ *    specific reason (e.g. `zip entry type is not allowed: exe`). The rules are
+ *    listed once, in this package's README: `useSaveImage()`, "`{ bytes }`
+ *    holding a `.zip`". Anything else — a GIF, random binary — is refused with
+ *    `file type is not allowed`, and an empty buffer with
+ *    `invalid save-image request`. The saved extension is forced from the
+ *    classified type, whatever `filename` says. The cap is 50 MiB of raw bytes,
+ *    or 256 MiB for a zip.
  *    The buffer is COPIED across `postMessage`, never transferred, so the block
  *    can keep displaying it.
  */
@@ -56,8 +62,9 @@ export interface UseSaveImage {
    * the transport timeout — the hook never hangs.
    *
    * 🔴 One call is refused BEFORE sending, with the host's own string: a
-   * `bytes` buffer over the 50 MiB cap rejects with `file exceeds the maximum
-   * save size`, so it is never copied across `postMessage` just to be refused.
+   * `bytes` buffer over its cap (50 MiB, or 256 MiB when it starts like a zip)
+   * rejects with `file exceeds the maximum save size`, so it is never copied
+   * across `postMessage` just to be refused.
    * Everything else is forwarded and judged by the host, which replies
    * `invalid save-image request` to a request that is not exactly one variant,
    * to a `bytes` that is not a non-empty `ArrayBuffer` (pass
@@ -87,7 +94,7 @@ type SaveImageWirePayload = {
 function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
   const raw = input as { url?: string; imageId?: number; bytes?: unknown; filename?: string };
   if (raw.bytes !== undefined) {
-    if (raw.bytes instanceof ArrayBuffer && raw.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+    if (raw.bytes instanceof ArrayBuffer && raw.bytes.byteLength > saveBytesMaxBytes(raw.bytes)) {
       throw new Error(SAVE_BYTES_TOO_LARGE_ERROR);
     }
     const payload: SaveImageWirePayload = { bytes: raw.bytes as ArrayBuffer, filename: raw.filename };
@@ -112,6 +119,9 @@ function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
  * await saveImage({ imageId: cell.imageId });
  * // a file produced in the tab (classified by content host-side; page apps only):
  * await saveImage({ bytes: healedPng, filename: 'healed.png' });
+ * // a dataset zip built in the tab (validated host-side; saved as dataset.zip):
+ * // DEFLATE, or stored without streamFiles (README: "Build the zip with DEFLATE"):
+ * await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }), filename: 'dataset.zip' });
  */
 export function useSaveImage(): UseSaveImage {
   useTransportConnection();

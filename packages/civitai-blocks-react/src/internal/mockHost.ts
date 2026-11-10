@@ -107,11 +107,14 @@ import {
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
 import { stepInputRefusal } from './mockHostStepInput.js';
+import { SAVE_IMAGE_INVALID_REQUEST_ERROR, saveImageRequestKind } from './saveBytes.js';
 import {
-  SAVE_IMAGE_INVALID_REQUEST_ERROR,
+  SAVE_ZIP_NEEDS_NEWER_APP_SDK_ERROR,
+  loadSaveZipRules,
   prepareSaveBytes,
-  saveImageRequestKind,
-} from './saveBytes.js';
+  saveBytesNeedsZipRules,
+  verifySaveZipInflateSafely,
+} from './saveBytesPrepare.js';
 import {
   UPLOAD_BYTES_INVALID_ERROR,
   admitUploadBytes,
@@ -1615,7 +1618,7 @@ export interface MockHostOptions {
   /**
    * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
    * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
-   * `text/plain`), the download `filename` exactly as the host cleans it (the
+   * `text/plain`, `application/zip`), the download `filename` exactly as the host cleans it (the
    * same character rules, then the extension forced from that type), and the
    * `bytes` themselves.
    * The mock cannot trigger a browser download, so this is the observable a
@@ -5541,20 +5544,35 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
             if (saveImageError !== undefined) return saveReply({ ok: false, error: saveImageError });
             if (kind === 'bytes' && p.bytes instanceof ArrayBuffer) {
-              // The host's `prepareSaveBytes` (./saveBytes.ts): size cap, clean
-              // the name, classify on the CLEANED name, force the extension.
-              const prepared = prepareSaveBytes({
-                bytes: p.bytes,
-                filename: typeof p.filename === 'string' ? p.filename : undefined,
-              });
-              if (!prepared.ok) return saveReply(prepared);
               // A COPY, as production's structured-clone `postMessage` delivers
-              // it — the block keeps (and may keep mutating) its own buffer.
-              options.onSaveBytes?.({
-                bytes: p.bytes.slice(0),
-                mimeType: prepared.type,
-                filename: prepared.filename,
-              });
+              // it — the block keeps (and may keep mutating) its own buffer. Taken
+              // FIRST, so the async zip path below judges the bytes that were sent.
+              const bytes = p.bytes.slice(0);
+              const filename = typeof p.filename === 'string' ? p.filename : undefined;
+              // The host's `prepareSaveBytes` (./saveBytesPrepare.ts): size cap, clean
+              // the name, classify on the CLEANED name, force the extension.
+              if (!saveBytesNeedsZipRules(bytes)) {
+                const prepared = prepareSaveBytes({ bytes, filename }, null);
+                if (!prepared.ok) return saveReply(prepared);
+                options.onSaveBytes?.({ bytes, mimeType: prepared.type, filename: prepared.filename });
+                return saveReply({ ok: true });
+              }
+              // A zip candidate: the validator (@civitai/app-sdk/save-zip, the module the
+              // host runs) is loaded on demand — see ./saveBytesPrepare.ts for why it is
+              // never a static import. Then, like the host, every deflated entry must
+              // inflate to exactly its declared size BEFORE the save.
+              void loadSaveZipRules().then(
+                async (zip) => {
+                  const prepared = prepareSaveBytes({ bytes, filename }, zip);
+                  if (!prepared.ok) return saveReply(prepared);
+                  const error = await verifySaveZipInflateSafely(zip, bytes, prepared.deflated ?? []);
+                  if (error) return saveReply({ ok: false, error });
+                  options.onSaveBytes?.({ bytes, mimeType: prepared.type, filename: prepared.filename });
+                  saveReply({ ok: true });
+                },
+                () => saveReply({ ok: false, error: SAVE_ZIP_NEEDS_NEWER_APP_SDK_ERROR }),
+              );
+              return;
             }
             return saveReply({ ok: true });
           }

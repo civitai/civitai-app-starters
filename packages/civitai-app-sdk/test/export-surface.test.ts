@@ -142,6 +142,14 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
     inRoot: false,
     reason: 'NOT on the root: NODE ONLY — optional peers ajv (runtime) and vite (types).',
   },
+  './save-zip': {
+    src: 'save-zip/index',
+    inRoot: false,
+    reason:
+      'NOT on the root: the SAVE_IMAGE zip validator, imported by exactly two consumers — the ' +
+      'civitai.com host and @civitai/blocks-react createMockHost — so they share ONE copy. An ' +
+      'OAuth app never saves a zip through a block host, so the root would only carry it.',
+  },
 };
 
 /** `exports` keys that publish a FILE rather than a module surface. */
