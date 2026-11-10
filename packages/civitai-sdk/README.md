@@ -249,15 +249,14 @@ const { limits, usage } = await app.storage.info();
   cannot be withdrawn). A tally never changes `data` or `version`. A second operator,
   an unknown one, a mark name that is not a string and a `by` that is not a number
   do not type-check; a body that still reaches the server as anything but one
-  operator is refused `invalid_request`, and `storageUpdateRefusal(error)` reads its
-  `details.reason`: `empty_patch`, `unknown_operator`, `multiple_operators`,
-  `merge_patch_unsupported` (plain fields: a merge-patch of `data` is reserved) or
-  `malformed_operator`.
-- **`increment`, `mark` and `unmark` are deprecated** for `update`. They keep their
-  signatures and replies (`increment`'s `by` still defaults to 1) and send the same
-  PATCH, so they no longer reach the deprecated per-tally routes
-  (`…/counters/:name`, `…/marks/:name`), which civitai.com still answers with a
-  `Deprecation` header.
+  operator is refused `invalid_request` with a `details.reason`: `empty_patch`,
+  `unknown_operator`, `multiple_operators`, `merge_patch_unsupported` (plain fields:
+  a merge-patch of `data` is reserved) or `malformed_operator`. `update` needs a
+  civitai.com that serves the PATCH route (civitai/civitai#8292).
+- **`increment`, `mark` and `unmark` are deprecated** for `update`. They are
+  unchanged: same signatures, replies and routes (`POST …/counters/:name`,
+  `PUT`/`DELETE …/marks/:name`, which civitai.com answers with a `Deprecation`
+  header), so they keep working against a civitai.com without the PATCH route.
 - **Conditional writes:** `put(key, data, { ifVersion })` and
   `delete(key, { ifVersion })` write only at that version (`0` = only if absent);
   a mismatch rejects `version_conflict` with `details.currentVersion`.
@@ -290,7 +289,7 @@ try {
 A counter or mark through `update`, with a refused body told apart by its reason:
 
 ```ts
-import { storageUpdateRefusal, type StorageCollection } from '@civitai/sdk';
+import { StorageError, type StorageCollection } from '@civitai/sdk';
 
 declare const board: StorageCollection<{ title: string }>;
 
@@ -301,9 +300,10 @@ console.log(value, marked, count);
 try {
   await board.update('r1', { $unmark: 'vote' });
 } catch (error) {
-  // `null` for every other refusal, including a wrong value inside a good operator.
-  const reason = storageUpdateRefusal(error);
-  if (reason !== null) console.error('not one update operator:', reason);
+  // Absent for a wrong value inside a well-formed operator, and for other codes.
+  if (error instanceof StorageError && error.code === 'invalid_request' && error.details?.reason) {
+    console.error('not one update operator:', error.details.reason);
+  }
   throw error;
 }
 ```

@@ -100,12 +100,18 @@ describe('request shapes the contract run does not cover', () => {
     expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/a', `blocks/storage/a${'_9'.repeat(15)}b`]);
   });
 
-  it('encodes every caller-supplied segment; a counter name travels in the body, not the path', async () => {
+  it('encodes every caller-supplied segment', async () => {
     const r = recorder(() => ({ value: 1 }));
     await r.storage.collection('c').increment('a:b/c d?e', 'n#1');
-    expect(r.sent[0]!.method).toBe('PATCH');
-    expect(r.sent[0]!.path).toBe('blocks/storage/c/a%3Ab%2Fc%20d%3Fe');
-    expect(JSON.stringify(r.sent[0]!.opts.body)).toBe('{"$inc":{"n#1":1}}');
+    expect(r.sent[0]!.path).toBe('blocks/storage/c/a%3Ab%2Fc%20d%3Fe/counters/n%231');
+  });
+
+  it('update: the key is a path segment, the counter name travels in the body', async () => {
+    const r = recorder(() => ({ value: 1 }));
+    await r.storage.collection('c').update('a:b/c d?e', { $inc: { 'n#1': 2 } });
+    expect(r.sent.map((x) => [x.method, x.path, JSON.stringify(x.opts.body)])).toEqual([
+      ['PATCH', 'blocks/storage/c/a%3Ab%2Fc%20d%3Fe', '{"$inc":{"n#1":2}}'],
+    ]);
   });
 
   it.each([
@@ -113,6 +119,9 @@ describe('request shapes the contract run does not cover', () => {
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').put('.', {})],
     ['key', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').delete('..')],
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').update('.', { $mark: 'vote' })],
+    ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.')],
+    ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', '')],
+    ['mark', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').unmark('k', '..')],
   ])('refuses a %s of %j before sending — a URL would rewrite it into another route', async (_what, _value, run) => {
     const r = recorder();
     const error = await run(r.storage).catch((e: unknown) => e);
@@ -123,13 +132,13 @@ describe('request shapes the contract run does not cover', () => {
   });
 
   it.each([
-    ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.'), { $inc: { '.': 1 } }],
-    ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', ''), { $mark: '' }],
-    ['mark', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').unmark('k', '..'), { $unmark: '..' }],
-  ])('sends a %s of %j in the PATCH body (no URL rewrites it) and lets the server refuse it', async (_what, _value, run, body) => {
+    ['counter', '.', { $inc: { '.': 1 } }],
+    ['mark', '', { $mark: '' }],
+    ['mark', '..', { $unmark: '..' }],
+  ] as const)('update sends a %s of %j in the PATCH body (no URL rewrites it) and lets the server refuse it', async (_what, _value, op) => {
     const r = recorder(() => envelope(400, 'invalid_request'));
-    await expect(run(r.storage)).rejects.toMatchObject({ code: 'invalid_request' });
-    expect(r.sent.map((x) => [x.method, x.path, x.opts.body])).toEqual([['PATCH', 'blocks/storage/c/k', body]]);
+    await expect(r.storage.collection('c').update('k', op)).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(r.sent.map((x) => [x.method, x.path, x.opts.body])).toEqual([['PATCH', 'blocks/storage/c/k', op]]);
   });
 
   it('sends a dot-only key that is NOT a path step (`...`) and lets the server refuse it', async () => {

@@ -5,10 +5,11 @@ import { CivitaiError } from '../../src/core/errors.js';
 import {
   createDocumentStorage,
   StorageError,
-  storageUpdateRefusal,
   type StorageCollection,
+  type StorageIncrementOp,
+  type StorageMarkOp,
+  type StorageUnmarkOp,
   type StorageUpdateOp,
-  type StorageUpdateRefusalReason,
 } from '../../src/doc-store/index.js';
 import { ApiError, type Http, type RequestOptions } from '../../src/http/index.js';
 import * as root from '../../src/index.js';
@@ -20,8 +21,9 @@ import { fakeFetch, json, type FetchCall } from '../support/fake-fetch.js';
  * with exactly one of `{"$inc":{"<counter>":by}}`, `{"$mark":"<name>"}`, `{"$unmark":"<name>"}`.
  *
  * - `update(key, op)` sends the operator as written and reads the reply its operator gives.
- * - `increment`/`mark`/`unmark` are deprecated and send the SAME PATCH (never the per-tally
- *   routes), with their replies unchanged and `by` defaulting to 1 in the client.
+ * - `increment`/`mark`/`unmark` are deprecated and keep their own per-tally routes and
+ *   request shapes, so they do not depend on a civitai.com that serves PATCH; only `update`
+ *   sends PATCH.
  * - The fake (and so the local preview, which is the fake) refuses a body that is not one
  *   operator with the server's `details.reason`, before sign-in, any budget or the
  *   collection is looked at — `parseTallyPatch` runs before `run` on the server.
@@ -157,45 +159,52 @@ describe('update: each operator through the real client and http layer', () => {
     const two = { $inc: { views: 1 }, $mark: 'vote' } as unknown as StorageUpdateOp;
     const error = await refusal(r.storage.collection('posts').update('p', two));
     expect(r.sent.map((s) => [s.method, s.path, s.opts.body])).toEqual([['PATCH', 'blocks/storage/posts/p', two]]);
-    expect(storageUpdateRefusal(error)).toBe('multiple_operators');
+    expect(error.details).toEqual({ reason: 'multiple_operators', operators: ['$inc', '$mark'] });
   });
 });
 
-describe('the deprecated methods send the PATCH update sends', () => {
-  const answer = (_method: string, _path: string, opts: RequestOptions) => {
-    const op = opts.body as Record<string, unknown>;
-    if ('$inc' in op) return { value: 7 };
-    if (op.$mark === 'report') return { marked: true };
-    return '$mark' in op ? { marked: true, count: 2 } : { marked: false, count: 1 };
-  };
-
-  it('deprecated increment sends PATCH to the document, never POST …/counters/:name', async () => {
-    const r = recorder(answer);
+describe('the deprecated methods keep their per-tally routes; only update sends PATCH', () => {
+  it('deprecated increment sends POST …/counters/:name with `{ by }`, never PATCH', async () => {
+    const r = recorder(() => ({ value: 7 }));
     expect(await r.storage.collection('posts').increment('p1', 'views', 2)).toEqual({ value: 7 });
     expect(r.sent.map((s) => [s.method, s.path, s.opts.body])).toEqual([
-      ['PATCH', 'blocks/storage/posts/p1', { $inc: { views: 2 } }],
+      ['POST', 'blocks/storage/posts/p1/counters/views', { by: 2 }],
     ]);
   });
 
-  it('deprecated increment without `by` sends `by: 1` and tallies one per call', async () => {
-    // Against the fake, so the default is checked by what it DOES (a total of 2), not
-    // only by the bytes: a dropped default sends `{"$inc":{}}`, which is refused.
-    const fake = make();
-    const plays = fake.storage.collection('plays');
-    expect(await plays.increment('m', 'plays')).toEqual({ value: 1 });
-    expect(await plays.increment('m', 'plays')).toEqual({ value: 2 });
-    expect(fake.calls.map((c) => JSON.stringify(c.body))).toEqual(['{"$inc":{"plays":1}}', '{"$inc":{"plays":1}}']);
+  it('deprecated increment without `by` sends no body (the route\'s own default applies)', async () => {
+    const r = recorder(() => ({ value: 1 }));
+    await r.storage.collection('posts').increment('p1', 'views');
+    expect(r.sent.map((s) => [s.method, s.path, s.opts.body])).toEqual([
+      ['POST', 'blocks/storage/posts/p1/counters/views', undefined],
+    ]);
   });
 
-  it('deprecated mark and unmark send PATCH $mark / $unmark; replies unchanged', async () => {
-    const r = recorder(answer);
+  it('deprecated mark and unmark send PUT / DELETE …/marks/:name; replies unchanged', async () => {
+    let reply: unknown = { marked: true, count: 2 };
+    const r = recorder(() => reply);
     const posts = r.storage.collection('posts');
     expect(await posts.mark('p1', 'vote')).toEqual({ marked: true, count: 2 });
+    reply = { marked: true };
     expect(await posts.mark('p1', 'report')).toEqual({ marked: true });
+    reply = { marked: false, count: 1 };
     expect(await posts.unmark('p1', 'vote')).toEqual({ marked: false, count: 1 });
     expect(r.sent.map((s) => [s.method, s.path, s.opts.body])).toEqual([
+      ['PUT', 'blocks/storage/posts/p1/marks/vote', undefined],
+      ['PUT', 'blocks/storage/posts/p1/marks/report', undefined],
+      ['DELETE', 'blocks/storage/posts/p1/marks/vote', undefined],
+    ]);
+  });
+
+  it('update sends PATCH to the document, never a per-tally route', async () => {
+    const r = recorder((_m, _p, opts) => ('$inc' in (opts.body as object) ? { value: 3 } : { marked: '$mark' in (opts.body as object), count: 1 }));
+    const posts = r.storage.collection('posts');
+    await posts.update('p1', { $inc: { views: 3 } });
+    await posts.update('p1', { $mark: 'vote' });
+    await posts.update('p1', { $unmark: 'vote' });
+    expect(r.sent.map((s) => [s.method, s.path, s.opts.body])).toEqual([
+      ['PATCH', 'blocks/storage/posts/p1', { $inc: { views: 3 } }],
       ['PATCH', 'blocks/storage/posts/p1', { $mark: 'vote' }],
-      ['PATCH', 'blocks/storage/posts/p1', { $mark: 'report' }],
       ['PATCH', 'blocks/storage/posts/p1', { $unmark: 'vote' }],
     ]);
   });
@@ -207,22 +216,23 @@ describe('the deprecated methods send the PATCH update sends', () => {
     await expect(posts.unmark('p1', 'vote')).rejects.toThrow('storage posts.unmark: malformed reply');
   });
 
-  it('none of the four ever addresses a per-tally route, against the fake', async () => {
+  it('against the fake, the deprecated routes and update tally the same counters and marks', async () => {
     const fake = make();
     const posts = fake.storage.collection('posts');
     await posts.put('p', { t: 1 });
     await posts.increment('p', 'views', 3);
-    await posts.mark('p', 'vote');
-    await posts.unmark('p', 'vote');
+    await posts.increment('p', 'views');
     await posts.update('p', { $inc: { views: 1 } });
-    const tallies = fake.calls.slice(1);
-    expect(tallies.map((c) => [c.method, c.path, c.status])).toEqual([
+    await posts.mark('p', 'vote');
+    await posts.update('p', { $unmark: 'vote' });
+    expect(fake.calls.slice(1).map((c) => [c.method, c.path, c.status])).toEqual([
+      ['POST', 'blocks/storage/posts/p/counters/views', 200],
+      ['POST', 'blocks/storage/posts/p/counters/views', 200],
       ['PATCH', 'blocks/storage/posts/p', 200],
-      ['PATCH', 'blocks/storage/posts/p', 200],
-      ['PATCH', 'blocks/storage/posts/p', 200],
+      ['PUT', 'blocks/storage/posts/p/marks/vote', 200],
       ['PATCH', 'blocks/storage/posts/p', 200],
     ]);
-    expect((await posts.get('p'))!).toMatchObject({ version: 1, counters: { views: 4 }, marks: { vote: 0 } });
+    expect((await posts.get('p'))!).toMatchObject({ version: 1, counters: { views: 5 }, marks: { vote: 0 } });
   });
 });
 
@@ -279,32 +289,11 @@ describe('update: the types', () => {
     >();
   });
 
-  it('the new names are exported from the package root', () => {
-    expect(root.storageUpdateRefusal).toBe(storageUpdateRefusal);
+  it('the new types are exported from the package root', () => {
     expectTypeOf<root.StorageUpdateOp>().toEqualTypeOf<StorageUpdateOp>();
-    expectTypeOf<root.StorageUpdateRefusalReason>().toEqualTypeOf<StorageUpdateRefusalReason>();
-  });
-});
-
-describe('storageUpdateRefusal', () => {
-  const invalid = (details?: Record<string, unknown>) =>
-    new StorageError(400, 'invalid_request', 'x', { code: 'invalid_request', message: 'x', error: 'x', details }, details);
-
-  it.each(['empty_patch', 'unknown_operator', 'multiple_operators', 'merge_patch_unsupported', 'malformed_operator'])(
-    'reads %s',
-    (reason) => {
-      expect(storageUpdateRefusal(invalid({ reason }))).toBe(reason);
-    },
-  );
-
-  it('is null for a reason it does not list, no reason, another code, and a non-StorageError', () => {
-    expect(storageUpdateRefusal(invalid({ reason: 'some_later_reason' }))).toBeNull();
-    expect(storageUpdateRefusal(invalid({ counter: 'likes' }))).toBeNull();
-    expect(storageUpdateRefusal(invalid())).toBeNull();
-    const policy = new StorageError(403, 'write_policy', 'x', {}, { reason: 'malformed_operator' });
-    expect(storageUpdateRefusal(policy)).toBeNull();
-    expect(storageUpdateRefusal(new ApiError(400, 'x', { details: { reason: 'empty_patch' } }))).toBeNull();
-    expect(storageUpdateRefusal(new Error('empty_patch'))).toBeNull();
+    expectTypeOf<root.StorageIncrementOp>().toEqualTypeOf<StorageIncrementOp>();
+    expectTypeOf<root.StorageMarkOp>().toEqualTypeOf<StorageMarkOp>();
+    expectTypeOf<root.StorageUnmarkOp>().toEqualTypeOf<StorageUnmarkOp>();
   });
 });
 
@@ -357,14 +346,14 @@ describe('the fake: PATCH refusals, as the server gives them', () => {
     const posts = fake.storage.collection('posts');
     const two = { $inc: { views: 1 }, $mark: 'vote' } as unknown as StorageUpdateOp;
     const error = await refusal(posts.update('p', two));
-    expect([error.status, error.code, storageUpdateRefusal(error)]).toEqual([400, 'invalid_request', 'multiple_operators']);
+    expect([error.status, error.code, error.details?.reason]).toEqual([400, 'invalid_request', 'multiple_operators']);
     expect((await posts.get('p'))!).toMatchObject({ counters: { views: 0 }, marks: { vote: 0 }, viewer: { marks: [] } });
   });
 
-  it('every reason reaches the caller through update() as a StorageError, read by storageUpdateRefusal', async () => {
+  it('every reason reaches the caller through update() as a StorageError with its details.reason', async () => {
     const fake = await seeded();
     const posts = fake.storage.collection('posts');
-    const send = (op: unknown) => refusal(posts.update('p', op as StorageUpdateOp)).then(storageUpdateRefusal);
+    const send = (op: unknown) => refusal(posts.update('p', op as StorageUpdateOp)).then((e) => e.details?.reason);
     expect(
       await Promise.all([undefined, { $set: 1 }, { $inc: { views: 1 }, $unmark: 'vote' }, { status: 'x' }, { $mark: 2 }].map(send)),
     ).toEqual(['empty_patch', 'unknown_operator', 'multiple_operators', 'merge_patch_unsupported', 'malformed_operator']);

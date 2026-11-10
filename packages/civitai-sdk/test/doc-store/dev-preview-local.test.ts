@@ -8,7 +8,7 @@ import { build, type Rollup } from 'vite';
 import { initialize, StorageError, type BlockInitializeOptions } from '../../src/index.js';
 import { snapshotFromInit, type BlockSnapshot } from '../../src/core/transport.js';
 import type { BlockInitPayload } from '../../src/core/handshake.js';
-import { INSUFFICIENT_SCOPE_HINT, storageUpdateRefusal } from '../../src/doc-store/index.js';
+import { INSUFFICIENT_SCOPE_HINT } from '../../src/doc-store/index.js';
 import { isTransient } from '../../src/http/retry.js';
 import { LOCAL_PREVIEW_MANIFEST_GLOBAL } from '../../src/doc-store/local-preview.js';
 import { createFakeTransport } from '../../src/testing.js';
@@ -240,7 +240,6 @@ describe('dev-tunnel preview: tallies as update operators (PATCH)', () => {
     expect(calls).toEqual([]);
     expect(error).toBeInstanceOf(StorageError);
     expect(error).toMatchObject({ status: 400, code: 'invalid_request', details: { reason } });
-    expect(storageUpdateRefusal(error)).toBe(reason);
   });
 
   it('without a manifest, update() fails with the same local error as every other method', async () => {

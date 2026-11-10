@@ -157,8 +157,12 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    *   Idempotent. A `report` cannot be withdrawn: the server refuses it
    *   `invalid_request` (400) for every caller.
    *
-   * A body the server cannot read as one operator is refused `invalid_request` with a
-   * `details.reason` ({@link storageUpdateRefusal}).
+   * A body the server cannot read as one operator is refused `invalid_request`, with
+   * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
+   * `merge_patch_unsupported` or `malformed_operator`).
+   *
+   * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
+   * deprecated methods below keep their own routes and do not.
    *
    * @example
    * ```ts
@@ -177,9 +181,9 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     opts?: DocumentCallOptions,
   ): Promise<{ value: number } | { marked: boolean; count?: number }>;
   /**
-   * Add `by` (1 when omitted) to a declared counter of a shared document. In a
+   * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
    * `write: "none"` collection the first increment of an absent key creates the
-   * document. Sends `update(key, { $inc: { [counter]: by } })`.
+   * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
    *
    * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
    */
@@ -192,7 +196,7 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /**
    * Set the viewer's mark on a shared document — a declared mark, or the
    * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-   * never exposed. Sends `update(key, { $mark: name })`.
+   * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
    *
    * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
    */
@@ -200,7 +204,7 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /**
    * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
    * server refuses it `invalid_request` (400) for every caller. Sends
-   * `update(key, { $unmark: name })`.
+   * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
    *
    * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
    */
@@ -354,9 +358,7 @@ export type StorageErrorCode =
 export class StorageError extends ApiError {
   readonly code: StorageErrorCode;
   /**
-   * E.g. `currentVersion`, `reason` (on a refused `update` body:
-   * {@link StorageUpdateRefusalReason}, read with {@link storageUpdateRefusal}),
-   * `category`, `ceiling`, `bucket`, `retryAfter`. On
+   * E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. On
    * `schema_violation` (400: a document's `data` does not match its collection's declared
    * `schema`): `collection`, `pointer` (the first failing JSON pointer into `data`, `""` for
    * the root) and `keyword` (the schema keyword it failed, e.g. `required`).
@@ -383,50 +385,6 @@ export class StorageError extends ApiError {
     const value = this.details?.retryAfter;
     return typeof value === 'number' ? value : undefined;
   }
-}
-
-/**
- * `details.reason` of the `invalid_request` (400) a PATCH body gets when it is not ONE
- * update operator — every one the server's `parseTallyPatch` emits (civitai/civitai#8292):
- *
- * - `empty_patch` — no body, or `{}`.
- * - `unknown_operator` — a `$` field that is not `$inc`, `$mark` or `$unmark`
- *   (`details.operator` names it).
- * - `multiple_operators` — two or more operators (`details.operators`).
- * - `merge_patch_unsupported` — plain fields only: a merge-patch of `data` is reserved;
- *   to change `data`, `put` the document.
- * - `malformed_operator` — every other shape: a body that is not an object, an operator
- *   beside any other field, `$inc` naming other than exactly one counter, or a
- *   `$mark`/`$unmark` name that is not a string.
- *
- * A wrong VALUE inside a well-formed operator (a `by` out of range, an undeclared counter
- * or mark) is refused `invalid_request` as the deprecated routes refuse it, with no
- * `reason`.
- */
-export type StorageUpdateRefusalReason =
-  | 'empty_patch'
-  | 'unknown_operator'
-  | 'multiple_operators'
-  | 'merge_patch_unsupported'
-  | 'malformed_operator';
-
-const UPDATE_REFUSAL_REASONS: ReadonlySet<string> = new Set<StorageUpdateRefusalReason>([
-  'empty_patch',
-  'unknown_operator',
-  'multiple_operators',
-  'merge_patch_unsupported',
-  'malformed_operator',
-]);
-
-/**
- * The reason a PATCH body was refused, typed — or `null` for anything else: another
- * code, an `invalid_request` without a reason (a wrong value inside a well-formed
- * operator), and a reason this SDK does not list.
- */
-export function storageUpdateRefusal(error: unknown): StorageUpdateRefusalReason | null {
-  if (!(error instanceof StorageError) || error.code !== 'invalid_request') return null;
-  const reason = error.details?.reason;
-  return typeof reason === 'string' && UPDATE_REFUSAL_REASONS.has(reason) ? (reason as StorageUpdateRefusalReason) : null;
 }
 
 /**
@@ -738,8 +696,8 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       const from = typeof options?.from === 'string' ? options.from : undefined;
       const authoring = <R>(signal: AbortSignal | undefined, attempt: () => Promise<R>) =>
         withSourcePublishGrant(ask, from, signal, attempt);
-      // Every tally: ONE update operator, PATCHed onto the document. The counter or mark
-      // name travels in the body, so no URL rewrites it and none is refused here.
+      // `update`: ONE update operator, PATCHed onto the document. The counter or mark name
+      // travels in the body, so no URL rewrites it and none is refused here.
       const patch = (key: string, op: unknown, signal: AbortSignal | undefined) =>
         authoring(signal, () => call<unknown>('PATCH', docPath(key), { query: q(), body: op, signal }));
 
@@ -832,20 +790,32 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           throw new CivitaiError(`storage ${name}.update: the server accepted a body with no update operator`);
         }) as StorageCollection<T>['update'],
 
-        // The deprecated three: the same PATCH `update` sends, so their traffic leaves
-        // the deprecated per-tally routes. Signatures, replies and reply checks unchanged.
+        // The deprecated three: their pre-PR routes and request shapes, unchanged, so they
+        // do not depend on a civitai.com that serves PATCH. Only `update` sends PATCH.
         async increment(key, counter, by, { signal } = {}) {
-          // `by` defaults HERE: the PATCH body requires it, as the old route's default did not.
-          const reply = await patch(key, { $inc: { [counter]: by === undefined ? 1 : by } }, signal);
+          const reply = await authoring(signal, () =>
+            call<{ value?: unknown }>(
+              'POST',
+              `${docPath(key)}/counters/${segment('counter', counter)}`,
+              // No body at all when `by` is omitted: the server's default applies.
+              { query: q(), body: by === undefined ? undefined : { by }, signal },
+            ),
+          );
           return toValueResult(reply, `${name}.increment`);
         },
 
         async mark(key, markName, { signal } = {}) {
-          return toMarkResult(await patch(key, { $mark: markName }, signal), true, `${name}.mark`);
+          const reply = await authoring(signal, () =>
+            call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
+          );
+          return toMarkResult(reply, true, `${name}.mark`);
         },
 
         async unmark(key, markName, { signal } = {}) {
-          return toMarkResult(await patch(key, { $unmark: markName }, signal), false, `${name}.unmark`);
+          const reply = await authoring(signal, () =>
+            call('DELETE', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
+          );
+          return toMarkResult(reply, false, `${name}.unmark`);
         },
       };
     },

@@ -659,9 +659,7 @@ export interface SubListingsClient {
 export declare class StorageError extends ApiError {
     readonly code: StorageErrorCode;
     /**
-     * E.g. `currentVersion`, `reason` (on a refused `update` body:
-     * {@link StorageUpdateRefusalReason}, read with {@link storageUpdateRefusal}),
-     * `category`, `ceiling`, `bucket`, `retryAfter`. On
+     * E.g. `currentVersion`, `reason`, `category`, `ceiling`, `bucket`, `retryAfter`. On
      * `schema_violation` (400: a document's `data` does not match its collection's declared
      * `schema`): `collection`, `pointer` (the first failing JSON pointer into `data`, `""` for
      * the root) and `keyword` (the schema keyword it failed, e.g. `required`).
@@ -671,13 +669,6 @@ export declare class StorageError extends ApiError {
     /** Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503). */
     get retryAfter(): number | undefined;
 }
-
-/**
- * The reason a PATCH body was refused, typed — or `null` for anything else: another
- * code, an `invalid_request` without a reason (a wrong value inside a well-formed
- * operator), and a reason this SDK does not list.
- */
-export declare function storageUpdateRefusal(error: unknown): StorageUpdateRefusalReason | null;
 
 /**
  * The import refusal `error` is, typed — or `null` for anything else (including the
@@ -825,8 +816,12 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
      *   Idempotent. A `report` cannot be withdrawn: the server refuses it
      *   `invalid_request` (400) for every caller.
      *
-     * A body the server cannot read as one operator is refused `invalid_request` with a
-     * `details.reason` ({@link storageUpdateRefusal}).
+     * A body the server cannot read as one operator is refused `invalid_request`, with
+     * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
+     * `merge_patch_unsupported` or `malformed_operator`).
+     *
+     * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
+     * deprecated methods below keep their own routes and do not.
      *
      * @example
      * ```ts
@@ -854,9 +849,9 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
         count?: number;
     }>;
     /**
-     * Add `by` (1 when omitted) to a declared counter of a shared document. In a
+     * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
      * `write: "none"` collection the first increment of an absent key creates the
-     * document. Sends `update(key, { $inc: { [counter]: by } })`.
+     * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
      *
      * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
      */
@@ -866,7 +861,7 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     /**
      * Set the viewer's mark on a shared document — a declared mark, or the
      * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-     * never exposed. Sends `update(key, { $mark: name })`.
+     * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
      *
      * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
      */
@@ -877,7 +872,7 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     /**
      * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
      * server refuses it `invalid_request` (400) for every caller. Sends
-     * `update(key, { $unmark: name })`.
+     * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
      *
      * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
      */
@@ -1000,26 +995,6 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  | 'local_preview_invalid_manifest'
 /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
  | 'local_preview_unavailable' | (string & {});
-
-/**
- * `details.reason` of the `invalid_request` (400) a PATCH body gets when it is not ONE
- * update operator — every one the server's `parseTallyPatch` emits (civitai/civitai#8292):
- *
- * - `empty_patch` — no body, or `{}`.
- * - `unknown_operator` — a `$` field that is not `$inc`, `$mark` or `$unmark`
- *   (`details.operator` names it).
- * - `multiple_operators` — two or more operators (`details.operators`).
- * - `merge_patch_unsupported` — plain fields only: a merge-patch of `data` is reserved;
- *   to change `data`, `put` the document.
- * - `malformed_operator` — every other shape: a body that is not an object, an operator
- *   beside any other field, `$inc` naming other than exactly one counter, or a
- *   `$mark`/`$unmark` name that is not a string.
- *
- * A wrong VALUE inside a well-formed operator (a `by` out of range, an undeclared counter
- * or mark) is refused `invalid_request` as the deprecated routes refuse it, with no
- * `reason`.
- */
-export type StorageUpdateRefusalReason = 'empty_patch' | 'unknown_operator' | 'multiple_operators' | 'merge_patch_unsupported' | 'malformed_operator';
 
 /**
  * `details.reason` of a `not_eligible` that only an import gets — every one the server's
