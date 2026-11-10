@@ -1,0 +1,5 @@
+---
+'@civitai/sdk': patch
+---
+
+Docs: `BREAKING.md` and the README no longer say the legacy stores keep working. civitai.com removed the legacy app storage and shared storage on 2026-11-10: a request to any `/api/v1/blocks/app-storage/*` or `/api/v1/blocks/shared-storage/*` route that passes the block-token and scope checks is answered `410` with `{ error: 'legacy_store_removed', message, docs }`, so the deprecated `app.storage.get`/`set`/`delete`/`list`/`getQuota` and every `app.sharedStorage` method reject with an `ApiError` whose `status` is `410`. Move the app to the document store: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. No code change.
