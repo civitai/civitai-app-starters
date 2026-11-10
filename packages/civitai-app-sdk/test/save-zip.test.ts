@@ -238,7 +238,7 @@ function lieAboutSize(zip: ArrayBuffer, size: number): ArrayBuffer {
 
 const jszip = async (
   files: Record<string, string | Uint8Array | null>,
-  options: { compression?: 'STORE' | 'DEFLATE'; streamFiles?: boolean } = {}
+  options: { compression?: 'STORE' | 'DEFLATE'; streamFiles?: boolean; comment?: string } = {}
 ) => {
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) {
@@ -249,9 +249,59 @@ const jszip = async (
     type: 'uint8array',
     compression: options.compression ?? 'STORE',
     streamFiles: options.streamFiles ?? false,
+    ...(options.comment !== undefined ? { comment: options.comment } : {}),
   });
   return u8.slice().buffer;
 };
+
+// CRC-32 (IEEE), written here independently of the validator so a fixture's checksum is not the
+// implementation grading itself. Cross-checked against the CRC jszip writes, below.
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes: Uint8Array) => {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+/** An Info-ZIP Unicode Path extra field (0x7075): version, CRC-32 of the header name, UTF-8 name. */
+const unicodePath = (
+  name: string,
+  opts: { headerName?: string; version?: number; crc?: number } = {}
+) => {
+  const u = enc.encode(name);
+  const body = new Uint8Array(5 + u.length);
+  const v = new DataView(body.buffer);
+  v.setUint8(0, opts.version ?? 1);
+  v.setUint32(1, opts.crc ?? crc32(enc.encode(opts.headerName ?? name)), true);
+  body.set(u, 5);
+  return extraField(0x7075, [...body]);
+};
+
+/**
+ * The extra fields of a ONE-entry zip's local and central headers: `[id, offset, size]` each.
+ * (No folder in the name: jszip adds a separate entry for every parent folder.)
+ */
+function singleEntryExtras(zip: ArrayBuffer) {
+  const v = new DataView(zip);
+  const cd = v.getUint32(zip.byteLength - 22 + 16, true);
+  const walk = (start: number, len: number) => {
+    const out: [id: number, offset: number, size: number][] = [];
+    for (let p = start; p < start + len; ) {
+      const size = v.getUint16(p + 2, true);
+      out.push([v.getUint16(p, true), p + 4, size]);
+      p += 4 + size;
+    }
+    return out;
+  };
+  return {
+    local: walk(30 + v.getUint16(26, true), v.getUint16(28, true)),
+    central: walk(cd + 46 + v.getUint16(cd + 28, true), v.getUint16(cd + 30, true)),
+  };
+}
 
 const refusal = (bytes: ArrayBuffer) => {
   const r = validateSaveZip(bytes);
@@ -319,6 +369,93 @@ describe('validateSaveZip — real zips written by jszip', () => {
   ])('refuses a %s entry (allowlist): %s', async (name, ext) => {
     const zip = await jszip({ 'ok.png': new Uint8Array(PNG_HEAD), [name]: 'x' });
     expect(refusal(zip)).toBe(saveZipEntryTypeError(ext));
+  });
+});
+
+// ── Real zips with non-ASCII names, and archive comments (jszip) ──────────────────────────────
+
+describe('validateSaveZip — real jszip zips with non-ASCII entry names', () => {
+  const NAMES = ['img/café.png', '画像/001.png', 'captions/naïve ✓.txt', 'données/été 2026.json'];
+
+  it('POSITIVE CONTROL: jszip writes a Unicode Path field (0x7075) in BOTH headers for a non-ASCII name, and none for ASCII', async () => {
+    const extras = singleEntryExtras(await jszip({ 'café.png': new Uint8Array(PNG_HEAD) }));
+    expect(extras.local.map(([id]) => id)).toEqual([0x7075]);
+    expect(extras.central.map(([id]) => id)).toEqual([0x7075]);
+    const ascii = singleEntryExtras(await jszip({ 'cafe.png': new Uint8Array(PNG_HEAD) }));
+    expect([...ascii.local, ...ascii.central]).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the field jszip writes is exactly version 1 + CRC-32 of the header name + the same UTF-8 name', async () => {
+    const zip = await jszip({ 'café.png': new Uint8Array(PNG_HEAD) });
+    const v = new DataView(zip);
+    const [, offset, size] = singleEntryExtras(zip).central[0]!;
+    const name = enc.encode('café.png');
+    expect(v.getUint8(offset)).toBe(1);
+    // Also the cross-check of this file's own crc32 against a CRC a real writer computed.
+    expect(v.getUint32(offset + 1, true)).toBe(crc32(name));
+    expect(new Uint8Array(zip, offset + 5, size - 5)).toEqual(name);
+    // And the entry sets the UTF-8 flag.
+    expect(v.getUint16(6, true) & (1 << 11)).toBe(1 << 11);
+  });
+
+  it.each(NAMES)('accepts %j — stored, deflated, and streamed', async (name) => {
+    for (const options of [
+      { compression: 'STORE' as const },
+      { compression: 'DEFLATE' as const },
+      { compression: 'DEFLATE' as const, streamFiles: true },
+    ]) {
+      const zip = await jszip({ [name]: name.endsWith('.png') ? new Uint8Array(PNG_HEAD) : 'a caption' }, options);
+      const r = validateSaveZip(zip);
+      expect(r, JSON.stringify(options)).toMatchObject({ ok: true });
+      if (r.ok) expect(await verifySaveZipInflate(zip, r.deflated)).toBeNull();
+    }
+  });
+
+  it('accepts a whole captioned dataset with non-ASCII folders and names', async () => {
+    const zip = await jszip(
+      {
+        '画像/001.png': new Uint8Array(PNG_HEAD),
+        '画像/001.txt': '猫、座っている',
+        'images/café.png': new Uint8Array(PNG_HEAD),
+        'images/café.txt': 'a café terrace',
+        'méta.json': '{"trigger":"ç"}',
+      },
+      { compression: 'DEFLATE' }
+    );
+    const r = validateSaveZip(zip);
+    // 5 files + the two folders jszip adds for them.
+    expect(r).toMatchObject({ ok: true, entryCount: 7 });
+    if (r.ok) expect(await verifySaveZipInflate(zip, r.deflated)).toBeNull();
+  });
+
+  it('refuses a REAL jszip zip whose Unicode Path field was rewritten to another name of the same length', async () => {
+    // One byte of the central header's UnicodeName changed (é → è is 0xa9 → 0xa8): the CRC still
+    // matches the header name, the version is 1, so only the name comparison can refuse it.
+    const zip = await jszip({ 'café.png': new Uint8Array(PNG_HEAD) });
+    const [, offset, size] = singleEntryExtras(zip).central[0]!;
+    const u8 = new Uint8Array(zip);
+    const at = offset + size - 5; // the second byte of `é`, five bytes before the end (`.png`)
+    expect(u8[at]).toBe(0xa9);
+    u8[at] = 0xa8;
+    expect(refusal(zip)).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+  });
+});
+
+describe('validateSaveZip — archive comments', () => {
+  // DECIDED: still refused, bounded or not. The validator pins the EOCD to the last 22 bytes,
+  // which is what makes "nothing after the central directory" checkable at all; with a comment the
+  // EOCD has to be FOUND by scanning backwards for its signature, and the comment can itself
+  // contain a second EOCD-shaped record — the classic way two readers end up seeing two different
+  // archives. A comment is also displayed (`unzip -z`, archive-manager panes) and so is a terminal-
+  // escape surface. A dataset needs neither; jszip only writes one when `comment` is passed.
+  it('refuses a REAL jszip archive comment, and accepts the same zip without one (control)', async () => {
+    const files = { 'images/001.png': new Uint8Array(PNG_HEAD), 'images/001.txt': 'a cat' };
+    expect(refusal(await jszip(files))).toBe('ok');
+    const commented = await jszip(files, { comment: 'dataset v1' });
+    expect(new DataView(commented).getUint16(commented.byteLength - 'dataset v1'.length - 2, true)).toBe(
+      'dataset v1'.length
+    );
+    expect(refusal(commented)).toBe(SAVE_ZIP_NO_EOCD_ERROR);
   });
 });
 
@@ -413,14 +550,59 @@ describe('validateSaveZip — hand-built zips', () => {
       );
     });
 
-    it('refuses an Info-ZIP Unicode Path extra field (an extractor may use it instead of the name)', () => {
+    it('refuses an Info-ZIP Unicode Path extra field that is malformed or names ANOTHER path', () => {
+      // The field is how an extractor may pick a name other than the header's, so only the exact
+      // shape jszip writes is accepted (the next describe). Each case below changes ONE thing from
+      // that shape — the POSITIVE CONTROL first, so a refusal is the changed field, not the builder.
+      const U = 1 << 11;
+      const named = (name: string, extra: Uint8Array, flags = U) => ({ ...file('x'), name, flags, extra, localExtra: extra });
+      expect(refusal(buildZip([named('café.txt', unicodePath('café.txt'))]))).toBe('ok');
+      // The smuggling shape: an allowed header name, an alternate path to something else. The CRC
+      // is the HEADER name's, so only the name comparison can refuse it.
+      expect(refusal(buildZip([named('a.txt', unicodePath('../evil.exe', { headerName: 'a.txt' }))]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      // Same, in ONE header only (central, then local): each header's field is checked.
+      const evil = unicodePath('../evil.exe', { headerName: 'a.txt' });
+      const good = unicodePath('a.txt');
+      expect(refusal(buildZip([named('a.txt', good)]))).toBe('ok');
+      expect(refusal(buildZip([{ ...named('a.txt', good), extra: evil }]))).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+      expect(refusal(buildZip([{ ...named('a.txt', good), localExtra: evil }]))).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+      // A same-length different name (é vs è): byte-exact, not "close enough".
+      expect(refusal(buildZip([named('café.txt', unicodePath('cafè.txt', { headerName: 'café.txt' }))]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      // The right name with a wrong CRC, a version other than 1, or a body too short to hold one.
+      expect(refusal(buildZip([named('café.txt', unicodePath('café.txt', { crc: 0x12345678 }))]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      expect(refusal(buildZip([named('café.txt', unicodePath('café.txt', { version: 2 }))]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      expect(refusal(buildZip([named('a.txt', extraField(0x7075, [1, 0, 0, 0]))]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      // An empty (size 0) field must not be read PAST: here the bytes after it — the next extra
+      // field's header — happen to spell version 1 and this name's CRC (`f1918.txt` was picked for
+      // that: CRC-32 0x400026f7, so the next field is id 0xf701, size 38, data starting 0x40). A
+      // reader that ignores the size would accept the version and CRC and then fail on the body.
+      expect([...new Uint8Array(new Uint32Array([crc32(enc.encode('f1918.txt'))]).buffer)]).toEqual([0xf7, 0x26, 0x00, 0x40]);
+      const overread = new Uint8Array([...extraField(0x7075, []), ...extraField(0xf701, [0x40, ...new Array(37).fill(0)])]);
+      expect(refusal(buildZip([{ ...file('x'), name: 'f1918.txt', flags: U, extra: overread }]))).toBe(
+        SAVE_ZIP_ALTERNATE_PATH_ERROR
+      );
+      // A field naming a PREFIX of the header name: `payload.exe` inside a header that says
+      // `payload.exe.txt`. Equal byte for byte as far as it goes, so only the length refuses it.
+      expect(
+        refusal(buildZip([named('payload.exe.txt', unicodePath('payload.exe', { headerName: 'payload.exe.txt' }))]))
+      ).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+      // A matching field on an entry WITHOUT the UTF-8 flag (an ASCII name, so the encoding rule
+      // passes it): the field then claims a different encoding than the header does.
+      expect(refusal(buildZip([named('a.txt', unicodePath('a.txt'), 0)]))).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+      // The original shape: a stray field on a flagless entry naming `..`.
       const alt = extraField(0x7075, [1, 0, 0, 0, 0, 0x2e, 0x2e]);
-      expect(refusal(buildZip([{ ...file('a.txt'), extra: alt }]))).toBe(
-        SAVE_ZIP_ALTERNATE_PATH_ERROR
-      );
-      expect(refusal(buildZip([{ ...file('a.txt'), localExtra: alt }]))).toBe(
-        SAVE_ZIP_ALTERNATE_PATH_ERROR
-      );
+      expect(refusal(buildZip([{ ...file('a.txt'), extra: alt }]))).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
+      expect(refusal(buildZip([{ ...file('a.txt'), localExtra: alt }]))).toBe(SAVE_ZIP_ALTERNATE_PATH_ERROR);
     });
   });
 
