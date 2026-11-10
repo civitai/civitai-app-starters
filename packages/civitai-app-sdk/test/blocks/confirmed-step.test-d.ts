@@ -92,6 +92,8 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'step_quote_rejected'
   | 'step_quote_unavailable'
   | 'step_quote_unpriced'
+  // The pending-scan source refusal (civitai#8405).
+  | 'source-scan-pending'
 >();
 const dailyLimit: BlockWorkflowSnapshot['errorCode'] = 'daily-limit-exceeded';
 const futureCode: BlockWorkflowSnapshot['errorCode'] = 'some-code-a-later-host-adds';

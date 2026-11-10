@@ -2945,7 +2945,13 @@ export type ModelSubstitutionReason = 'wrong-workflow' | 'unrecognized' | 'gated
  * and the SDK's inbound validator accepts any string. Handle an unrecognised
  * code as a generic failure.
  */
-export type KnownBlockWorkflowErrorCode = 'training-quote-rejected' | 'training-quote-unavailable' | 'training-quote-unpriced' | 'daily-limit-exceeded' | 'workflow_step_denied' | 'workflow_ref_invalid' | 'workflow_too_many_steps' | 'workflow_repeat_unbounded' | 'workflow_quote_rejected' | 'workflow_quote_unavailable' | 'workflow_quote_unpriced' | 'step_quote_rejected' | 'step_quote_unavailable' | 'step_quote_unpriced';
+export type KnownBlockWorkflowErrorCode = 'training-quote-rejected' | 'training-quote-unavailable' | 'training-quote-unpriced' | 'daily-limit-exceeded' | 'workflow_step_denied' | 'workflow_ref_invalid' | 'workflow_too_many_steps' | 'workflow_repeat_unbounded' | 'workflow_quote_rejected' | 'workflow_quote_unavailable' | 'workflow_quote_unpriced' | 'step_quote_rejected' | 'step_quote_unavailable' | 'step_quote_unpriced'
+/**
+ * A generation input names an image the viewer uploaded whose scan has not
+ * finished. Retry once the upload's scan verdict is `scanned` (with
+ * `asyncScan`, wait for it before submitting).
+ */
+ | 'source-scan-pending';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {
