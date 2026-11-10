@@ -112,6 +112,7 @@ import {
   prepareSaveBytes,
   saveImageRequestKind,
 } from './saveBytes.js';
+import { SAVE_ZIP_INFLATE_ERROR, verifySaveZipInflate } from './saveZip.js';
 import {
   UPLOAD_BYTES_INVALID_ERROR,
   admitUploadBytes,
@@ -1615,7 +1616,7 @@ export interface MockHostOptions {
   /**
    * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
    * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
-   * `text/plain`), the download `filename` exactly as the host cleans it (the
+   * `text/plain`, `application/zip`), the download `filename` exactly as the host cleans it (the
    * same character rules, then the extension forced from that type), and the
    * `bytes` themselves.
    * The mock cannot trigger a browser download, so this is the observable a
@@ -5550,11 +5551,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               if (!prepared.ok) return saveReply(prepared);
               // A COPY, as production's structured-clone `postMessage` delivers
               // it — the block keeps (and may keep mutating) its own buffer.
-              options.onSaveBytes?.({
-                bytes: p.bytes.slice(0),
-                mimeType: prepared.type,
-                filename: prepared.filename,
-              });
+              const bytes = p.bytes.slice(0);
+              const accept = () => {
+                options.onSaveBytes?.({ bytes, mimeType: prepared.type, filename: prepared.filename });
+                saveReply({ ok: true });
+              };
+              if (prepared.deflated) {
+                // A zip: the host inflates every deflated entry and refuses one that does not
+                // yield exactly its declared size, BEFORE the download (./saveZip.ts).
+                const deflated = prepared.deflated;
+                void verifySaveZipInflate(bytes, deflated).then(
+                  (error) => (error ? saveReply({ ok: false, error }) : accept()),
+                  () => saveReply({ ok: false, error: SAVE_ZIP_INFLATE_ERROR }),
+                );
+                return;
+              }
+              return accept();
             }
             return saveReply({ ok: true });
           }

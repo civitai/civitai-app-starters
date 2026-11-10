@@ -2702,11 +2702,35 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   CONTENT. It accepts PNG, WebP and JPEG by magic bytes. Anything else must be
   valid UTF-8 with no NUL byte: it is saved as JSON when it parses and
   `filename` ends `.json` (any case) once the host has replaced each `?` and
-  `#` with `_`, and as plain text otherwise. A GIF, a zip
-  or other binary is refused with `file type is not allowed`. The host forces
-  the extension from the classified type. The cap is 50 MiB, and the hook
-  refuses a larger buffer before sending it: `file exceeds the maximum save
-  size`. The buffer is copied, not transferred, so you can keep displaying it.
+  `#` with `_`, and as plain text otherwise. A GIF or other binary is refused
+  with `file type is not allowed`. The host forces the extension from the
+  classified type. The cap is 50 MiB, and the hook refuses a larger buffer
+  before sending it: `file exceeds the maximum save size`. The buffer is
+  copied, not transferred, so you can keep displaying it.
+- **`{ bytes }` holding a `.zip`** (e.g. an image dataset with caption files):
+  recognised by its STRUCTURE — the buffer must start with a zip local header —
+  and always saved as `<name>.zip`, whatever `filename` says. The host checks
+  the whole archive before it starts the download, and refuses it with a
+  specific reason (such as `zip entry type is not allowed: exe`) unless:
+  - every entry is a folder or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.txt`,
+    `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
+  - no entry name is absolute, has a `..`, `.` or empty segment, a backslash, a
+    colon / drive letter, or a control or bidi character, and no two names are
+    the same ignoring case and Unicode normalisation;
+  - entries are stored or deflated, not encrypted, not symlinks;
+  - the archive is not zip64 and has no archive comment, and every central
+    directory record matches its local header;
+  - there are at most 10,000 entries, at most 1 GiB uncompressed in total, no
+    entry over 1 MiB declares more than 100× its compressed size, and every
+    deflated entry inflates to exactly its declared size.
+
+  The cap for a zip is 256 MiB (the hook refuses a larger one before sending),
+  and one 256 MiB zip uses up the host's per-window save budget: a further save
+  in the next ~10 seconds replies `busy`. The whole buffer sits in the viewer's
+  tab and is copied once across `postMessage` (and once more into the download),
+  so build it once and save it once. Any zip writer works that produces a plain
+  archive — e.g. JSZip `generateAsync({ type: 'arraybuffer' })`, stored or
+  `DEFLATE`, with or without `streamFiles`.
 
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
 with `invalid save-image request`.** The host also replies that when the input
@@ -2733,6 +2757,14 @@ try {
   // 'invalid save-image request' here means this host cannot save bytes yet.
   setStatus(`Could not save the sidecar: ${(err as Error).message}`);
 }
+
+// A captioned dataset, zipped in the tab. Saved as dataset.zip after the host validates it.
+const zip = new JSZip();
+for (const item of dataset) {
+  zip.file(`images/${item.name}`, item.imageBytes);
+  zip.file(`images/${item.stem}.txt`, item.caption);
+}
+await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer' }), filename: 'dataset.zip' });
 
 // The block's own generation output, or another user's image.
 await saveImage({ url: output.url, filename: 'render.png' });
