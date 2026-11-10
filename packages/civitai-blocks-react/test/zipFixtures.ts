@@ -11,6 +11,19 @@ export type ZipFixtureEntry = {
   method?: number;
   /** Declared uncompressed size; defaults to data.length. */
   size?: number;
+  /** The uncompressed bytes of a DEFLATED entry, so its declared CRC-32 is the real one. */
+  plain?: Uint8Array;
+};
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes: Uint8Array) => {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
 };
 
 export function zipFixture(entries: ZipFixtureEntry[]): ArrayBuffer {
@@ -37,7 +50,8 @@ export function zipFixture(entries: ZipFixtureEntry[]): ArrayBuffer {
     u16(e.method ?? 0);
     u16(0); // time
     u16(0x21); // date
-    u32(0x1234abcd); // crc (not checked by the validator)
+    // The REAL CRC-32 (the validator checks it): of the stored data, or of `plain` for deflate.
+    u32((e.method ?? 0) === 0 ? crc32(data) : e.plain ? crc32(e.plain) : 0x1234abcd);
     u32(data.length);
     u32(e.size ?? data.length);
     u16(name.length);

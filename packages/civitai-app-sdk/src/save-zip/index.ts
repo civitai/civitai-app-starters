@@ -159,12 +159,27 @@ const EXTRA_STRONG_ENCRYPTION = 0x0017;
 const EXTRA_UNICODE_PATH = 0x7075;
 const EXTRA_AES = 0x9901;
 
+/**
+ * The extra fields an entry MAY carry; every other id is refused. An allow-list, not a block-list:
+ * an extractor honours fields this validator never looked at — 0x000d (PKWARE Unix: mode and a
+ * symlink target) and 0x5855 / 0x6c78 can turn an entry into a link or an executable on extraction.
+ *   - 0x5455 extended timestamp, 0x000a NTFS times: timestamps only (Info-ZIP `zip`, 7-Zip, Windows).
+ *   - 0x7875 Info-ZIP Unix UID/GID: ownership only (no mode, no link), and the Info-ZIP `zip` CLI
+ *     writes it on every Unix entry, so refusing it would refuse ordinary command-line zips.
+ *   - 0x7075 Unicode Path: only in the exact shape {@link checkUnicodePath} accepts.
+ * zip64 (0x0001) and the encryption fields are refused first, with their own reasons.
+ */
+const EXTRA_ALLOWED: ReadonlySet<number> = new Set([0x5455, 0x000a, 0x7875, EXTRA_UNICODE_PATH]);
+
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 const S_IFDIR = 0o040000;
 
-/** A deflated entry {@link verifySaveZipInflate} must inflate: where its data is and what it declared. */
-export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number };
+/**
+ * A deflated entry {@link verifySaveZipInflate} must inflate: where its data is, and the size and
+ * CRC-32 its central record declares.
+ */
+export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number; crc: number };
 
 export type SaveZipValidation =
   | { ok: true; entryCount: number; deflated: SaveZipDeflatedEntry[] }
@@ -182,12 +197,17 @@ function refuse(error: string): never {
   throw new ZipRefusal(error);
 }
 
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+// `ignoreBOM: true` keeps a leading U+FEFF in the decoded name (the default STRIPS it), so the
+// control/format-character rule below sees it.
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 let crcTable: Uint32Array | undefined;
 
-/** CRC-32 (IEEE 802.3, the zip one) of `bytes`. */
-function crc32(bytes: Uint8Array): number {
+/**
+ * Running CRC-32 (IEEE 802.3, the zip one): start from `0`, feed chunks in order, the last return
+ * value is the CRC of the whole. Measured on Node 24: ~0.5 s for 256 MiB.
+ */
+function crc32(bytes: Uint8Array, previous = 0): number {
   if (!crcTable) {
     crcTable = new Uint32Array(256);
     for (let n = 0; n < 256; n++) {
@@ -196,9 +216,28 @@ function crc32(bytes: Uint8Array): number {
       crcTable[n] = c >>> 0;
     }
   }
-  let c = 0xffffffff;
-  for (const b of bytes) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8);
+  const t = crcTable;
+  let c = (previous ^ 0xffffffff) >>> 0;
+  for (let i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]!) & 0xff]! ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Refuse STORED data behind a data descriptor that contains a data-descriptor (`PK\x07\x08`) or
+ * local-header (`PK\x03\x04`) signature. Such an entry has no size in its local header (jszip's
+ * `streamFiles` writes zeros), so a STREAMING reader cannot know where it ends and may stop at a
+ * signature inside it — after which a fake local header hidden in the data is extracted under a
+ * name nothing here checked. Deflated data ends at its own end-of-stream marker, so it is not
+ * scanned. For random bytes (image data) the odds of a false refusal are ~2 matches per 2^32 bytes:
+ * measured 2 in 4 GiB of random bytes, so ~12% for one 256 MiB stored + streamed zip — the error
+ * says how to avoid it (DEFLATE, or no streamFiles).
+ */
+function checkStoredStreamedData(u8: Uint8Array, start: number, end: number): void {
+  for (let i = u8.indexOf(0x50, start); i >= 0 && i + 3 < end; i = u8.indexOf(0x50, i + 1)) {
+    if (u8[i + 1] !== 0x4b) continue;
+    if (u8[i + 2] === 0x07 && u8[i + 3] === 0x08) refuse(SAVE_ZIP_STORED_DESCRIPTOR_SIGNATURE_ERROR);
+    if (u8[i + 2] === 0x03 && u8[i + 3] === 0x04) refuse(SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR);
+  }
 }
 
 /**
@@ -230,7 +269,8 @@ function checkUnicodePath(
 
 /**
  * Walk the extra field block of the header whose name bytes and flags are `name` / `flags`; refuse
- * a malformed block, zip64, encryption, or a Unicode Path field that does not restate `name`.
+ * a malformed block, zip64, encryption, any field not in {@link EXTRA_ALLOWED}, or a Unicode Path
+ * field that does not restate `name`.
  */
 function checkExtraFields(
   view: DataView,
@@ -248,8 +288,9 @@ function checkExtraFields(
     p += 4;
     if (p + size > end) refuse(SAVE_ZIP_EXTRA_FIELD_ERROR);
     if (id === EXTRA_ZIP64) refuse(SAVE_ZIP64_ERROR);
-    if (id === EXTRA_UNICODE_PATH) checkUnicodePath(view, p, size, name, flags);
     if (id === EXTRA_STRONG_ENCRYPTION || id === EXTRA_AES) refuse(SAVE_ZIP_ENCRYPTED_ERROR);
+    if (!EXTRA_ALLOWED.has(id)) refuse(saveZipExtraFieldError(id));
+    if (id === EXTRA_UNICODE_PATH) checkUnicodePath(view, p, size, name, flags);
     p += size;
   }
 }
@@ -282,6 +323,9 @@ function checkName(name: string): { isDir: boolean } {
   for (const seg of segments) {
     if (seg === '..') refuse(SAVE_ZIP_TRAVERSAL_ERROR);
     if (seg === '' || seg === '.') refuse(SAVE_ZIP_EMPTY_SEGMENT_ERROR);
+    // Windows drops a trailing dot or space, so `a.txt.` / `a.txt ` land on `a.txt` (and `...`
+    // or `. .` on nothing): refused, rather than added to the duplicate key.
+    if (seg.endsWith('.') || seg.endsWith(' ')) refuse(SAVE_ZIP_SEGMENT_DOT_SPACE_ERROR);
   }
   if (!isDir) {
     const last = segments[segments.length - 1] ?? '';
@@ -481,7 +525,12 @@ function validate(bytes: ArrayBuffer): SaveZipValidation {
       }
     }
     if (e.method === METHOD_DEFLATE) {
-      deflated.push({ dataOffset, compressedSize: e.compressedSize, size: e.size });
+      deflated.push({ dataOffset, compressedSize: e.compressedSize, size: e.size, crc: e.crc });
+    } else {
+      // STORED: the data IS the content, so its CRC is checked here (a deflated entry's output is
+      // checked by verifySaveZipInflate, chunk by chunk).
+      if (hasDescriptor) checkStoredStreamedData(u8, dataOffset, dataEnd);
+      if (crc32(u8.subarray(dataOffset, dataEnd)) !== e.crc) refuse(SAVE_ZIP_CRC_ERROR);
     }
     // For the last entry `next` is cdOffset, so the walk ends exactly where the directory starts.
     cursor = next;
@@ -506,11 +555,15 @@ export function validateSaveZip(bytes: ArrayBuffer): SaveZipValidation {
   }
 }
 
-/** Inflate one entry; true iff it yields exactly `size` bytes. Stops as soon as it yields more. */
-async function inflatesToDeclaredSize(
+/**
+ * Inflate `data` (raw deflate), stopping as soon as it yields more than `limit` bytes. Resolves to
+ * `{ produced, crc }` when the stream ENDED cleanly, or `null` when it errored (corrupt, truncated,
+ * or — on an engine that reports it — data after its end-of-stream marker) or overshot `limit`.
+ */
+async function inflate(
   data: Uint8Array<ArrayBuffer>,
-  size: number
-): Promise<boolean> {
+  limit: number
+): Promise<{ produced: number; crc: number } | null> {
   const ds = new DecompressionStream('deflate-raw');
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
@@ -524,29 +577,53 @@ async function inflatesToDeclaredSize(
   })();
   feed.catch(() => undefined);
   let produced = 0;
+  let crc = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       produced += value.byteLength;
-      if (produced > size) {
+      if (produced > limit) {
         await reader.cancel().catch(() => undefined);
         await writer.abort().catch(() => undefined);
-        return false;
+        return null;
       }
+      crc = crc32(value, crc);
     }
     await feed;
   } catch {
-    return false;
+    return null;
   }
-  return produced === size;
+  return { produced, crc };
+}
+
+/**
+ * Check one deflated entry: it inflates to exactly `e.size` bytes whose CRC-32 is `e.crc`, and its
+ * deflate stream ends at the LAST of its `compressedSize` bytes. The last part is what catches bytes
+ * hidden after the end-of-stream marker (a streaming reader would read them as the next record)
+ * on an engine whose DecompressionStream does not throw on trailing data: the same stream WITHOUT
+ * its last byte must fail to complete (the Compression Streams spec errors a truncated stream). If
+ * it completes, the stream ended earlier and the remaining bytes are not deflate data. That costs a
+ * second inflate, run alongside the first.
+ */
+async function checkDeflatedEntry(u8: Uint8Array<ArrayBuffer>, e: SaveZipDeflatedEntry): Promise<string | null> {
+  const data = u8.subarray(e.dataOffset, e.dataOffset + e.compressedSize);
+  const [full, short] = await Promise.all([
+    inflate(data, e.size),
+    data.length > 0 ? inflate(data.subarray(0, data.length - 1), e.size) : Promise.resolve(null),
+  ]);
+  if (!full || full.produced !== e.size) return SAVE_ZIP_INFLATE_ERROR;
+  if (short && short.produced === e.size) return SAVE_ZIP_INFLATE_TRAILING_ERROR;
+  if (full.crc !== e.crc) return SAVE_ZIP_CRC_ERROR;
+  return null;
 }
 
 /**
  * Inflate every deflated entry {@link validateSaveZip} returned and refuse the zip unless each
- * yields exactly its declared size — so the declared-size bounds cannot be walked by lying about
- * them. Work is bounded by the declared total ({@link SAVE_ZIP_LIMITS}) plus one slice. Returns the
- * error string, or `null` when every entry checks out.
+ * yields exactly its declared size and CRC-32, with nothing after its end-of-stream marker — so the
+ * declared-size bounds cannot be walked by lying about them, and no bytes ride along unchecked.
+ * Work is bounded by twice the declared total ({@link SAVE_ZIP_LIMITS}; two inflates per entry)
+ * plus one slice each. Returns the error string, or `null` when every entry checks out.
  */
 export async function verifySaveZipInflate(
   bytes: ArrayBuffer,
@@ -554,8 +631,8 @@ export async function verifySaveZipInflate(
 ): Promise<string | null> {
   const u8 = new Uint8Array(bytes);
   for (const e of deflated) {
-    const data = u8.subarray(e.dataOffset, e.dataOffset + e.compressedSize);
-    if (!(await inflatesToDeclaredSize(data, e.size))) return SAVE_ZIP_INFLATE_ERROR;
+    const error = await checkDeflatedEntry(u8, e);
+    if (error) return error;
   }
   return null;
 }

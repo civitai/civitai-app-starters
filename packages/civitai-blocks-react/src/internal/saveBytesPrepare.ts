@@ -29,7 +29,7 @@ import {
 } from './saveBytes.js';
 
 /** A deflated entry the inflate check must inflate (`@civitai/app-sdk/save-zip`'s `SaveZipDeflatedEntry`). */
-export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number };
+export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number; crc: number };
 
 /**
  * The part of `@civitai/app-sdk/save-zip` the mock host calls. Declared

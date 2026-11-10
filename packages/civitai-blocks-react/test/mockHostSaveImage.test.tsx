@@ -91,7 +91,7 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
   it('saves a valid zip (stored + deflated entries) as application/zip under .zip', async () => {
     const zip = zipFixture([
       { name: 'images/001.png', data: PNG },
-      { name: 'images/001.txt', data: HELLO_DEFLATED, method: 8, size: 5 },
+      { name: 'images/001.txt', data: HELLO_DEFLATED, method: 8, size: 5, plain: new TextEncoder().encode('hello') },
     ]);
     const err = await save({ bytes: zip, filename: 'dataset.png' });
     expect(err).toBeNull();

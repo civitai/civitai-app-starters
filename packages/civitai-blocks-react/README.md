@@ -2714,18 +2714,28 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   specific reason (such as `zip entry type is not allowed: exe`) unless:
   - every entry is a folder or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.txt`,
     `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
-  - no entry name is absolute, has a `..`, `.` or empty segment, a backslash, a
-    colon / drive letter, or a control or bidi character, and no two names are
+  - no entry name is absolute, has a `..`, `.` or empty segment, a segment
+    ending in a dot or space, a backslash, a colon / drive letter, or a control,
+    bidi or byte-order-mark character, and no two names are
     the same ignoring case and Unicode normalisation. A non-ASCII name (`画像/001.png`,
     `café.txt`) must be UTF-8 with the zip's UTF-8 flag set, which JSZip does;
     the Info-ZIP Unicode Path field JSZip adds beside it is accepted only when
     it restates that exact name;
-  - entries are stored or deflated, not encrypted, not symlinks;
+  - entries are stored or deflated, not encrypted, not symlinks, and every
+    entry's CRC-32 matches its content;
+  - extra fields are only timestamps (`0x5455`, `0x000a`), Unix owner
+    (`0x7875`) or the Unicode Path field above — anything else (e.g. `0x000d`
+    Unix mode / link) is refused;
+  - a STORED entry written with a data descriptor (JSZip `streamFiles: true`)
+    must not contain the bytes `PK\x07\x08` or `PK\x03\x04`: a streaming
+    extractor could stop there. Image data hits that by chance roughly once per
+    2 GiB, so for large stored datasets prefer `DEFLATE` or drop `streamFiles`;
   - the archive is not zip64 and has no archive comment, and every central
     directory record matches its local header;
   - there are at most 10,000 entries, at most 1 GiB uncompressed in total, no
     entry over 1 MiB declares more than 100× its compressed size, and every
-    deflated entry inflates to exactly its declared size.
+    deflated entry inflates to exactly its declared size with nothing after the
+    end of its deflate stream.
 
   The cap for a zip is 256 MiB (the hook refuses a larger one before sending),
   and one 256 MiB zip uses up the host's per-window save budget: a further save
