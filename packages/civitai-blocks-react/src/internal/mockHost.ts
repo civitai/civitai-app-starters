@@ -122,6 +122,7 @@ import {
   type UploadBytesWindowEntry,
 } from './uploadBytes.js';
 import {
+  mockMediaUploadBatchReply,
   mockMediaUploadReply,
   type MediaUploadWindowEntry,
   type MockMediaUploads,
@@ -1701,6 +1702,35 @@ export interface MockHostOptions {
    */
   mediaUploadError?: string;
   /**
+   * `OPEN_MEDIA_UPLOAD_BATCH` (`useMediaUpload().uploadBatch`): `true` = the
+   * viewer DECLINES the host's confirm, so the batch answers a bare reply and
+   * `uploadBatch` resolves `null`. The confirm is only shown when at least one
+   * item is valid, so a batch of only refused items still answers its
+   * per-item errors. Absent → the viewer confirms.
+   *
+   * Otherwise the mock answers at once, in the host's order: the whole-batch
+   * checks (`invalid media-upload batch request`, the purpose,
+   * `a batch holds 1 to 1200 files`, `the batch exceeds the 5 GB limit`), then
+   * each item with the single bytes upload's checks minus the window (kind, an
+   * invalid buffer, the per-kind cap, the content type, a mismatching
+   * `mimeType`), each refused item answered in its own result and each valid
+   * one with the kind's {@link cannedMediaUploads} entry, as a bytes `upload()`
+   * answers it. `expiresAt` is 7 days from now. A batch neither reads nor
+   * fills the bytes-mode window. A model-slot `context` answers
+   * `unsupported on this host`. Live-tunable via {@link MockHost.setScenario}.
+   */
+  mediaUploadBatchDeclined?: boolean;
+  /**
+   * Force an `OPEN_MEDIA_UPLOAD_BATCH` that passed the whole-batch checks to
+   * be refused as a whole with this `error`, before any item is looked at:
+   * the stand-in for the refusals the mock cannot produce, such as
+   * `no block token`, `busy` (the mock answers at once, so a batch is never
+   * still running when the next arrives), the viewer's daily quota, or a
+   * failure starting the batch. Absent → it runs.
+   * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   */
+  mediaUploadBatchError?: string;
+  /**
    * Image ids the mock treats as already issued and postable when the host is
    * created, as production treats an image this app stamped for the viewer in
    * an EARLIER session that is not in a post yet. Each seeded id may be posted
@@ -1927,6 +1957,8 @@ export type MockHostScenarioPatch = Pick<
   | 'uploadImageBytesError'
   | 'cannedMediaUploads'
   | 'mediaUploadError'
+  | 'mediaUploadBatchDeclined'
+  | 'mediaUploadBatchError'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -2793,6 +2825,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let cannedMediaUploads: MockMediaUploads = options.cannedMediaUploads ?? {};
   let mediaUploadError: string | undefined = options.mediaUploadError;
   let mediaUploadWindow: MediaUploadWindowEntry[] = [];
+  // OPEN_MEDIA_UPLOAD_BATCH: the viewer's answer to the confirm, and a forced
+  // whole-batch refusal. A batch has no window.
+  let mediaUploadBatchDeclined: boolean = options.mediaUploadBatchDeclined ?? false;
+  let mediaUploadBatchError: string | undefined = options.mediaUploadBatchError;
   // The ids a `CREATE_POST_FROM_APP` `{ kind: 'published' }` source may name:
   // ONLY ids this mock itself issued as postable (an accepted bytes upload, or a
   // PUBLISH_GENERATION_OUTPUTS reply) plus the seeded `postableImageIds` (an
@@ -4938,6 +4974,29 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'OPEN_MEDIA_UPLOAD_BATCH': {
+            // Batch generation-input upload. The rules live in
+            // ./mediaUploadBytes.ts; there is no confirm UI, so the viewer's
+            // answer is `mediaUploadBatchDeclined`.
+            if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'MEDIA_UPLOAD_BATCH_RESULT',
+                payload: { requestId, error: 'unsupported on this host' },
+              });
+              return;
+            }
+            const answer = mockMediaUploadBatchReply({
+              payload: typed.payload ?? {},
+              canned: cannedMediaUploads,
+              forcedError: mediaUploadBatchError,
+              declined: mediaUploadBatchDeclined,
+              now: Date.now(),
+            });
+            dispatchToBlock({ type: 'MEDIA_UPLOAD_BATCH_RESULT', payload: { requestId, ...answer } });
+            return;
+          }
+
           case 'OPEN_IMAGE_UPLOAD': {
             // Host-chrome image upload: return the canned result keyed by the
             // requested `purpose` (mirrors the real host's IMAGE_UPLOAD_RESULT).
@@ -5777,6 +5836,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if ('uploadImageBytesError' in patch) uploadImageBytesError = patch.uploadImageBytesError;
     if ('cannedMediaUploads' in patch) cannedMediaUploads = patch.cannedMediaUploads ?? {};
     if ('mediaUploadError' in patch) mediaUploadError = patch.mediaUploadError;
+    if ('mediaUploadBatchDeclined' in patch) mediaUploadBatchDeclined = patch.mediaUploadBatchDeclined ?? false;
+    if ('mediaUploadBatchError' in patch) mediaUploadBatchError = patch.mediaUploadBatchError;
     if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if ('runConfirmedStepError' in patch) runConfirmedStepError = patch.runConfirmedStepError;
     if ('runConfirmedStepCapRefusal' in patch) {

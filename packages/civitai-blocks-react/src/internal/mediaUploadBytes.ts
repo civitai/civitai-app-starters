@@ -1,7 +1,7 @@
 /**
- * `OPEN_MEDIA_UPLOAD`: the strings and limits both sides of the bridge agree
- * on, the content sniffers, and the mock host's copy of the host's admission
- * rules for BYTES mode.
+ * `OPEN_MEDIA_UPLOAD` and `OPEN_MEDIA_UPLOAD_BATCH`: the strings and limits
+ * both sides of the bridge agree on, the content sniffers, and the mock host's
+ * copy of the host's admission rules for BYTES mode and for a batch.
  *
  * The host owns the real rules. This copy exists so `createMockHost` (and so
  * `dev:harness` and every block test) accepts and refuses the same buffers
@@ -21,7 +21,11 @@
  * decoder and network, so the mock never produces them.
  */
 
-import type { BlockMediaKind, BlockMediaUploadInfo } from '@civitai/app-sdk/blocks';
+import type {
+  BlockMediaKind,
+  BlockMediaUploadBatchItemResult,
+  BlockMediaUploadInfo,
+} from '@civitai/app-sdk/blocks';
 
 import { sniffImageBytes } from './saveBytes.js';
 
@@ -58,6 +62,19 @@ export const MEDIA_UPLOAD_TYPE_ERROR: Readonly<Record<BlockMediaKind, string>> =
 export const MEDIA_UPLOAD_MIME_MISMATCH_ERROR = "mimeType does not match the file's content";
 /** The bytes-mode window is full. Retryable. */
 export const MEDIA_UPLOAD_BUSY_ERROR = 'busy';
+
+/** `OPEN_MEDIA_UPLOAD_BATCH`: at most this many items in one batch (and at least 1). */
+export const MEDIA_UPLOAD_BATCH_MAX_ITEMS = 1200;
+/** `OPEN_MEDIA_UPLOAD_BATCH`: at most this many raw bytes across all of a batch's items (5 GiB). */
+export const MEDIA_UPLOAD_BATCH_MAX_BYTES = 5 * 1024 ** 3;
+/** How long the host keeps a batch's uploads: 7 days after the batch started (`expiresAt`). */
+export const MEDIA_UPLOAD_BATCH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** The batch is not `{ purpose, items: [...objects] }`: `items` is not an array, or an entry is not an object. */
+export const MEDIA_UPLOAD_BATCH_INVALID_ERROR = 'invalid media-upload batch request';
+/** No items, or more than {@link MEDIA_UPLOAD_BATCH_MAX_ITEMS}. */
+export const MEDIA_UPLOAD_BATCH_COUNT_ERROR = 'a batch holds 1 to 1200 files';
+/** The items' raw bytes add up to more than {@link MEDIA_UPLOAD_BATCH_MAX_BYTES}. */
+export const MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR = 'the batch exceeds the 5 GB limit';
 
 /** The kinds the bridge knows. */
 export const MEDIA_UPLOAD_KINDS: readonly BlockMediaKind[] = ['image', 'video', 'audio'];
@@ -141,6 +158,35 @@ export function normaliseMediaMimeType(mimeType: string): string {
   return base === 'audio/x-wav' ? 'audio/wav' : base;
 }
 
+/**
+ * The per-file BUFFER check, shared by a single bytes upload and each batch
+ * item: `bytes` must be a non-empty `ArrayBuffer` and a present `mimeType` a
+ * string. Returns the refusal, or `null`.
+ */
+function mediaBytesShapeError(bytes: unknown, mimeType: unknown): string | null {
+  if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return MEDIA_UPLOAD_INVALID_ERROR;
+  if (mimeType !== undefined && typeof mimeType !== 'string') return MEDIA_UPLOAD_INVALID_ERROR;
+  return null;
+}
+
+/**
+ * The per-file CONTENT checks, shared by a single bytes upload and each batch
+ * item, in the host's order: the sniffed content must be one of the kind's
+ * types, then a present `mimeType` (normalised) must equal the sniffed type.
+ */
+function mediaContentVerdict(
+  kind: BlockMediaKind,
+  bytes: ArrayBuffer,
+  mimeType: unknown,
+): { ok: true; mimeType: string } | { ok: false; error: string } {
+  const sniffed = sniffMediaBytes(kind, new Uint8Array(bytes));
+  if (!sniffed) return { ok: false, error: MEDIA_UPLOAD_TYPE_ERROR[kind] };
+  if (typeof mimeType === 'string' && normaliseMediaMimeType(mimeType) !== sniffed) {
+    return { ok: false, error: MEDIA_UPLOAD_MIME_MISMATCH_ERROR };
+  }
+  return { ok: true, mimeType: sniffed };
+}
+
 function windowHasRoom(live: readonly MediaUploadWindowEntry[], size: number): boolean {
   const total = live.reduce((sum, e) => sum + e.size, 0);
   return live.length < MEDIA_UPLOAD_MAX_PER_WINDOW && total + size <= MEDIA_UPLOAD_MAX_BYTES_PER_WINDOW;
@@ -189,25 +235,95 @@ export function admitMediaUpload(
   // `null` reads as absent, as `OPEN_IMAGE_UPLOAD`'s `bytes` does.
   if (raw.bytes == null) return { result: { ok: true, mode: 'picker', kind }, recent: live };
 
-  const bytes = raw.bytes;
-  if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return refuse(MEDIA_UPLOAD_INVALID_ERROR);
-  if (raw.mimeType !== undefined && typeof raw.mimeType !== 'string') {
-    return refuse(MEDIA_UPLOAD_INVALID_ERROR);
-  }
+  const shapeError = mediaBytesShapeError(raw.bytes, raw.mimeType);
+  if (shapeError) return refuse(shapeError);
+  const bytes = raw.bytes as ArrayBuffer;
   const size = bytes.byteLength;
   if (opts.noToken) return refuse(MEDIA_UPLOAD_NO_TOKEN_ERROR);
   const cap = mediaUploadCap(kind);
   if (size > cap.maxBytes) return refuse(cap.error);
   if (!windowHasRoom(live, size)) return refuse(MEDIA_UPLOAD_BUSY_ERROR);
-  const sniffed = sniffMediaBytes(kind, new Uint8Array(bytes));
-  if (!sniffed) return refuse(MEDIA_UPLOAD_TYPE_ERROR[kind]);
-  if (typeof raw.mimeType === 'string' && normaliseMediaMimeType(raw.mimeType) !== sniffed) {
-    return refuse(MEDIA_UPLOAD_MIME_MISMATCH_ERROR);
-  }
+  const content = mediaContentVerdict(kind, bytes, raw.mimeType);
+  if (!content.ok) return refuse(content.error);
   return {
-    result: { ok: true, mode: 'bytes', kind, bytes, mimeType: sniffed },
+    result: { ok: true, mode: 'bytes', kind, bytes, mimeType: content.mimeType },
     recent: [...live, { at: now, size }],
   };
+}
+
+/** One batch item as the host reads it off the wire (nothing about it is trusted). */
+export type MediaUploadBatchWireItem = { kind?: unknown; bytes?: unknown; mimeType?: unknown };
+
+/**
+ * The host's WHOLE-BATCH refusal for one `OPEN_MEDIA_UPLOAD_BATCH`, or `null`
+ * when the request is admissible as a batch. ONE place for these rules: both
+ * `useMediaUpload().uploadBatch` (before sending) and the mock host call it.
+ * In the host's order:
+ *   1. `items` not an array, or an entry not an object → invalid batch;
+ *   2. `purpose` not `'generationSource'` → purpose error;
+ *   3. fewer than 1 or more than {@link MEDIA_UPLOAD_BATCH_MAX_ITEMS} items →
+ *      count error;
+ *   4. the items' raw bytes (every entry whose `bytes` is an `ArrayBuffer`)
+ *      over {@link MEDIA_UPLOAD_BATCH_MAX_BYTES} → too large.
+ * A problem with ONE item (an unknown kind, a bad buffer, a file over its cap,
+ * the wrong content) is NOT a whole-batch refusal: it is answered in that
+ * item's own result ({@link admitMediaUploadBatchItem}).
+ */
+export function mediaUploadBatchRefusal(raw: { purpose?: unknown; items?: unknown }): string | null {
+  const items = raw.items;
+  if (!Array.isArray(items)) return MEDIA_UPLOAD_BATCH_INVALID_ERROR;
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return MEDIA_UPLOAD_BATCH_INVALID_ERROR;
+  }
+  if (raw.purpose !== 'generationSource') return MEDIA_UPLOAD_PURPOSE_ERROR;
+  if (items.length < 1 || items.length > MEDIA_UPLOAD_BATCH_MAX_ITEMS) return MEDIA_UPLOAD_BATCH_COUNT_ERROR;
+  let total = 0;
+  for (const item of items as MediaUploadBatchWireItem[]) {
+    if (item.bytes instanceof ArrayBuffer) total += item.bytes.byteLength;
+  }
+  if (total > MEDIA_UPLOAD_BATCH_MAX_BYTES) return MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR;
+  return null;
+}
+
+/**
+ * The host's decision for ONE item of an admissible batch: the single bytes
+ * upload's per-file checks, in the same order, minus the token check (whole
+ * batch) and minus the window (a batch has none):
+ *   1. `kind` not known → kind error;
+ *   2. `bytes` not a non-empty `ArrayBuffer`, or a non-string `mimeType` →
+ *      invalid;
+ *   3. over the kind's cap ({@link mediaUploadCap}) → too large;
+ *   4. the sniffed content in the kind's set → else the kind's type error;
+ *   5. a present `mimeType` (normalised) equal to the sniffed type → else
+ *      mismatch.
+ */
+export function admitMediaUploadBatchItem(
+  raw: MediaUploadBatchWireItem,
+): { ok: true; kind: BlockMediaKind; bytes: ArrayBuffer; mimeType: string } | { ok: false; error: string } {
+  if (!isMediaKind(raw.kind)) return { ok: false, error: MEDIA_UPLOAD_KIND_ERROR };
+  const kind = raw.kind;
+  const shapeError = mediaBytesShapeError(raw.bytes, raw.mimeType);
+  if (shapeError) return { ok: false, error: shapeError };
+  const bytes = raw.bytes as ArrayBuffer;
+  const cap = mediaUploadCap(kind);
+  if (bytes.byteLength > cap.maxBytes) return { ok: false, error: cap.error };
+  const content = mediaContentVerdict(kind, bytes, raw.mimeType);
+  if (!content.ok) return content;
+  return { ok: true, kind, bytes, mimeType: content.mimeType };
+}
+
+/**
+ * The host's admission of one whole `OPEN_MEDIA_UPLOAD_BATCH` (the caller has
+ * already dropped an unroutable `requestId`): the whole-batch refusal
+ * ({@link mediaUploadBatchRefusal}), else one verdict per item, in item order
+ * ({@link admitMediaUploadBatchItem}).
+ */
+export function admitMediaUploadBatch(raw: { purpose?: unknown; items?: unknown }):
+  | { ok: false; error: string }
+  | { ok: true; items: ReturnType<typeof admitMediaUploadBatchItem>[] } {
+  const refusal = mediaUploadBatchRefusal(raw);
+  if (refusal) return { ok: false, error: refusal };
+  return { ok: true, items: (raw.items as MediaUploadBatchWireItem[]).map(admitMediaUploadBatchItem) };
 }
 
 /**
@@ -288,10 +404,66 @@ export function mockMediaUploadReply(args: {
   if (result.mode === 'picker') {
     return { reply: canned ? { selected: { ...canned, kind: result.kind } } : {}, recent };
   }
-  const base = canned ?? DEFAULT_MOCK_MEDIA_UPLOADS[result.kind];
-  const selected: BlockMediaUploadInfo =
-    result.kind === 'image'
-      ? { ...base, kind: 'image', mimeType: 'image/jpeg' }
-      : { ...base, kind: result.kind, mimeType: result.mimeType, sizeBytes: result.bytes.byteLength };
-  return { reply: { selected }, recent };
+  return { reply: { selected: mockBytesUpload(args.canned, result.kind, result.mimeType, result.bytes) }, recent };
+}
+
+/**
+ * What the mock reports for an ADMITTED bytes upload (single or batch item):
+ * the kind's canned upload (the default when it is left out or `null`: there
+ * is no picker to dismiss), carrying what the host would report for THESE
+ * bytes: the sniffed `mimeType` and the buffer's size for video and audio;
+ * `image/jpeg` and the canned size for an image, which the host re-encodes.
+ */
+function mockBytesUpload(
+  canned: MockMediaUploads,
+  kind: BlockMediaKind,
+  sniffedMimeType: string,
+  bytes: ArrayBuffer,
+): BlockMediaUploadInfo {
+  const base = canned[kind] ?? DEFAULT_MOCK_MEDIA_UPLOADS[kind];
+  return kind === 'image'
+    ? { ...base, kind: 'image', mimeType: 'image/jpeg' }
+    : { ...base, kind, mimeType: sniffedMimeType, sizeBytes: bytes.byteLength };
+}
+
+/**
+ * The mock host's whole answer to one routable `OPEN_MEDIA_UPLOAD_BATCH`, on a
+ * page surface, in this order:
+ *  1. the whole-batch refusal ({@link mediaUploadBatchRefusal}) → `{ error }`;
+ *  2. `forcedError`, when set → `{ error }`: the stand-in for the whole-batch
+ *     refusals the mock cannot produce (`no block token`, `busy` — the mock
+ *     answers at once, so a batch is never still running when the next one
+ *     arrives — the viewer's daily quota, the feature not available, a failure
+ *     starting the batch). Placed after the request checks, before any item is
+ *     looked at;
+ *  3. every item's verdict ({@link admitMediaUploadBatchItem}). When NO item
+ *     is valid the host answers the per-item errors without asking the viewer,
+ *     so `declined` does not apply;
+ *  4. `declined` → a bare reply (the viewer declined the host's confirm);
+ *  5. otherwise `{ results, expiresAt }`: one entry per item, in item order,
+ *     each the kind's canned upload ({@link mockBytesUpload}) or the item's
+ *     refusal, and `expiresAt` = `now` + 7 days.
+ * A batch never reads or writes the single bytes-mode window.
+ */
+export function mockMediaUploadBatchReply(args: {
+  payload: { purpose?: unknown; items?: unknown };
+  canned: MockMediaUploads;
+  forcedError: string | undefined;
+  declined: boolean;
+  now: number;
+}):
+  | { error: string }
+  | { results: BlockMediaUploadBatchItemResult[]; expiresAt: string }
+  | Record<string, never> {
+  const admitted = admitMediaUploadBatch(args.payload);
+  if (!admitted.ok) return { error: admitted.error };
+  if (args.forcedError !== undefined) return { error: args.forcedError };
+  const anyValid = admitted.items.some((item) => item.ok);
+  if (anyValid && args.declined) return {};
+  const results = admitted.items.map((item, index): BlockMediaUploadBatchItemResult =>
+    item.ok
+      ? { index, selected: mockBytesUpload(args.canned, item.kind, item.mimeType, item.bytes) }
+      : { index, error: item.error },
+  );
+  return { results, expiresAt: new Date(args.now + MEDIA_UPLOAD_BATCH_RETENTION_MS).toISOString() };
 }

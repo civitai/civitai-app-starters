@@ -19,6 +19,7 @@ import type {
   BlockPickedImageInfo,
   BlockMediaKind,
   BlockMediaUploadInfo,
+  BlockMediaUploadBatchItemResult,
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
@@ -1038,6 +1039,29 @@ export type ParentToBlockMessage =
       };
     }
   | {
+      // Reply to OPEN_MEDIA_UPLOAD_BATCH. Exactly one of three shapes:
+      //   - `{ requestId }` — DECLINED, nothing uploaded: the viewer declined
+      //     the host's confirm, or the host declined at once (review mode, or
+      //     the block is not ready). The hook resolves `null`.
+      //   - `{ requestId, error }` — the WHOLE batch was refused and nothing
+      //     was uploaded: an invalid request, too many files, over the batch
+      //     byte cap, `no block token`, `busy` (a batch is already running on
+      //     this page), the viewer's daily quota, the feature not available,
+      //     or a failure starting the batch.
+      //   - `{ requestId, results, expiresAt }` — the batch RAN. `results` has
+      //     exactly one entry per item, in item order, each with exactly one of
+      //     `selected` and `error` ({@link BlockMediaUploadBatchItemResult}).
+      //     `expiresAt` (ISO 8601) is when the uploaded files stop being kept:
+      //     7 days after the batch started.
+      type: 'MEDIA_UPLOAD_BATCH_RESULT';
+      payload: {
+        requestId: string;
+        error?: string;
+        results?: BlockMediaUploadBatchItemResult[];
+        expiresAt?: string;
+      };
+    }
+  | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
       // `error` string (e.g. "wrong-ecosystem"), distinct from the block
       // lifecycle error class.
@@ -1846,6 +1870,46 @@ export type BlockToParentMessage =
       };
     }
   | {
+      // Upload MANY in-tab files as generation inputs behind ONE viewer
+      // confirm, and get back one answer per file
+      // (`MEDIA_UPLOAD_BATCH_RESULT`). PAGE apps only; a model-slot host
+      // answers `unsupported on this host`.
+      //
+      // Each item is a bytes-mode `OPEN_MEDIA_UPLOAD` without the picker:
+      // `kind`, an `ArrayBuffer` (structured-cloned) and an optional
+      // `mimeType` cross-checked against the sniffed content. The host
+      // validates EVERY item with the single-file rules before asking (24 MB
+      // per image, 64 MB per video or audio, the content sniff, the mimeType
+      // check), shows ONE confirm in Civitai's own UI, and only after the
+      // viewer confirms uploads the valid items, at most 3 at a time. A refused
+      // item gets its own `error` and does not stop the others. When no item is
+      // valid the host answers `results` (all errors) without a confirm.
+      //
+      // Whole-batch limits: 1 to 1200 items and at most 5 GB of raw bytes in
+      // total; one batch at a time per page (`busy`); and a per-viewer daily
+      // quota of 1,200 files and 5 GB per UTC day across all apps, enforced on
+      // the server. The single-file bytes window (8 uploads / 60 s) does NOT
+      // apply to a batch, and a batch does not count against it.
+      //
+      // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT, so against an
+      // older host the request ends at the caller's timeout.
+      type: 'OPEN_MEDIA_UPLOAD_BATCH';
+      payload: {
+        requestId: string;
+        /** Required. The only accepted value today. */
+        purpose: 'generationSource';
+        /** 1 to 1200 files, answered in this order. */
+        items: Array<{
+          /** What the bytes are. An unknown value is refused for that item. */
+          kind: BlockMediaKind;
+          /** The file. A typed-array view or an empty buffer is refused for that item. */
+          bytes: ArrayBuffer;
+          /** Optional: the type the app believes it is sending; must match the content. */
+          mimeType?: string;
+        }>;
+      };
+    }
+  | {
       // Persist a viewer's checkpoint override via the host. `null` clears
       // the override and falls back to the publisher default.
       type: 'SET_USER_CHECKPOINT';
@@ -2238,6 +2302,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'OPEN_IMAGE_UPLOAD',
   'OPEN_IMAGE_PICKER',
   'OPEN_MEDIA_UPLOAD',
+  'OPEN_MEDIA_UPLOAD_BATCH',
   'SET_USER_CHECKPOINT',
   'NAVIGATE',
   'REQUEST_SIGN_IN',

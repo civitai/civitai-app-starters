@@ -1985,6 +1985,45 @@ export function isValidMediaUploadResult(p: unknown): boolean {
 }
 
 /**
+ * One entry of `MEDIA_UPLOAD_BATCH_RESULT.results`: a whole `index` ≥ 0 and
+ * EXACTLY ONE of a valid `selected` (the single upload's
+ * {@link isValidMediaUploadInfo}) or a string `error`.
+ */
+function isValidMediaUploadBatchItemResult(e: unknown): boolean {
+  if (!isObject(e)) return false;
+  if (typeof e.index !== 'number' || !Number.isInteger(e.index) || e.index < 0) return false;
+  const hasSelected = e.selected !== undefined;
+  const hasError = e.error !== undefined;
+  if (hasSelected === hasError) return false;
+  if (hasError) return typeof e.error === 'string';
+  return isValidMediaUploadInfo(e.selected);
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD_BATCH`: `{ requestId, error }` (the whole batch
+ * refused), a bare `{ requestId }` (declined), or
+ * `{ requestId, results, expiresAt? }` (the batch ran) whose `results` is an
+ * array of valid entries ({@link isValidMediaUploadBatchItemResult}) and whose
+ * `expiresAt` is a string when present.
+ *
+ * As for the single upload, a reply with a string `error` is accepted without
+ * looking further: `uploadBatch` throws on a PRESENT `error` before it reads
+ * `results`, and dropping the refusal would leave it waiting out its whole
+ * timeout. Whether `results` lines up with the items sent (one per item, in
+ * order) is checked by the hook, which knows the items.
+ */
+export function isValidMediaUploadBatchResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `results`
+  if (p.expiresAt !== undefined && typeof p.expiresAt !== 'string') return false;
+  if (p.results === undefined) return true;
+  if (!Array.isArray(p.results)) return false;
+  return p.results.every(isValidMediaUploadBatchItemResult);
+}
+
+/**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
  * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
@@ -2166,6 +2205,8 @@ export function payloadValidatorFor(
       return isValidImagePickerResult;
     case 'MEDIA_UPLOAD_RESULT':
       return isValidMediaUploadResult;
+    case 'MEDIA_UPLOAD_BATCH_RESULT':
+      return isValidMediaUploadBatchResult;
     case 'USER_CHECKPOINT_SET':
       return isValidUserCheckpointSetResult;
     case 'SUSPEND':

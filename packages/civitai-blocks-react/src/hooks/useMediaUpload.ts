@@ -1,15 +1,23 @@
 import { useCallback } from 'react';
 
-import type { BlockMediaKind, BlockMediaUploadInfo } from '@civitai/app-sdk/blocks';
+import type {
+  BlockMediaKind,
+  BlockMediaUploadBatchItemResult,
+  BlockMediaUploadInfo,
+} from '@civitai/app-sdk/blocks';
 
 import {
   MEDIA_UPLOAD_INVALID_ERROR,
   MEDIA_UPLOAD_KIND_ERROR,
   isMediaKind,
+  mediaUploadBatchRefusal,
   mediaUploadCap,
 } from '../internal/mediaUploadBytes.js';
 import { throwOnReplyError } from '../internal/replyError.js';
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import {
+  HUMAN_INTERACTION_TIMEOUT_MS,
+  MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS,
+} from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
@@ -49,6 +57,55 @@ export interface MediaUploadBytesOptions {
   mimeType?: string;
 }
 
+/**
+ * What `uploadBatch()` rejects with when the host's `results` do not line up
+ * with the items sent: not exactly one entry per item, or an entry whose
+ * `index` is not its position. The host never sends that; a reply that did
+ * could pair a URL with the wrong item, so it is refused rather than returned.
+ */
+export const MEDIA_UPLOAD_BATCH_MISMATCH_ERROR =
+  'the host answered the batch with results that do not match its items';
+
+/** One item for {@link UseMediaUpload.uploadBatch}: the same fields as {@link MediaUploadBytesOptions}. */
+export interface MediaUploadBatchItem {
+  /** What the bytes are: `'image'`, `'video'` or `'audio'`. */
+  kind: BlockMediaKind;
+  /**
+   * The file, as an `ArrayBuffer`. At most 24 MB for an image and 64 MB for
+   * video or audio; a larger, empty or non-`ArrayBuffer` item is refused in
+   * ITS OWN result, not before sending.
+   */
+  bytes: ArrayBuffer;
+  /** Optional: the type you believe you are sending; must match the content. */
+  mimeType?: string;
+}
+
+/** Options for {@link UseMediaUpload.uploadBatch}. */
+export interface MediaUploadBatchOptions {
+  /**
+   * How long to wait for the host's one reply, in milliseconds. Default
+   * {@link HUMAN_INTERACTION_TIMEOUT_MS} (10 minutes, for the viewer's confirm)
+   * plus {@link MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS} (60 s) per item. This
+   * REPLACES the whole bound.
+   */
+  timeoutMs?: number;
+}
+
+/** What {@link UseMediaUpload.uploadBatch} resolves with when the batch ran. */
+export interface MediaUploadBatchResult {
+  /**
+   * Exactly one entry per item, in item order (`results[i].index === i`),
+   * each with exactly one of `selected` (uploaded) and `error` (refused or
+   * failed; the other items are unaffected).
+   */
+  results: BlockMediaUploadBatchItemResult[];
+  /**
+   * When the uploaded files stop being kept (ISO 8601): 7 days after the batch
+   * started. Set by the host on every batch that ran.
+   */
+  expiresAt?: string;
+}
+
 /** What {@link useMediaUpload} returns. */
 export interface UseMediaUpload {
   /**
@@ -66,6 +123,21 @@ export interface UseMediaUpload {
    * uploading. It never resolves without a file.
    */
   upload: (options: MediaUploadBytesOptions) => Promise<BlockMediaUploadInfo>;
+  /**
+   * BATCH mode: upload 1 to 1200 files the block holds behind ONE confirm the
+   * host shows the viewer, and get one answer per file. Resolves with
+   * `{ results, expiresAt }` when the batch ran (some items may carry an
+   * `error`), or `null` when nothing was uploaded because the viewer declined
+   * the confirm or the host declined at once (review mode, not ready). Rejects
+   * with the host's message when it refused the WHOLE batch (`busy`,
+   * `no block token`, the daily quota, …), and before sending when the batch
+   * itself is invalid (`invalid media-upload batch request`,
+   * `a batch holds 1 to 1200 files`, `the batch exceeds the 5 GB limit`).
+   */
+  uploadBatch: (
+    items: readonly MediaUploadBatchItem[],
+    options?: MediaUploadBatchOptions,
+  ) => Promise<MediaUploadBatchResult | null>;
 }
 
 /**
@@ -98,6 +170,15 @@ export interface UseMediaUpload {
  *
  * For images, `useImageUpload().open({ purpose: 'generationSource' })` remains
  * valid; this hook is the one that also takes video, audio and in-tab bytes.
+ *
+ * - `uploadBatch(items, { timeoutMs? })` uploads up to 1200 in-tab files
+ *   behind one viewer confirm. The host checks every item with the
+ *   single-file rules first and answers a refused item in its own result; it
+ *   uploads at most 3 at a time, has no per-minute window (the 8-per-60 s
+ *   window above is for `upload` only), and allows 1 to 1200 files and 5 GB
+ *   in one batch, one batch at a time per page, and 1,200 files / 5 GB per
+ *   viewer per UTC day across all apps. Uploads are kept for 7 days
+ *   (`expiresAt`).
  *
  * @example
  * // A recording made in the tab, passed into a step.
@@ -170,5 +251,52 @@ export function useMediaUpload(): UseMediaUpload {
     [],
   );
 
-  return { open, upload };
+  const uploadBatch = useCallback(
+    async (
+      items: readonly MediaUploadBatchItem[],
+      options?: MediaUploadBatchOptions,
+    ): Promise<MediaUploadBatchResult | null> => {
+      // The host's WHOLE-BATCH refusals, in the host's order, from the one
+      // shared rule (./internal/mediaUploadBytes.ts). A problem with one item
+      // is NOT refused here: the host answers it in that item's result, so
+      // the app gets a per-item answer, exactly as production gives it.
+      const refusal = mediaUploadBatchRefusal({ purpose: 'generationSource', items });
+      if (refusal) throw new Error(refusal);
+
+      const reply = await sendTypedRequest(
+        getTransport(),
+        {
+          type: 'OPEN_MEDIA_UPLOAD_BATCH',
+          payload: {
+            purpose: 'generationSource',
+            items: items.map(({ kind, bytes, mimeType }) => ({
+              kind,
+              bytes,
+              ...(mimeType !== undefined ? { mimeType } : {}),
+            })),
+          },
+        },
+        'MEDIA_UPLOAD_BATCH_RESULT',
+        // The viewer answers a confirm, then the host uploads every file.
+        {
+          timeoutMs:
+            options?.timeoutMs ?? HUMAN_INTERACTION_TIMEOUT_MS + MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS * items.length,
+        },
+      );
+      // 🔴 BEFORE reading `results`: a whole-batch refusal carries none, and
+      // would otherwise resolve `null` exactly like a decline.
+      throwOnReplyError(reply, 'media upload failed');
+      // A bare reply: the viewer declined the confirm, or the host declined
+      // at once. Nothing was uploaded; like `open`'s dismiss, not a failure.
+      if (!reply.results) return null;
+      const { results } = reply;
+      if (results.length !== items.length || results.some((r, i) => r.index !== i)) {
+        throw new Error(MEDIA_UPLOAD_BATCH_MISMATCH_ERROR);
+      }
+      return { results, ...(reply.expiresAt !== undefined ? { expiresAt: reply.expiresAt } : {}) };
+    },
+    [],
+  );
+
+  return { open, upload, uploadBatch };
 }

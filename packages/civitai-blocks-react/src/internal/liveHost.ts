@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 53, of which 15 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 54, of which 16 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -138,6 +138,8 @@
  *   • OPEN_MEDIA_UPLOAD — the generation-input upload runs in the host with the
  *     viewer's signed-in session, which the local harness does not have.
  *     Replies with a refusal.
+ *   • OPEN_MEDIA_UPLOAD_BATCH — the same upload, many files behind one host
+ *     confirm. Replies with the same refusal.
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -1832,6 +1834,25 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             if (!isRoutableRequestId(requestId)) return;
             dispatchToBlock({
               type: 'MEDIA_UPLOAD_RESULT',
+              payload: { requestId, error: MEDIA_UPLOAD_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'OPEN_MEDIA_UPLOAD_BATCH': {
+            // REFUSED, for the same reason as OPEN_MEDIA_UPLOAD: the host
+            // uploads with the viewer's signed-in session, which this harness
+            // does not have. An immediate error, so `uploadBatch()` rejects
+            // instead of waiting out its timeout.
+            logOnce(
+              'open-media-upload-batch',
+              'OPEN_MEDIA_UPLOAD_BATCH received but live dev mode cannot upload generation inputs ' +
+                '— useMediaUpload().uploadBatch() REJECTS. Test it against the real site, ' +
+                'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+            );
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'MEDIA_UPLOAD_BATCH_RESULT',
               payload: { requestId, error: MEDIA_UPLOAD_UNSUPPORTED_ERROR },
             });
             return;

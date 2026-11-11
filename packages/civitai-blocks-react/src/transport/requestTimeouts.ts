@@ -52,6 +52,18 @@ export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
 export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
 
 /**
+ * What `useMediaUpload().uploadBatch` adds to {@link HUMAN_INTERACTION_TIMEOUT_MS}
+ * for EACH item, by default: 60 s. The host replies once, after the viewer
+ * confirmed AND every item was uploaded (at most 3 at a time), so the bound
+ * grows with the batch: 10 minutes for the viewer, plus a minute per file.
+ * A caller can replace the whole bound with `uploadBatch(items, { timeoutMs })`.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: the default
+ * is always at least the human bound.
+ */
+export const MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS = 60_000;
+
+/**
  * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
  * host forwards it to the orchestrator and replies only once that answers. No
  * person is in the loop, so it stays in the `'protocol'` bucket below; it just
@@ -114,6 +126,10 @@ const REQUEST_TIMEOUT_CLASS = {
   OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
   OPEN_MEDIA_UPLOAD: 'human', //           viewer picks a file, or a 64 MB upload + host retries
+  // Viewer answers the host's confirm, then the host uploads up to 1200 files
+  // (3 at a time). `uploadBatch` waits the human bound PLUS
+  // MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS per item.
+  OPEN_MEDIA_UPLOAD_BATCH: 'human',
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)
   // 🔴 `'human'` for the SAME reason as PUBLISH_GENERATION_OUTPUTS, and the
