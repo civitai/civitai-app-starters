@@ -189,7 +189,7 @@ jobs:
         # Dependabot's trailing-comment rewrite is known-flaky (dependabot-core #7912,
         # #8011, #14716), so treat the label as documentation, not as verified truth.
         # PINNED is what actually holds the sha; keep the two in step by hand.
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from
           # opening PRs, and this secret already carries PR-creation perms for the
@@ -308,7 +308,7 @@ jobs:
 
       - name: Open PR if the contract changed
         if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           token: ${{ secrets.CHANGESETS_TOKEN }}
           branch: ${{ env.CONTRACT_REVENDOR_BRANCH }}
