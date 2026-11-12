@@ -1710,12 +1710,13 @@ export interface MockHostOptions {
    *
    * Otherwise the mock answers at once, in the host's order: the whole-batch
    * checks (`invalid media-upload batch request`, the purpose,
-   * `a batch holds 1 to 1200 files`, `the batch exceeds the 5 GB limit`), then
+   * `a batch holds 1 to 1200 files`, `the batch exceeds the 10 GB limit`), then
    * each item with the single bytes upload's checks minus the window (kind, an
    * invalid buffer, the per-kind cap, the content type, a mismatching
    * `mimeType`), each refused item answered in its own result and each valid
    * one with the kind's {@link cannedMediaUploads} entry, as a bytes `upload()`
-   * answers it. `expiresAt` is 7 days from now. A batch neither reads nor
+   * answers it. `expiresAt` is 30 days from now (the upload service's default
+   * retention), and absent when no item was valid. A batch neither reads nor
    * fills the bytes-mode window. A model-slot `context` answers
    * `unsupported on this host`. Live-tunable via {@link MockHost.setScenario}.
    */

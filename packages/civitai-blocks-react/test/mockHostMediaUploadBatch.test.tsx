@@ -28,7 +28,6 @@ const ORIGIN = window.location.origin;
 // The contract's limits, spelled as literals so a changed constant cannot move the test with it.
 const CAP = 67_108_864; // one video or audio file
 const IMAGE_CAP = 25_165_824; // one image
-const DAY_MS = 86_400_000;
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
@@ -118,7 +117,7 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
   }
 
   // ── A batch that runs, through the real hook ───────────────────────────────
-  it('answers one result per item, in order, with the kind’s canned upload and expiresAt 7 days out', async () => {
+  it('answers one result per item, in order, with the kind’s canned upload and expiresAt 30 days out', async () => {
     const hook = await install();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(1_800_000_000_000);
@@ -155,9 +154,9 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
           },
         },
       ],
-      expiresAt: new Date(1_800_000_000_000 + 7 * DAY_MS).toISOString(),
+      // 1_800_000_000_000 (2027-01-15T08:00Z) + 30 days.
+      expiresAt: '2027-02-14T08:00:00.000Z',
     });
-    expect(out.value?.expiresAt).toBe('2027-01-22T08:00:00.000Z');
   });
 
   it('answers each valid item with its kind’s cannedMediaUploads entry (null = the default)', async () => {
@@ -264,7 +263,8 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
     ['items missing', { purpose: 'generationSource' }, 'invalid media-upload batch request'],
     ['an entry that is null', { purpose: 'generationSource', items: [{ kind: 'image', bytes: buf(PNG) }, null] }, 'invalid media-upload batch request'],
     ['an entry that is a number', { purpose: 'generationSource', items: [3] }, 'invalid media-upload batch request'],
-    ['a bad shape AND a bad purpose (shape first)', { purpose: 'display', items: 'x' }, 'invalid media-upload batch request'],
+    ['a bad shape AND a bad purpose (purpose first)', { purpose: 'display', items: 'x' }, "purpose must be 'generationSource'"],
+    ['a null entry AND a missing purpose (purpose first)', { items: [null] }, "purpose must be 'generationSource'"],
     ['purpose display', { purpose: 'display', items: [{ kind: 'image', bytes: buf(PNG) }] }, "purpose must be 'generationSource'"],
     ['a missing purpose', { items: [{ kind: 'image', bytes: buf(PNG) }] }, "purpose must be 'generationSource'"],
     ['a bad purpose AND no items (purpose first)', { purpose: 'display', items: [] }, "purpose must be 'generationSource'"],
@@ -285,29 +285,38 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
     expect(over).toEqual({ requestId: expect.any(String), error: 'a batch holds 1 to 1200 files' });
   });
 
-  it('caps the batch at 5 GiB of raw bytes: exactly 5 GiB runs, one byte more is refused as a whole', async () => {
+  it('caps the batch at 10 GiB of raw bytes: exactly 10,737,418,240 runs, one byte more is refused as a whole', async () => {
     await install();
-    // One 64 MiB buffer, referenced 80 times = 5,368,709,120 bytes.
+    // One 64 MiB buffer, referenced 160 times = 10,737,418,240 bytes.
     const max = sized(MP4, CAP);
-    const at = await batch(Array.from({ length: 80 }, () => ({ kind: 'video', bytes: max })));
+    const at = await batch(Array.from({ length: 160 }, () => ({ kind: 'video', bytes: max })));
     expect(at.error).toBeUndefined();
-    expect(at.results).toHaveLength(80);
+    expect(at.results).toHaveLength(160);
     const extra = await batch([
-      ...Array.from({ length: 80 }, () => ({ kind: 'video', bytes: max })),
+      ...Array.from({ length: 160 }, () => ({ kind: 'video', bytes: max })),
       { kind: 'image', bytes: new ArrayBuffer(1) },
     ]);
-    expect(extra).toEqual({ requestId: expect.any(String), error: 'the batch exceeds the 5 GB limit' });
+    expect(extra).toEqual({ requestId: expect.any(String), error: 'the batch exceeds the 10 GB limit' });
   });
 
-  it('counts every ArrayBuffer toward the 5 GiB, a per-item-refused one included', async () => {
+  it('admits a batch between 5 and 10 GiB (100 x 64 MiB = 6.25 GiB)', async () => {
     await install();
     const max = sized(MP4, CAP);
-    // 80 valid videos plus one 2-byte item of an unknown kind: still over.
+    const reply = await batch(Array.from({ length: 100 }, () => ({ kind: 'video', bytes: max })));
+    expect(reply.error).toBeUndefined();
+    expect(reply.results).toHaveLength(100);
+    expect(reply.results?.every((r) => r.selected?.sizeBytes === CAP)).toBe(true);
+  });
+
+  it('counts every ArrayBuffer toward the 10 GiB, a per-item-refused one included', async () => {
+    await install();
+    const max = sized(MP4, CAP);
+    // 160 valid videos plus one 2-byte item of an unknown kind: still over.
     const reply = await batch([
-      ...Array.from({ length: 80 }, () => ({ kind: 'video', bytes: max })),
+      ...Array.from({ length: 160 }, () => ({ kind: 'video', bytes: max })),
       { kind: 'gif', bytes: new ArrayBuffer(2) },
     ]);
-    expect(reply.error).toBe('the batch exceeds the 5 GB limit');
+    expect(reply.error).toBe('the batch exceeds the 10 GB limit');
   });
 
   // ── No per-minute window ───────────────────────────────────────────────────
@@ -345,6 +354,21 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
       { kind: 'audio', bytes: new ArrayBuffer(0) },
     ]);
     expect(errors(reply)).toEqual(['images must be PNG, JPEG or WebP', 'invalid media-upload request']);
+    expect(reply).not.toHaveProperty('expiresAt');
+  });
+
+  it('omits expiresAt when no item is valid (nothing was asked or uploaded), and the hook resolves without it', async () => {
+    const hook = await install();
+    const reply = await batch([{ kind: 'image', bytes: buf(GIF) }]);
+    expect(reply).toEqual({
+      requestId: expect.any(String),
+      results: [{ index: 0, error: 'images must be PNG, JPEG or WebP' }],
+    });
+    const out = await settle(hook.current.uploadBatch([{ kind: 'video', bytes: buf(WAV) }]));
+    expect(out.value).toEqual({ results: [{ index: 0, error: 'videos must be MP4 or WebM' }] });
+    // One valid item is enough for expiresAt to be set.
+    const mixed = await batch([{ kind: 'image', bytes: buf(GIF) }, { kind: 'image', bytes: buf(PNG) }]);
+    expect(typeof mixed.expiresAt).toBe('string');
   });
 
   it('a whole-batch refusal comes before the confirm', async () => {

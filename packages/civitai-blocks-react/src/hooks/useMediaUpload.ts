@@ -100,8 +100,9 @@ export interface MediaUploadBatchResult {
    */
   results: BlockMediaUploadBatchItemResult[];
   /**
-   * When the uploaded files stop being kept (ISO 8601): 7 days after the batch
-   * started. Set by the host on every batch that ran.
+   * ISO 8601. The uploaded files are kept AT LEAST until then: at least 30
+   * days, the upload service's default retention. Not a promise that they are
+   * deleted at that time. Absent when no item was valid (nothing was uploaded).
    */
   expiresAt?: string;
 }
@@ -132,7 +133,7 @@ export interface UseMediaUpload {
    * with the host's message when it refused the WHOLE batch (`busy`,
    * `no block token`, the daily quota, …), and before sending when the batch
    * itself is invalid (`invalid media-upload batch request`,
-   * `a batch holds 1 to 1200 files`, `the batch exceeds the 5 GB limit`).
+   * `a batch holds 1 to 1200 files`, `the batch exceeds the 10 GB limit`).
    */
   uploadBatch: (
     items: readonly MediaUploadBatchItem[],
@@ -175,10 +176,10 @@ export interface UseMediaUpload {
  *   behind one viewer confirm. The host checks every item with the
  *   single-file rules first and answers a refused item in its own result; it
  *   uploads at most 3 at a time, has no per-minute window (the 8-per-60 s
- *   window above is for `upload` only), and allows 1 to 1200 files and 5 GB
+ *   window above is for `upload` only), and allows 1 to 1200 files and 10 GB
  *   in one batch, one batch at a time per page, and 1,200 files / 5 GB per
- *   viewer per UTC day across all apps. Uploads are kept for 7 days
- *   (`expiresAt`).
+ *   viewer per UTC day across all apps. Uploads are kept for at least 30 days,
+ *   the upload service's default retention (`expiresAt`).
  *
  * @example
  * // A recording made in the tab, passed into a step.

@@ -1051,8 +1051,10 @@ export type ParentToBlockMessage =
       //   - `{ requestId, results, expiresAt }` — the batch RAN. `results` has
       //     exactly one entry per item, in item order, each with exactly one of
       //     `selected` and `error` ({@link BlockMediaUploadBatchItemResult}).
-      //     `expiresAt` (ISO 8601) is when the uploaded files stop being kept:
-      //     7 days after the batch started.
+      //     `expiresAt` (ISO 8601): the uploaded files are kept AT LEAST until
+      //     then, at least 30 days (the upload service's default retention);
+      //     not a promise of deletion. Absent when no item was valid (the
+      //     host asked nothing and uploaded nothing).
       type: 'MEDIA_UPLOAD_BATCH_RESULT';
       payload: {
         requestId: string;
@@ -1885,7 +1887,7 @@ export type BlockToParentMessage =
       // item gets its own `error` and does not stop the others. When no item is
       // valid the host answers `results` (all errors) without a confirm.
       //
-      // Whole-batch limits: 1 to 1200 items and at most 5 GB of raw bytes in
+      // Whole-batch limits: 1 to 1200 items and at most 10 GB of raw bytes in
       // total; one batch at a time per page (`busy`); and a per-viewer daily
       // quota of 1,200 files and 5 GB per UTC day across all apps, enforced on
       // the server. The single-file bytes window (8 uploads / 60 s) does NOT

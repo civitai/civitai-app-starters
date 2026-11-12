@@ -2708,7 +2708,7 @@ function UploadFrames({ frames }: { frames: Blob[] }) {
       if (selected) setFrameUrl(index, selected.url);
       else showFrameError(index, error);
     }
-    // batch.expiresAt: the uploads are kept until then (7 days)
+    // batch.expiresAt: the uploads are kept at least until then (at least 30 days)
   }
 
   return <button onClick={onClick}>Upload {frames.length} frames</button>;
@@ -2740,8 +2740,10 @@ What `uploadBatch` resolves and rejects with:
   `this audio was refused by the upload service` for a file the content scan
   blocked, and `media upload failed — please try again`. One refused item does
   not stop the others. `expiresAt` is an ISO timestamp: the uploaded files are
-  kept until then, 7 days after the batch started, so pass the URLs into your
-  steps before that.
+  kept at least until then, which is at least 30 days (the upload service's
+  default retention). It is not a promise that they are deleted at that time,
+  so do not rely on a URL going away; pass the URLs into your steps before it.
+  `expiresAt` is absent when no item was valid, since nothing was uploaded.
 - **`null` when nothing was uploaded** because the viewer declined the confirm,
   or the host declined at once (review mode, or your app is not ready). Like
   closing `open`'s picker, this is the viewer's choice, not an error.
@@ -2753,7 +2755,7 @@ What `uploadBatch` resolves and rejects with:
 - **It refuses before sending,** with the host's own strings, what the host
   would refuse for the whole batch: `invalid media-upload batch request` (not
   an array, or an entry that is not an object),
-  `a batch holds 1 to 1200 files`, and `the batch exceeds the 5 GB limit` (the
+  `a batch holds 1 to 1200 files`, and `the batch exceeds the 10 GB limit` (the
   items' raw bytes added up). A problem with one item is **not** refused
   before sending: it comes back in that item's `error`.
 - It rejects with
@@ -2766,12 +2768,12 @@ Limits:
 | Limit | Value |
 |---|---|
 | Files per batch | 1 to 1200 |
-| Raw bytes per batch | 5 GB |
+| Raw bytes per batch | 10 GB |
 | Per file | 24 MB per image, 64 MB per video or audio file |
 | Batches at a time | one per page (`busy` otherwise) |
 | Per viewer, per UTC day, across all apps | 1,200 files and 5 GB (checked on the server) |
 | Per-minute window | none (the 8 uploads / 128 MB per 60 s window applies to `upload` only, and a batch does not count against it) |
-| Uploads kept | 7 days (`expiresAt`) |
+| Uploads kept | at least 30 days, the upload service's default retention (`expiresAt`) |
 
 **Timeout:** by default `uploadBatch` waits 10 minutes for the viewer plus 60
 seconds per item (3 items: 13 minutes), then rejects with a
@@ -2785,7 +2787,8 @@ that predates it, the request gets no answer and `uploadBatch` rejects with a
 With the mock host there is no confirm: the batch answers at once. It runs the
 whole-batch checks, then each item with `upload`'s checks (without the rate
 window), and answers each valid item with that kind's `cannedMediaUploads`
-entry, the way `upload` does; `expiresAt` is 7 days from now. Set
+entry, the way `upload` does; `expiresAt` is 30 days from now, and absent
+when no item was valid. Set
 `mediaUploadBatchDeclined: true` for a viewer who declines the confirm
 (`uploadBatch` resolves `null`; a batch with no valid item still answers its
 per-item errors). The mock answers at once and has no server, so it never

@@ -26,8 +26,8 @@ const PARENT_ORIGIN = 'https://civitai.com';
 
 // The contract's limits, spelled as literals so a changed constant cannot move the test with it.
 const MAX_ITEMS = 1200;
-const MAX_BYTES = 5_368_709_120; // 5 GiB
-const VIDEO_CAP = 67_108_864; // 64 MiB: 80 of these are exactly 5 GiB
+const MAX_BYTES = 10_737_418_240; // 10 GiB
+const VIDEO_CAP = 67_108_864; // 64 MiB: 160 of these are exactly 10 GiB
 
 function buildInit(): BlockInitPayload {
   return {
@@ -165,12 +165,18 @@ describe('useMediaUpload().uploadBatch', () => {
     ['an entry that is an array', () => [[]], 'invalid media-upload batch request'],
     ['no items', () => [], 'a batch holds 1 to 1200 files'],
     ['1201 items', () => many(1201), 'a batch holds 1 to 1200 files'],
-    // 81 x 64 MiB = 5 GiB + 64 MiB (one buffer, referenced 81 times).
-    ['more than 5 GB in total', () => many(81, new ArrayBuffer(VIDEO_CAP)), 'the batch exceeds the 5 GB limit'],
+    // 161 x 64 MiB = 10 GiB + 64 MiB (one buffer, referenced 161 times).
+    ['more than 10 GB in total', () => many(161, new ArrayBuffer(VIDEO_CAP)), 'the batch exceeds the 10 GB limit'],
+    // 160 x 64 MiB + 1 byte = 10,737,418,241 bytes: one byte over.
+    [
+      'one byte over 10 GB',
+      () => [...many(160, new ArrayBuffer(VIDEO_CAP)), { kind: 'image', bytes: new ArrayBuffer(1) }],
+      'the batch exceeds the 10 GB limit',
+    ],
     // The shape is checked first: a 1201-item batch holding a null is invalid, not too many.
     ['1201 items, one of them null', () => [...many(1200), null], 'invalid media-upload batch request'],
     // The count before the bytes.
-    ['1201 items over 5 GB', () => many(1201, new ArrayBuffer(VIDEO_CAP)), 'a batch holds 1 to 1200 files'],
+    ['1201 items over 10 GB', () => many(1201, new ArrayBuffer(VIDEO_CAP)), 'a batch holds 1 to 1200 files'],
   ])('refuses %s BEFORE sending, with the host string', async (_n, items, message) => {
     const state = start((h) => h.uploadBatch(items() as never));
     await flush();
@@ -181,14 +187,16 @@ describe('useMediaUpload().uploadBatch', () => {
   it.each([
     ['1 item', () => many(1)],
     ['exactly 1200 items', () => many(1200)],
-    // 80 x 64 MiB = exactly 5 GiB.
-    ['exactly 5 GB in total', () => many(80, new ArrayBuffer(VIDEO_CAP))],
+    // 160 x 64 MiB = exactly 10,737,418,240 bytes.
+    ['exactly 10 GB in total', () => many(160, new ArrayBuffer(VIDEO_CAP))],
+    // 100 x 64 MiB = 6.25 GiB: over the old 5 GiB, under 10 GiB.
+    ['6.25 GiB in total (between 5 and 10 GiB)', () => many(100, new ArrayBuffer(VIDEO_CAP))],
   ])('sends %s', (_n, items) => {
     start((h) => h.uploadBatch(items()));
     expect(sent()).toHaveLength(1);
   });
 
-  it('pins the batch limits: 1200 items and 5 GiB', () => {
+  it('pins the batch limits: 1200 items and 10 GiB', () => {
     expect(MEDIA_UPLOAD_BATCH_MAX_ITEMS).toBe(MAX_ITEMS);
     expect(MEDIA_UPLOAD_BATCH_MAX_BYTES).toBe(MAX_BYTES);
   });
@@ -218,7 +226,7 @@ describe('useMediaUpload().uploadBatch', () => {
     'no block token',
     'unsupported on this host',
     'a batch holds 1 to 1200 files',
-    'the batch exceeds the 5 GB limit',
+    'the batch exceeds the 10 GB limit',
     'you have reached your daily upload limit',
   ])('REJECTS with a whole-batch host error %j (never null)', async (error) => {
     const state = start((h) => h.uploadBatch(many(2)));
