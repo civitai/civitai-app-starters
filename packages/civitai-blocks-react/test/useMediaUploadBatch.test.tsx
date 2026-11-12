@@ -227,7 +227,7 @@ describe('useMediaUpload().uploadBatch', () => {
     'unsupported on this host',
     'a batch holds 1 to 1200 files',
     'the batch exceeds the 10 GB limit',
-    'you have reached your daily upload limit',
+    "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.",
   ])('REJECTS with a whole-batch host error %j (never null)', async (error) => {
     const state = start((h) => h.uploadBatch(many(2)));
     dispatch({ requestId: sent()[0]!.payload.requestId, error });

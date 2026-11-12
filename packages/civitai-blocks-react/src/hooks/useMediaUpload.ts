@@ -177,7 +177,7 @@ export interface UseMediaUpload {
  *   single-file rules first and answers a refused item in its own result; it
  *   uploads at most 3 at a time, has no per-minute window (the 8-per-60 s
  *   window above is for `upload` only), and allows 1 to 1200 files and 10 GB
- *   in one batch, one batch at a time per page, and 1,200 files / 5 GB per
+ *   in one batch, one batch at a time per page, and 1,200 files / 10 GB per
  *   viewer per UTC day across all apps. Uploads are kept for at least 30 days,
  *   the upload service's default retention (`expiresAt`).
  *

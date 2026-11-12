@@ -1889,7 +1889,7 @@ export type BlockToParentMessage =
       //
       // Whole-batch limits: 1 to 1200 items and at most 10 GB of raw bytes in
       // total; one batch at a time per page (`busy`); and a per-viewer daily
-      // quota of 1,200 files and 5 GB per UTC day across all apps, enforced on
+      // quota of 1,200 files and 10 GB per UTC day across all apps, enforced on
       // the server. The single-file bytes window (8 uploads / 60 s) does NOT
       // apply to a batch, and a batch does not count against it.
       //

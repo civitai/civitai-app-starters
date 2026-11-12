@@ -377,7 +377,7 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
   });
 
   // ── Forced whole-batch error ───────────────────────────────────────────────
-  it.each(['busy', 'no block token', 'you have reached your daily upload limit'])(
+  it.each(['busy', 'no block token', "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC."])(
     '`mediaUploadBatchError: %j` refuses the whole batch, and uploadBatch rejects with it',
     async (error) => {
       const hook = await install({ mediaUploadBatchError: error });

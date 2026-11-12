@@ -2771,7 +2771,7 @@ Limits:
 | Raw bytes per batch | 10 GB |
 | Per file | 24 MB per image, 64 MB per video or audio file |
 | Batches at a time | one per page (`busy` otherwise) |
-| Per viewer, per UTC day, across all apps | 1,200 files and 5 GB (checked on the server) |
+| Per viewer, per UTC day, across all apps | 1,200 files and 10 GB (checked on the server; past it the batch rejects with `You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.`) |
 | Per-minute window | none (the 8 uploads / 128 MB per 60 s window applies to `upload` only, and a batch does not count against it) |
 | Uploads kept | at least 30 days, the upload service's default retention (`expiresAt`) |
 
