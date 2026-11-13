@@ -131,7 +131,16 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
     ['targets[].priority non-integer (not a canonical property)', valid({ targets: [{ slotId: 's', priority: 1.5 }] })],
     // -- already relaxed by the previous commit; pinned so they stay relaxed
     ["type: 'embed' is still refused, but type may be omitted", without(['type'])],
-    ['targets omitted (canonical: "Optional for page-only apps")', without(['targets'])],
+    // A manifest must declare a surface (the canonical's top-level `allOf[1].anyOf`):
+    // `targets` may go only when `page` comes in its place.
+    [
+      'targets omitted, page declared (canonical: "Optional for a page app")',
+      without(['targets'], { page: { path: '/', title: 'Fixture Block' } }),
+    ],
+    [
+      'page omitted, one target declared (a slot-only app declares its surface by targets)',
+      valid({ targets: [{ slotId: 'model.sidebar_top' }] }),
+    ],
     ['iframe omitted (canonical declares no required sub-fields on it)', without(['iframe'])],
     ['iframe with only sandbox', valid({ iframe: { sandbox: 'allow-scripts' } })],
     ['iframe.maxHeight null', valid({ iframe: { minHeight: 137, maxHeight: null } })],
@@ -379,6 +388,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['assetBundleUrl pattern', valid({ assetBundleUrl: 'http://cdn.example.com/b.zip' }), 'assetBundleUrl'],
     ['page.path required', valid({ page: { title: 'T' } }), 'page.path'],
     ['page additionalProperties:false', valid({ page: { path: '/x', title: 'T', bogus: 1 } }), 'page.bogus'],
+    // A manifest must declare at least one surface: the canonical's top-level
+    // `allOf[1].anyOf` (a SEVENTH oneOf/anyOf site — see the LEDGER below). Its
+    // members pin no `const`, so no member is preferred and Ajv's first error —
+    // the first member's, on `targets` — is what is reported.
+    ['allOf: a manifest with neither targets nor page declares no surface', without(['targets']), 'targets'],
+    [
+      'allOf: an empty targets array is no surface without page',
+      valid({ targets: [] }),
+      'targets',
+    ],
     // -- analytics (custom events): every rule below is the canonical's ------
     [
       "analytics: no free-text 'string' property type",
@@ -922,7 +941,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are SIX sites. Two are discriminated: the analytics
+   * ever gains. Today there are SEVEN sites. Two are discriminated: the analytics
    * property declaration (on `type`) and a storage migration op (on `op`,
    * civitai/civitai#7661's `$defs.storageMigrationOp`). The first's messages are
    * pinned whole below; the migration op is reached through `$ref` (its paths
@@ -933,11 +952,14 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
    * `storage`'s "collections or imports" (civitai/civitai#7494), a
    * `write: "none"` storage collection's "at least one counter or mark", and a
    * collection schema's `type` (one name or a list) and `additionalProperties`
-   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. This
+   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. The
+   * seventh is the only one at the TOP LEVEL rather than under a property: the
+   * root `allOf[1].anyOf` (civitai/civitai#8735), "a non-empty `targets` or a
+   * `page`", likewise with no `const` discriminator. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly six oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly seven oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -958,6 +980,8 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       '#/$defs/storageCollectionSchema/properties/type/anyOf',
       '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
       '#/$defs/storageMigrationOp/oneOf',
+      // Top level, not property level: a manifest declares at least one surface.
+      '#/allOf/1/anyOf',
     ]);
   });
 });
