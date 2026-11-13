@@ -615,10 +615,87 @@ on one path):
 body returns your `maxBuzz` as `cost.total`, and billing settles to the real GPU
 time after the run. Show it as "up to N Buzz".
 
+### Sampler options per model family (`fetchGenerationSamplers`)
+
+`params.sampler` on a `textToImage` body is a free string, and the valid names
+depend on the model family: the SD families take `Euler a`, Chroma takes
+`Euler`, Anima takes ComfyUI names such as `euler_ancestral`, and Flux.1 takes
+no sampler at all. **A name the family does not offer is not refused.** The host
+swaps in the family default, so a guessed sampler generates with a different one
+and reports no error. Don't copy a list into your app. Read the one the on-site
+generator renders:
+
+```ts
+import { fetchGenerationSamplers, resolveGenerationSampler } from '@civitai/app-sdk/blocks';
+
+// hostOrigin: useHostOrigin(); token: useBlockToken().raw — any block token works, no scope needed.
+const catalog = await fetchGenerationSamplers({ hostOrigin, token });
+
+// resource: a resource-picker result (it carries baseModel and versionId).
+const lookup = resolveGenerationSampler(catalog, {
+  baseModel: resource.baseModel,
+  modelVersionId: resource.versionId,
+});
+if (!lookup.known) {
+  // The platform has no answer for this model (lookup.reason). Keep a free-text field.
+} else if (lookup.sampler === null) {
+  // The generator shows no sampler control for this model: send no `sampler`.
+} else {
+  // A drop-down: lookup.sampler.options ({ value, label }[]), preselect lookup.sampler.default.
+}
+```
+
+The route is `GET /api/v1/blocks/generation-samplers`. It returns
+`{ ecosystems, baseModels }`:
+
+- `ecosystems[key]` is `{ sampler, byModelVersion }`, keyed by ecosystem key.
+  `sampler` is `{ options, default }` or `null`. `byModelVersion[versionId]`
+  overrides it for model versions that select a different graph variant; today
+  that is HiDream Full, which offers `UniPC` while the rest of HiDream has no
+  sampler.
+- `baseModels[name]` maps a base model name (`SDXL 1.0`, `Flux.1 D`, …) to its
+  ecosystem key.
+
+`resolveGenerationSampler` applies them in this order:
+
+1. With `baseModel`, it finds the family, then that family's override for
+   `modelVersionId`, and otherwise the family's control. This matches the host,
+   which picks the graph by the checkpoint's base model.
+2. With only `modelVersionId`, it uses the override that lists that version.
+   A version with no override needs `baseModel`.
+
+An override of `null` means that version has no sampler. It does not fall
+through to the family.
+
+🔴 **Unknown is not "no sampler".** A family the platform could not determine
+is absent from `ecosystems`, never `null`. `resolveGenerationSampler` reports
+an absent family as `{ known: false, reason }`, and that arm has no `sampler`
+property, so TypeScript makes you narrow on `known` first. The reasons are:
+
+- `base-model-not-in-catalog`: the base model is not mapped to a family.
+- `family-not-in-catalog`: it maps to a family the platform left out.
+- `base-model-required`: only a version id was given and it has no override.
+
+`parseGenerationSamplers` does the same for an unexpected response: it drops a
+family it cannot read, so that family reads as unknown too.
+
+**On a platform without the route**, `fetchGenerationSamplers` throws
+`GenerationSamplersError` with `code: 'unsupported-platform'`, after the host
+answers `404`. It never resolves to an empty catalog, which would read as "no
+family has a sampler". The other codes are:
+
+- `unauthorized` (`401`/`403`, a bad or expired block token);
+- `http-error` (any other non-2xx);
+- `invalid-response` (a 2xx that is not the catalog);
+- `network-error` (the fetch itself failed).
+
+An aborted `signal` rejects with the `AbortError`.
+
 ### Version compatibility
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
+| `0.87.0` | `fetchGenerationSamplers` / `resolveGenerationSampler` / `parseGenerationSamplers` / `GenerationSamplersError`: the on-site generator's sampler options per model family (needs a platform that serves `GET /api/v1/blocks/generation-samplers`) |
 | `0.80.0` | `checkComfyGraph` — pre-spend check that a workflow file can run as an inline `customComfy` graph; `BLOCK_INLINE_COMFY_MAX_NODES` / `BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES` |
 | `0.57.0` | `fetchNestedDocument` / `NestedDocumentError` — the `srcdoc` escape hatch for embedding your own bundled documents |
 | `0.27.0` | `@civitai/app-sdk/safe-storage` — opaque-origin `localStorage`/`sessionStorage` shim, auto-installed by the `blocks` subpath |
