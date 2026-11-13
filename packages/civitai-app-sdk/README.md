@@ -631,10 +631,11 @@ import { fetchGenerationSamplers, resolveGenerationSampler } from '@civitai/app-
 // hostOrigin: useHostOrigin(); token: useBlockToken().raw — any block token works, no scope needed.
 const catalog = await fetchGenerationSamplers({ hostOrigin, token });
 
-// resource: a resource-picker result (it carries baseModel and versionId).
+// checkpoint: the checkpoint you generate against — a model block's
+// context.checkpoint (BlockCheckpointInfo), or a page block's Checkpoint pick.
 const lookup = resolveGenerationSampler(catalog, {
-  baseModel: resource.baseModel,
-  modelVersionId: resource.versionId,
+  baseModel: checkpoint.baseModel,
+  modelVersionId: checkpoint.versionId,
 });
 if (!lookup.known) {
   // The platform has no answer for this model (lookup.reason). Keep a free-text field.
@@ -660,7 +661,13 @@ The route is `GET /api/v1/blocks/generation-samplers`. It returns
 
 1. With `baseModel`, it finds the family, then that family's override for
    `modelVersionId`, and otherwise the family's control. This matches the host,
-   which picks the graph by the checkpoint's base model.
+   which picks the graph by the checkpoint's base model and version.
+
+🔴 **Pass the CHECKPOINT, not a LoRA.** The host keys the sampler on the
+checkpoint it generates against. A LoRA pick carries its own `baseModel` and
+`versionId`, and a LoRA install's resolved checkpoint can belong to a different
+family, so looking up the LoRA can show the wrong list. The host then swaps a
+sampler from that list for the checkpoint family's default.
 2. With only `modelVersionId`, it uses the override that lists that version.
    A version with no override needs `baseModel`.
 
@@ -668,16 +675,19 @@ An override of `null` means that version has no sampler. It does not fall
 through to the family.
 
 🔴 **Unknown is not "no sampler".** A family the platform could not determine
-is absent from `ecosystems`, never `null`. `resolveGenerationSampler` reports
-an absent family as `{ known: false, reason }`, and that arm has no `sampler`
-property, so TypeScript makes you narrow on `known` first. The reasons are:
+is absent from `ecosystems`, never `null`, and the platform maps no base model
+to it. `resolveGenerationSampler` reports that as `{ known: false, reason }`,
+and that arm has no `sampler` property, so TypeScript makes you narrow on
+`known` first. The reasons are:
 
-- `base-model-not-in-catalog`: the base model is not mapped to a family.
-- `family-not-in-catalog`: it maps to a family the platform left out.
+- `base-model-not-in-catalog`: the base model is not in `baseModels`. This is
+  what a family the platform could not determine looks like, as well as a base
+  model the platform does not map at all.
+- `family-not-in-catalog`: the base model maps to a family missing from
+  `ecosystems`. The platform does not send that combination. You get it when
+  `parseGenerationSamplers` dropped a family it could not read, or from a
+  catalog you built yourself.
 - `base-model-required`: only a version id was given and it has no override.
-
-`parseGenerationSamplers` does the same for an unexpected response: it drops a
-family it cannot read, so that family reads as unknown too.
 
 **On a platform without the route**, `fetchGenerationSamplers` throws
 `GenerationSamplersError` with `code: 'unsupported-platform'`, after the host
@@ -689,7 +699,8 @@ family has a sampler". The other codes are:
 - `invalid-response` (a 2xx that is not the catalog);
 - `network-error` (the fetch itself failed).
 
-An aborted `signal` rejects with the `AbortError`.
+An abort before the response arrives rejects with the `AbortError`. An abort
+while the body is being read surfaces as `invalid-response`.
 
 ### Version compatibility
 

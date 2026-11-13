@@ -63,7 +63,7 @@ export interface GenerationSamplerFamily {
 export interface GenerationSamplerCatalog {
   /** Families by ecosystem key. A family the platform could not determine is ABSENT, never `null`. */
   ecosystems: Record<string, GenerationSamplerFamily>;
-  /** Base model name (a picker result's `baseModel`) → ecosystem key. */
+  /** Base model name (a checkpoint's `baseModel`) → ecosystem key. Only families present in `ecosystems` are mapped. */
   baseModels: Record<string, string>;
 }
 
@@ -182,7 +182,8 @@ export function parseGenerationSamplers(body: unknown): GenerationSamplerCatalog
  *
  * @example
  * const catalog = await fetchGenerationSamplers({ hostOrigin, token: raw });
- * const lookup = resolveGenerationSampler(catalog, { baseModel: resource.baseModel, modelVersionId: resource.versionId });
+ * // checkpoint: the checkpoint you generate against (a model block's context.checkpoint), never a LoRA.
+ * const lookup = resolveGenerationSampler(catalog, { baseModel: checkpoint.baseModel, modelVersionId: checkpoint.versionId });
  */
 export async function fetchGenerationSamplers(
   opts: FetchGenerationSamplersOptions,
@@ -243,7 +244,11 @@ export async function fetchGenerationSamplers(
   return parseGenerationSamplers(body);
 }
 
-/** Which model to look up. Pass what a picker result carries: `baseModel` and `versionId`. */
+/**
+ * Which model to look up: the CHECKPOINT you generate against (`BlockCheckpointInfo`, or a
+ * Checkpoint pick), never a LoRA. The host keys the sampler on the checkpoint, and a LoRA can
+ * belong to a different family.
+ */
 export interface GenerationSamplerLookupInput {
   baseModel?: string | null | undefined;
   modelVersionId?: number | null | undefined;
@@ -253,7 +258,11 @@ export interface GenerationSamplerLookupInput {
 export type GenerationSamplerUnknownReason =
   /** The catalog does not map this base model to a family. */
   | 'base-model-not-in-catalog'
-  /** The base model maps to a family the platform could not determine (absent from `ecosystems`). */
+  /**
+   * The base model maps to a family absent from `ecosystems`. The platform never sends this
+   * (it maps no base model to a family it could not determine, so that case is
+   * `base-model-not-in-catalog`); it comes from a family the parser dropped, or a hand-built catalog.
+   */
   | 'family-not-in-catalog'
   /** Only a model version id was given, and it has no per-version override, so the family is unknown. */
   | 'base-model-required';
