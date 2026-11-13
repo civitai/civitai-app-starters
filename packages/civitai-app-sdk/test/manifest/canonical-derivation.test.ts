@@ -131,7 +131,17 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
     ['targets[].priority non-integer (not a canonical property)', valid({ targets: [{ slotId: 's', priority: 1.5 }] })],
     // -- already relaxed by the previous commit; pinned so they stay relaxed
     ["type: 'embed' is still refused, but type may be omitted", without(['type'])],
-    ['targets omitted (canonical: "Optional for page-only apps")', without(['targets'])],
+    // A manifest must declare a surface (the canonical's top-level `allOf[1].anyOf`):
+    // `targets` may go only when `page` comes in its place.
+    [
+      'targets omitted, page declared (canonical: "Optional for a page app")',
+      without(['targets'], { page: { path: '/', title: 'Fixture Block' } }),
+    ],
+    [
+      'page omitted, one target declared (a slot-only app declares its surface by targets)',
+      valid({ targets: [{ slotId: 'model.sidebar_top' }] }),
+    ],
+    ['bugs: an https issue-tracker URL on any host', valid({ bugs: 'https://example.com/support' })],
     ['iframe omitted (canonical declares no required sub-fields on it)', without(['iframe'])],
     ['iframe with only sandbox', valid({ iframe: { sandbox: 'allow-scripts' } })],
     ['iframe.maxHeight null', valid({ iframe: { minHeight: 137, maxHeight: null } })],
@@ -372,6 +382,8 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['category enum', valid({ category: 'miscellaneous' }), 'category'],
     ['tagline maxLength (RAW, per the canonical)', valid({ tagline: 'x'.repeat(141) }), 'tagline'],
     ['repository pattern', valid({ repository: 'git@github.com:owner/repo.git' }), 'repository'],
+    ['bugs pattern', valid({ bugs: 'http://example.com/issues' }), 'bugs'],
+    ['bugs is a string, not the npm object form', valid({ bugs: { url: 'https://example.com/issues' } }), 'bugs'],
     ['buildCommand allowlist', valid({ buildCommand: 'rm -rf /', outputDir: 'dist' }), 'buildCommand'],
     ['allOf: outputDir required with buildCommand', valid({ buildCommand: 'vite build' }), 'outputDir'],
     ['outputDir traversal', valid({ buildCommand: 'vite build', outputDir: '../../etc' }), 'outputDir'],
@@ -379,6 +391,16 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['assetBundleUrl pattern', valid({ assetBundleUrl: 'http://cdn.example.com/b.zip' }), 'assetBundleUrl'],
     ['page.path required', valid({ page: { title: 'T' } }), 'page.path'],
     ['page additionalProperties:false', valid({ page: { path: '/x', title: 'T', bogus: 1 } }), 'page.bogus'],
+    // A manifest must declare at least one surface: the canonical's top-level
+    // `allOf[1].anyOf` (a SEVENTH oneOf/anyOf site — see the LEDGER below). Its
+    // members pin no `const`, so no member is preferred and Ajv's first error —
+    // the first member's, on `targets` — is what is reported.
+    ['allOf: a manifest with neither targets nor page declares no surface', without(['targets']), 'targets'],
+    [
+      'allOf: an empty targets array is no surface without page',
+      valid({ targets: [] }),
+      'targets',
+    ],
     // -- analytics (custom events): every rule below is the canonical's ------
     [
       "analytics: no free-text 'string' property type",
@@ -717,6 +739,62 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
 });
 
 /**
+ * A manifest with no surface is told BOTH fixes. Ajv's own report for the
+ * canonical's surface clause is its first member's complaint, "manifest.targets
+ * is required" (or "must NOT have fewer than 1 items" for `targets: []`), which
+ * never mentions `page` — the fix a full-page app needs. The message is pinned
+ * WHOLE, as a literal, and it is civitai/civitai's `manifestSurfaceError` text
+ * (its own test, block-manifest-surface.test.ts, pins the same string), so the
+ * build and the platform's submit refusal say the same thing.
+ *
+ * REGRESSION: the two "no surface" rows are red before the message change.
+ * The CONTROL rows pin that the rewrite is scoped to the surface clause: a
+ * manifest that HAS a surface but breaks another rule keeps Ajv's own message.
+ */
+describe('a manifest with no surface is told to add a page or targets', () => {
+  const NO_SURFACE =
+    'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+    '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+    'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
+
+  const noSurface: Array<[string, Record<string, unknown>]> = [
+    ['neither targets nor page', without(['targets'])],
+    ['targets: [] and no page', valid({ targets: [] })],
+  ];
+
+  it.each(noSurface)('%s: names both fixes, at field targets', (_label, manifest) => {
+    expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
+    const err = rejection(manifest);
+    expect(err.message).toBe(NO_SURFACE);
+    expect(err.field).toBe('targets');
+  });
+
+  it('CONTROL: a page app with a bad blockId is told about blockId, not the surface', () => {
+    const err = rejection(without(['targets'], { blockId: 'X', page: { path: '/', title: 'T' } }));
+    expect(err.field).toBe('blockId');
+    expect(err.message).not.toBe(NO_SURFACE);
+  });
+
+  // Ajv reports `allOf` members in order, so with no surface AND a broken
+  // `allOf[0]` (buildCommand without outputDir) the picked error is `allOf[0]`'s.
+  // The surface clause has failed too, but the rewrite applies only to an error
+  // from inside it: this is the one case that tells "the picked error is the
+  // surface's" from "the surface clause failed somewhere in the list".
+  it('CONTROL: an earlier allOf error is reported as itself even when the surface is missing', () => {
+    const manifest = without(['targets'], { buildCommand: 'pnpm build' });
+    const err = rejection(manifest);
+    expect(err.field).toBe('outputDir');
+    expect(err.message).toBe('manifest.outputDir is required');
+  });
+
+  it('CONTROL: a non-empty targets entry missing its slotId is told about the entry', () => {
+    const err = rejection(valid({ targets: [{ priority: 1 }] }));
+    expect(err.field).toBe('targets[0].slotId');
+    expect(err.message).toBe('manifest.targets[0].slotId is required');
+  });
+});
+
+/**
  * A migration op's SHAPE (civitai/civitai#7661) is the canonical's, reached
  * through `$defs.storageMigrationOp` — a `oneOf` discriminated on `op` — and
  * `$defs.storageMigrationPath`. Nothing in this package writes any of it down.
@@ -922,7 +1000,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are SIX sites. Two are discriminated: the analytics
+   * ever gains. Today there are SEVEN sites. Two are discriminated: the analytics
    * property declaration (on `type`) and a storage migration op (on `op`,
    * civitai/civitai#7661's `$defs.storageMigrationOp`). The first's messages are
    * pinned whole below; the migration op is reached through `$ref` (its paths
@@ -933,11 +1011,14 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
    * `storage`'s "collections or imports" (civitai/civitai#7494), a
    * `write: "none"` storage collection's "at least one counter or mark", and a
    * collection schema's `type` (one name or a list) and `additionalProperties`
-   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. This
+   * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. The
+   * seventh is the only one at the TOP LEVEL rather than under a property: the
+   * root `allOf[1].anyOf` (civitai/civitai#8735), "a non-empty `targets` or a
+   * `page`", likewise with no `const` discriminator. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly six oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly seven oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -958,6 +1039,8 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       '#/$defs/storageCollectionSchema/properties/type/anyOf',
       '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
       '#/$defs/storageMigrationOp/oneOf',
+      // Top level, not property level: a manifest declares at least one surface.
+      '#/allOf/1/anyOf',
     ]);
   });
 });

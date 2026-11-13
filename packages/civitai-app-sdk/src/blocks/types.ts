@@ -3477,6 +3477,15 @@ export interface BlockManifestV1 {
    * locally is necessary, not sufficient.
    */
   repository?: string;
+  /**
+   * Optional PUBLIC issue-tracker / support link, rendered as a `Support` row
+   * on the app's store detail page. A URL string only (the npm-style
+   * `{ url, email }` object is refused), `https://`, at most 200 chars, any
+   * host. `defineBlock` mirrors the canonical's COARSE pattern; the server also
+   * refuses embedded credentials and a port, so passing locally is necessary,
+   * not sufficient.
+   */
+  bugs?: string;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
   /** Optional; dot-separated integers (e.g. `"1"` or `"1.0"`). Informational. */

@@ -144,7 +144,16 @@ describe('BEHAVIOURAL: the plugin runs the gate against each real manifest', () 
   });
 
   it('resolves manifestPath against the Vite root reported by configResolved', () => {
-    const file = tempManifest({ blockId: 'X', version: '1.0.0', name: 'n', contentRating: 'g', scopes: [] });
+    // Valid but for the one deliberate fault (`blockId`): it declares its surface
+    // (`page`), so the refusal cannot come from the top-level "declare a surface" rule.
+    const file = tempManifest({
+      blockId: 'X',
+      version: '1.0.0',
+      name: 'n',
+      contentRating: 'g',
+      scopes: [],
+      page: { path: '/', title: 'n' },
+    });
     const plugin = blockManifestPlugin();
     // No `root` option: the hook must use the config it is handed.
     expect(() =>
