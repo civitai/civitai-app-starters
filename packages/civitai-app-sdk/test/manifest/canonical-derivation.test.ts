@@ -141,6 +141,7 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
       'page omitted, one target declared (a slot-only app declares its surface by targets)',
       valid({ targets: [{ slotId: 'model.sidebar_top' }] }),
     ],
+    ['bugs: an https issue-tracker URL on any host', valid({ bugs: 'https://example.com/support' })],
     ['iframe omitted (canonical declares no required sub-fields on it)', without(['iframe'])],
     ['iframe with only sandbox', valid({ iframe: { sandbox: 'allow-scripts' } })],
     ['iframe.maxHeight null', valid({ iframe: { minHeight: 137, maxHeight: null } })],
@@ -381,6 +382,8 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['category enum', valid({ category: 'miscellaneous' }), 'category'],
     ['tagline maxLength (RAW, per the canonical)', valid({ tagline: 'x'.repeat(141) }), 'tagline'],
     ['repository pattern', valid({ repository: 'git@github.com:owner/repo.git' }), 'repository'],
+    ['bugs pattern', valid({ bugs: 'http://example.com/issues' }), 'bugs'],
+    ['bugs is a string, not the npm object form', valid({ bugs: { url: 'https://example.com/issues' } }), 'bugs'],
     ['buildCommand allowlist', valid({ buildCommand: 'rm -rf /', outputDir: 'dist' }), 'buildCommand'],
     ['allOf: outputDir required with buildCommand', valid({ buildCommand: 'vite build' }), 'outputDir'],
     ['outputDir traversal', valid({ buildCommand: 'vite build', outputDir: '../../etc' }), 'outputDir'],
@@ -732,6 +735,62 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     const err = rejection(valid({ scopes: ['ModelsReadSelf'] }));
     expect(err.field).toBe('scopes[0]');
     expect(err.message).toContain('colon-separated lowercase');
+  });
+});
+
+/**
+ * A manifest with no surface is told BOTH fixes. Ajv's own report for the
+ * canonical's surface clause is its first member's complaint, "manifest.targets
+ * is required" (or "must NOT have fewer than 1 items" for `targets: []`), which
+ * never mentions `page` — the fix a full-page app needs. The message is pinned
+ * WHOLE, as a literal, and it is civitai/civitai's `manifestSurfaceError` text
+ * (its own test, block-manifest-surface.test.ts, pins the same string), so the
+ * build and the platform's submit refusal say the same thing.
+ *
+ * REGRESSION: the two "no surface" rows are red before the message change.
+ * The CONTROL rows pin that the rewrite is scoped to the surface clause: a
+ * manifest that HAS a surface but breaks another rule keeps Ajv's own message.
+ */
+describe('a manifest with no surface is told to add a page or targets', () => {
+  const NO_SURFACE =
+    'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+    '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+    'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
+
+  const noSurface: Array<[string, Record<string, unknown>]> = [
+    ['neither targets nor page', without(['targets'])],
+    ['targets: [] and no page', valid({ targets: [] })],
+  ];
+
+  it.each(noSurface)('%s: names both fixes, at field targets', (_label, manifest) => {
+    expect(canonicalAccepts(manifest), 'fixture must be canonical-INVALID').not.toBe(true);
+    const err = rejection(manifest);
+    expect(err.message).toBe(NO_SURFACE);
+    expect(err.field).toBe('targets');
+  });
+
+  it('CONTROL: a page app with a bad blockId is told about blockId, not the surface', () => {
+    const err = rejection(without(['targets'], { blockId: 'X', page: { path: '/', title: 'T' } }));
+    expect(err.field).toBe('blockId');
+    expect(err.message).not.toBe(NO_SURFACE);
+  });
+
+  // Ajv reports `allOf` members in order, so with no surface AND a broken
+  // `allOf[0]` (buildCommand without outputDir) the picked error is `allOf[0]`'s.
+  // The surface clause has failed too, but the rewrite applies only to an error
+  // from inside it: this is the one case that tells "the picked error is the
+  // surface's" from "the surface clause failed somewhere in the list".
+  it('CONTROL: an earlier allOf error is reported as itself even when the surface is missing', () => {
+    const manifest = without(['targets'], { buildCommand: 'pnpm build' });
+    const err = rejection(manifest);
+    expect(err.field).toBe('outputDir');
+    expect(err.message).toBe('manifest.outputDir is required');
+  });
+
+  it('CONTROL: a non-empty targets entry missing its slotId is told about the entry', () => {
+    const err = rejection(valid({ targets: [{ priority: 1 }] }));
+    expect(err.field).toBe('targets[0].slotId');
+    expect(err.message).toBe('manifest.targets[0].slotId is required');
   });
 });
 

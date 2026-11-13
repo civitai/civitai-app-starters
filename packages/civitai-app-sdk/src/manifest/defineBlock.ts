@@ -308,6 +308,43 @@ function toManifestError(
   return new BlockManifestError(message, field);
 }
 
+/**
+ * What a manifest that declares no surface is told. Worded as civitai/civitai's
+ * `manifestSurfaceError` (block-manifest-validator.service.ts) words the same
+ * refusal at submit, so the build and the platform name the same two fixes.
+ */
+const NO_SURFACE_MESSAGE =
+  'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+  '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+  'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
+
+const sameStrings = (a: unknown, b: string[]): boolean =>
+  Array.isArray(a) && a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * True when `error` comes from the canonical's surface rule: an `anyOf` whose
+ * members are exactly "requires `targets`" and "requires `page`" (the
+ * top-level `allOf` clause from civitai/civitai#8735). The site is found by
+ * reading each failed `anyOf`'s own members off the error list (Ajv's
+ * `verbose: true` puts them on `schema`), not by a fixed schema path, so it
+ * follows the clause if the canonical reorders its `allOf`.
+ *
+ * Ajv reports the first member's complaint for that site — "`targets` is
+ * required", or "`targets` must NOT have fewer than 1 items" — which names only
+ * one of the two fixes, and the one a full-page app does not want. This changes
+ * the MESSAGE only: the error was already picked, so the verdict is Ajv's.
+ */
+function isSurfaceError(error: ErrorObject, errors: ErrorObject[]): boolean {
+  return errors.some((site) => {
+    if (site.keyword !== 'anyOf') return false;
+    const members = site.schema;
+    if (!Array.isArray(members) || members.length !== 2) return false;
+    const required = members.map((m) => (m as { required?: unknown } | null)?.required);
+    if (!sameStrings(required[0], ['targets']) || !sameStrings(required[1], ['page'])) return false;
+    return error.schemaPath === site.schemaPath || error.schemaPath.startsWith(`${site.schemaPath}/`);
+  });
+}
+
 export interface DefineBlockConfig {
   manifest: BlockManifest;
   // v2 will add an optional `render` callback for inline-mode hosts. It is
@@ -367,6 +404,9 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     const picked = preferDiscriminatedBranch(validate.errors ?? []);
     /* c8 ignore next */
     if (!picked) throw new BlockManifestError('manifest failed schema validation');
+    if (isSurfaceError(picked.error, validate.errors ?? [])) {
+      throw new BlockManifestError(NO_SURFACE_MESSAGE, 'targets');
+    }
     throw toManifestError(picked.error, manifest, picked.discriminator);
   }
 
