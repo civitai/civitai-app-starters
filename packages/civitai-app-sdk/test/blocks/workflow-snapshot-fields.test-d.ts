@@ -163,6 +163,9 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'step_quote_unavailable'
   | 'step_quote_unpriced'
   | 'source-scan-pending'
+  | 'inline-node-refused'
+  | 'not-api-format'
+  | 'model-filenames'
 >();
 // The host's refusal assigns; so does a code a later host adds (open string).
 const refusal: BlockWorkflowSnapshot = {
