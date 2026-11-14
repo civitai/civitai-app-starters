@@ -1437,6 +1437,27 @@ export type WorkflowBodyStep = {
    * package would drift against it silently.
    */
   params: Record<string, unknown>;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * Top-level, NOT inside `params` — a pool is not a step parameter, and the
+   * step's own `.strict()` param schema would refuse it there. A host predating
+   * this field refuses it as an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 /**
@@ -1601,6 +1622,28 @@ export type WorkflowBodyPassThroughStep = {
    * (`quoteId` itself is excluded from that comparison).
    */
   quoteId?: string;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * Never forwarded into {@link input}. On a CONFIRMED run it is part of the
+   * body the quote is bound to: submit with the pool you estimated with, or the
+   * run is refused as a changed body. A host predating this field refuses it as
+   * an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 // ============================================================
@@ -1833,6 +1876,28 @@ export type WorkflowBodyWorkflow = {
    * place to put a prompt or a seed that several steps share.
    */
   arguments?: Record<string, unknown>;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * ONE pick for the whole workflow, not per step: the orchestrator takes a
+   * single list of pools per workflow, so a step cannot name its own (a step
+   * carrying `accountType` is refused). A host predating this field refuses it
+   * as an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 // ============================================================
