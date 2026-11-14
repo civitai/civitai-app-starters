@@ -11,7 +11,7 @@ import type { PanelManager } from '../panels/panel.js';
 import { panelTools } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { UPDATE_INSTRUCTIONS, proposedInstructions } from './instructions.js';
-import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
+import { jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
 import { CHOICE_INVALID, CHOICE_RETRY_NOTE, normalizeChoice } from './choice.js';
@@ -29,13 +29,11 @@ export interface TurnToolContext {
   panels?: PanelManager;
   findAttachment(id: string): Attachment | undefined;
   resolveArgs(args: Record<string, unknown>): Promise<Record<string, unknown>>;
-  onCaption(attachmentId: string, caption: string): void;
 }
 
 const JOB_SUFFIX =
   ' Runs in the background: the user sees the price, progress and result in the chat. Pass attachment ids (like up1-1 or gen2-1-1) wherever a URL is asked for.';
 const MEDIA_SUFFIX = ' Pass attachment ids (like up1-1 or gen2-1-1) wherever a URL is asked for.';
-const CAPTION_TOOLS = new Set(['caption_media', 'transcribe_audio']);
 const REFUSED_NOTE =
   'Nothing was run: the request was refused. Fix the input (get_input_schema shows what it needs) and call again. If it is refused again, tell the user in plain words.';
 const FAILED_NOTE = 'This service failed. Do not call it again this turn; tell the user in plain words and offer another way.';
@@ -208,9 +206,6 @@ function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolC
       }
       const { result, text } = await pending;
       if (result.isError) return { error: text, note: FAILED_NOTE };
-      if (CAPTION_TOOLS.has(mcpTool.name) && typeof raw.mediaUrl === 'string' && ATTACHMENT_ID.test(raw.mediaUrl)) {
-        ctx.onCaption(raw.mediaUrl, text);
-      }
       const models = modelsOf(result);
       return models ? { text, models } : text;
     },

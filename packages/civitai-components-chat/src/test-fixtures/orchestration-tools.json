@@ -221,80 +221,6 @@
       }
     },
     {
-      "name": "caption_media",
-      "description": "Generate a descriptive caption for an image or video. Useful for understanding media content before processing.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "mediaUrl": {
-            "description": "URL of the image or video to caption",
-            "type": "string"
-          },
-          "temperature": {
-            "description": "Sampling temperature (higher = more creative). Default: 0.5",
-            "type": [
-              "number",
-              "null"
-            ],
-            "default": null
-          },
-          "maxNewTokens": {
-            "description": "Maximum number of tokens to generate. Default: 300",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "whatif": {
-            "description": "Price the request without running it or spending Buzz",
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "default": null
-          },
-          "waitForCompletion": {
-            "description": "Wait for completion (default true). Set false to get the workflow ID immediately.",
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "default": null
-          },
-          "tags": {
-            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "default": null
-          },
-          "metadataJson": {
-            "description": "JSON object stored as the workflow's metadata",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          }
-        },
-        "required": [
-          "mediaUrl"
-        ]
-      },
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false
-      }
-    },
-    {
       "name": "get_guide",
       "description": "Get the plan for a multi-step job before starting it: generating with specific Civitai models, turning an image into a video, editing an image, comparing services, or working out what media contains.",
       "inputSchema": {
@@ -369,88 +295,6 @@
       }
     },
     {
-      "name": "transcribe_audio",
-      "description": "Transcribe audio/video to text with optional word-level timestamps.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "mediaUrl": {
-            "description": "URL of the audio/video to transcribe",
-            "type": "string"
-          },
-          "language": {
-            "description": "Language hint (e.g. 'en', 'zh')",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "context": {
-            "description": "Context to improve transcription accuracy",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "returnTimestamps": {
-            "description": "Return word-level timestamps (default true)",
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "default": null
-          },
-          "whatif": {
-            "description": "Price the request without running it or spending Buzz",
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "default": null
-          },
-          "waitForCompletion": {
-            "description": "Wait for completion (default true). Set false to get the workflow ID immediately.",
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "default": null
-          },
-          "tags": {
-            "description": "Up to 10 tags (1-200 characters each) to attach to the workflow",
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "default": null
-          },
-          "metadataJson": {
-            "description": "JSON object stored as the workflow's metadata",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          }
-        },
-        "required": [
-          "mediaUrl"
-        ]
-      },
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false
-      }
-    },
-    {
       "name": "find_services",
       "description": "Find and compare services (one concrete engine, model and operation, e.g. image/flux2/klein/createImage/9b) by speed, cost and success rate, plus OpenRouter chat models, which run as the chatCompletion step. Takes plain language like 'a watercolor fox', 'fast cheap anime image' or 'best video'. Pass a result's service id to get_input_schema.",
       "inputSchema": {
@@ -481,6 +325,56 @@
             "default": null
           }
         }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "web_search",
+      "description": "Search the web. Returns result titles, URLs and descriptions. Costs 1 Buzz per call. Use fetch_page to read a result.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "The search query",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum number of results, 1-10 (default 5)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "fetch_page",
+      "description": "Fetch a web page and return its content as markdown. Use it to read a URL from web_search or one the user gave. Costs 1 Buzz per call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "description": "The absolute http(s) URL of the page",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,

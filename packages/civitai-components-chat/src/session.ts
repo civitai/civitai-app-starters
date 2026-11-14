@@ -780,10 +780,6 @@ export class ChatSession extends EventTarget {
       panels: this.panels,
       findAttachment: (id) => this.findAttachment(id),
       resolveArgs: (args) => this.resolveArgs(args),
-      onCaption: (id, caption) => {
-        const attachment = this.store.current?.turns.flatMap((t) => t.user.attachments).find((a) => a.id === id);
-        if (attachment) attachment.caption = caption.slice(0, 600);
-      },
     });
   }
 
