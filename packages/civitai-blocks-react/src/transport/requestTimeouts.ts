@@ -110,8 +110,12 @@ export function mediaUploadBatchDefaultTimeoutMs(itemCount: number, totalBytes: 
  * needs more than {@link DEFAULT_REQUEST_TIMEOUT_MS}.
  *
  * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
- * preflight plus the real submit plus a prompt audit), and
- * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`.
+ * preflight plus the real submit plus a prompt audit),
+ * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`, and
+ * `PERSIST_GENERATION_SOURCE` in `hooks/usePersistGenerationSource.ts` (the host
+ * fetches the output, stores it and waits up to ~30 s for its scan, polled every
+ * 1.5 s, all under one server deadline, so it can answer after ~32 s plus
+ * network; civitai/civitai#8987).
  *
  * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so every
  * caller shares the number instead of re-typing it.
@@ -131,19 +135,6 @@ export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
  * {@link WORKFLOW_REQUEST_TIMEOUT_MS}.
  */
 export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
-
-/**
- * The bound for `PERSIST_GENERATION_SOURCE` (`hooks/usePersistGenerationSource.ts`),
- * a `'protocol'` request (there is no confirm, so no person in the loop) whose
- * HOST work includes a wait: the host saves the output and then waits up to
- * about 30 s for its scan before it replies (`ready: false` if the scan has not
- * finished by then). That wait alone is the whole of
- * {@link DEFAULT_REQUEST_TIMEOUT_MS}, so at the default the block would time out
- * while the host was about to answer, and the host's valid reply would be
- * dropped as unroutable. 45 s leaves the scan wait about 15 s for the save and
- * the round-trip.
- */
-export const PERSIST_GENERATION_SOURCE_TIMEOUT_MS = 45_000;
 
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
@@ -264,9 +255,9 @@ const REQUEST_TIMEOUT_CLASS = {
   // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
   // under a 110 s deadline, which the 30 s default would cut short.
   GET_RESOURCE_FILE: 'protocol',
-  // No confirm, so `'protocol'` — but sent under its own longer
-  // `PERSIST_GENERATION_SOURCE_TIMEOUT_MS`: the host waits up to ~30 s for the
-  // scan before it replies, which the 30 s default would cut short.
+  // No confirm, so `'protocol'` — but sent under `WORKFLOW_REQUEST_TIMEOUT_MS`
+  // (120 s): the host fetches, stores and then waits up to ~30 s for the scan
+  // under one server deadline, which the 30 s default would cut short.
   PERSIST_GENERATION_SOURCE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',

@@ -127,9 +127,13 @@ shared grid, and there is no confirm dialog. The host waits up to about thirty
 seconds for the scan; `ready: false` means it is still pending, and a generation using the
 source is refused with `source-scan-pending` until it finishes. `url` / `width` /
 `height` are a `BlockGenerationSourceImageInfo`, so they go into a
-`sourceImages` entry. Full-page app hosts only: an iframe/slot host replies with
-an `error`. The `@civitai/blocks-react` `usePersistGenerationSource()` hook
-wraps it:
+`sourceImages` entry (a `textToImage` source image is refused with
+`source-scan-pending` too). It is idempotent per (viewer, app, `workflowId`,
+`imageIndex`): asking again returns the same image with its current `ready`.
+Full-page app hosts only: the iframe/slot host, review mode, a block that is not
+ready yet and App Assistant dev-tunnel previews all reply with an `error`. The
+`@civitai/blocks-react` `usePersistGenerationSource()` hook wraps it; its README
+section lists the size and rate limits:
 
 ```ts
 import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
