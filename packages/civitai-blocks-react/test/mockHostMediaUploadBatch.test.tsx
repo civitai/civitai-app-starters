@@ -257,6 +257,19 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
     ]);
   });
 
+  it('answers an ARRAY entry with that item’s kind error, as the host does, and uploads the rest', async () => {
+    const hook = await install();
+    const reply = await batch([[], { kind: 'image', bytes: buf(PNG) }, [{ kind: 'image', bytes: buf(PNG) }]]);
+    expect(errors(reply)).toEqual(["kind must be 'image', 'video' or 'audio'", undefined, "kind must be 'image', 'video' or 'audio'"]);
+    expect(typeof reply.expiresAt).toBe('string');
+    // Through the hook too: it sends the batch rather than refusing it.
+    const out = await settle(hook.current.uploadBatch([[] as never, { kind: 'image', bytes: buf(PNG) }]));
+    expect(out.value?.results).toEqual([
+      { index: 0, error: "kind must be 'image', 'video' or 'audio'" },
+      { index: 1, selected: DEFAULT_IMAGE },
+    ]);
+  });
+
   // ── Whole-batch refusals ───────────────────────────────────────────────────
   it.each([
     ['items not an array', { purpose: 'generationSource', items: 'x' }, 'invalid media-upload batch request'],
@@ -377,14 +390,65 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
   });
 
   // ── Forced whole-batch error ───────────────────────────────────────────────
-  it.each(['busy', 'no block token', "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC."])(
-    '`mediaUploadBatchError: %j` refuses the whole batch, and uploadBatch rejects with it',
+  // Placed where the HOST decides each refusal. `no block token` and `busy` are
+  // checked before the items and before the confirm; every other one (the
+  // daily quota, the feature not available, a failure starting the batch) is
+  // the server refusing to START it, which happens only after the viewer
+  // confirmed a batch with at least one valid item.
+  const QUOTA = "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.";
+  const START_REFUSALS = [
+    QUOTA,
+    'batch media upload is not available',
+    'batch media upload is not available yet, please try again later',
+    'media upload failed — please try again',
+  ];
+
+  it.each(['busy', 'no block token'])(
+    '`mediaUploadBatchError: %j` refuses the whole batch before the items and the confirm',
     async (error) => {
       const hook = await install({ mediaUploadBatchError: error });
       expect(await batch([{ kind: 'image', bytes: buf(PNG) }])).toEqual({ requestId: expect.any(String), error });
       // Before any item is looked at: an all-invalid batch is refused too.
       expect((await batch([{ kind: 'image', bytes: buf(GIF) }])).error).toBe(error);
       expect(await settle(hook.current.uploadBatch([{ kind: 'image', bytes: buf(PNG) }]))).toEqual({ error });
+      // Before the confirm: a declining viewer is never asked.
+      act(() => host!.setScenario({ mediaUploadBatchDeclined: true }));
+      expect((await batch([{ kind: 'image', bytes: buf(PNG) }])).error).toBe(error);
+    },
+  );
+
+  it.each(START_REFUSALS)(
+    '`mediaUploadBatchError: %j` refuses a CONFIRMED batch with a valid item, and uploadBatch rejects with it',
+    async (error) => {
+      const hook = await install({ mediaUploadBatchError: error });
+      expect(await batch([{ kind: 'image', bytes: buf(GIF) }, { kind: 'image', bytes: buf(PNG) }])).toEqual({
+        requestId: expect.any(String),
+        error,
+      });
+      expect(await settle(hook.current.uploadBatch([{ kind: 'image', bytes: buf(PNG) }]))).toEqual({ error });
+    },
+  );
+
+  it.each(START_REFUSALS)(
+    '`mediaUploadBatchError: %j` does NOT fire for a batch with no valid item: it answers the per-item errors',
+    async (error) => {
+      await install({ mediaUploadBatchError: error });
+      expect(await batch([{ kind: 'image', bytes: buf(GIF) }, { kind: 'video', bytes: buf(WAV) }])).toEqual({
+        requestId: expect.any(String),
+        results: [
+          { index: 0, error: 'images must be PNG, JPEG or WebP' },
+          { index: 1, error: 'videos must be MP4 or WebM' },
+        ],
+      });
+    },
+  );
+
+  it.each(START_REFUSALS)(
+    '`mediaUploadBatchError: %j` does NOT fire after a decline: the batch never started',
+    async (error) => {
+      const hook = await install({ mediaUploadBatchError: error, mediaUploadBatchDeclined: true });
+      expect(await batch([{ kind: 'image', bytes: buf(PNG) }])).toEqual({ requestId: expect.any(String) });
+      expect(await settle(hook.current.uploadBatch([{ kind: 'image', bytes: buf(PNG) }]))).toEqual({ value: null });
     },
   );
 
@@ -398,9 +462,11 @@ describe('createMockHost — OPEN_MEDIA_UPLOAD_BATCH', () => {
     expect((await batch([{ kind: 'image', bytes: buf(PNG) }])).results).toHaveLength(1);
   });
 
-  it('a forced error beats a decline (the host refuses before asking)', async () => {
+  it('a forced `busy` beats a decline (the host refuses before asking); a forced quota refusal does not', async () => {
     await install({ mediaUploadBatchError: 'busy', mediaUploadBatchDeclined: true });
     expect((await batch([{ kind: 'image', bytes: buf(PNG) }])).error).toBe('busy');
+    act(() => host!.setScenario({ mediaUploadBatchError: QUOTA }));
+    expect(await batch([{ kind: 'image', bytes: buf(PNG) }])).toEqual({ requestId: expect.any(String) });
   });
 
   // ── Surface ────────────────────────────────────────────────────────────────

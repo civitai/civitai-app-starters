@@ -6,8 +6,9 @@ import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
 import { MEDIA_UPLOAD_BATCH_MAX_BYTES, MEDIA_UPLOAD_BATCH_MAX_ITEMS } from '../src/internal/mediaUploadBytes.js';
 import {
-  HUMAN_INTERACTION_TIMEOUT_MS,
+  MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS,
   MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS,
+  MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS,
 } from '../src/transport/requestTimeouts.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { RequestTimeoutError } from '../src/transport/transport.js';
@@ -157,12 +158,17 @@ describe('useMediaUpload().uploadBatch', () => {
     expect(sent()[0]!.payload.items).toHaveLength(5);
   });
 
+  it('sends a batch holding an ARRAY entry: the host answers it with that item’s kind error, not a whole-batch refusal', () => {
+    start((h) => h.uploadBatch([[] as never, { kind: 'image', bytes: small() }]));
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0]!.payload.items).toHaveLength(2);
+  });
+
   // ── Whole-batch refusals before sending ─────────────────────────────────────
   it.each([
     ['items not an array', () => 'nope', 'invalid media-upload batch request'],
     ['an entry that is null', () => [{ kind: 'image', bytes: new ArrayBuffer(4) }, null], 'invalid media-upload batch request'],
     ['an entry that is a string', () => ['image'], 'invalid media-upload batch request'],
-    ['an entry that is an array', () => [[]], 'invalid media-upload batch request'],
     ['no items', () => [], 'a batch holds 1 to 1200 files'],
     ['1201 items', () => many(1201), 'a batch holds 1 to 1200 files'],
     // 161 x 64 MiB = 10 GiB + 64 MiB (one buffer, referenced 161 times).
@@ -255,10 +261,57 @@ describe('useMediaUpload().uploadBatch', () => {
     expect(state.settled).toBeUndefined();
   });
 
-  it('drops a malformed reply (an entry with both selected and error) and settles on the next valid one', async () => {
+  // 🔴 One malformed entry used to drop the WHOLE reply, after every other file
+  // had uploaded: `uploadBatch` then waited out its timeout and the app never
+  // learned a single URL. Now that entry is that item's error and the call
+  // resolves at once with the rest.
+  it('resolves at once when ONE entry among good ones is malformed: that item is an error, the rest are kept', async () => {
+    const state = start((h) => h.uploadBatch(many(3)));
+    const requestId = sent()[0]!.payload.requestId;
+    dispatch({
+      requestId,
+      results: [
+        { index: 0, selected: IMAGE },
+        { index: 1, selected: IMAGE, error: 'busy' },
+        { index: 2, selected: AUDIO },
+      ],
+      expiresAt: EXPIRES,
+    });
+    await waitFor(() =>
+      expect(state.value).toEqual({
+        results: [
+          { index: 0, selected: IMAGE },
+          { index: 1, error: 'media upload failed' },
+          { index: 2, selected: AUDIO },
+        ],
+        expiresAt: EXPIRES,
+      }),
+    );
+  });
+
+  it.each([
+    ['a malformed selected', { index: 0, selected: { ...IMAGE, width: undefined } }],
+    ['an entry that is null', null],
+    ['an entry with no index', { selected: IMAGE }],
+  ])('answers %s as that item’s error rather than hanging', async (_n, bad) => {
+    const state = start((h) => h.uploadBatch(many(2)));
+    dispatch({
+      requestId: sent()[0]!.payload.requestId,
+      results: [bad, { index: 1, selected: AUDIO }],
+      expiresAt: EXPIRES,
+    });
+    await waitFor(() =>
+      expect(state.value).toEqual({
+        results: [{ index: 0, error: 'media upload failed' }, { index: 1, selected: AUDIO }],
+        expiresAt: EXPIRES,
+      }),
+    );
+  });
+
+  it('still drops a reply whose TOP-LEVEL shape is wrong (results not an array) and settles on the next valid one', async () => {
     const state = start((h) => h.uploadBatch(many(1)));
     const requestId = sent()[0]!.payload.requestId;
-    dispatch({ requestId, results: [{ index: 0, selected: IMAGE, error: 'busy' }], expiresAt: EXPIRES });
+    dispatch({ requestId, results: { 0: { index: 0, selected: IMAGE } }, expiresAt: EXPIRES });
     await flush();
     expect(state.settled).toBeUndefined();
     expect(state.caught).toBeUndefined();
@@ -267,28 +320,56 @@ describe('useMediaUpload().uploadBatch', () => {
   });
 
   // ── Timeout ─────────────────────────────────────────────────────────────────
-  it('pins the per-item timeout to 60 s', () => {
+  it('pins the default timeout’s parts: 60 s per item, 1 s per MiB, and at most 6 h 10 min', () => {
     expect(MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS).toBe(60_000);
+    expect(MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS).toBe(1_000);
+    // The host's 6 h batch window, plus the 10 minutes the viewer has to confirm.
+    expect(MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS).toBe(22_200_000);
   });
 
-  it.each([1, 3])(
-    'waits the human bound plus 60 s per item by default (%i items)',
-    async (n) => {
-      vi.useFakeTimers();
-      const state = start((h) => h.uploadBatch(many(n)));
-      // 10 minutes for the viewer, plus a minute per file.
-      const bound = 600_000 + 60_000 * n;
-      expect(bound).toBe(HUMAN_INTERACTION_TIMEOUT_MS + MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS * n);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(bound - 1);
-      });
-      expect(state.caught).toBeUndefined();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2);
-      });
-      expect(state.caught).toBeInstanceOf(RequestTimeoutError);
-    },
-  );
+  /** Advance to one ms before `bound` (still waiting), then past it (timed out). */
+  async function expectTimesOutAt(state: { caught?: Error }, bound: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(bound - 1);
+    });
+    expect(state.caught).toBeUndefined();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2);
+    });
+    expect(state.caught).toBeInstanceOf(RequestTimeoutError);
+  }
+
+  it.each([
+    // n tiny buffers (4 bytes each) round up to 1 MiB in all.
+    [1, 600_000 + 60_000 + 1_000],
+    [3, 600_000 + 3 * 60_000 + 1_000],
+    // 359 files: 22,141,000 ms, just under the cap.
+    [359, 600_000 + 359 * 60_000 + 1_000],
+  ])('waits the human bound + 60 s per item + 1 s per MiB by default (%i small items: %i ms)', async (n, bound) => {
+    vi.useFakeTimers();
+    const state = start((h) => h.uploadBatch(many(n)));
+    await expectTimesOutAt(state, bound);
+  });
+
+  it('grows the default with the bytes: 2 x 64 MiB waits 128 s more than 2 tiny files', async () => {
+    vi.useFakeTimers();
+    const big = new ArrayBuffer(VIDEO_CAP);
+    const state = start((h) => h.uploadBatch([{ kind: 'video', bytes: big }, { kind: 'video', bytes: big }]));
+    // 10 min + 2 x 60 s + 128 MiB x 1 s.
+    await expectTimesOutAt(state, 600_000 + 120_000 + 128_000);
+  });
+
+  it.each([
+    // 360 small files would be 22,201,000 ms: 1 s past the cap.
+    ['360 small items', () => many(360)],
+    ['1200 small items', () => many(1200)],
+    // Near the most files AND bytes one batch may hold: 159 x 64 MiB + 1041 tiny files.
+    ['1200 items holding just under 10 GiB', () => [...many(1041), ...many(159, new ArrayBuffer(VIDEO_CAP))]],
+  ])('never waits longer than the host can still deliver: %s time out at 6 h 10 min', async (_n, items) => {
+    vi.useFakeTimers();
+    const state = start((h) => h.uploadBatch(items()));
+    await expectTimesOutAt(state, 22_200_000);
+  });
 
   it('`timeoutMs` replaces the whole bound', async () => {
     vi.useFakeTimers();
@@ -305,9 +386,10 @@ describe('useMediaUpload().uploadBatch', () => {
 
   it('`timeoutMs` can also lengthen it past the default', async () => {
     vi.useFakeTimers();
-    const state = start((h) => h.uploadBatch(many(1), { timeoutMs: 2 * 60 * 60_000 }));
+    // 7 h: past the default AND past the 6 h 10 min cap, which binds only the default.
+    const state = start((h) => h.uploadBatch(many(1), { timeoutMs: 7 * 60 * 60_000 }));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(600_000 + 60_000 + 1);
+      await vi.advanceTimersByTimeAsync(22_200_000 + 1);
     });
     expect(state.caught).toBeUndefined();
     dispatch({ requestId: sent()[0]!.payload.requestId });
