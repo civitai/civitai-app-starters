@@ -140,7 +140,7 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
     '- Every file has an id like up1-1 (an upload) or gen2-1-1 (something made in this chat). In tool calls, put the id wherever the schema asks for an image, video or audio URL; the app swaps in the real file.',
     ...(makes
       ? [
-          '- You cannot see images. When what is in a file matters, call caption_media on it (captions you already know are listed with the files). For audio, use transcribe_audio.',
+          '- You cannot see images or hear audio, and no tool here describes a file to you: captions you already know are listed with the files. When what is in a file matters and it has none, ask the user what it shows or says.',
           '- To animate something, make or choose the picture first, then turn it into a video. A video prompt describes the motion and the camera, not the scene.',
           '- Generations run in the background and cost the user Buzz; the app shows the price and asks when it should. After starting one, say in one short sentence that it is on its way. Do not start the same thing twice.',
           '- Earlier tool results tell you how each job went and the ids of what it made. Report an outcome only from the latest status there: never say something finished, worked or is ready unless its status is succeeded, and if you do not know why something failed, say so.',
