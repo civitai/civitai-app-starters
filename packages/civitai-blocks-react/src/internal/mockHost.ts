@@ -1272,6 +1272,14 @@ export interface MockHostOptions {
    */
   pollsUntilDone?: number;
   /**
+   * Which `POLL_WORKFLOW` requests (1-based, counted across the whole install)
+   * the mock answers as a poll the host could not serve:
+   * `{ workflowId, status: 'processing', throttled: true }`, the host's
+   * rate-limited reply. A throttled poll does not advance the workflow. Use it
+   * to exercise `watch` skipping such replies. Default: none.
+   */
+  throttledPolls?: readonly number[];
+  /**
    * The `cost.total` reported on estimate + succeeded snapshots. Default 8.
    * @deprecated Prefer {@link MockGenerationScenario.costPerGen} on `generation`.
    */
@@ -3296,6 +3304,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       );
     };
 
+    /** `POLL_WORKFLOW` requests seen by this install, for {@link MockHostOptions.throttledPolls}. */
+    let pollRequests = 0;
+
     /** When each mock step started running (by workflow + step), so `startedAt` holds still across polls. */
     const runStartedAt = new Map<string, string>();
 
@@ -3309,10 +3320,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
      * `progress` rising for an image or video generation `$type` — the only ones
      * the host reports it for). With the default `pollsUntilDone: 2` there is one
      * non-terminal poll and it is a running one; give `pollsUntilDone: 5` to see
-     * two queued and two running polls. The workflow `status` stays
-     * `'processing'` in both phases, as the mock's non-terminal status always
-     * has (the host sends `'pending'` while queued): read `eta` to tell them
-     * apart. Terminal polls have no `eta`.
+     * two queued and two running polls. As on the host, the workflow (and a
+     * `kind: 'workflow'` run's waiting step) is `'pending'` while queued and
+     * `'processing'` once it runs. Terminal polls have no `eta`.
      */
     const etaView = (
       workflowId: string,
@@ -3367,23 +3377,30 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
      * step as the host does ({@link mockSingleStep}).
      */
     const processingSnapshot = (workflowId: string, body: WorkflowBody | undefined, polls: number) => {
+      // QUEUED (the step has a queue position) reads 'pending', for the
+      // workflow and for its waiting step, as on the host; RUNNING reads
+      // 'processing'.
       if (body?.kind !== 'workflow') {
         const single = mockSingleStep(body);
+        const { eta, step } = etaView(workflowId, polls, single.name, single.$type);
         return {
           workflowId,
-          status: 'processing' as const,
-          eta: etaView(workflowId, polls, single.name, single.$type).eta,
+          status: step.queue ? ('pending' as const) : ('processing' as const),
+          eta,
         };
       }
       const view = workflowProgressView(workflowId, body, polls);
       const current = view.steps?.find((s) => s.status === 'processing');
       if (!current) return { workflowId, status: 'processing' as const, ...view };
       const { eta, step } = etaView(workflowId, polls, current.name, current.$type);
+      const queued = step.queue !== undefined;
       return {
         workflowId,
-        status: 'processing' as const,
+        status: queued ? ('pending' as const) : ('processing' as const),
         ...view,
-        steps: view.steps!.map((s) => (s === current ? { ...s, ...step } : s)),
+        steps: view.steps!.map((s) =>
+          s === current ? { ...s, ...step, ...(queued ? { status: 'pending' as const } : {}) } : s,
+        ),
         eta,
       };
     };
@@ -4290,6 +4307,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
+            // The host's answer to a poll it could not serve: not read, not
+            // advanced, and flagged so the SDK does not treat it as an update.
+            pollRequests += 1;
+            if (options.throttledPolls?.includes(pollRequests)) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: { workflowId, status: 'processing' as const, throttled: true as const } },
+              });
+              return;
+            }
             // An id this mock did not submit (e.g. restored from storage after a
             // reload) gets a record on its first poll, so it counts down to done
             // like any other instead of answering `processing` forever.

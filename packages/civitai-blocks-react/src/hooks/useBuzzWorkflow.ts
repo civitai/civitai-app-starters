@@ -188,6 +188,10 @@ export interface WatchWorkflowOptions {
    * order. This is the push side of the API: render from here instead of
    * re-reading `result` on a timer.
    *
+   * The one exception is a THROTTLED reply (`snapshot.throttled === true`, a
+   * poll the host could not serve): it is not an update, so it is not passed
+   * here and does not replace `result`; the watch just polls again.
+   *
    * A throw from this callback is not caught — it rejects the `watch` promise.
    */
   onUpdate?: (snapshot: BlockWorkflowSnapshot) => void;
@@ -1329,6 +1333,10 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setStatus('polling');
       try {
         const snapshot = await pollOnce(workflowId);
+        // A throttled reply (a poll the host could not serve) is returned so the
+        // caller can see it, but it is not an observation: the hook's `result`
+        // stays the previous real snapshot.
+        if (snapshot.throttled === true) return snapshot;
         setResult(snapshot);
         if (TERMINAL_STATUSES.has(snapshot.status)) {
           setStatus('done');
@@ -1354,6 +1362,9 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setStatus('polling');
 
       let last: BlockWorkflowSnapshot | null = null;
+      // The first throttled reply, kept ONLY to resolve with when no real
+      // snapshot ever arrived (see the end of the loop).
+      let throttledOnly: BlockWorkflowSnapshot | null = null;
       let consecutiveFailures = 0;
 
       // 🔴 SEQUENTIAL BY CONSTRUCTION. Every iteration AWAITS its poll before
@@ -1378,6 +1389,19 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
             setStatus('error');
             throw err;
           }
+          await sleep(interval, options?.signal);
+          continue;
+        }
+
+        // 🔴 A THROTTLED REPLY IS NOT AN UPDATE. The host answers a poll it
+        // could not serve with `{ workflowId, status: 'processing', throttled:
+        // true }` without reading the workflow, so handing it on would blank an
+        // app's eta, steps and cost on every refused poll. Skip it: no
+        // `onUpdate`, `last` and the hook's `result` stay the previous real
+        // snapshot, and the loop polls again on the usual interval.
+        if (snapshot.throttled === true) {
+          throttledOnly ??= snapshot;
+          if (Date.now() + interval >= deadline) break;
           await sleep(interval, options?.signal);
           continue;
         }
@@ -1407,6 +1431,9 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
 
       // Aborted or timed out with a snapshot in hand — resolve with it.
       if (last) return last;
+      // Only throttled replies ever came back: resolve with one, flag and all,
+      // so the caller can tell "still running, never actually read" apart.
+      if (throttledOnly) return throttledOnly;
       // 🔴 NO SNAPSHOT AT ALL. Only reachable when the signal was ALREADY
       // aborted on entry. Rejecting is the only honest option: there is nothing
       // to resolve with, and issuing a poll here would make a request the

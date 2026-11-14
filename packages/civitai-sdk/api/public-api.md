@@ -2876,12 +2876,10 @@ export interface BlockWorkflowSnapshot {
      *   - a terminal workflow (`succeeded`, `failed`, `expired`, `canceled`);
      *   - a workflow with no step queued or running;
      *   - a host that predates the field;
-     *   - a poll the host answered without reading the workflow, such as a
-     *     rate-limited poll, which replies `{ workflowId, status: 'processing' }`
-     *     and nothing else.
-     *   So an absent `eta` on a non-terminal snapshot does not mean the queue went
-     *   away: a progress bar that must not flicker can keep its last value until
-     *   `status` is terminal.
+     *   - a rate-limited poll the host could not serve. That reply carries
+     *     {@link BlockWorkflowSnapshot.throttled}, and `watch` drops it rather
+     *     than passing it to `onUpdate`, so an app on `watch` never sees its
+     *     missing `eta`.
      *
      * 🔴 THE QUEUE POSITION DOES NOT MOVE ON ITS OWN BETWEEN STATUS CHANGES. A held
      * poll (`watch`) returns early when the workflow's status, a step's progress or
@@ -2914,6 +2912,20 @@ export interface BlockWorkflowSnapshot {
      * the snapshot, so a bad estimate never costs an app its status or outputs.
      */
     eta?: BlockWorkflowEta | null;
+    /**
+     * A poll the host could not serve; NOT A REAL UPDATE. The host answers a poll
+     * it refused (rate-limited) with `{ workflowId, status: 'processing',
+     * throttled: true }` without reading the workflow, so its `status` is a
+     * placeholder and everything else is missing. A real snapshot never carries
+     * the field.
+     *
+     * `useBuzzWorkflow().watch` already handles it: it does not pass such a reply
+     * to `onUpdate`, keeps the previous real snapshot as its result, and polls
+     * again. `poll()` returns it as is (so check the flag) but does not replace
+     * the hook's `result` with it. Absent on a host that predates the marker,
+     * whose throttled reply is `{ workflowId, status: 'processing' }`.
+     */
+    throttled?: true;
 }
 
 /** One entry of {@link BlockWorkflowSnapshot.steps}. */

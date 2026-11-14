@@ -161,8 +161,9 @@ every kind of workflow. Each entry of `steps` can carry `queue` (only while that
 step is queued), `progress`, `startedAt` and `completedAt`. All of them are
 optional, and **absent means the same as `null`**: the host omits a field with
 nothing to report. A terminal snapshot has no `eta`, nor does a host that
-predates the field, nor a rate-limited poll the host answered without reading
-the workflow. `progress` is a fraction from 0 to 1, reported only for image and
+predates the field. A poll the host could not serve (rate-limited) answers
+`{ workflowId, status: 'processing', throttled: true }`: not a real update, and
+`@civitai/blocks-react`'s `watch` skips it. `progress` is a fraction from 0 to 1, reported only for image and
 video generation steps. `queuedAhead` / `precedingJobs` count the jobs ahead in
 the queue; while a step is queued they refresh at most once per held poll
 (about every 15 s), since a held poll does not wake on queue drift. Every time
@@ -175,7 +176,7 @@ import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 function etaLine(snapshot: BlockWorkflowSnapshot): string | null {
   const eta = snapshot.eta;
-  if (!eta) return null; // nothing reported this time: keep showing the last line
+  if (!eta) return null; // terminal, or nothing queued or running
   if (eta.progress !== null) return eta.progress.toLocaleString(undefined, { style: 'percent' });
   const at = eta.startsAt
     ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

@@ -637,11 +637,17 @@ progress bar or an "N ahead, starts ~HH:MM" line:
 **Absent and `null` mean the same thing.** The host omits a field it has
 nothing to report rather than sending `null`. A terminal snapshot has no `eta`,
 and neither does a workflow with nothing queued or running. A host that predates
-these fields sends none of them. A poll the host answered without reading the
-workflow carries no `eta` either: a rate-limited poll replies
-`{ workflowId, status: 'processing' }` and nothing else. So on a non-terminal
-snapshot, an absent `eta` is not news that the queue went away. Keep showing the
-last value until `status` is terminal, as the example below does.
+these fields sends none of them.
+
+**A throttled poll is not an update, and `watch` already skips it.** When the
+host cannot serve a poll (it is rate-limited), it answers
+`{ workflowId, status: 'processing', throttled: true }` without reading the
+workflow. `watch` does not pass that reply to `onUpdate` and keeps the previous
+real snapshot (its `eta`, `steps` and `cost`) as `result`. It then polls again,
+so an app's progress bar does not blank on a refused poll. `poll()` returns
+such a reply as is, so check `snapshot.throttled`, but it does not replace
+`result` either. A host that predates the marker sends the same reply without
+`throttled`, and that one still reaches `onUpdate`.
 
 🔴 **The queue position does not move on its own between status changes.** A
 held poll (`watch`) returns early when the workflow's status, a step's progress
@@ -670,10 +676,7 @@ function RunStatus({ workflowId }: { workflowId: string }) {
     const ctl = new AbortController();
     void watch(workflowId, {
       signal: ctl.signal,
-      // Absent on a poll that carries nothing new: keep the last value.
-      onUpdate: (s) => {
-        if (s.eta) setEta(s.eta);
-      },
+      onUpdate: (s) => setEta(s.eta ?? null), // throttled polls never arrive here
     }).then(
       () => setEta(null), // terminal
       () => {}, // a watch error is shown elsewhere
@@ -703,10 +706,10 @@ so a bad estimate never costs you the status or the outputs.
 
 **Mock host:** the polls before `pollsUntilDone` report these fields, encoded
 as the host does (an empty field is omitted, not `null`). The first half of
-them are queued (`queuedAhead` falling) and the rest running (`progress` rising,
-for an image or video generation step). The terminal poll has no `eta`. `status`
-stays `'processing'` in both phases, where the host sends `'pending'` while
-queued. `stepName` is the host's own step name for each kind: `block-step` for
+them are queued (`status: 'pending'`, `queuedAhead` falling) and the rest
+running (`status: 'processing'`, `progress` rising for an image or video
+generation step). The terminal poll has no `eta`. `throttledPolls: [n, …]`
+answers those `POLL_WORKFLOW` requests (1-based) as throttled replies. `stepName` is the host's own step name for each kind: `block-step` for
 `kind: 'step'` and `kind: 'training'`, `block-custom-comfy` for `customComfy`,
 and each step's `name` for `kind: 'workflow'`. A `textToImage` step is named by
 the orchestrator, which the mock cannot know, so it uses `$0`. With the default

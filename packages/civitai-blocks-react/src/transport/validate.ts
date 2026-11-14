@@ -331,7 +331,7 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
   if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
   // 🔴 `eta` (and each step's `queue` / `progress` / `startedAt` /
-  // `completedAt`) is DELIBERATELY NOT CHECKED HERE. These are estimates,
+  // `completedAt`, and the `throttled` marker) is DELIBERATELY NOT CHECKED HERE. These are estimates,
   // re-sent on every poll; rejecting the snapshot over one would drop the
   // status and outputs with it and stall `watch` until its timeout. A malformed
   // one is instead removed by `projectInboundPayload` →
@@ -391,9 +391,10 @@ function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly s
 }
 
 /**
- * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` at
- * the top level, and `queue`, `progress`, `startedAt` and `completedAt` on each
- * entry of `steps` — and everything else as sent. The unit removed is the
+ * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
+ * `throttled` that is not `true` at the top level, and `queue`, `progress`,
+ * `startedAt` and `completedAt` on each entry of `steps` — and everything else
+ * as sent. The unit removed is the
  * whole field: an `eta` with one bad member goes entirely, because a partial
  * object would not have the published shape.
  *
@@ -420,6 +421,10 @@ export function projectWorkflowSnapshot(s: unknown): unknown {
     if (changed) out = { ...out, steps };
   }
   if (s.eta !== undefined && !isValidWorkflowEta(s.eta)) out = withoutKeys(out, ['eta']);
+  // The throttled-poll marker is the literal `true` or nothing: any other value
+  // is removed, so it can never be read as the marker (and `watch` never drops a
+  // real snapshot over it).
+  if (s.throttled !== undefined && s.throttled !== true) out = withoutKeys(out, ['throttled']);
   return out;
 }
 
