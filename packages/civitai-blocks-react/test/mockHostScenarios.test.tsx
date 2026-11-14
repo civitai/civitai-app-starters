@@ -1483,7 +1483,8 @@ describe('createMockHost — accountType on kind: step bodies', () => {
   it.each([...ARMS, ['textToImage', BODY]] as const)(
     '%s: the ESTIMATE rejects a disallowed pick with the host message',
     async (_arm, body) => {
-      host = createMockHost({ disallowedAccountTypes: ['yellow'] });
+      // The spend scope granted, so the estimate reaches the account check.
+      host = createMockHost({ consentGranted: true, disallowedAccountTypes: ['yellow'] });
       uninstall = host.install();
       const { result } = renderHook(() => useBuzzWorkflow());
       await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
@@ -1503,7 +1504,7 @@ describe('createMockHost — accountType on kind: step bodies', () => {
 
   // An invariant guard: an allowed pick still prices.
   it('the ESTIMATE of an allowed pick still prices', async () => {
-    host = createMockHost({ disallowedAccountTypes: ['yellow'] });
+    host = createMockHost({ consentGranted: true, disallowedAccountTypes: ['yellow'] });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
