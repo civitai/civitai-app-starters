@@ -288,6 +288,15 @@ export const WORKFLOW_STEP_TYPES = {
   qwenImageBench: 'Qwen image benchmarking (internal)',
   /** Per-label scores and flags for a positive / negative prompt pair, under a versioned policy. */
   promptModeration: 'Prompt moderation — per-label scores and flags for a prompt pair (internal)',
+  // ----- Auto-added 2026-11-07 from the orchestrator spec ----------------------
+  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
+  // these and this catalog did not list them. MOVE each entry into the right
+  // section above, and replace any TODO(catalog) line with a real one-line
+  // description — `pnpm check:catalogs` names every placeholder that is left.
+  // (That check is advisory, so it will not stop this merging. It is a
+  // reminder, not a gate.)
+  /** Description taken verbatim from the spec's step schema — confirm it reads well here. */
+  modelAnalysis: "Check a checkpoint for evidence of specified merged LoRAs.",
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
