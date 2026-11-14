@@ -2935,7 +2935,9 @@ export interface BlockWorkflowSnapshot {
      * `useBuzzWorkflow().watch` already handles it: it does not pass such a reply
      * to `onUpdate`, keeps the previous real snapshot as its result, and polls
      * again. `poll()` returns it as is (so check the flag) but does not replace
-     * the hook's `result` with it. Absent on a host that predates the marker,
+     * the hook's `result` with it. On a cancel it means the cancel was NOT
+     * issued: `cancel()` rejects with `WorkflowCancelNotIssuedError`, and the
+     * caller retries. Absent on a host that predates the marker,
      * whose throttled reply is `{ workflowId, status: 'processing' }`.
      */
     throttled?: true;

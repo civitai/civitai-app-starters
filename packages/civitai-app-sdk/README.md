@@ -163,7 +163,9 @@ optional, and **absent means the same as `null`**: the host omits a field with
 nothing to report. A terminal snapshot has no `eta`, nor does a host that
 predates the field. A poll the host could not serve (rate-limited) answers
 `{ workflowId, status: 'processing', throttled: true }`: not a real update, and
-`@civitai/blocks-react`'s `watch` skips it. `progress` is a fraction from 0 to 1, reported only for image and
+`@civitai/blocks-react`'s `watch` skips it. A throttled answer to a cancel means
+the cancel was not issued: `useBuzzWorkflow().cancel()` rejects with
+`WorkflowCancelNotIssuedError`; retry it. `progress` is a fraction from 0 to 1, reported only for image and
 video generation steps. `queuedAhead` / `precedingJobs` count the jobs ahead in
 the queue; while a step is queued they refresh at most once per held poll
 (about every 15 s), since a held poll does not wake on queue drift. Every time

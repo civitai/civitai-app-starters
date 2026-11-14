@@ -1212,10 +1212,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 payload: {
                   requestId,
                   // keeps the workflowId so the block maps it back to the right card.
+                  // A transient failure is a poll the host could not serve, so it
+                  // carries `throttled: true` as production's
+                  // `pollFailureSnapshot` does, and `watch` does not treat it
+                  // as an update.
                   snapshot: {
                     workflowId,
                     status: transient ? ('processing' as const) : ('failed' as const),
                     error: r.error ?? 'poll failed',
+                    ...(transient ? { throttled: true as const } : {}),
                   },
                 },
               });

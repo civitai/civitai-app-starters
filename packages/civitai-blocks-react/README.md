@@ -646,7 +646,10 @@ workflow. `watch` does not pass that reply to `onUpdate` and keeps the previous
 real snapshot (its `eta`, `steps` and `cost`) as `result`. It then polls again,
 so an app's progress bar does not blank on a refused poll. `poll()` returns
 such a reply as is, so check `snapshot.throttled`, but it does not replace
-`result` either. A host that predates the marker sends the same reply without
+`result` either. `cancel()` rejects on such a reply with
+`WorkflowCancelNotIssuedError`, since the cancel was not issued (see the cancel
+note below). The `dev:live` host marks its own transient poll-failure reply the
+same way. A host that predates the marker sends the same reply without
 `throttled`, and that one still reaches `onUpdate`.
 
 🔴 **The queue position does not move on its own between status changes.** A
@@ -918,6 +921,14 @@ as `cost.total`.
 > stops spending Buzz. Before that, cancel was client-side only (stop polling). If
 > your installed version predates 0.5.0, do the client-side half and add the
 > `cancel(...)` call after upgrading.
+>
+> 🔴 **A throttled cancel was not issued.** If the host cannot serve the cancel
+> (it answers `throttled: true`), `cancel()` REJECTS with
+> `WorkflowCancelNotIssuedError` (`code: 'cancel-not-issued'`, plus
+> `workflowId` and the reply as `snapshot`). The workflow is still running and
+> still spending, so retry the cancel after a short wait. The hook's `result`,
+> `status` and `error` are left as they were. Any other reply resolves as
+> before, with `status` becoming `'done'`.
 
 ### `useBatchEstimate()`
 
