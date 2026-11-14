@@ -236,7 +236,9 @@ outside that set is refused on the estimate and the submit alike; omit the field
 default order, blue first. A pick does **not** guarantee an unrestricted output: when the picked
 pool runs out the fallback pays, and a fallback to `blue` can still leave a mature output
 restricted. On a confirmed step, `accountType` is part of the quoted body — submit with the pool
-you estimated with. A host that predates the field refuses it as an unknown key.
+you estimated with. **Release order: host first** — civitai/civitai must accept the field
+(civitai/civitai#8985) before an app sends it, because a host that predates it refuses the whole
+body as an unknown key. Leaving it out works on every host.
 
 **Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
 can still run when the **viewer confirms its exact price** in Civitai's own dialog

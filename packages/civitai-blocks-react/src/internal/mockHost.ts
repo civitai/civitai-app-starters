@@ -3520,6 +3520,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           if (!consentGranted) {
             return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
           }
+          // Disallowed-account path, as on SUBMIT_WORKFLOW: the real host refuses a
+          // picked pool outside the app's maturity policy on EVERY estimate too
+          // (civitai/civitai#8985), before pricing, and the page host catches that
+          // BAD_REQUEST into `failureSnapshot(err)`. Same message as the submit.
+          const estimatePick = preferredAccountType(body);
+          if (estimatePick && disallowedAccounts.has(estimatePick)) {
+            return { workflowId: 'failed', status: 'failed', error: disallowedAccountError(estimatePick) };
+          }
           // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
           // kind-agnostic rule above, because the real arm is not a priced
           // pass-through: it checks the dataset items against the server's
@@ -4741,6 +4749,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // the quote, so the quote is kept.
             if (isTrainingStepTypeName(b.$type)) {
               return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
+            }
+            // A disallowed pick is refused BEFORE the quote is claimed, so the quote
+            // is kept — the host resolves the currencies ahead of its replay claim
+            // (civitai/civitai#8985). Same message as the submit.
+            const confirmedPick = preferredAccountType(b as unknown as WorkflowBody);
+            if (confirmedPick && disallowedAccounts.has(confirmedPick)) {
+              return reply({ error: disallowedAccountError(confirmedPick) });
             }
             quote.spent = true;
             // The body is hashed AFTER the claim, so a body the server cannot bind
