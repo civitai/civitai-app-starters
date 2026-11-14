@@ -339,9 +339,9 @@ describe('collection schema: where it runs among the other checks', () => {
   it('spends no write budget and no rejection', async () => {
     const fake = make(BOARD, { enforceRateLimits: true, now: () => Date.parse('2031-01-01T00:00:00.000Z') });
     const board = fake.storage.collection('board');
-    for (let i = 0; i < 25; i++) expect((await refusal(board.put(`r${i}`, { body: tooLong }))).code).toBe('schema_violation');
-    // A full burst of ten still fits: neither the burst nor the rejection bucket moved.
-    for (let i = 0; i < 10; i++) await board.put(`ok${i}`, { body: 'ok' });
-    expect((await refusal(board.put('ok10', { body: 'ok' }))).details).toEqual({ bucket: 'shared-write', retryAfter: 360 });
+    for (let i = 0; i < 35; i++) expect((await refusal(board.put(`r${i}`, { body: tooLong }))).code).toBe('schema_violation');
+    // A full burst of 30 still fits: neither the burst nor the rejection bucket moved.
+    for (let i = 0; i < 30; i++) await board.put(`ok${i}`, { body: 'ok' });
+    expect((await refusal(board.put('ok30', { body: 'ok' }))).details).toEqual({ bucket: 'shared-write', retryAfter: 60 });
   });
 });

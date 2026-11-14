@@ -116,10 +116,14 @@ const RATE: Record<RateBucket, { max: number; windowSeconds: number }> = {
   tally: { max: 30, windowSeconds: MINUTE },
   report: { max: 20, windowSeconds: DAY },
 };
-/** burst, daily, rejections: [capacity, refill interval ms]. */
+/**
+ * burst, daily, rejections: [capacity, refill interval ms]. The document store's own
+ * budget (civitai/civitai#8873): burst 30 (one back a minute), daily 300 (one back every
+ * 4.8 minutes), rejections 10 (one back every 30 minutes).
+ */
 const SHARED_WRITE_BUDGET: readonly (readonly [number, number])[] = [
-  [10, 6 * 60 * 1000],
-  [50, (DAY * 1000) / 50],
+  [30, 60 * 1000],
+  [300, (DAY * 1000) / 300],
   [10, 30 * 60 * 1000],
 ];
 

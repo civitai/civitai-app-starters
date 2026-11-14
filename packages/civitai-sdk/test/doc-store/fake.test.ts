@@ -11,8 +11,9 @@ import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js
  * `shared-storage-rate-limit.ts`), not from the contract, so nothing re-checks them
  * against the server when it changes. They are meant to move into upstream contract
  * cases in a later civitai PR, and leave this file then:
- *   - the shared write budget: burst 10 refilling every 6 min, the rejection bucket
- *     (30 min), refunds on a refused write and none charged for an outage, per viewer;
+ *   - the shared write budget (civitai/civitai#8873): burst 30 refilling one a minute,
+ *     daily 300 refilling one every 4.8 min, the rejection bucket (10, one back every
+ *     30 min), refunds on a refused write and none charged for an outage, per viewer;
  *   - fixed-window resets and `retryAfter` values; anonymous reads sharing one window;
  *   - a report withdrawal refused BEFORE sign-in and any budget (the contract pins
  *     only the signed-in refusal itself);
@@ -101,10 +102,11 @@ describe('rate limits are opt-in', () => {
   it('off by default: no window and no shared write budget throttles an app\'s tests', async () => {
     const { fake } = make({ enforceRateLimits: false });
     const posts = fake.storage.collection('posts');
-    for (let i = 0; i < 15; i++) await posts.put(`p${i}`, {});
+    // 35 shared writes: past the burst of 30 that would refuse the 31st with limits on.
+    for (let i = 0; i < 35; i++) await posts.put(`p${i}`, {});
     for (let i = 0; i < 40; i++) await fake.storage.collection('plays').increment('m', 'plays');
     for (let i = 0; i < 25; i++) await posts.mark('p0', 'report');
-    await expect(posts.list({ limit: 100 })).resolves.toMatchObject({ items: { length: 15 } });
+    await expect(posts.list({ limit: 100 })).resolves.toMatchObject({ items: { length: 35 } });
   });
 
   it('the default is off', async () => {
@@ -115,17 +117,19 @@ describe('rate limits are opt-in', () => {
 });
 
 describe('the shared write budget', () => {
-  it('ten writes, then refused until one burst token refills (6 minutes)', async () => {
+  it('thirty writes, then the 31st is refused until one burst token refills (1 minute)', async () => {
     const { fake, clock } = make();
     const posts = fake.storage.collection('posts');
-    for (let i = 0; i < 10; i++) await posts.put(`p${i}`, {});
-    const e = await refusal(posts.put('p10', {}));
+    for (let i = 0; i < 29; i++) await posts.put(`p${i}`, {});
+    // The 30th still lands: the burst is 30, not fewer.
+    await expect(posts.put('p29', {})).resolves.toMatchObject({ key: 'p29' });
+    const e = await refusal(posts.put('p30', {}));
     expect(e.code).toBe('rate_limited');
-    expect(e.details).toEqual({ bucket: 'shared-write', retryAfter: 360 });
-    clock.advance(359_000);
-    expect((await refusal(posts.put('p10', {}))).details?.retryAfter).toBe(1);
+    expect(e.details).toEqual({ bucket: 'shared-write', retryAfter: 60 });
+    clock.advance(59_000);
+    expect((await refusal(posts.put('p30', {}))).details?.retryAfter).toBe(1);
     clock.advance(1_000);
-    await expect(posts.put('p10', {})).resolves.toMatchObject({ key: 'p10' });
+    await expect(posts.put('p30', {})).resolves.toMatchObject({ key: 'p30' });
     // Private writes and deletes spend other buckets.
     await expect(fake.storage.collection('prefs').put('k', {})).resolves.toBeTruthy();
     await expect(posts.delete('p0')).resolves.toEqual({ deleted: true });
@@ -145,16 +149,39 @@ describe('the shared write budget', () => {
   it('an outage (moderation unavailable) is refunded without a rejection', async () => {
     const { fake } = make();
     const posts = fake.storage.collection('posts');
-    for (let i = 0; i < 12; i++) {
+    // More outages than the burst (30) or the rejection bucket (10) holds.
+    for (let i = 0; i < 32; i++) {
       expect((await refusal(posts.put(`p${i}`, { t: 'contract-scanner-down' }))).code).toBe('moderation_unavailable');
     }
     await expect(posts.put('ok', {})).resolves.toMatchObject({ key: 'ok' });
   });
 
+  it('the daily bucket: 300, one back every 4.8 minutes; one write a minute lands 378 times', async () => {
+    const { fake, clock } = make();
+    const posts = fake.storage.collection('posts');
+    // One write a minute never empties the burst (one token back a minute). Each write takes
+    // one daily token and a minute gives back 60/288 of one, so after n writes the daily
+    // bucket is full again n*(288-60) s from now; the next write is refused once that passes
+    // 299*288 s: n*228 > 86112 at n = 378, refused for 378*228 - 86112 = 72 s.
+    for (let i = 0; i < 378; i++) {
+      await posts.put('p', { i });
+      clock.advance(60_000);
+    }
+    const e = await refusal(posts.put('p', { i: 378 }));
+    expect(e.details).toEqual({ bucket: 'shared-write', retryAfter: 72 });
+    clock.advance(72_000);
+    await expect(posts.put('p', { i: 378 })).resolves.toMatchObject({ key: 'p' });
+  });
+
+  it('info reports the budget: 30 burst, 300 a day', async () => {
+    const { fake } = make();
+    expect((await fake.storage.info()).limits.rate).toMatchObject({ sharedWritesBurst: 30, sharedWritesPerDay: 300 });
+  });
+
   it('per viewer: one viewer exhausting it leaves another untouched', async () => {
     const { fake } = make();
-    for (let i = 0; i < 10; i++) await fake.storage.collection('posts').put(`a${i}`, {});
-    await expect(fake.storage.collection('posts').put('a10', {})).rejects.toMatchObject({ code: 'rate_limited' });
+    for (let i = 0; i < 30; i++) await fake.storage.collection('posts').put(`a${i}`, {});
+    await expect(fake.storage.collection('posts').put('a30', {})).rejects.toMatchObject({ code: 'rate_limited' });
     const bob = fake.as({ viewer: { username: 'bob' } }).storage;
     await expect(bob.collection('posts').put('b0', {})).resolves.toMatchObject({ key: 'b0' });
   });
