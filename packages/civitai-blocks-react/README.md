@@ -1171,8 +1171,12 @@ if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
 ```
 
 > Per-account Buzz: `useBuzzWorkflow().submit(body)` also takes an optional
-> `body.accountType` (`'blue' | 'green' | 'yellow'`) — a *preference* for which
-> pool funds the generation; the host clamps it server-side.
+> `body.accountType` (`'blue' | 'green' | 'yellow'`) — the pool tried *first*,
+> with the app's other allowed pools as fallback. It rides top-level on a
+> `textToImage` body, on both `kind: 'step'` arms and once per `kind: 'workflow'`
+> body (under `params` on a `customComfy` recipe). A pool the app may not spend
+> is refused on the estimate and the submit. A pick does not guarantee an
+> unrestricted output: a fallback to `blue` can still restrict a mature one.
 
 ### `useViewer()`
 

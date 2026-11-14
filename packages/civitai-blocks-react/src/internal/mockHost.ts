@@ -150,15 +150,15 @@ import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
 /**
- * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
- * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
- * `params.accountType`; a `step` body (EITHER arm) and a `customComfy` INLINE
- * body have NO account preference at all — the host's `blockStepBodySchema`,
- * `blockPassThroughStepBodySchema` and `blockInlineComfyBodySchema` are all
- * `.strict()` with no `accountType` anywhere, so there is no field to read and
- * `undefined` (let the host pick) is the accurate answer rather than a fallback.
- * That is why `case 'step'` needs no second narrow on the arm, unlike
- * `customComfy`: both step arms give the same answer.
+ * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody}, a
+ * `step` body (EITHER arm) and a `workflow` body it's the top-level
+ * `accountType` (once per workflow, never per step); on a `customComfy` RECIPE
+ * body it lives under `params.accountType`; a `customComfy` INLINE body and a
+ * `training` body have NO account preference at all — the host's
+ * `blockInlineComfyBodySchema` and `blockTrainingBodySchema` are `.strict()`
+ * with no `accountType`, so `undefined` (let the host pick) is the accurate
+ * answer rather than a fallback. `case 'step'` needs no second narrow on the
+ * arm, unlike `customComfy`: both step arms carry the field in the same place.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
@@ -184,14 +184,14 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     case 'customComfy':
       return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
-      return undefined;
-    // A training body names no pool either: the host's `blockTrainingBodySchema`
-    // is `.strict()` with no `accountType`.
+      return body.accountType;
+    // A training body names no pool: the host's `blockTrainingBodySchema` is
+    // `.strict()` with no `accountType`.
     case 'training':
       return undefined;
-    // Nor does a multi-step body: the kind has no `accountType` field.
+    // One pick for the whole multi-step workflow, on the body.
     case 'workflow':
-      return undefined;
+      return body.accountType;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
       // fail to compile, right here, rather than defaulting somewhere.
@@ -1749,6 +1749,7 @@ export interface MockHostOptions {
   postableImageIds?: number[];
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
+   * (on any body that carries one — see `preferredAccountType`)
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
    * block picks a pool the app's maturity policy disallows; the mock mirrors
@@ -3300,7 +3301,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           status: 'succeeded' as const,
           cost: { total: cost },
           ...workflowStepsView(workflowId, body, () => 'succeeded'),
-          spentAccountType: primaryFunder(buzzBalance),
+          // Pick-aware, like the single-step stamp below (same approximation).
+          spentAccountType: preferredAccountType(body) ?? primaryFunder(buzzBalance),
         };
       }
       // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
