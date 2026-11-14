@@ -72,6 +72,7 @@ const CASES: Record<string, HookCall> = {
   useImageUpload: () => entry.useImageUpload(),
   useMediaUpload: () => entry.useMediaUpload(),
   useNestedDocument: () => entry.useNestedDocument(),
+  usePersistGenerationSource: () => entry.usePersistGenerationSource(),
   usePublishGenerationOutputs: () => entry.usePublishGenerationOutputs(),
   useReactions: () => entry.useReactions('image', [], { tickets: {} }),
   useRequestConsent: () => entry.useRequestConsent(),
