@@ -330,8 +330,10 @@ jobs:
             package's `files` and read only by the package's own tests).
 
   # File a report when either re-vendor job fails, and close it when a later run is
-  # green. Copied from civitai/cli's `revendor-canonical-schema.yml` `signal` job;
-  # `failure-issue.yml` (same origin) owns WHEN to open, edit, comment or close.
+  # green. Modelled on civitai/cli's `revendor-canonical-schema.yml` `signal` job, and
+  # it calls civitai/cli's reusable `failure-issue.yml` directly (pinned to a commit
+  # sha; both repos are public), which owns WHEN to open, edit, comment or close.
+  # To take a later fix to that mechanism, bump the sha.
   #
   # Why it exists: a red scheduled run notifies almost nobody (only whoever last
   # edited the `cron` line, through their own Actions setting). This workflow was
@@ -343,7 +345,7 @@ jobs:
   signal:
     needs: [revendor, revendor-storage-contract]
     if: always() && needs.revendor.result != 'cancelled' && needs.revendor-storage-contract.result != 'cancelled'
-    uses: ./.github/workflows/failure-issue.yml
+    uses: civitai/cli/.github/workflows/failure-issue.yml@50b6355fa092d5b0efb888dbabf8692fcd2004bd # v0.1.140
     permissions:
       contents: read
       issues: write
