@@ -188,6 +188,10 @@ export interface WatchWorkflowOptions {
    * order. This is the push side of the API: render from here instead of
    * re-reading `result` on a timer.
    *
+   * The one exception is a THROTTLED reply (`snapshot.throttled === true`, a
+   * poll the host could not serve): it is not an update, so it is not passed
+   * here and does not replace `result`; the watch just polls again.
+   *
    * A throw from this callback is not caught — it rejects the `watch` promise.
    */
   onUpdate?: (snapshot: BlockWorkflowSnapshot) => void;
@@ -655,6 +659,32 @@ export class WorkflowSubmitError extends Error {
   }
 }
 
+/**
+ * {@link UseBuzzWorkflow.cancel} rejects with this when the host answered the
+ * cancel with a THROTTLED reply (`throttled: true`): a request it could not
+ * serve, so THE CANCEL WAS NOT ISSUED and the workflow is still running (and
+ * still spending). Retry the cancel after a short wait.
+ *
+ * The hook's `result`, `status` and `error` are left exactly as they were, so a
+ * running watch keeps its last real snapshot. Branch on `code` (or
+ * `instanceof`), never on `message`.
+ */
+export class WorkflowCancelNotIssuedError extends Error {
+  /** Stable branch target: the cancel was not issued; retry it. */
+  readonly code = 'cancel-not-issued' as const;
+  /** The workflow the cancel was for. */
+  readonly workflowId: string;
+  /** The host's throttled reply, as received. Not an observation of the workflow. */
+  readonly snapshot: BlockWorkflowSnapshot;
+
+  constructor(workflowId: string, snapshot: BlockWorkflowSnapshot) {
+    super(`cancel was not issued for ${workflowId} (the host could not serve the request) — retry it`);
+    this.name = 'WorkflowCancelNotIssuedError';
+    this.workflowId = workflowId;
+    this.snapshot = snapshot;
+  }
+}
+
 /** Optional per-submit controls. */
 export interface SubmitWorkflowOptions extends ConsentRetryOptions {
   /**
@@ -892,8 +922,16 @@ export interface UseBuzzWorkflow {
    * Cancel a running workflow on the orchestrator (a real server-side stop,
    * not just client-side untracking). The host re-derives ownership from the
    * viewer's orchestrator token, so this can only cancel workflows the viewer
-   * owns; the orchestrator rejects others. Resolves with the workflow's
-   * (now-canceled) snapshot.
+   * owns; the orchestrator rejects others.
+   *
+   * Resolves with the workflow as it now stands: usually `'canceled'`, but a
+   * workflow that had already finished keeps its real final status. The hook's
+   * `result` becomes that snapshot and `status` becomes `'done'`.
+   *
+   * 🔴 A THROTTLED REPLY REJECTS WITH {@link WorkflowCancelNotIssuedError}
+   * (`code: 'cancel-not-issued'`). The host could not serve the request, so the
+   * cancel was NOT issued and the workflow keeps running: retry it. The hook's
+   * `result`, `status` and `error` are left untouched in that case.
    */
   cancel: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
   status: WorkflowStatus;
@@ -1329,6 +1367,10 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setStatus('polling');
       try {
         const snapshot = await pollOnce(workflowId);
+        // A throttled reply (a poll the host could not serve) is returned so the
+        // caller can see it, but it is not an observation: the hook's `result`
+        // stays the previous real snapshot.
+        if (snapshot.throttled === true) return snapshot;
         setResult(snapshot);
         if (TERMINAL_STATUSES.has(snapshot.status)) {
           setStatus('done');
@@ -1354,6 +1396,9 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setStatus('polling');
 
       let last: BlockWorkflowSnapshot | null = null;
+      // The first throttled reply, kept ONLY to resolve with when no real
+      // snapshot ever arrived (see the end of the loop).
+      let throttledOnly: BlockWorkflowSnapshot | null = null;
       let consecutiveFailures = 0;
 
       // 🔴 SEQUENTIAL BY CONSTRUCTION. Every iteration AWAITS its poll before
@@ -1378,6 +1423,19 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
             setStatus('error');
             throw err;
           }
+          await sleep(interval, options?.signal);
+          continue;
+        }
+
+        // 🔴 A THROTTLED REPLY IS NOT AN UPDATE. The host answers a poll it
+        // could not serve with `{ workflowId, status: 'processing', throttled:
+        // true }` without reading the workflow, so handing it on would blank an
+        // app's eta, steps and cost on every refused poll. Skip it: no
+        // `onUpdate`, `last` and the hook's `result` stay the previous real
+        // snapshot, and the loop polls again on the usual interval.
+        if (snapshot.throttled === true) {
+          throttledOnly ??= snapshot;
+          if (Date.now() + interval >= deadline) break;
           await sleep(interval, options?.signal);
           continue;
         }
@@ -1407,6 +1465,9 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
 
       // Aborted or timed out with a snapshot in hand — resolve with it.
       if (last) return last;
+      // Only throttled replies ever came back: resolve with one, flag and all,
+      // so the caller can tell "still running, never actually read" apart.
+      if (throttledOnly) return throttledOnly;
       // 🔴 NO SNAPSHOT AT ALL. Only reachable when the signal was ALREADY
       // aborted on entry. Rejecting is the only honest option: there is nothing
       // to resolve with, and issuing a poll here would make a request the
@@ -1419,16 +1480,14 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
   );
 
   const cancel = useCallback(async (workflowId: string) => {
+    let snapshot: BlockWorkflowSnapshot;
     try {
-      const { snapshot } = await sendTypedRequest(
+      ({ snapshot } = await sendTypedRequest(
         getTransport(),
         { type: 'CANCEL_WORKFLOW', payload: { workflowId } },
         'WORKFLOW_CANCELED',
         { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
-      );
-      setResult(snapshot);
-      setStatus('done');
-      return snapshot;
+      ));
     } catch (err) {
       // A cancel that fails (e.g. the workflow already finished, or a transient
       // host error) is surfaced but must not wedge the hook — callers treat
@@ -1436,6 +1495,15 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setError(err as Error);
       throw err;
     }
+    // A throttled reply is the host saying it could not serve the request: the
+    // cancel was NOT issued and the workflow keeps running. Not an outcome, so
+    // the hook's result, status and error are left alone; the caller retries.
+    if (snapshot?.throttled === true) {
+      throw new WorkflowCancelNotIssuedError(workflowId, snapshot);
+    }
+    setResult(snapshot);
+    setStatus('done');
+    return snapshot;
   }, []);
 
   return { estimate, submit, poll, watch, cancel, status, result, error };

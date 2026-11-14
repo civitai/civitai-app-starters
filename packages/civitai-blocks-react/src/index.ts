@@ -52,6 +52,7 @@ export type { UseHostOrigin } from './hooks/useHostOrigin.js';
 export {
   DEFAULT_WATCH_WAIT_SECONDS,
   useBuzzWorkflow,
+  WorkflowCancelNotIssuedError,
   WorkflowEstimateError,
   WorkflowSubmitError,
 } from './hooks/useBuzzWorkflow.js';

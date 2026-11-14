@@ -799,7 +799,8 @@ export class IframeTransport implements BlockTransport {
     // `projectInboundPayload` drops fields a consumer is not allowed to see
     // (today: every key beyond `imageId`/`status` on a `hidden` gated image),
     // answers a malformed `MEDIA_UPLOAD_BATCH_RESULT` entry as that item's
-    // error, and is identity for every other type. Validation said "deliver this message";
+    // error, removes a malformed queue/ETA field from a workflow snapshot, and
+    // is identity for every other type. Validation said "deliver this message";
     // this says "deliver these fields".
     //
     // The `TOKEN_REFRESH_RESPONSE` branch below still reads `data.payload` on

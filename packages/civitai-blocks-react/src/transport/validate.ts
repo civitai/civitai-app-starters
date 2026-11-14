@@ -330,8 +330,132 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.stepQuote !== undefined && !isValidStepQuote(s.stepQuote)) return false;
   if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
   if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
+  // 🔴 `eta` (and each step's `queue` / `progress` / `startedAt` /
+  // `completedAt`, and the `throttled` marker) is DELIBERATELY NOT CHECKED HERE. These are estimates,
+  // re-sent on every poll; rejecting the snapshot over one would drop the
+  // status and outputs with it and stall `watch` until its timeout. A malformed
+  // one is instead removed by `projectInboundPayload` →
+  // {@link projectWorkflowSnapshot}, so none this predicate let through reaches
+  // block code unchecked.
   return true;
 }
+
+/** A finite number in [0, 1] — the `progress` fraction. */
+const isProgressFraction = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+
+/** A whole number ≥ 0 — a queue position. */
+const isQueueCount = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+const isStringOrNull = (v: unknown): boolean => v === null || typeof v === 'string';
+
+/**
+ * Shape check for `BlockWorkflowSnapshot.eta`. Times are any string (not
+ * parsed: they are estimates for display, and a host formatting change must
+ * not drop them) and `support` is any string (an open union).
+ */
+function isValidWorkflowEta(e: unknown): boolean {
+  if (e === null) return true;
+  if (!isObject(e)) return false;
+  if (typeof e.stepName !== 'string') return false;
+  if (e.queuedAhead !== null && !isQueueCount(e.queuedAhead)) return false;
+  if (!isStringOrNull(e.startsAt) || !isStringOrNull(e.completesAt)) return false;
+  if (e.progress !== null && !isProgressFraction(e.progress)) return false;
+  return isStringOrNull(e.support);
+}
+
+/** Shape check for `BlockWorkflowStepSnapshot.queue`; same leniency as {@link isValidWorkflowEta}. */
+function isValidWorkflowStepQueue(q: unknown): boolean {
+  if (q === null) return true;
+  if (!isObject(q)) return false;
+  if (q.precedingJobs !== null && !isQueueCount(q.precedingJobs)) return false;
+  if (!isStringOrNull(q.estimatedStartAt) || !isStringOrNull(q.estimatedCompleteAt)) return false;
+  return typeof q.support === 'string';
+}
+
+/** The optional per-step ETA fields and their checks. Absent passes; `undefined` is never checked. */
+const STEP_ETA_FIELDS: ReadonlyArray<readonly [string, (v: unknown) => boolean]> = [
+  ['queue', isValidWorkflowStepQueue],
+  ['progress', (v) => v === null || isProgressFraction(v)],
+  ['startedAt', isStringOrNull],
+  ['completedAt', isStringOrNull],
+];
+
+/** `obj` without the keys in `drop`; `obj` itself when there are none. */
+function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly string[]): T {
+  if (drop.length === 0) return obj;
+  const copy: Record<string, unknown> = { ...obj };
+  for (const k of drop) delete copy[k];
+  return copy as T;
+}
+
+/**
+ * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
+ * `throttled` that is not `true` at the top level, and `queue`, `progress`,
+ * `startedAt` and `completedAt` on each entry of `steps` — and everything else
+ * as sent. The unit removed is the
+ * whole field: an `eta` with one bad member goes entirely, because a partial
+ * object would not have the published shape.
+ *
+ * Applied by {@link projectInboundPayload} to every reply that carries a
+ * snapshot, AFTER {@link isValidWorkflowSnapshot} (which does not look at these
+ * fields) accepted it. Identity when nothing is removed. A value that is not an
+ * object, or `steps` that is not an array, is returned as is: the validator
+ * decides those.
+ */
+export function projectWorkflowSnapshot(s: unknown): unknown {
+  if (!isObject(s)) return s;
+  let out: Record<string, unknown> = s;
+  if (Array.isArray(s.steps)) {
+    let changed = false;
+    const steps = s.steps.map((step: unknown) => {
+      if (!isObject(step)) return step;
+      const drop = STEP_ETA_FIELDS.filter(
+        ([key, ok]) => step[key] !== undefined && !ok(step[key]),
+      ).map(([key]) => key);
+      if (drop.length === 0) return step;
+      changed = true;
+      return withoutKeys(step, drop);
+    });
+    if (changed) out = { ...out, steps };
+  }
+  if (s.eta !== undefined && !isValidWorkflowEta(s.eta)) out = withoutKeys(out, ['eta']);
+  // The throttled-poll marker is the literal `true` or nothing: any other value
+  // is removed, so it can never be read as the marker (and `watch` never drops a
+  // real snapshot over it).
+  if (s.throttled !== undefined && s.throttled !== true) out = withoutKeys(out, ['throttled']);
+  return out;
+}
+
+/** `payload` with its `snapshot` projected by {@link projectWorkflowSnapshot}. */
+function projectSnapshotReply(payload: unknown): unknown {
+  if (!isObject(payload) || payload.snapshot === undefined) return payload;
+  const snapshot = projectWorkflowSnapshot(payload.snapshot);
+  return snapshot === payload.snapshot ? payload : { ...payload, snapshot };
+}
+
+/** `ESTIMATE_BATCH_RESULT` with each of its `snapshots` projected. */
+function projectEstimateBatchReply(payload: unknown): unknown {
+  if (!isObject(payload) || !Array.isArray(payload.snapshots)) return payload;
+  let changed = false;
+  const snapshots = payload.snapshots.map((cell: unknown) => {
+    const projected = projectWorkflowSnapshot(cell);
+    if (projected !== cell) changed = true;
+    return projected;
+  });
+  return changed ? { ...payload, snapshots } : payload;
+}
+
+/** The inbound types whose payload carries one `snapshot`. */
+const SNAPSHOT_REPLY_TYPES = new Set<string>([
+  'ESTIMATE_RESULT',
+  'WORKFLOW_SUBMITTED',
+  'WORKFLOW_STATUS',
+  'WORKFLOW_CANCELED',
+  'TRAINING_RESULT',
+  'CONFIRMED_STEP_RESULT',
+]);
 
 /**
  * Shape check for `stepQuote` — the viewer-confirmable quote a pass-through
@@ -2088,15 +2212,20 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: two types are projected today. `IMAGES_RESULT`
- * (the hidden-entry allowlist) and `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
- * entry becomes that item's error, {@link projectMediaUploadBatchResults}).
+ * 🔴 SCOPE, STATED HONESTLY: three groups are projected today. `IMAGES_RESULT`
+ * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}), and
+ * every reply carrying a workflow snapshot — the six in
+ * {@link SNAPSHOT_REPLY_TYPES} plus each cell of `ESTIMATE_BATCH_RESULT` — whose
+ * malformed queue/ETA fields are removed ({@link projectWorkflowSnapshot}).
  * Every other type is returned by identity — this is not a general sanitizer and
  * must not be read as one. Add a case here (and say so in the type's validator
  * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
+  if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
+  if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
   if (type !== 'IMAGES_RESULT') return payload;
   if (!isObject(payload)) return payload;
   const result = payload.result;
