@@ -2091,8 +2091,35 @@ describe('workflow snapshot queue/ETA fields', () => {
     expect(projectWorkflowSnapshot(old)).toBe(old);
   });
 
+  // 🔴 ABSENT MEANS NULL. The host omits a field with nothing to report rather
+  // than sending null, so a NON-terminal snapshot can lack `eta` and every step
+  // field (nothing queued or running, or a poll the host did not read). It must
+  // cross untouched, with the keys still absent.
+  it.each([
+    ['a queued step with only its queue (host encoding)', {
+      workflowId: 'w', status: 'pending',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'pending', queue: QUEUED.steps[0]!.queue }],
+      eta: QUEUED.eta,
+    }],
+    ['a running step with no progress, queue or completedAt', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'train', $type: 'training', status: 'processing', startedAt: '2026-11-14T12:00:21Z' }],
+      eta: { ...PROCESSING.eta, stepName: 'train', progress: null },
+    }],
+    ['no eta and no step fields at all', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'processing' }],
+    }],
+    ['the rate-limited placeholder', { workflowId: 'w', status: 'processing' }],
+  ])('passes a non-terminal snapshot with the eta fields absent: %s', (_, snapshot) => {
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    // By identity: nothing was added, so an absent key stays absent.
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
   it.each([
     ['eta: null (terminal)', { ...PROCESSING, status: 'succeeded', eta: null }],
+    ['eta absent (terminal, host encoding)', { workflowId: 'w', status: 'succeeded' }],
     ['progress 0 and 1, the inclusive bounds', { ...PROCESSING, eta: { ...PROCESSING.eta, progress: 1 }, steps: [{ ...PROCESSING.steps[0]!, progress: 0 }] }],
     ['precedingJobs / queuedAhead 0', { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: 0 }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, precedingJobs: 0 } }] }],
     ['a support value the SDK does not know yet', { ...QUEUED, eta: { ...QUEUED.eta, support: 'someFutureValue' }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, support: '' } }] }],
@@ -2201,9 +2228,10 @@ describe('workflow snapshot queue/ETA fields', () => {
   });
 });
 
-// The host's exact shape, one queued and one processing snapshot.
-// TODO(app_blocks_sdk_1gm9): swap in the real host-mapper fixture once the
-// civitai host PR that emits these fields is up.
+// The host's own contract fixtures: a copy of the two whole-snapshot
+// expectations (`toStrictEqual`) pinned in civitai/civitai#8980's
+// `src/server/services/blocks/__tests__/workflow.service.test.ts`. Empty
+// fields are OMITTED there, as the host sends them.
 describe('host-workflow-snapshot.eta.json contract fixture', () => {
   const path = join(__dirname, 'fixtures/host-workflow-snapshot.eta.json');
 
@@ -2220,5 +2248,22 @@ describe('host-workflow-snapshot.eta.json contract fixture', () => {
     expect(isValidWorkflowReply(payload)).toBe(true);
     expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
     expect((snapshot as { eta?: unknown }).eta).not.toBeUndefined();
+  });
+
+  it('is the host copy: its ids, step names and values', () => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(fixture.queued!.workflowId).toBe('wf_contract_queued');
+    expect(fixture.queued!.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: '2026-11-14T12:00:07Z',
+      completesAt: '2026-11-14T12:01:13Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(fixture.processing!.workflowId).toBe('wf_contract_processing');
+    expect(fixture.processing!.steps).toEqual([
+      { name: 'clip', $type: 'videoGen', status: 'processing', progress: 0.42, startedAt: '2026-11-14T12:00:21Z' },
+    ]);
   });
 });

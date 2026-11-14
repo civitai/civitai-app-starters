@@ -1,49 +1,46 @@
 {
-  "$comment": "TODO(app_blocks_sdk_1gm9): replace with the real host-mapper fixture from the civitai host PR that emits eta/queue/progress. Until then this is built by hand from the shared contract: one QUEUED and one PROCESSING snapshot, in the host's shape.",
+  "$comment": "The host's own contract fixtures: a copy of the two whole-snapshot expectations (`toStrictEqual`) in civitai/civitai#8980's src/server/services/blocks/__tests__/workflow.service.test.ts, describe 'snapshotFromWorkflow — queue/ETA/progress contract fixtures'. Empty fields are OMITTED, as the host encodes them. Re-copy if the host changes them.",
   "queued": {
-    "workflowId": "wf_eta_fixture",
-    "status": "processing",
+    "workflowId": "wf_contract_queued",
+    "status": "pending",
+    "cost": { "total": 24 },
     "steps": [
       {
-        "name": "draw",
+        "name": "gen",
         "$type": "imageGen",
         "status": "pending",
         "queue": {
-          "precedingJobs": 3,
-          "estimatedStartAt": "2026-11-14T12:00:20.000Z",
-          "estimatedCompleteAt": "2026-11-14T12:00:45.000Z",
+          "precedingJobs": 7,
+          "estimatedStartAt": "2026-11-14T12:00:07Z",
+          "estimatedCompleteAt": "2026-11-14T12:01:13Z",
           "support": "available"
-        },
-        "progress": null,
-        "startedAt": null,
-        "completedAt": null
+        }
       }
     ],
     "eta": {
-      "stepName": "draw",
-      "queuedAhead": 3,
-      "startsAt": "2026-11-14T12:00:20.000Z",
-      "completesAt": "2026-11-14T12:00:45.000Z",
+      "stepName": "gen",
+      "queuedAhead": 7,
+      "startsAt": "2026-11-14T12:00:07Z",
+      "completesAt": "2026-11-14T12:01:13Z",
       "progress": null,
       "support": "available"
     }
   },
   "processing": {
-    "workflowId": "wf_eta_fixture",
+    "workflowId": "wf_contract_processing",
     "status": "processing",
+    "cost": { "total": 31 },
     "steps": [
       {
-        "name": "draw",
-        "$type": "imageGen",
+        "name": "clip",
+        "$type": "videoGen",
         "status": "processing",
-        "queue": null,
         "progress": 0.42,
-        "startedAt": "2026-11-14T12:00:21.000Z",
-        "completedAt": null
+        "startedAt": "2026-11-14T12:00:21Z"
       }
     ],
     "eta": {
-      "stepName": "draw",
+      "stepName": "clip",
       "queuedAhead": null,
       "startsAt": null,
       "completesAt": null,

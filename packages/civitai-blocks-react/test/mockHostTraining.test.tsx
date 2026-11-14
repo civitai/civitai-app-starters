@@ -80,9 +80,9 @@ describe('createMockHost — pass-through training', () => {
     expect(snap.status).toBe('succeeded');
     expect(snap.publishedModel).toBeUndefined();
     // The full key set: no trainedEpochs, no checkpoint url field, no fabricated stepOutputs.
-    // `eta` is the terminal poll's `null`.
+    // No `eta`: the host omits it on a terminal snapshot.
     expect(Object.keys(snap).sort()).toEqual(
-      ['cost', 'eta', 'imageUrls', 'spentAccountType', 'status', 'workflowId'].sort(),
+      ['cost', 'imageUrls', 'spentAccountType', 'status', 'workflowId'].sort(),
     );
   });
 
@@ -91,7 +91,7 @@ describe('createMockHost — pass-through training', () => {
     const snap = await runToTerminal(result, TRAINING_BODY);
     expect(snap.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 1 }]);
     expect(Object.keys(snap).sort()).toEqual(
-      ['cost', 'eta', 'imageUrls', 'spentAccountType', 'status', 'trainedEpochs', 'workflowId'].sort(),
+      ['cost', 'imageUrls', 'spentAccountType', 'status', 'trainedEpochs', 'workflowId'].sort(),
     );
   });
 
