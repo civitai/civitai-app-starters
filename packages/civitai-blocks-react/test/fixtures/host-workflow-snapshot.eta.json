@@ -1,0 +1,54 @@
+{
+  "$comment": "TODO(app_blocks_sdk_1gm9): replace with the real host-mapper fixture from the civitai host PR that emits eta/queue/progress. Until then this is built by hand from the shared contract: one QUEUED and one PROCESSING snapshot, in the host's shape.",
+  "queued": {
+    "workflowId": "wf_eta_fixture",
+    "status": "processing",
+    "steps": [
+      {
+        "name": "draw",
+        "$type": "imageGen",
+        "status": "pending",
+        "queue": {
+          "precedingJobs": 3,
+          "estimatedStartAt": "2026-11-14T12:00:20.000Z",
+          "estimatedCompleteAt": "2026-11-14T12:00:45.000Z",
+          "support": "available"
+        },
+        "progress": null,
+        "startedAt": null,
+        "completedAt": null
+      }
+    ],
+    "eta": {
+      "stepName": "draw",
+      "queuedAhead": 3,
+      "startsAt": "2026-11-14T12:00:20.000Z",
+      "completesAt": "2026-11-14T12:00:45.000Z",
+      "progress": null,
+      "support": "available"
+    }
+  },
+  "processing": {
+    "workflowId": "wf_eta_fixture",
+    "status": "processing",
+    "steps": [
+      {
+        "name": "draw",
+        "$type": "imageGen",
+        "status": "processing",
+        "queue": null,
+        "progress": 0.42,
+        "startedAt": "2026-11-14T12:00:21.000Z",
+        "completedAt": null
+      }
+    ],
+    "eta": {
+      "stepName": "draw",
+      "queuedAhead": null,
+      "startsAt": null,
+      "completesAt": null,
+      "progress": 0.42,
+      "support": null
+    }
+  }
+}
