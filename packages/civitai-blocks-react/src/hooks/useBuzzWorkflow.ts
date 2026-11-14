@@ -1336,7 +1336,6 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         // A throttled reply (a poll the host could not serve) is returned so the
         // caller can see it, but it is not an observation: the hook's `result`
         // stays the previous real snapshot.
-        if (snapshot.throttled === true) return snapshot;
         setResult(snapshot);
         if (TERMINAL_STATUSES.has(snapshot.status)) {
           setStatus('done');
@@ -1399,12 +1398,6 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         // app's eta, steps and cost on every refused poll. Skip it: no
         // `onUpdate`, `last` and the hook's `result` stay the previous real
         // snapshot, and the loop polls again on the usual interval.
-        if (snapshot.throttled === true) {
-          throttledOnly ??= snapshot;
-          if (Date.now() + interval >= deadline) break;
-          await sleep(interval, options?.signal);
-          continue;
-        }
 
         last = snapshot;
         setResult(snapshot);
