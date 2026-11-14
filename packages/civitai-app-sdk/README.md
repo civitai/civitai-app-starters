@@ -123,8 +123,8 @@ The request is `{ requestId, workflowId, imageIndex }` (an index into the
 workflow's `images`; never a url) and the reply carries `result`, a
 `BlockPersistedGenerationSource` (`{ url, width, height, imageId, ready }`), or a
 free-text `error`. The image is private to the viewer and not on the app's
-shared grid, and there is no confirm dialog. The host waits up to about 30 s for
-the scan; `ready: false` means it is still pending, and a generation using the
+shared grid, and there is no confirm dialog. The host waits up to about thirty
+seconds for the scan; `ready: false` means it is still pending, and a generation using the
 source is refused with `source-scan-pending` until it finishes. `url` / `width` /
 `height` are a `BlockGenerationSourceImageInfo`, so they go into a
 `sourceImages` entry. Full-page app hosts only: an iframe/slot host replies with

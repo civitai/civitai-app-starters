@@ -50,11 +50,13 @@ describe('PERSIST_GENERATION_SOURCE in the host reply ledger', () => {
     });
   });
 
-  it('request() posts the type with its payload and resolves with the result', async () => {
+  // The ledger's only key is `result`, so request() unwraps it: the caller gets
+  // the source itself, not `{ result }`.
+  it('request() posts the type with its payload and resolves with the unwrapped source', async () => {
     const { pending, sent } = exchange({ result: RESULT });
     expect(sent.type).toBe('PERSIST_GENERATION_SOURCE');
     expect(sent.payload).toMatchObject({ workflowId: 'wf_persist', imageIndex: 1 });
-    await expect(pending).resolves.toEqual({ result: RESULT });
+    await expect(pending).resolves.toEqual(RESULT);
   });
 
   it('request() rejects with a BridgeError carrying the host error as its message', async () => {
