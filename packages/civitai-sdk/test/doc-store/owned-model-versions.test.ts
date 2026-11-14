@@ -209,11 +209,11 @@ describe('ownedModelVersions: where it runs among the other checks', () => {
   it('spends no write budget and no rejection', async () => {
     const fake = make({ enforceRateLimits: true, now: () => Date.parse('2031-01-01T00:00:00.000Z') });
     const workflows = fake.storage.collection('workflows');
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 35; i++) {
       expect(await refused(workflows.put(`r${i}`, { baseVersionId: NOBODY_OWNS }))).toEqual(NOT_OWNED('/baseVersionId'));
     }
-    // A full burst of ten still fits: neither the burst nor the rejection bucket moved.
-    for (let i = 0; i < 10; i++) await workflows.put(`ok${i}`, { baseVersionId: ALICE_OWNS });
-    expect((await refusal(workflows.put('ok10', {}))).details).toEqual({ bucket: 'shared-write', retryAfter: 360 });
+    // A full burst of 30 still fits: neither the burst nor the rejection bucket moved.
+    for (let i = 0; i < 30; i++) await workflows.put(`ok${i}`, { baseVersionId: ALICE_OWNS });
+    expect((await refusal(workflows.put('ok30', {}))).details).toEqual({ bucket: 'shared-write', retryAfter: 60 });
   });
 });
