@@ -618,6 +618,107 @@ Nothing is charged.
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
 
+#### Queue position, ETA and progress
+
+A snapshot from `watch()` / `poll()` carries where the run is right now, for a
+progress bar or an "N ahead, starts ~HH:MM" line:
+
+- **`snapshot.eta`** summarises the step that is queued or running now:
+  `{ stepName, queuedAhead, startsAt, completesAt, progress, support }`. The
+  host reads it off all of the workflow's orchestrator steps, so every kind has
+  one, not only `kind: 'workflow'`. It picks the first step with a queue
+  position, else the first running step. While that step is queued,
+  `queuedAhead` counts the jobs ahead of it and `startsAt` / `completesAt` are
+  estimates. While it runs, those two are `null` and `progress` moves.
+- **On each entry of `snapshot.steps`** (a `kind: 'workflow'` run): `queue`
+  (`{ precedingJobs, estimatedStartAt, estimatedCompleteAt, support }`, present
+  only while that step is queued), `progress`, `startedAt` and `completedAt`.
+
+**Absent and `null` mean the same thing.** The host omits a field it has
+nothing to report rather than sending `null`. A terminal snapshot has no `eta`,
+and neither does a workflow with nothing queued or running. A host that predates
+these fields sends none of them.
+
+**A throttled poll is not an update, and `watch` already skips it.** When the
+host cannot serve a poll (it is rate-limited), it answers
+`{ workflowId, status: 'processing', throttled: true }` without reading the
+workflow. `watch` does not pass that reply to `onUpdate` and keeps the previous
+real snapshot (its `eta`, `steps` and `cost`) as `result`. It then polls again,
+so an app's progress bar does not blank on a refused poll. `poll()` returns
+such a reply as is, so check `snapshot.throttled`, but it does not replace
+`result` either. `cancel()` rejects on such a reply with
+`WorkflowCancelNotIssuedError`, since the cancel was not issued (see the cancel
+note below). The `dev:live` host marks its own transient poll-failure reply the
+same way. A host that predates the marker sends the same reply without
+`throttled`, and that one still reaches `onUpdate`.
+
+🔴 **The queue position does not move on its own between status changes.** A
+held poll (`watch`) returns early when the workflow's status, a step's progress
+or a job event changes. It does not return when the queue ahead of a waiting
+step drains. So while a step is queued, `queuedAhead` and its estimates refresh
+at most once per held poll, about every 15 s. Once the step runs, `progress`
+updates promptly.
+
+`progress` is a **fraction from 0 to 1**, not a percentage. The host reports it
+only for image and video generation steps (`textToImage`, `imageGen`,
+`videoGen`). Other types, training among them, report a value that restarts
+each phase, so they get none. Every time is an ISO-8601 string and an
+**estimate**. `support: 'unavailable'` means there is no capacity for the step
+right now; treat a value you do not recognise like `'unsupported'` (no
+estimate). `status` is still the only thing that says the run is done.
+
+```tsx
+import type { BlockWorkflowEta } from '@civitai/app-sdk/blocks';
+import { useState } from 'react';
+
+function RunStatus({ workflowId }: { workflowId: string }) {
+  const { watch } = useBuzzWorkflow();
+  const [eta, setEta] = useState<BlockWorkflowEta | null>(null);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    void watch(workflowId, {
+      signal: ctl.signal,
+      onUpdate: (s) => setEta(s.eta ?? null), // throttled polls never arrive here
+    }).then(
+      () => setEta(null), // terminal
+      () => {}, // a watch error is shown elsewhere
+    );
+    return () => ctl.abort();
+  }, [watch, workflowId]);
+
+  if (!eta) return null;
+  if (eta.progress !== null) {
+    return <progress max={1} value={eta.progress} />;
+  }
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return (
+    <span>
+      {eta.queuedAhead ?? '?'} ahead{at ? `, starts ~${at}` : ''}
+    </span>
+  );
+}
+```
+
+🔴 **A malformed value is dropped, not fatal.** The transport removes an `eta`
+that does not have this shape (and likewise a malformed `queue`, `progress`,
+`startedAt` or `completedAt` on a step) and delivers the rest of the snapshot,
+so a bad estimate never costs you the status or the outputs.
+
+**Mock host:** the polls before `pollsUntilDone` report these fields, encoded
+as the host does (an empty field is omitted, not `null`). The first half of
+them are queued (`status: 'pending'`, `queuedAhead` falling) and the rest
+running (`status: 'processing'`, `progress` rising for an image or video
+generation step). The terminal poll has no `eta`. `throttledPolls: [n, …]`
+answers those `POLL_WORKFLOW` requests (1-based) as throttled replies. `stepName` is the host's own step name for each kind: `block-step` for
+`kind: 'step'` and `kind: 'training'`, `block-custom-comfy` for `customComfy`,
+and each step's `name` for `kind: 'workflow'`. A `textToImage` step is named by
+the orchestrator, which the mock cannot know, so it uses `$0`. With the default
+`pollsUntilDone: 2` the one non-terminal poll is a running one. Pass
+`pollsUntilDone: 5` to see two of each.
+
 #### Several steps as one workflow: `kind: 'workflow'`
 
 A `kind: 'workflow'` body submits **several orchestrator steps as one
@@ -748,7 +849,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
+last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
 fields keep their meaning: `status` and `cost` are the whole workflow's, and
@@ -818,6 +921,14 @@ as `cost.total`.
 > stops spending Buzz. Before that, cancel was client-side only (stop polling). If
 > your installed version predates 0.5.0, do the client-side half and add the
 > `cancel(...)` call after upgrading.
+>
+> 🔴 **A throttled cancel was not issued.** If the host cannot serve the cancel
+> (it answers `throttled: true`), `cancel()` REJECTS with
+> `WorkflowCancelNotIssuedError` (`code: 'cancel-not-issued'`, plus
+> `workflowId` and the reply as `snapshot`). The workflow is still running and
+> still spending, so retry the cancel after a short wait. The hook's `result`,
+> `status` and `error` are left as they were. Any other reply resolves as
+> before, with `status` becoming `'done'`.
 
 ### `useBatchEstimate()`
 

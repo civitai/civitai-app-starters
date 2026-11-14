@@ -812,9 +812,11 @@ describe('createMockHost — kind: workflow', () => {
       const { workflowId } = (await submit(chain())) as BlockWorkflowSnapshot;
       const statuses = (s: BlockWorkflowSnapshot) => s.steps?.map((x) => x.status);
 
+      // Poll 1 is the mock's QUEUED phase: as on the host, the workflow and its
+      // waiting step report 'pending' until the step runs.
       const first = await poll(workflowId);
-      expect(first.status).toBe('processing');
-      expect(statuses(first)).toEqual(['succeeded', 'processing', 'pending']);
+      expect(first.status).toBe('pending');
+      expect(statuses(first)).toEqual(['succeeded', 'pending', 'pending']);
       // `draw` is done but suppressed, so nothing is surfaced yet.
       expect(first.imageUrls).toBeUndefined();
 

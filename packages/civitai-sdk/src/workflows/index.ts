@@ -229,24 +229,37 @@ export interface WorkflowsClient {
    */
   submit(body: WorkflowBody, opts: WorkflowSubmitOptions): Promise<BlockWorkflowSnapshot>;
 
-  /** One workflow's current state. Only a workflow this app submitted for this viewer. */
+  /**
+   * One workflow's current state. Only a workflow this app submitted for this
+   * viewer. A read the host could not serve is returned as is, with
+   * `throttled: true` and no other state: check the flag before rendering it.
+   */
   get(workflowId: string, opts?: WorkflowGetOptions): Promise<BlockWorkflowSnapshot>;
 
   /**
    * Yields the workflow now and again each time it changes, ending at a final
    * status. Break out of the loop to stop watching.
    *
-   * A yielded snapshot can be a bare progress placeholder — just `workflowId`
-   * and `status: 'processing'` — which the host sends when it skips a read
-   * under load. Keep what an earlier snapshot showed rather than rendering
-   * that one as "no steps, no images".
+   * A read the host could not serve (rate-limited) comes back as
+   * `{ workflowId, status: 'processing', throttled: true }`. It is not an
+   * update, so it is never yielded and does not end the watch: the watch reads
+   * again, and the last snapshot you were given stays the current one. A host
+   * that predates the `throttled` marker sends the same placeholder without it,
+   * and that one IS yielded: keep what an earlier snapshot showed rather than
+   * rendering it as "no steps, no images".
+   *
+   * There is no timeout of its own: stop it with `signal` (it then rejects with
+   * the abort reason, whatever it has yielded) or by breaking out of the loop.
    */
   watch(
     workflowId: string,
     opts?: WorkflowWatchOptions,
   ): AsyncGenerator<BlockWorkflowSnapshot, void, undefined>;
 
-  /** Resolves once the workflow reaches a final status, whichever it is. */
+  /**
+   * Resolves once the workflow reaches a final status, whichever it is. A
+   * throttled reply never ends it and is never what it resolves with.
+   */
   wait(workflowId: string, opts?: WorkflowWatchOptions): Promise<BlockWorkflowSnapshot>;
 
   /**
@@ -305,6 +318,17 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
         continue;
       }
       held = true;
+      // 🔴 A THROTTLED REPLY IS NOT AN UPDATE. The host answers a poll it could
+      // not serve with `{ workflowId, status: 'processing', throttled: true }`
+      // without reading the workflow. It is not yielded (so `wait` never
+      // resolves with it and the caller's last real snapshot stands), it does
+      // not touch `seen` (so the same real snapshot after it is not re-yielded),
+      // and the watch reads again after the usual gap.
+      if (snapshot.throttled === true) {
+        signal?.throwIfAborted();
+        await sleep(intervalMs, signal);
+        continue;
+      }
       // Compared whole, so anything the host adds to a snapshot counts as progress.
       const text = JSON.stringify(snapshot);
       if (text !== seen) {
