@@ -1433,3 +1433,65 @@ describe('createMockHost — purity (no network)', () => {
     }
   });
 });
+
+/**
+ * `accountType` on BOTH `kind: 'step'` arms (civitai/civitai's step schemas carry it
+ * top-level, as `textToImage` does). The default wallet is yellow-dominant, so a
+ * pick-blind stamp reads `'yellow'` and cannot satisfy the `'green'` assertion.
+ */
+describe('createMockHost — accountType on kind: step bodies', () => {
+  let host: ReturnType<typeof createMockHost> | undefined;
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = host = undefined;
+    resetTransport();
+  });
+
+  const ARMS = [
+    [
+      'pass-through',
+      { kind: 'step' as const, $type: 'imageBackgroundRemoval', input: { prompt: 'a cat' }, maxBuzz: 20 },
+    ],
+    ['registered', { kind: 'step' as const, step: 'convert-image', params: {} }],
+  ] as const;
+
+  it.each(ARMS)('%s: stamps spentAccountType from the pick', async (_arm, body) => {
+    host = createMockHost({ pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let snap!: { status: string; workflowId: string; spentAccountType?: string };
+    await act(async () => {
+      snap = (await result.current.submit({ ...body, accountType: 'green' })) as typeof snap;
+    });
+    await act(async () => {
+      snap = (await result.current.poll(snap.workflowId)) as typeof snap;
+    });
+    expect(snap.status).toBe('succeeded');
+    expect(snap.spentAccountType).toBe('green');
+  });
+
+  it.each(ARMS)('%s: rejects a disallowed pick with the host message', async (_arm, body) => {
+    host = createMockHost({ disallowedAccountTypes: ['yellow'], pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.submit({ ...body, accountType: 'yellow' }).then(
+        (snap) => ({ unexpectedlyResolved: snap }),
+        (err) => err,
+      );
+    });
+    expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+    expect((outcome as WorkflowSubmitError).snapshot.error).toBe(disallowedAccountError('yellow'));
+  });
+});
