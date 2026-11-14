@@ -20,8 +20,15 @@ import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
 
-/** The timeout the hook must use: 45 s, the host's ~30 s scan wait plus room. */
-const EXPECTED_TIMEOUT_MS = 45_000;
+/**
+ * The timeout the hook must use: 120 s, the workflow class. The host's server
+ * deadline covers the whole request — fetch the output, store it, then wait up to
+ * ~30 s for the scan, polled every 1.5 s — so it can answer after ~32 s plus
+ * network (civitai/civitai#8987). A bound of 45 s left too little room.
+ */
+const EXPECTED_TIMEOUT_MS = 120_000;
+/** The earlier, too-tight bound this PR first shipped; a late reply past it must still land. */
+const PREVIOUS_TIMEOUT_MS = 45_000;
 /** The transport's default, which the host's own scan wait would exhaust. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -174,7 +181,7 @@ describe('usePersistGenerationSource', () => {
   });
 
   // A malformed reply must REJECT promptly — never resolve with unchecked
-  // fields, and never be dropped (which would leave persist() hanging for 45 s).
+  // fields, and never be dropped (which would leave persist() hanging for 120 s).
   // Fake timers make "promptly" checkable: the rejection must land with the
   // clock advanced by 0 ms, so a dropped reply that later times out fails here.
   it.each([
@@ -280,7 +287,7 @@ describe('usePersistGenerationSource', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });
 
-  it('survives the 30 s default (the host waits ~30 s for the scan) and resolves a late reply', async () => {
+  it('survives the 30 s default AND the old 45 s bound, and resolves a late reply', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => usePersistGenerationSource());
     let p!: Promise<BlockPersistedGenerationSource>;
@@ -292,9 +299,10 @@ describe('usePersistGenerationSource', () => {
       () => (settled = true),
       () => (settled = true),
     );
-    // Past the default, short of the persist bound.
+    // Past the default and past the old 45 s bound, short of the 120 s one.
+    expect(PREVIOUS_TIMEOUT_MS).toBeGreaterThan(DEFAULT_TIMEOUT_MS);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUT_MS + 5_000);
+      await vi.advanceTimersByTimeAsync(PREVIOUS_TIMEOUT_MS + 15_000);
     });
     expect(settled).toBe(false);
 
@@ -308,7 +316,7 @@ describe('usePersistGenerationSource', () => {
     await expect(p).resolves.toMatchObject({ imageId: 7307, ready: false });
   });
 
-  it('rejects with a RequestTimeoutError at 45 s when the host never answers', async () => {
+  it('rejects with a RequestTimeoutError at 120 s when the host never answers', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => usePersistGenerationSource());
     let p!: Promise<BlockPersistedGenerationSource>;

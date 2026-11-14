@@ -2971,7 +2971,7 @@ describe('createLiveHost — PERSIST_GENERATION_SOURCE (refused: needs a signed-
   // The page host resolves the output, saves it and waits for its scan through
   // the viewer's signed-in session, which this harness does not have. It must
   // refuse on the reply channel at once — never fall through to `default:`
-  // (a 45 s hang in the hook) and never touch the network.
+  // (a 120 s hang in the hook) and never touch the network.
   it('replies GENERATION_SOURCE_PERSISTED with an actionable error and makes no network call', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock = vi.fn(async () => {
