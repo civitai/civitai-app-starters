@@ -618,6 +618,70 @@ Nothing is charged.
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
 
+#### Queue position, ETA and progress
+
+A snapshot from `watch()` / `poll()` carries where the run is right now, for a
+progress bar or an "N ahead, starts ~HH:MM" line:
+
+- **`snapshot.eta`** summarises the step that is queued or running now (the
+  first queued step, else the first running step): `{ stepName, queuedAhead,
+  startsAt, completesAt, progress, support }`. While it is queued, `queuedAhead`
+  counts the jobs ahead of it and `startsAt` / `completesAt` are estimates;
+  while it runs, those two are `null` and `progress` moves. It is `null` once
+  the workflow is terminal.
+- **On each entry of `snapshot.steps`** (a `kind: 'workflow'` run): `queue`
+  (`{ precedingJobs, estimatedStartAt, estimatedCompleteAt, support }`, present
+  only while that step is queued), `progress`, `startedAt` and `completedAt`.
+
+`progress` is a **fraction from 0 to 1**, not a percentage, and is `null` for
+multi-phase steps such as training, whose own value restarts each phase. Every
+time is an ISO-8601 string and an **estimate**. `support: 'unavailable'` means
+there is no capacity for the step right now; treat a value you do not recognise
+like `'unsupported'` (no estimate). Every field is optional: a host that
+predates them sends none, so treat absent as "unknown". `status` is still the
+only thing that says the run is done.
+
+```tsx
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+import { useState } from 'react';
+
+function RunStatus({ workflowId }: { workflowId: string }) {
+  const { watch } = useBuzzWorkflow();
+  const [snap, setSnap] = useState<BlockWorkflowSnapshot | null>(null);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    void watch(workflowId, { signal: ctl.signal, onUpdate: setSnap });
+    return () => ctl.abort();
+  }, [watch, workflowId]);
+
+  const eta = snap?.eta;
+  if (!eta) return null; // terminal, not started, or an older host
+  if (eta.progress !== null) {
+    return <progress max={1} value={eta.progress} />;
+  }
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return (
+    <span>
+      {eta.queuedAhead ?? '?'} ahead{at ? `, starts ~${at}` : ''}
+    </span>
+  );
+}
+```
+
+🔴 **A malformed value is dropped, not fatal.** The transport removes an `eta`
+that does not have this shape (and likewise a malformed `queue`, `progress`,
+`startedAt` or `completedAt` on a step) and delivers the rest of the snapshot,
+so a bad estimate never costs you the status or the outputs.
+
+**Mock host:** the polls before `pollsUntilDone` report these fields: the first
+half of them queued (`queuedAhead` falling), the rest running (`progress`
+rising), and the terminal poll `eta: null`. `status` stays `'processing'` in
+both phases. With the default `pollsUntilDone: 2` the one non-terminal poll is a
+running one; pass `pollsUntilDone: 5` to see two of each.
+
 #### Several steps as one workflow: `kind: 'workflow'`
 
 A `kind: 'workflow'` body submits **several orchestrator steps as one
@@ -748,7 +812,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
+last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
 fields keep their meaning: `status` and `cost` are the whole workflow's, and

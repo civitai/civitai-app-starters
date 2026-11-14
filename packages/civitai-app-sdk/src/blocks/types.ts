@@ -2531,6 +2531,43 @@ export interface BlockWorkflowSnapshot {
    * an estimate (which creates no workflow) and on a host that predates it.
    */
   steps?: BlockWorkflowStepSnapshot[];
+  /**
+   * Where the run is right now: a summary of the ONE step that is queued or
+   * running, for a progress bar or an "N ahead, starts ~HH:MM" line. The host
+   * picks the first queued step, else the first running step. See
+   * {@link BlockWorkflowEta} for each field.
+   *
+   * - **An object** while the workflow is not terminal and a step is queued or
+   *   running.
+   * - **`null`** once the workflow is terminal (`succeeded`, `failed`,
+   *   `expired`, `canceled`).
+   * - **Absent** on a host that predates the field. Treat absent as "unknown",
+   *   not as "no queue".
+   *
+   * Every value in it is an ESTIMATE from the orchestrator's scheduler. Do not
+   * gate on it; `status` is still the only thing that says the run is done.
+   *
+   * ```tsx
+   * await watch(workflowId, {
+   *   onUpdate: (s) => {
+   *     const eta = s.eta;
+   *     if (!eta) return setLine(null);
+   *     if (eta.progress !== null) return setBar(eta.progress); // running
+   *     const at = eta.startsAt ? new Date(eta.startsAt) : null;
+   *     setLine(
+   *       `${eta.queuedAhead ?? '?'} ahead` +
+   *         (at ? `, starts ~${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''),
+   *     );
+   *   },
+   * });
+   * ```
+   *
+   * 🔴 A MALFORMED VALUE IS DROPPED, NOT FATAL. `@civitai/blocks-react` removes
+   * an `eta` that does not have this shape (and likewise a malformed `queue`,
+   * `progress`, `startedAt` or `completedAt` on a step) and delivers the rest of
+   * the snapshot, so a bad estimate never costs an app its status or outputs.
+   */
+  eta?: BlockWorkflowEta | null;
 }
 
 /** One entry of {@link BlockWorkflowSnapshot.steps}. */
@@ -2553,6 +2590,99 @@ export interface BlockWorkflowStepSnapshot {
   output?: unknown;
   /** Why this step failed. Diagnostic text; do not render it verbatim. */
   error?: string;
+  /**
+   * The step's place in the orchestrator's queue. PRESENT ONLY WHILE THE STEP
+   * IS QUEUED (waiting for a worker); `null` or absent once it has started,
+   * once it is terminal, and on a host that predates the field. See
+   * {@link BlockWorkflowStepQueue}.
+   */
+  queue?: BlockWorkflowStepQueue | null;
+  /**
+   * How much of this step is done, as a FRACTION from `0` to `1` (not a
+   * percentage). `null` when the orchestrator reports none, once the step is
+   * terminal, and for MULTI-PHASE steps such as training, whose orchestrator
+   * value restarts at 0 in each phase and so would move backwards. Absent on a
+   * host that predates the field.
+   */
+  progress?: number | null;
+  /**
+   * When the step started running, as an ISO-8601 string. `null` until it has
+   * started. Absent on a host that predates the field.
+   */
+  startedAt?: string | null;
+  /**
+   * When the step finished, as an ISO-8601 string. `null` until it is
+   * terminal. Absent on a host that predates the field.
+   */
+  completedAt?: string | null;
+}
+
+/**
+ * The values the host sends today in {@link BlockWorkflowStepQueue.support}
+ * and {@link BlockWorkflowEta.support}: whether the orchestrator can estimate
+ * this step's queue at all.
+ *
+ *  - `'available'` — there is capacity for the step and the estimates are the
+ *    scheduler's own.
+ *  - `'unavailable'` — NO CAPACITY RIGHT NOW: no worker that can run the step
+ *    is available, so the step waits until one is. The estimates, when given,
+ *    are least reliable here.
+ *  - `'unsupported'` — the orchestrator does not estimate queues for this kind
+ *    of step; the position and times are `null`.
+ *
+ * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the field is typed as these plus any string,
+ * and the SDK's inbound validator accepts any string. Treat an unrecognised
+ * value like `'unsupported'`.
+ */
+export type KnownBlockWorkflowQueueSupport = 'unsupported' | 'unavailable' | 'available';
+
+/**
+ * One step's place in the orchestrator's queue — {@link
+ * BlockWorkflowStepSnapshot.queue}, present only while the step is queued.
+ *
+ * Every time is an ISO-8601 string and an ESTIMATE, and any of them may be
+ * `null` when the orchestrator has none.
+ */
+export interface BlockWorkflowStepQueue {
+  /** How many jobs are ahead of this step in the queue (a whole number ≥ 0), or `null` when unknown. */
+  precedingJobs: number | null;
+  /** When the step is expected to start running. An estimate. */
+  estimatedStartAt: string | null;
+  /** When the step is expected to finish. An estimate. */
+  estimatedCompleteAt: string | null;
+  /** Whether these estimates exist at all — see {@link KnownBlockWorkflowQueueSupport}. */
+  support: KnownBlockWorkflowQueueSupport | (string & {});
+}
+
+/**
+ * {@link BlockWorkflowSnapshot.eta}: a summary of the step that is queued or
+ * running now (the first queued step, else the first running step).
+ *
+ * WHILE QUEUED, `startsAt` and `completesAt` are the estimates and `progress`
+ * is `null`. WHILE RUNNING, `startsAt` and `completesAt` are `null` and
+ * `progress` moves. Every time is an ISO-8601 string and an
+ * ESTIMATE.
+ */
+export interface BlockWorkflowEta {
+  /** The {@link BlockWorkflowStepSnapshot.name} of the step this summarises. */
+  stepName: string;
+  /** How many jobs are ahead of that step in the queue (a whole number ≥ 0), or `null` when unknown. */
+  queuedAhead: number | null;
+  /** When the step is expected to start. An estimate; `null` once it is running or when unknown. */
+  startsAt: string | null;
+  /** When the step is expected to finish. An estimate; `null` once it is running or when unknown. */
+  completesAt: string | null;
+  /**
+   * How much of the step is done, as a FRACTION from `0` to `1`. `null` while
+   * it is queued, when the orchestrator reports none, and for multi-phase
+   * steps such as training (see {@link BlockWorkflowStepSnapshot.progress}).
+   */
+  progress: number | null;
+  /**
+   * The step's {@link BlockWorkflowStepQueue.support}, or `null` when the host
+   * has none. `'unavailable'` means no capacity right now.
+   */
+  support: KnownBlockWorkflowQueueSupport | (string & {}) | null;
 }
 
 /**

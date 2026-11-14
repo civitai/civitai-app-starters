@@ -69,7 +69,9 @@ import {
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
+  type BlockWorkflowEta,
   type BlockWorkflowSnapshot,
+  type BlockWorkflowStepSnapshot,
   type BlockGatedImage,
   type BlockImagePickerSource,
   type BlockPickedImageInfo,
@@ -1228,7 +1230,12 @@ export interface MockHostOptions {
    * unaffected. Live-tunable via {@link MockHost.setScenario}.
    */
   cannedImageScan?: MockCannedImageScan;
-  /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
+  /**
+   * Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2.
+   * The polls before it report the queue and progress fields (`eta`, and a
+   * step's `queue` / `progress` / `startedAt`): the first half of them queued,
+   * the rest running. `5` gives two of each.
+   */
   pollsUntilDone?: number;
   /**
    * The `cost.total` reported on estimate + succeeded snapshots. Default 8.
@@ -3255,6 +3262,88 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       );
     };
 
+    /** When each mock workflow's current step started running, so `startedAt` holds still across polls. */
+    const runStartedAt = new Map<string, string>();
+
+    /**
+     * The queue/ETA fields of a NON-terminal poll, so an app can be built
+     * against them: the first half of the non-terminal polls are QUEUED (the
+     * step's `queue` set, `precedingJobs` / `eta.queuedAhead` falling, start and
+     * finish estimates in the near future), the rest RUNNING (`queue: null`,
+     * `progress` / `eta.progress` rising, `startedAt` set). With the default
+     * `pollsUntilDone: 2` there is one non-terminal poll and it is a running
+     * one; give `pollsUntilDone: 5` to see two queued and two running polls.
+     * The workflow `status` stays `'processing'` in both phases, as the mock's
+     * non-terminal status always has: read `eta` to tell them apart. Terminal
+     * polls carry `eta: null`.
+     */
+    const etaView = (
+      workflowId: string,
+      polls: number,
+      stepName: string,
+    ): {
+      eta: BlockWorkflowEta;
+      step: Pick<BlockWorkflowStepSnapshot, 'queue' | 'progress' | 'startedAt' | 'completedAt'>;
+    } => {
+      const nonTerminal = Math.max(1, pollsUntilDone - 1);
+      const queuedPolls = Math.floor(nonTerminal / 2);
+      const now = Date.now();
+      const iso = (ms: number) => new Date(ms).toISOString();
+      if (polls <= queuedPolls) {
+        const ahead = (queuedPolls - polls + 1) * 2;
+        const startsAt = iso(now + ahead * 4_000);
+        const completesAt = iso(now + ahead * 4_000 + 8_000);
+        return {
+          eta: { stepName, queuedAhead: ahead, startsAt, completesAt, progress: null, support: 'available' },
+          step: {
+            queue: {
+              precedingJobs: ahead,
+              estimatedStartAt: startsAt,
+              estimatedCompleteAt: completesAt,
+              support: 'available',
+            },
+            progress: null,
+            startedAt: null,
+            completedAt: null,
+          },
+        };
+      }
+      const running = nonTerminal - queuedPolls;
+      const progress = Math.min(1, (polls - queuedPolls) / (running + 1));
+      let startedAt = runStartedAt.get(workflowId);
+      if (startedAt === undefined) {
+        startedAt = iso(now);
+        runStartedAt.set(workflowId, startedAt);
+      }
+      return {
+        eta: { stepName, queuedAhead: null, startsAt: null, completesAt: null, progress, support: null },
+        step: { queue: null, progress, startedAt, completedAt: null },
+      };
+    };
+
+    /**
+     * The `processing` snapshot of a poll: a multi-step run's steps, the step
+     * fields of {@link etaView} on its running step, and `eta`. A run that is
+     * not `kind: 'workflow'` has no `steps`, so only `eta` is added, naming the
+     * orchestrator's default step name `$0`.
+     */
+    const processingSnapshot = (workflowId: string, body: WorkflowBody | undefined, polls: number) => {
+      if (body?.kind !== 'workflow') {
+        return { workflowId, status: 'processing' as const, eta: etaView(workflowId, polls, '$0').eta };
+      }
+      const view = workflowProgressView(workflowId, body, polls);
+      const current = view.steps?.find((s) => s.status === 'processing');
+      if (!current) return { workflowId, status: 'processing' as const, ...view };
+      const { eta, step } = etaView(workflowId, polls, current.name);
+      return {
+        workflowId,
+        status: 'processing' as const,
+        ...view,
+        steps: view.steps!.map((s) => (s === current ? { ...s, ...step } : s)),
+        eta,
+      };
+    };
+
     /** Index of the step `generation.failWorkflowStep` names, or `-1`. */
     const failingWorkflowStep = (body: MockWorkflowBody): number => {
       const target = gen.failWorkflowStep;
@@ -4168,7 +4257,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (wf.canceled) {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: { requestId, snapshot: { workflowId, status: 'canceled' as const } },
+                payload: { requestId, snapshot: { workflowId, status: 'canceled' as const, eta: null } },
               });
               return;
             }
@@ -4180,7 +4269,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (partialFailure !== null) {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: { requestId, snapshot: partialFailure },
+                payload: { requestId, snapshot: { ...partialFailure, eta: null } },
               });
               return;
             }
@@ -4191,7 +4280,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 type: 'WORKFLOW_STATUS',
                 payload: {
                   requestId,
-                  snapshot: { workflowId, status: outcome, error: `mock: workflow ${outcome}` },
+                  snapshot: { workflowId, status: outcome, error: `mock: workflow ${outcome}`, eta: null },
                 },
               });
               return;
@@ -4203,29 +4292,21 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 after(delay, () =>
                   dispatchToBlock({
                     type: 'WORKFLOW_STATUS',
-                    payload: { requestId, snapshot: succeededSnapshot(workflowId) },
+                    payload: { requestId, snapshot: { ...succeededSnapshot(workflowId), eta: null } },
                   }),
                 );
               } else {
                 dispatchToBlock({
                   type: 'WORKFLOW_STATUS',
-                  payload: { requestId, snapshot: succeededSnapshot(workflowId) },
+                  payload: { requestId, snapshot: { ...succeededSnapshot(workflowId), eta: null } },
                 });
               }
             } else {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: {
-                  requestId,
-                  snapshot: {
-                    workflowId,
-                    status: 'processing' as const,
-                    // A multi-step run reports how far its steps have got.
-                    ...(wf.body?.kind === 'workflow'
-                      ? workflowProgressView(workflowId, wf.body, polls)
-                      : {}),
-                  },
-                },
+                // A multi-step run reports how far its steps have got; every
+                // run reports its queue position or progress (`etaView`).
+                payload: { requestId, snapshot: processingSnapshot(workflowId, wf.body, polls) },
               });
             }
             return;
