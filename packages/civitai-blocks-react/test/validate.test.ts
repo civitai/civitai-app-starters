@@ -16,6 +16,7 @@ import {
   isValidCheckpointPickerResult,
   isValidImageUploadResult,
   isValidImagePickerResult,
+  isValidMediaUploadBatchResult,
   isValidMediaUploadResult,
   isValidResourcePickerResult,
   isValidSharedAppendResult,
@@ -38,6 +39,7 @@ import {
   isValidWorkflowReply,
   isValidWorkflowSnapshot,
   payloadValidatorFor,
+  projectInboundPayload,
 } from '../src/transport/validate.js';
 
 const validInit = {
@@ -1192,6 +1194,186 @@ describe('isValidMediaUploadResult', () => {
     ['durationMs a string', { requestId: 'r', selected: { ...audio, durationMs: '5' } }],
   ])('rejects %s', (_n, payload) => {
     expect(isValidMediaUploadResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidMediaUploadBatchResult', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const audio = {
+    url: 'https://media.example/generation-input/c.wav',
+    kind: 'audio',
+    mimeType: 'audio/wav',
+    sizeBytes: 96_000,
+  };
+  const ran = (results: unknown[], extra: Record<string, unknown> = {}) => ({
+    requestId: 'r',
+    results,
+    expiresAt: '2026-11-18T00:00:00.000Z',
+    ...extra,
+  });
+
+  it('is the validator payloadValidatorFor routes MEDIA_UPLOAD_BATCH_RESULT to', () => {
+    expect(payloadValidatorFor('MEDIA_UPLOAD_BATCH_RESULT')).toBe(isValidMediaUploadBatchResult);
+  });
+  it.each([
+    ['uploads and per-item errors', ran([{ index: 0, selected: image }, { index: 1, error: 'busy' }, { index: 2, selected: audio }])],
+    ['an empty per-item error string', ran([{ index: 0, error: '' }])],
+    ['all items refused', ran([{ index: 0, error: 'images must be PNG, JPEG or WebP' }])],
+    ['results with no expiresAt', { requestId: 'r', results: [{ index: 0, selected: image }] }],
+    ['an empty results array (the hook checks the count)', ran([])],
+    ['indices out of order (the hook checks the order)', ran([{ index: 1, error: 'x' }, { index: 0, error: 'y' }])],
+  ])('accepts %s', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(true);
+  });
+  it('accepts a bare reply (declined)', () => {
+    expect(isValidMediaUploadBatchResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts a whole-batch error, including an empty one, without checking results beside it', () => {
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: '' })).toBe(true);
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: 'no', results: 'x', expiresAt: 5 })).toBe(true);
+  });
+  // The TOP-LEVEL shape: a reply this wrong is dropped whole. (An ABSENT
+  // requestId passes the shape check, as for every reply, and is dropped as
+  // unroutable by the transport; a reply with too few or too many results is
+  // rejected by the hook, which knows the items.)
+  it.each([
+    ['not an object', 'MEDIA_UPLOAD_BATCH_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7 }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['results not an array', ran({} as never)],
+    ['results null', ran(null as never)],
+    ['results a string', ran('x' as never)],
+    ['expiresAt not a string', ran([{ index: 0, selected: image }], { expiresAt: 1_800_000_000_000 })],
+    ['expiresAt null', ran([{ index: 0, selected: image }], { expiresAt: null })],
+  ])('rejects %s', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(false);
+  });
+
+  // 🔴 A malformed ENTRY no longer drops the whole reply. By the time the host
+  // answers, the other files have uploaded; dropping the reply left
+  // `uploadBatch` waiting out its whole timeout and the app never learned any
+  // URL. The entry is answered as that item's error by `projectInboundPayload`
+  // (below), so the validator lets it through.
+  it.each([
+    ['an entry that is not an object', ran(['x'])],
+    ['an entry that is null', ran([null])],
+    ['an entry with neither selected nor error', ran([{ index: 0 }])],
+    ['an entry with both selected and error', ran([{ index: 0, selected: image, error: 'busy' }])],
+    ['an entry with no index', ran([{ selected: image }])],
+    ['a negative index', ran([{ index: -1, selected: image }])],
+    ['a fractional index', ran([{ index: 0.5, selected: image }])],
+    ['a string index', ran([{ index: '0', selected: image }])],
+    ['a NaN index', ran([{ index: NaN, selected: image }])],
+    ['an entry error that is not a string', ran([{ index: 0, error: 5 }])],
+    ['an entry error that is null', ran([{ index: 0, error: null }])],
+    ['a selected that is null', ran([{ index: 0, selected: null }])],
+    ['a selected with an empty url', ran([{ index: 0, selected: { ...image, url: '' } }])],
+    ['a selected image with no width', ran([{ index: 0, selected: { ...image, width: undefined } }])],
+    ['a selected audio with a width', ran([{ index: 0, selected: { ...audio, width: 640 } }])],
+    ['a selected with an unknown kind', ran([{ index: 0, selected: { ...image, kind: 'gif' } }])],
+    ['one bad entry among good ones', ran([{ index: 0, selected: image }, { index: 1, selected: { ...image, sizeBytes: -1 } }])],
+  ])('accepts %s (the entry is answered per item, not the reply dropped)', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(true);
+  });
+});
+
+describe('projectInboundPayload — MEDIA_UPLOAD_BATCH_RESULT', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const video = {
+    url: 'https://media.example/generation-input/b.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  const EXPIRES = '2026-12-14T00:00:00.000Z';
+  const project = (payload: unknown) => projectInboundPayload('MEDIA_UPLOAD_BATCH_RESULT', payload);
+
+  it.each([
+    ['not an object', 'x'],
+    ['null', null],
+    ['an entry with neither selected nor error', { index: 1 }],
+    ['an entry with both selected and error', { index: 1, selected: image, error: 'busy' }],
+    ['an entry with no index', { selected: image }],
+    ['an entry whose index is a string', { index: '1', selected: image }],
+    ['an entry whose index is negative', { index: -1, selected: image }],
+    ['an entry error that is not a string', { index: 1, error: 5 }],
+    ['a selected with a negative size', { index: 1, selected: { ...image, sizeBytes: -1 } }],
+    ['a selected with an unknown kind', { index: 1, selected: { ...image, kind: 'gif' } }],
+  ])('answers one malformed entry (%s) as THAT item’s error, at its position, and keeps the rest', (_n, bad) => {
+    const first = { index: 0, selected: image };
+    const last = { index: 2, selected: video };
+    const payload = { requestId: 'r', results: [first, bad, last], expiresAt: EXPIRES };
+    const out = project(payload) as { requestId: string; results: unknown[]; expiresAt: string };
+    expect(out).toEqual({
+      requestId: 'r',
+      results: [first, { index: 1, error: 'media upload failed' }, last],
+      expiresAt: EXPIRES,
+    });
+    // The good entries are passed through as sent, not rebuilt.
+    expect(out.results[0]).toBe(first);
+    expect(out.results[2]).toBe(last);
+    // The reply as sent is not mutated.
+    expect(payload.results[1]).toBe(bad);
+  });
+
+  it('never carries a malformed entry’s url across (an entry with both selected and error)', () => {
+    const out = project({ requestId: 'r', results: [{ index: 0, selected: image, error: 'busy' }] }) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(out.results).toEqual([{ index: 0, error: 'media upload failed' }]);
+    expect(out.results[0]).not.toHaveProperty('selected');
+  });
+
+  it('passes a WELL-FORMED entry at the wrong position through as sent (the hook rejects the mismatch)', () => {
+    const payload = { requestId: 'r', results: [{ index: 1, selected: image }, { index: 0, selected: video }] };
+    expect(project(payload)).toBe(payload);
+  });
+
+  it('is identity when every entry is well formed (per-item errors included)', () => {
+    const payload = {
+      requestId: 'r',
+      results: [
+        { index: 0, selected: image },
+        { index: 1, error: '' },
+        { index: 2, error: 'videos must be MP4 or WebM' },
+      ],
+      expiresAt: EXPIRES,
+    };
+    expect(project(payload)).toBe(payload);
+  });
+
+  it.each([
+    ['a bare reply', { requestId: 'r' }],
+    ['a whole-batch error', { requestId: 'r', error: 'busy' }],
+    ['a whole-batch error beside a bad results', { requestId: 'r', error: 'busy', results: [null] }],
+    ['results not an array', { requestId: 'r', results: 'x' }],
+  ])('is identity for %s', (_n, payload) => {
+    expect(project(payload)).toBe(payload);
+  });
+
+  it('touches no other type', () => {
+    const payload = { requestId: 'r', results: [null] };
+    expect(projectInboundPayload('MEDIA_UPLOAD_RESULT', payload)).toBe(payload);
   });
 });
 
