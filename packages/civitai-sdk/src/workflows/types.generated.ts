@@ -1882,7 +1882,7 @@ export interface BlockWorkflowRestrictedOutput {
  *
  * ```ts
  * for (const out of snapshot.outputs ?? []) {
- *   if (out.restricted) renderLocked(out.reason);
+ *   if (out.restricted === true) renderLocked(out.reason);
  *   else renderImage(out.url);
  * }
  * ```
