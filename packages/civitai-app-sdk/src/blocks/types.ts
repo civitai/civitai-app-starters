@@ -485,6 +485,29 @@ export interface BlockMediaUploadInfo {
 }
 
 /**
+ * One item's answer in a batch media upload (`MEDIA_UPLOAD_BATCH_RESULT.results`,
+ * via `useMediaUpload().uploadBatch`). The host answers EXACTLY ONE entry per
+ * item, in item order, and `index` is that item's position in the request.
+ *
+ * Exactly one of `selected` and `error` is set:
+ *  - `selected`: the item was uploaded, the same {@link BlockMediaUploadInfo}
+ *    `MEDIA_UPLOAD_RESULT.selected` carries;
+ *  - `error`: the item was refused (the same per-file strings as a single
+ *    bytes upload: too large, wrong type, `mimeType` mismatch, invalid) or its
+ *    upload failed (`this image was refused by the upload service`,
+ *    `media upload failed — please try again`, …). The other items are not
+ *    affected.
+ */
+export interface BlockMediaUploadBatchItemResult {
+  /** The item's position in the request's `items`. */
+  index: number;
+  /** The uploaded file. Never set beside `error`. */
+  selected?: BlockMediaUploadInfo;
+  /** Why this item was not uploaded. Never set beside `selected`. */
+  error?: string;
+}
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

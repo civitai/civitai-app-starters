@@ -13,6 +13,7 @@ import type {
   BlockImagePickerSource,
   BlockImageScanResult,
   BlockMediaKind,
+  BlockMediaUploadBatchItemResult,
   BlockMediaUploadInfo,
   BlockPendingImageInfo,
   BlockPickedImageInfo,
@@ -329,6 +330,66 @@ describe('OPEN_MEDIA_UPLOAD / MEDIA_UPLOAD_RESULT message guards', () => {
     }
     expect(audio).not.toHaveProperty('width');
     expect(audio).not.toHaveProperty('height');
+  });
+});
+
+describe('OPEN_MEDIA_UPLOAD_BATCH / MEDIA_UPLOAD_BATCH_RESULT message guards', () => {
+  const image: BlockMediaUploadInfo = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+
+  it('OPEN_MEDIA_UPLOAD_BATCH is a declared block-to-parent message type', () => {
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES as readonly string[]).toContain('OPEN_MEDIA_UPLOAD_BATCH');
+    // A sibling of the single upload, not a replacement for it.
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES as readonly string[]).toContain('OPEN_MEDIA_UPLOAD');
+  });
+
+  it('a batch request carries purpose and items of { kind, bytes, mimeType? }', () => {
+    const bytes = new ArrayBuffer(4);
+    const request: BlockToParentMessage = {
+      type: 'OPEN_MEDIA_UPLOAD_BATCH',
+      payload: {
+        requestId: 'mb-1',
+        purpose: 'generationSource',
+        items: [
+          { kind: 'image', bytes },
+          { kind: 'audio', bytes, mimeType: 'audio/wav' },
+        ],
+      },
+    };
+    if (isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD_BATCH'>(request, 'OPEN_MEDIA_UPLOAD_BATCH')) {
+      expect(request.payload.items).toHaveLength(2);
+      expect(request.payload.items[1]!.mimeType).toBe('audio/wav');
+    } else {
+      expect.unreachable('request should narrow to OPEN_MEDIA_UPLOAD_BATCH');
+    }
+    expect(isMessage<BlockToParentMessage, 'OPEN_MEDIA_UPLOAD'>(request, 'OPEN_MEDIA_UPLOAD')).toBe(false);
+  });
+
+  it('MEDIA_UPLOAD_BATCH_RESULT carries results + expiresAt, a whole-batch error, or nothing', () => {
+    const results: BlockMediaUploadBatchItemResult[] = [
+      { index: 0, selected: image },
+      { index: 1, error: 'images must be PNG, JPEG or WebP' },
+    ];
+    const ran: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_BATCH_RESULT',
+      payload: { requestId: 'mb-1', results, expiresAt: '2026-11-18T00:00:00.000Z' },
+    };
+    const refused: ParentToBlockMessage = {
+      type: 'MEDIA_UPLOAD_BATCH_RESULT',
+      payload: { requestId: 'mb-2', error: 'busy' },
+    };
+    const declined: ParentToBlockMessage = { type: 'MEDIA_UPLOAD_BATCH_RESULT', payload: { requestId: 'mb-3' } };
+    for (const m of [ran, refused, declined]) {
+      expect(isMessage<ParentToBlockMessage, 'MEDIA_UPLOAD_BATCH_RESULT'>(m, 'MEDIA_UPLOAD_BATCH_RESULT')).toBe(true);
+      // A different reply from the single upload's, not an alias.
+      expect(isMessage<ParentToBlockMessage, 'MEDIA_UPLOAD_RESULT'>(m, 'MEDIA_UPLOAD_RESULT')).toBe(false);
+    }
   });
 });
 

@@ -249,6 +249,9 @@ export type {
   UseMediaUpload,
   MediaUploadOpenOptions,
   MediaUploadBytesOptions,
+  MediaUploadBatchItem,
+  MediaUploadBatchOptions,
+  MediaUploadBatchResult,
 } from './hooks/useMediaUpload.js';
 export { useImagePicker, IMAGE_PICKER_MULTIPLE_MAX } from './hooks/useImagePicker.js';
 export type {

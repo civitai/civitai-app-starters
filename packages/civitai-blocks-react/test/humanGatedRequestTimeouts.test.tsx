@@ -90,6 +90,10 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => useMediaUpload());
     return () => result.current.open({ kind: 'video' });
   },
+  OPEN_MEDIA_UPLOAD_BATCH: () => {
+    const { result } = renderHook(() => useMediaUpload());
+    return () => result.current.uploadBatch([{ kind: 'image', bytes: new ArrayBuffer(4) }]);
+  },
   OPEN_RESOURCE_PICKER: () => {
     const { result } = renderHook(() => useResourcePicker());
     return () => result.current.open({ resourceType: 'LORA' });
@@ -159,6 +163,7 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   OPEN_IMAGE_PICKER: { type: 'IMAGE_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_UPLOAD: { type: 'IMAGE_UPLOAD_RESULT', extra: {} },
   OPEN_MEDIA_UPLOAD: { type: 'MEDIA_UPLOAD_RESULT', extra: {} },
+  OPEN_MEDIA_UPLOAD_BATCH: { type: 'MEDIA_UPLOAD_BATCH_RESULT', extra: {} },
   OPEN_RESOURCE_PICKER: { type: 'RESOURCE_PICKER_RESULT', extra: {} },
   PUBLISH_GENERATION_OUTPUTS: {
     type: 'PUBLISH_RESULT',
@@ -221,6 +226,11 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_IMAGE_PICKER',
       'OPEN_IMAGE_UPLOAD',
       'OPEN_MEDIA_UPLOAD',
+      // The host shows ONE confirm for the whole batch, then uploads every
+      // file before it replies. At the 30s default the request would reject
+      // with the dialog open, and a viewer who then confirmed would get
+      // uploads the block never learns the URLs of.
+      'OPEN_MEDIA_UPLOAD_BATCH',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
       // The host shows the viewer a job's price in its own confirm and submits
