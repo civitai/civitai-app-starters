@@ -260,6 +260,18 @@ const body: WorkflowBody = {
 };
 ```
 
+**Choosing the Buzz pool.** Both step arms, and a `kind: 'workflow'` body (once for the whole
+workflow, never per step), take an optional `accountType` (`'blue' | 'green' | 'yellow'`), as a
+`textToImage` body does. The host tries that pool first and keeps the app's other allowed pools
+as fallback — an SFW app may spend `blue` and `green`, a mature app `blue` and `yellow`. A pool
+outside that set is refused on the estimate and the submit alike; omit the field for the
+default order, blue first. A pick does **not** guarantee an unrestricted output: when the picked
+pool runs out the fallback pays, and a fallback to `blue` can still leave a mature output
+restricted. On a confirmed step, `accountType` is part of the quoted body — submit with the pool
+you estimated with. **Release order: host first** — civitai/civitai must accept the field
+(civitai/civitai#8985) before an app sends it, because a host that predates it refuses the whole
+body as an unknown key. Leaving it out works on every host.
+
 **Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
 can still run when the **viewer confirms its exact price** in Civitai's own dialog
 (civitai/civitai#5786). When the orchestrator quotes a **fixed** price (positive, not variable

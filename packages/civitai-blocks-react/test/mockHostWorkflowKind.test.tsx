@@ -19,7 +19,11 @@ import {
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { useWorkflowBatch } from '../src/hooks/useWorkflowBatch.js';
-import { MOCK_SPEND_SCOPE_ERROR, type MockWorkflowStepInfo } from '../src/internal/mockHost.js';
+import {
+  disallowedAccountError,
+  MOCK_SPEND_SCOPE_ERROR,
+  type MockWorkflowStepInfo,
+} from '../src/internal/mockHost.js';
 import {
   MOCK_MERGE_SHAPE_ERROR,
   MOCK_REPEAT_SHAPE_ERROR,
@@ -1008,5 +1012,41 @@ describe('createMockHost — kind: workflow', () => {
     });
     const failed = result.current.batch.cells.find((c) => c.snapshot?.status === 'failed');
     expect(failed?.snapshot?.steps?.map((x) => x.status)).toEqual(['succeeded', 'failed', 'canceled']);
+  });
+
+  // ---------------------------------------------------------------- accountType
+
+  // One pick per WORKFLOW (the host's `blockMultiStepWorkflowBodySchema.accountType`).
+  // The default wallet is yellow-dominant, so a pick-blind stamp reads `'yellow'` and
+  // cannot satisfy the `'green'` assertion below.
+  describe('accountType on the body', () => {
+    const picked = (accountType: unknown) => ({ ...chain(), accountType }) as WorkflowBody;
+
+    it('is accepted on the estimate (a body key the host schema has)', async () => {
+      const { estimate } = await setup({ generation: { costPerGen, authorFee: FEE } });
+      const out = await estimate(picked('green'));
+      expect(out).not.toBeInstanceOf(Error);
+      expect((out as BlockWorkflowSnapshot).status).not.toBe('failed');
+    });
+
+    it.each(['red', 'purple', 1])('refuses accountType %s as a schema rejection', async (accountType) => {
+      const { estimate } = await setup();
+      const snapshot = expectEstimateRefusal(await estimate(picked(accountType)), undefined);
+      expect(snapshot.error).toBe('invalid workflow body');
+    });
+
+    it('stamps spentAccountType from the pick', async () => {
+      const { submit, poll } = await setup({ pollsUntilDone: 1 });
+      const submitted = (await submit(picked('green'))) as BlockWorkflowSnapshot;
+      expect(submitted.status).toBe('pending');
+      expect((await poll(submitted.workflowId)).spentAccountType).toBe('green');
+    });
+
+    it('rejects a disallowed pick with the host message', async () => {
+      const { submit } = await setup({ disallowedAccountTypes: ['yellow'] });
+      const out = await submit(picked('yellow'));
+      expect(out).toBeInstanceOf(WorkflowSubmitError);
+      expect((out as WorkflowSubmitError).snapshot.error).toBe(disallowedAccountError('yellow'));
+    });
   });
 });
