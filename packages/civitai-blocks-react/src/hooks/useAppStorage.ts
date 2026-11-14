@@ -149,6 +149,12 @@ export interface UseAppStorage {
  * await storage.delete('key');                  // idempotent
  * const { keys } = await storage.list({ prefix: 'note-' });
  * const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
+ *
+ * @deprecated civitai.com removed the legacy app store on 2026-11-10: every
+ * call is refused with a message that starts `legacy_store_removed:`, so each
+ * method rejects. Declare a `private` collection under `storage.collections` in
+ * the manifest and use `app.storage.collection(name)` from `@civitai/sdk`. See
+ * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
  */
 export function useAppStorage(): UseAppStorage {
   useTransportConnection();

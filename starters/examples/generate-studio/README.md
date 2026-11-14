@@ -55,7 +55,7 @@ it runs, for every viewer, until you ship a new version.
 
 Both scopes are consent-gated. The token carries a scope only when it is
 declared, approved **and** granted. A signed-out viewer gets none
-(`block-tokens/index.ts:1440-1528`).
+(`block-tokens/index.ts`: `partitionByConsent` withholds ungranted scopes, and the `consentGatedScopes` strip empties them for a signed-out viewer).
 
 ### 2. One body builder
 
@@ -81,10 +81,10 @@ A page slot carries no model, so the app starts on a known-good checkpoint
   `baseModelGroup`**. That option is a filter, so passing the current family
   would trap the viewer in it. `persist()` is **not** used, because a page host
   always refuses it: *"page blocks cannot persist a checkpoint override (no model
-  binding)"* (civitai `src/components/AppBlocks/PageBlockHost.tsx:4093-4104`).
+  binding)"* (civitai `src/components/AppBlocks/PageBlockHost.tsx`, the `SET_USER_CHECKPOINT` handler).
 - **LoRAs**: `useResourcePicker().open({ resourceType: 'LORA', baseModelGroup:
   checkpoint.baseModel })`. The family comes from the checkpoint and is never a
-  literal. This picker exists on page apps only (`PageBlockHost.tsx:3747`). The
+  literal. This picker exists on page apps only (`PageBlockHost.tsx`, the `OPEN_RESOURCE_PICKER` handler). The
   slider range is the LoRA's own recommended clamp, kept inside [-1, 2].
 - **A new checkpoint drops LoRAs from another family**, and says so. Otherwise the
   next estimate fails with nothing on screen to explain it.
@@ -113,7 +113,7 @@ overrides that. **Page apps only.**
 
 - **It runs only once the token holds `ai:write:budgeted`.** In production the
   estimate needs the same scope as the submit (civitai
-  `src/server/routers/blocks.router.ts:6047`). It never prompts for consent, so
+  `src/server/routers/blocks.router.ts` `estimateWorkflow`). It never prompts for consent, so
   before the grant it would just fail.
 - An unusable estimate **rejects** with `WorkflowEstimateError`. Branch on
   `code`: `'failed'` (log `err.snapshot.error`, never render it) or
@@ -140,7 +140,7 @@ guarded auto-retry if you want one.
 
 The budget only appears on the token after consent. The app therefore asks
 first, with an **Allow** button (`useRequestConsent`). The host grants every
-declared scope still missing in one dialog (`PageBlockHost.tsx:1865-1868`).
+declared scope still missing in one dialog (`PageBlockHost.tsx`, the `REQUEST_CONSENT` handler, which grants the mint's `missingScopes`).
 
 ### 8. Runs: submit → watch → cancel
 
@@ -175,14 +175,14 @@ viewer-facing string is the app's own (`copy.ts`).
 `useAppWorkflows({ limit: 20 })` lists the generations **this app** made for the
 viewer, newest first and across reloads. The host forces the per-app filter and
 drops prompts, params and resources. `cancel()` stops a pending row in place.
-Both need `ai:write:budgeted` (`blocks.router.ts:4957, 5057`). After a run
+Both need `ai:write:budgeted` (`blocks.router.ts` `queryAppWorkflows` and `cancelAppWorkflow`). After a run
 settles, the app re-reads the history and the wallet.
 
 **Publish** calls `usePublishGenerationOutputs().publish({ workflowId,
 imageIndexes })`. It names *indexes into this list's `images`*, never URLs. The
 host shows a confirm, re-uploads the outputs and fully scans them, and returns
-`Image` ids (`blocks.router.ts:5174-5224`, `PageBlockHost.tsx:2461-2503`). It
-also needs `ai:write:budgeted` (`blocks.router.ts:5191`).
+`Image` ids (`blocks.router.ts` `publishGenerationOutputs`, and the `PUBLISH_GENERATION_OUTPUTS` handler in `PageBlockHost.tsx`). It
+also needs `ai:write:budgeted` (`blocks.router.ts` `publishGenerationOutputs`).
 
 ### 10. Showing outputs
 
@@ -204,13 +204,13 @@ host's own posture: its gated read hands a viewer their own unrated image.
   where R can be shown at all.
 - **Published** reads the ids back through `useGatedImages().getImages(ids)`, the
   per-viewer, server-clamped read (no scope, signed-in viewer;
-  `block-gated-images-read.service.ts:100-131`). It renders `hidden` entries
+  `block-gated-images-read.service.ts` `resolveGatedImagesForBlockClaims`). It renders `hidden` entries
   (which never carry a URL) as placeholders, and `ratingPending` entries with no
   rating.
 - **Save** calls `useSaveImage().saveImage({ url })`. The *host* downloads the
   file, because a sandboxed iframe has no `allow-downloads`. It accepts only
   Civitai's image and orchestration hosts, which is where outputs live
-  (`src/components/AppBlocks/saveImageDownload.ts:31-61`).
+  (`src/components/AppBlocks/saveImageDownload.ts`: `CIVITAI_IMAGE_HOSTS`, checked by `isAllowedSaveImageUrl`).
 
 ### Layout
 
@@ -228,11 +228,11 @@ images.
 
 | Feature | Status | Why |
 |---|---|---|
-| **`useCreatePostFromApp`** (post to the viewer's profile) | **not used: dark for everyone** | `createPostFromApp` checks the `app-blocks-post-creation` flag, which ships absent, so it is off for every viewer, moderators included: *"posting from apps is not enabled"* (civitai `blocks.router.ts:636-641`, `src/server/services/app-blocks-flag.ts:1044-1052`). It would also need `posts:write:self`, so this manifest does not declare that scope. **Publish** (a bare, scanned `Image`) is the usable route. |
+| **`useCreatePostFromApp`** (post to the viewer's profile) | **not used: dark for everyone** | `createPostFromApp` checks the `app-blocks-post-creation` flag, which ships absent, so it is off for every viewer, moderators included: *"posting from apps is not enabled"* (civitai `blocks.router.ts` `authorizeBlockPostRequest`, `src/server/services/app-blocks-flag.ts` `isAppBlocksPostCreationEnabled`). It would also need `posts:write:self`, so this manifest does not declare that scope. **Publish** (a bare, scanned `Image`) is the usable route. |
 | `useCheckpointPicker().persist()` | always refused on a page | see §3 |
-| everything, for a non-moderator | closed beta | the `appBlocks` / `appBlocksPages` mod-only flags gate the route and mint; `app-blocks-enabled` gates every bridge call; `app-blocks-runtime-enabled` gates the REST rehydrate (civitai `src/server/services/feature-flags.service.ts:576, 616`; `block-token-access.service.ts:119-163`) |
+| everything, for a non-moderator | closed beta | the `appBlocks` / `appBlocksPages` mod-only flags gate the route and mint; `app-blocks-enabled` gates every bridge call; `app-blocks-runtime-enabled` gates the REST rehydrate (civitai `src/server/services/feature-flags.service.ts`, the `appBlocks` and `appBlocksPages` entries; `block-token-access.service.ts` `assertAppBlocksEnabledForTokenUser`) |
 
-The citations are civitai/civitai `main` at `494941446d`.
+The citations name symbols in civitai/civitai `main`; they were checked at `8d7d716787` (2026-11-14).
 
 ## Run it
 

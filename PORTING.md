@@ -438,7 +438,7 @@ Replicating this flow against your dev OAuth app and a live `https://orchestrati
 - [`README.md`](./README.md) — repo overview, pick a starter for fresh apps.
 - [`AGENTS.md`](./AGENTS.md) — patterns to keep / avoid (also useful for humans).
 - [`packages/civitai-app-sdk/README.md`](./packages/civitai-app-sdk/README.md) — full SDK reference.
-- [Civitai OAuth docs](https://developer.civitai.com/docs/oauth) — official upstream documentation.
+- [Civitai OAuth docs](https://developer.civitai.com/site/oauth/quickstart) — official upstream documentation.
 - [`starters/sveltekit-app`](./starters/sveltekit-app) — closest reference if your existing app is SvelteKit or any SSR framework.
 - [`starters/next-app`](./starters/next-app) — closest reference for Next.js / React Server Components.
 - [`starters/react-pwa`](./starters/react-pwa) / [`starters/svelte-pwa`](./starters/svelte-pwa) — closest reference if your app is a Vite SPA / PWA with a small BFF.

@@ -59,8 +59,14 @@ Both give you:
 | `app.site` | The public REST API at `/api/v1`: `get`, `post`, `request` |
 | `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token: an OAuth access token is answered `401`, and a block holding one generates through `app.orchestration`. See [Multi-step workflows](#multi-step-workflows) |
 | `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
+| `app.storage` | Document storage: `collection(name)` and `info()` over the collections the manifest declares. Needs the block token. See [Document storage](#document-storage). Its legacy `get`/`set`/`delete`/`list`/`getQuota` are `@deprecated` and reject with `410` |
+| `app.sharedStorage` | `@deprecated`: the legacy shared store, removed on 2026-11-10, so every call rejects with `410`. Use a `shared` collection. See [Shared storage](#shared-storage) |
+| `app.subListings` | The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`. Needs the block token and `apps:store:items:write`. See [Store sub-listings](#store-sub-listings) |
 | `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
 | `app.getToken()` | For a call this client does not make |
+
+The `AppClient` interface in `src/app/index.ts` (and the published types) is the
+authority for this list.
 
 A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 `onChange(listener)`. Outside a block they do not exist, and the types say so.

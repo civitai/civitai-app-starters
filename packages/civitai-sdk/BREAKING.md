@@ -359,7 +359,7 @@ which is what the old "not carried" line was reaching for, but a model-slot bloc
 | Host failures | free-text `error` on each reply | `BridgeError` with a `code` |
 | Request deadlines | per-message client timeouts | none; pass an `AbortSignal` |
 | A refused grant | rejected | resolves `false` |
-| React hooks | 37 | none — plain functions; bind them in your framework |
+| React hooks | every hook `@civitai/blocks-react`'s `src/index.ts` exports | none — plain functions; bind them in your framework |
 
 ## Waiting on the host
 
@@ -404,7 +404,7 @@ For a block to use the API at all, civitai has to:
 
    ⚠ Still true, and still the cheaper route for most apps: the block JWT is **not** limited to
    `/api/v1/blocks/*` by any route or claim check — it works wherever a handler is wrapped. Today that is
-   most `/api/v1/blocks/*` routes plus `/api/v1/models/{id}` — the 35 routes wrapped in `withBlockScope`.
+   most `/api/v1/blocks/*` routes plus `/api/v1/models/{id}` — the routes wrapped in `withBlockScope` (search civitai's `src/pages/api/v1` for it; a count here would fall behind).
    🔴 **Not `/api/v1/me`**, which is an `AuthedEndpoint`; blocks use `/api/v1/blocks/me`. And four `blocks/*`
    routes (`dev-token`, `submissions`, `submit-version`, `withdraw`) are not wrapped either. Widening what the existing block token is accepted on reaches most destinations without
    OAuth at all. The question that decides between the two is whether a block must act **without an open host

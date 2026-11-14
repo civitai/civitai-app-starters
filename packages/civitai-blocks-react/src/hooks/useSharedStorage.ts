@@ -213,6 +213,17 @@ function rehydrateSharedItem(item: SharedStorageItemWire): SharedListItem {
   };
 }
 
+/**
+ * App-scoped shared key/value store (every viewer reads the same list), over
+ * the host's postMessage bridge.
+ *
+ * @deprecated civitai.com removed the legacy shared store on 2026-11-10: every
+ * call is refused with a message that starts `legacy_store_removed:`, so each
+ * method rejects. Declare a `shared` collection under `storage.collections` in
+ * the manifest (authorship, counters and marks are built in) and use
+ * `app.storage.collection(name)` from `@civitai/sdk`. See
+ * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
+ */
 export function useSharedStorage(): UseSharedStorage {
   useTransportConnection();
   return useMemo<UseSharedStorage>(() => {

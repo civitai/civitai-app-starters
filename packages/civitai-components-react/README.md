@@ -48,7 +48,12 @@ Import them by path:
 
 ```tsx
 import { CivitaiSignInButton } from '@civitai/components-react/elements/civitai-sign-in-button';
+import { CivitaiWorkflowButton } from '@civitai/components-react/elements/civitai-workflow-button';
 ```
+
+`CivitaiSignInButton` signs the viewer in; `CivitaiWorkflowButton` prices a
+workflow, runs it on the viewer's Buzz and reports its progress, so an app does
+not rebuild submit, watch and cancel around every generate button.
 
 `CivitaiResourcePicker` is out of the barrel for the same reason — it calls the
 Civitai catalog as the viewer, with the block token — though it needs no

@@ -17,27 +17,27 @@ estimate(body) → quote on the button → click = confirm → submit(body) → 
 | Estimate/submit/poll error handling shared by both panels | `src/workflow.ts` |
 | `page` block with `buzzBudgetPerGen`, `ai:write:budgeted` + its justification | `block.manifest.json` |
 
-Host behaviour below is cited from **civitai/civitai at `494941446d`**. Paths
-under `src/server/`, `src/pages/` and `src/components/AppBlocks/` are in that
-repo, not this one. Line numbers drift, but the quoted error strings make good
-search keys.
+Host behaviour below is cited from **civitai/civitai `main`** by symbol name
+(checked at `8d7d716787`, 2026-11-14). Paths under `src/server/`, `src/pages/`
+and `src/components/AppBlocks/` are in that repo, not this one. The symbols and
+the quoted error strings make good search keys.
 
 ## Who can run this
 
 🔴 **Apps on Civitai are an invite-only beta.** Every spend checks the per-user
-`app-blocks-enabled` flag (`src/server/services/app-blocks-flag.ts:15` in
-civitai/civitai, checked on every spend at `src/server/services/blocks/block-token-access.service.ts:161`).
+`app-blocks-enabled` flag (`src/server/services/app-blocks-flag.ts` `APP_BLOCKS_FLAG` in
+civitai/civitai, checked on every spend at `src/server/services/blocks/block-token-access.service.ts` `assertAppBlocksEnabledForTokenUser`).
 Viewers outside it get a refusal, and this app shows it as a failed estimate.
 
 Both kinds shown here are **page-only**. The host refuses them from a
 model-slot token: `'customComfy recipes are page-only'` and `'registry steps are
-page-only'` (`src/server/routers/blocks.router.ts:9184` and `:10113`). That is
+page-only'` (`src/server/routers/blocks.router.ts` `estimateCustomComfyWorkflow` / `submitCustomComfyWorkflow` and `assertStepRequestAllowed`). That is
 why this example is a page app (`page` in the manifest, no `targets`), unlike
 `buzz-workflow`.
 
 Before either kind will even **estimate**, the host requires a signed-in viewer,
-`ai:write:budgeted` on the token, and the beta flag (`blocks.router.ts:9178-9196`
-for Comfy, `assertStepRequestAllowed` at `:10111` for steps). A page token is
+`ai:write:budgeted` on the token, and the beta flag (`blocks.router.ts` `estimateCustomComfyWorkflow`
+for Comfy, `assertStepRequestAllowed` for steps). A page token is
 minted *without* the consent scope, so `App.tsx` asks for it with
 `requestConsent({ scopes: ['ai:write:budgeted'] })` first. It waits for the
 refreshed token to carry the scope before any panel prices anything.
@@ -66,14 +66,14 @@ const body: WorkflowBodyCustomComfyRecipe = {
 ```
 
 - The registry holds exactly two ids, `seamless-pano-360` and
-  `starter-comfy-txt2img` (`src/server/services/blocks/recipes/index.ts:186-193`).
+  `starter-comfy-txt2img` (`src/server/services/blocks/recipes/index.ts` `recipeRegistry`).
   An unregistered id is rejected at the schema.
 - `starter-comfy-txt2img` accepts only `{ prompt (≤1500), seed?, accountType? }`,
   and the schema is `.strict()`, so any other key is rejected rather than dropped
-  (`starter-comfy-txt2img.recipe.ts:100-107`).
+  (`starter-comfy-txt2img.recipe.ts` `starterComfyParamSchema`).
 - **Post-paid.** `estimate` returns the recipe's fixed *display* estimate, 15
-  (`:63`, `:227`), so the button says "est.". Submit reserves the ceiling, 90
-  Buzz and 90 s (`:89-92`), and the charge settles to measured runtime on the
+  (`STARTER_ESTIMATE_BUZZ`, returned by the recipe's `estimateBuzz`), so the button says "est.". Submit reserves the ceiling, 90
+  Buzz and 90 s (`STARTER_BUDGET`), and the charge settles to measured runtime on the
   terminal snapshot. The panel shows that as "Charged N Buzz".
 - Annotate the **arm** type (`WorkflowBodyCustomComfyRecipe`), not the union.
   With `mode` omitted, the union would accept an inline-arm key without
@@ -81,8 +81,8 @@ const body: WorkflowBodyCustomComfyRecipe = {
 
 **The inline arm (`mode: 'inline'`, you ship the ComfyUI graph) is NOT shown.**
 It *is* accepted from third-party page apps today, on the same gates and with no
-developer or allowlist check (`blocks.router.ts:9178-9216`; the schema's own note
-at `src/server/schema/blocks/workflow.schema.ts:381-391`). It is left out
+developer or allowlist check (`blocks.router.ts` `estimateCustomComfyWorkflow` and `submitCustomComfyWorkflow`; the schema's own note
+on `INLINE_MAX_BUZZ` in `src/server/schema/blocks/workflow.schema.ts`). It is left out
 because an inline graph has no code review: every viewer of your app runs
 whatever graph you ship. It also needs an entitlement-checked `resources`
 manifest and a `maxBuzz` that doubles as the step timeout in seconds. Read
@@ -100,20 +100,20 @@ const body: WorkflowBodyStep = {
 ```
 
 The SDK types `params` as opaque on purpose. The host's `.strict()` schema is the
-authority (`src/server/services/blocks/steps/chat-completion.step.ts:1069-1118`):
+authority (`chatCompletionParamsSchema` in `src/server/services/blocks/steps/chat-completion.step.ts`):
 
-- `model` is one of four allowlisted ids (`:474-482`). `ChatPanel` offers exactly those.
+- `model` is one of four allowlisted ids (`CHAT_COMPLETION_MODELS`). `ChatPanel` offers exactly those.
 - `messages` holds 1–32 entries, each with 1–8000 characters of content. The panel
   re-sends the conversation each turn and keeps the system message plus the
   newest turns under 32.
-- `maxTokens` is **required**, 1–4000 (`:538`). `temperature` is optional, 0–2.
+- `maxTokens` is **required**, 1–4000 (`CHAT_COMPLETION_MAX_OUTPUT_TOKENS`). `temperature` is optional, 0–2.
 
 **Price.** The estimate is a live quote, never below the 1-Buzz floor
-(`CHAT_COMPLETION_PRICE_BUZZ`, `:267`; `blocks.router.ts:10397-10435`). It rises
+(`CHAT_COMPLETION_PRICE_BUZZ`; `blocks.router.ts` `estimateStepWorkflow`). It rises
 with `maxTokens` and the model, so the button re-quotes every draft.
 
 **The reply** arrives on the **poll** snapshot as `textOutputs`, which the host
-has already moderated (`blocks.router.ts:4580`). It never comes on the submit
+has already moderated (`blocks.router.ts` `pollWorkflow`, via `attachModeratedStepTextOutputs`). It never comes on the submit
 reply. A reply the scan kept back arrives as `textOutputWithheld.reason` instead,
 a deliberately generic sentence, and the panel shows it.
 
@@ -127,19 +127,19 @@ tool for "put an assistant on my page", and the wrong one to demonstrate this
 
 `useWildcardPack(modelVersionId)` is a host bridge (`GET_WILDCARD_PACK`), not a
 `WorkflowBody` kind. The page host resolves, downloads and parses the pack in the
-viewer's own session (`src/components/AppBlocks/PageBlockHost.tsx:4136`, which
+viewer's own session (the `GET_WILDCARD_PACK` handler in `src/components/AppBlocks/PageBlockHost.tsx`, which
 calls the session-authed, rate-limited `generation.resolveWildcardPack`,
-`src/server/routers/generation.router.ts:184-200`). It needs no manifest scope
+`src/server/routers/generation.router.ts`). It needs no manifest scope
 and no flag, only a signed-in viewer. Here it fills the Comfy prompt.
 `WildcardPackError.code` is a closed set, so the panel branches on it.
 
 ## Not usable by a third-party app today: `kind: 'training'`
 
 `WorkflowBodyTraining` exists in the SDK, but the host refuses it unless the
-per-viewer flag `app-blocks-training-kind` is on (`blocks.router.ts:12024-12027`,
+per-viewer flag `app-blocks-training-kind` is on (`blocks.router.ts` `assertQuotedGrantRequestAllowed`,
 error `'training from apps is not enabled'`). That flag is false when unset
-(`app-blocks-flag.ts:30-37`, `:1074-1080`). Training is also refused from dev and
-review tokens (`blocks.router.ts:12001-12006`), so `dev:live` cannot reach it
+(`app-blocks-flag.ts`: the GLOBAL-EVAL SEMANTICS note and `isAppBlocksTrainingKindEnabled`). Training is also refused from dev and
+review tokens (`blocks.router.ts` `quotedGrantTokenGate`), so `dev:live` cannot reach it
 either. Its quote is confirmed only through `useRunTraining()`'s host-chrome
 dialog, and `useBuzzWorkflow().submit()` refuses the body. It is left out of the
 code. The SDK's `WorkflowBodyTraining` doc comment describes the flow for when

@@ -26,24 +26,24 @@ back to, adds a note, and opens them on Civitai later.
 
 ## What a page app changes
 
-Citations are to `civitai/civitai` at `494941446d`.
+Citations name symbols in `civitai/civitai` `main`; they were checked at `8d7d716787` (2026-11-14).
 
 - **It is declared by `page`, not by `targets`.** The host treats a manifest as
   a page app when `page.path` is a non-empty string
-  (`src/server/services/block-registry.service.ts:600-605`). The URL is not
+  (`manifestDeclaresPage` in `src/server/services/block-registry.service.ts`). The URL is not
   taken from `path`. It is always `/apps/run/<blockId>/<subPath>`.
   `page.title` is the title shown in the host chrome.
 - **The frame is the page, not the content.** The page host does not handle
   `RESIZE_IFRAME` ("page iframe is full-viewport (height:100%); no
-  size-to-content", `src/components/AppBlocks/hostHandlerParity.ts:146-154`),
+  size-to-content", the `RESIZE_IFRAME` entry of `INVENTORY` in `src/components/AppBlocks/hostHandlerParity.ts`),
   so this app does not call `useBlockResize`. Its root uses `min-height: 100vh`
   instead. The manifest still carries `iframe.minHeight` / `maxHeight` /
   `resizable` only because the validators require them
-  (`src/server/services/block-manifest-validator.service.ts:735-762`, and the
+  (the `iframe.*` checks in `BlockManifestValidator.validate`, `src/server/services/block-manifest-validator.service.ts`, and the
   CLI). The run page builds its own iframe envelope
-  (`src/pages/apps/run/[slug]/[[...path]].tsx:556`).
+  (the synthetic `install` in `AppPage`, `src/pages/apps/run/[slug]/[[...path]].tsx`).
 - **The frame can be very wide.** The host no longer caps the page width; the
-  old 1600px default was removed (`src/components/AppBlocks/PageBlockHost.tsx:415-452`).
+  old 1600px default was removed (the `APP_PAGE_MAX_WIDTH_PX` tombstone comment in `src/components/AppBlocks/PageBlockHost.tsx`).
   The developer guide's responsive page still mentions the 1600px cap. So the
   board grid uses `repeat(auto-fill, minmax(min(100%, 240px), 1fr))`, which
   gives one column at 375px and about nine at 2560px. `useBlockBreakpoint()`
@@ -52,20 +52,20 @@ Citations are to `civitai/civitai` at `494941446d`.
   everything is one column with the pins before the form.
 - **It owns a sub-path space.** `navigate('pin/42')` (app scope, the default)
   is resolved under `/apps/run/<slug>/` and pushed shallowly
-  (`src/components/AppBlocks/pageBlockHostLogic.ts:1045`). The host then pushes
+  (`resolveNavigateRequest` in `src/components/AppBlocks/pageBlockHostLogic.ts`). The host then pushes
   `ROUTE_CHANGED`, and `useCivitaiRoute()` reads it
-  (`PageBlockHost.tsx:2078`). `useCivitaiRoute()` is read on every render
+  (`PageBlockHost.tsx`, the effect that calls `send('ROUTE_CHANGED', { subPath })`). `useCivitaiRoute()` is read on every render
   and never copied into state. `navigate('models/42', { scope: 'site' })`
   leaves the app for the civitai.com model page. The `page-run` surface allows
-  that (`src/components/AppBlocks/blockInitFragmentGate.ts:215`).
+  that (`BLOCK_HOST_SITE_NAVIGATION` in `src/components/AppBlocks/blockInitFragmentGate.ts`).
 
 ## Sign-in, consent and the viewer's name
 
 `user:read:self` is **consent-gated**. For a signed-in viewer who has not
 granted it, the mint leaves it out of the token
-(`src/pages/api/v1/block-tokens/index.ts:1494`). For an anonymous viewer it
-is always removed (`:1523`). The host's viewer read refuses a token without it
-(`src/server/routers/blocks.router.ts:7859`, "block lacks user:read:self
+(the `partitionByConsent` call in the `handler` of `src/pages/api/v1/block-tokens/index.ts`). For an anonymous viewer it
+is always removed (the `consentGatedScopes` strip in the same handler). The host's viewer read refuses a token without it
+(`getMyViewer`, via `authorizeBlockBridgeViewer`, in `src/server/routers/blocks.router.ts`, "block lacks user:read:self
 scope"). So `AccountPanel`:
 
 1. **Anonymous** → **Sign in** calls `requestSignIn()`, and the host opens
@@ -80,7 +80,7 @@ scope"). So `AccountPanel`:
 4. **Refused** → `useConsentUnavailable()` delivers the host's
    `CONSENT_UNAVAILABLE`. The panel then stops saying "confirm in the dialog".
    The page host grants only the scopes the mint found missing **from the
-   approved manifest** (`PageBlockHost.tsx:1867`), so a scope you did not
+   approved manifest** (`resolveRequestConsent` in the `REQUEST_CONSENT` handler of `PageBlockHost.tsx`), so a scope you did not
    declare can never be granted here.
 
 The board works whether or not the viewer shares their name.
@@ -96,9 +96,9 @@ if your page generates; `buzz-workflow` shows the generation side.
 
 - **Page apps are behind a moderator-only flag.** `/apps/run/<slug>` needs both
   `appBlocks` and `appBlocksPages`. Otherwise it returns a 404
-  (`src/pages/apps/run/[slug]/[[...path]].tsx:34-37,131`). `appBlocksPages`
+  (the file docblock and the `getServerSideProps` flag gate in `src/pages/apps/run/[slug]/[[...path]].tsx`). `appBlocksPages`
   is `availability: ['mod']` until a Flipt segment widens it
-  (`src/server/services/feature-flags.service.ts:616`). The live segment is
+  (`appBlocksPages` in `src/server/services/feature-flags.service.ts`). The live segment is
   runtime config and cannot be read from source.
 - **`useBlockAnalytics()` records only what the manifest declares.** Both hosts
   forward `TRACK_EVENT`, and the platform keeps an event only when the APPROVED
@@ -111,8 +111,8 @@ if your page generates; `buzz-workflow` shows the generation side.
   `createLiveHost`, so an undeclared event or property warns in the console.
 - **The pre-paint theme fragment is allowlisted.** The host appends
   `#civitai-block=v1&theme=…` only for apps in `BLOCK_INIT_FRAGMENT_ALLOWLIST`,
-  which today holds one first-party app
-  (`blockInitFragmentGate.ts:243-260`). For your app the `index.html` reader is
+  which holds a handful of first-party apps and none of yours
+  (`blockInitFragmentGate.ts`). For your app the `index.html` reader is
   a no-op on civitai.com. The dark default paints first, and a light host
   switches the page at `BLOCK_INIT`.
 

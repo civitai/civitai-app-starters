@@ -1,6 +1,6 @@
 # Civitai App examples
 
-Eleven minimal, runnable Civitai App examples — one per feature area. Each is
+Minimal, runnable Civitai App examples — one per feature area. Each is
 self-contained (its own `block.manifest.json`, `src/`, and README) and runs
 offline against the SDK's mock host, or against the real backend with
 `dev:live`.
@@ -10,14 +10,21 @@ offline against the SDK's mock host, or against the real backend with
 | [`hello-world`](./hello-world) | lifecycle | `useBlockContext`, `useBlockResize` | #60 (the block themes itself), trust frame |
 | [`settings`](./settings) | manifest settings | `useBlockContext().settings`, `SettingsForm` (`/ui`) | publisher vs viewer scope, defaults the host doesn't fill |
 | [`buzz-workflow`](./buzz-workflow) | generation + Buzz | `useBuzzWorkflow`, `WorkflowEstimateError` | #59 (estimate=submit seed), #8/#9/#10 (status + polling), #19 (/64 dims) |
-| [`kv-storage`](./kv-storage) | per-block datastore | `useAppStorage` | storage scopes enforced locally, quota + per-value cap, anon handling |
+| [`kv-storage`](./kv-storage) | 🔴 **retired** — per-block datastore | `useAppStorage` (removed by civitai.com 2026-11-10; use the [document store](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage)) | storage scopes enforced locally, quota + per-value cap, anon handling |
 | [`scopes-api`](./scopes-api) | scopes + REST | `useBlockToken`, `useHostOrigin`, direct `fetch` | declared vs granted scopes, 401→refresh→retry |
-| [`shared-board`](./shared-board) | cross-viewer shared store | `useSharedStorage`, `useAppStorage`, `useViewer`, `useRequestSignIn` | app-wide (not per-instance) board, host-minted keys, author-only last-write-wins edits, one vote per viewer, flag + approval gated, not under `dev:live` |
+| [`shared-board`](./shared-board) | 🔴 **retired** — cross-viewer shared store | `useSharedStorage`, `useAppStorage` (both removed by civitai.com 2026-11-10; use a `shared` collection in the [document store](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage)), `useViewer`, `useRequestSignIn` | app-wide (not per-instance) board, host-minted keys, author-only last-write-wins edits, one vote per viewer, flag + approval gated, not under `dev:live` |
 | [`buzz-purchase`](./buzz-purchase) | top-up | `useBuzzPurchase`, `useBuzzBalance`, `estimate` | a purchase raises the wallet, never the per-generation budget |
 | [`generation-kinds`](./generation-kinds) | other `WorkflowBody` kinds (page app) | `useBuzzWorkflow` with `customComfy` + `step`/`chat-completion`, `useWildcardPack`, `useRequestConsent` | both kinds page-only, `page.buzzBudgetPerGen` ≥ the recipe ceiling, chat text only on the poll; `training` not available to apps yet |
 | [`monetize`](./monetize) | earning: goods + tips | `useGoodPurchase`, `useEntitlements`, `useTip`, `useTipAllowance`, `TipButton` | entitlement gate order, one key per purchase, which rails pay nothing today |
 | [`page-app`](./page-app) | full-page app | manifest `page`, `useBlockBreakpoint`, `useCivitaiRoute`/`useCivitaiNavigate`, `useRequestSignIn`/`useRequestConsent`/`useConsentUnavailable`, `useViewer`, `useHostOrigin` | page frame ignores resize; consent-gated `user:read:self`; mock `NAVIGATE` gap |
 | [`generate-studio`](./generate-studio) | page-app generation (txt2img + img2img) | `useCheckpointPicker`, `useResourcePicker`, `useGenerationResources`, `useImageUpload`, `useBuzzWorkflow` (`watch`/`cancel`), `useAppWorkflows`, `usePublishGenerationOutputs`, `useGatedImages`, `useDomainMaturity`/`SfwGate`, `useSaveImage` | `page.buzzBudgetPerGen`, page-only LoRAs/source images, unrated ≠ "G", post creation is dark |
+
+🔴 **`kv-storage` and `shared-board` are retired.** Both are built on the legacy
+stores civitai.com removed on 2026-11-10: every `useAppStorage()` /
+`useSharedStorage()` call is refused with `legacy_store_removed`, so they run
+under `dev:harness` (the mock host still answers) and fail against civitai.com.
+Don't start an app from either. Store data in the document store
+(`app.storage.collection(name)` in `@civitai/sdk`); moving an app: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 
 ## What every example shares
 

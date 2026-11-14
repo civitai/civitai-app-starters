@@ -5,8 +5,11 @@
 > `BLOCK_SCOPES`, the `postMessage` protocol — lives in
 > [`@civitai/app-sdk/blocks`](../civitai-app-sdk/) (the `defineBlock` manifest
 > gate is on the node-only `@civitai/app-sdk/manifest` subpath). This package adds the
-> `IframeTransport`, the singleton that detects + caches it, and the eight
-> React hooks block apps actually call.
+> `IframeTransport`, the singleton that detects + caches it, and the
+> React hooks block apps actually call — `src/hooks/use*.ts`; the exported set
+> is the `ENTRY_HOOKS` ledger in
+> [`tests/guards/blocks-react-hook-return-types.test.mjs`](../../tests/guards/blocks-react-hook-return-types.test.mjs)
+> (not counted here, so the count cannot fall behind).
 
 ## Stack
 
@@ -37,7 +40,7 @@ does, walking re-export edges so a barrel cannot launder the path.
 | `src/transport/detector.ts` | `BlockTransportDetector.detect()` — picks inline vs iframe based on bootstrap presence. |
 | `src/transport/requestTimeouts.ts` | `DEFAULT_REQUEST_TIMEOUT_MS` (30s, protocol round-trips), `HUMAN_INTERACTION_TIMEOUT_MS` (10 min, anything gated on a person), and `REQUEST_TIMEOUT_CLASS` — a TOTAL `human`/`protocol`/`no-reply` bucketing of every block→parent message type, from which `HUMAN_GATED_REQUEST_TYPES` is derived. |
 | `src/transport/singleton.ts` | `getTransport()` lazy-init + cache. Hooks share one instance. `__resetTransport()` for tests only. |
-| `src/hooks/` | The eight public hooks. Each is a thin wrapper around the singleton transport. |
+| `src/hooks/` | The public hooks (the set is `ENTRY_HOOKS` in `tests/guards/blocks-react-hook-return-types.test.mjs`). Each is a thin wrapper around the singleton transport. |
 | `src/testing.tsx` | The **host-simulation subpath**, `@civitai/blocks-react/testing` — a documented, published entry point, not an internal escape hatch. **Everything on it is a mock: no network, no Buzz.** That is a property of the subpath, not a promise in a comment — `createLiveHost` was moved OUT of here to `src/live.ts` in #334. **The exported surface is enumerated in exactly one place — README § "The `/testing` subexport"** — and `test/subpathSurfaces.test.ts` holds a ledger that it pins to the module (two checks) *and* to that README section (a third). No edit to the module, the ledger or the README leaves all three green. Do not restate the list here; a second copy goes stale, which is the whole of #334. |
 | `src/live.ts` | 🔴 **`@civitai/blocks-react/live` — THE REAL BACKEND. `createLiveHost` spends the token holder's REAL BUZZ.** Its own subpath since #334: a client that spends money must not be reachable through an import path named `testing`. A `dev:live` harness is the only legitimate caller. Surface, rationale and stability: README § "The `/live` subexport" — do not restate them here. |
 | `src/internal/mockHost.ts` | The mock host itself (~3.1k lines) — every `*_RESULT` reply, the scenario knobs, the in-memory app/shared storage. Reached only from `src/testing.tsx`; nothing in `src/index.ts` or `src/ui/` imports it. |

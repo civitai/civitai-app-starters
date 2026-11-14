@@ -1,5 +1,14 @@
 # kv-storage — per-block key-value store
 
+> 🔴 **Retired — do not start an app from this example.** It is built on `useAppStorage()`.
+> civitai.com removed the legacy stores on 2026-11-10: every call is refused with
+> a message that starts `legacy_store_removed:`, so this example works only
+> against the mock host (`npm run dev:harness`) and fails on civitai.com. Store
+> data in the document store instead — declare a collection in the manifest and
+> use [`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) from `@civitai/sdk`. Moving an app:
+> https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this README describes the example as it worked before the
+> removal.
+
 `useAppStorage()` — a small KV datastore scoped to (this block instance, this
 viewer). A tiny notes pad here.
 

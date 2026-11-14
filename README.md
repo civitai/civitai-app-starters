@@ -19,15 +19,14 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 
 ## What's in here
 
-- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **Civitai Apps** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
-- **`packages/civitai-blocks-react`** — React hooks + iframe transport for Civitai Apps. Published as `@civitai/blocks-react`.
+- **[`packages/`](./packages)** — the published `@civitai/*` npm packages, one per subdirectory, each with its own README. That directory is the list; the ones a Civitai App reaches for first are under [Packages](#packages) below.
 - **Scaffolding + submit for Civitai Apps** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `@civitai/blocks-cli` npm scaffolder it replaced stays published-but-deprecated on npm but is no longer part of this repo.
 - **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best OAuth-app default.
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
 - **`starters/civitai-block-starter`** — Vite + TypeScript Civitai App scaffold built on web components (`@civitai/sdk` + `@civitai/components`, no UI framework).
-- **`starters/examples/*`** — eleven minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
+- **`starters/examples/*`** — minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps); [`starters/examples/README.md`](./starters/examples/README.md) is the index).
 
 The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance (read with `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none; hidden entirely when `BuzzRead` was not granted) → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
@@ -89,23 +88,27 @@ bridge, `<civitai-*>` custom elements from `@civitai/components` for the UI.
 npx tiged civitai/civitai-app-starters/starters/civitai-block-starter my-block
 ```
 
-Prefer React? The Go `civitai` CLI's `civitai app create <name>` scaffolds a
-Vite + React + TS app from its `page-money` template, and the examples below
-are React too.
+Prefer React? The Go `civitai` CLI's `civitai app create <name> --template page-money`
+scaffolds a Vite + React + TS app (without `--template`, `civitai app create`
+uses its `page-elements` template: Vite + TypeScript, no framework), and the
+examples below are React too.
 
 ### Packages
+
+The full set is the [`packages/`](./packages) directory — one npm package per
+subdirectory, each with its own README. The ones a block reaches for first:
 
 | Package | What |
 |---|---|
 | [`@civitai/sdk`](https://www.npmjs.com/package/@civitai/sdk) — [source](./packages/civitai-sdk) | Framework-agnostic client: `initialize()` resolves on the host's `BLOCK_INIT` with the slot context, viewer, theme, `app.host` (host UI, resize, navigation) and the API clients. What the default starter uses for the bridge. |
 | [`@civitai/components`](https://www.npmjs.com/package/@civitai/components) — [source](./packages/civitai-components) | The `<civitai-*>` custom elements (Lit) and the attribute-driven `data-civitai-ui` CSS, themed by [`@civitai/theme`](./packages/civitai-theme). |
 | [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) (`/blocks` subpath) — [source](./packages/civitai-app-sdk) | Framework-agnostic contract: manifest types, scopes, the `postMessage` protocol. Build-time manifest validation (`defineBlock`, `blockManifestPlugin`) lives on the node-only `/manifest` and `/vite` subpaths. |
-| [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) — [source](./packages/civitai-blocks-react) | React hooks (`useBlockContext`, `useBuzzWorkflow`, `useAppStorage`, …) + iframe transport. Plus `/ui` (the `SettingsForm`). |
+| [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) — [source](./packages/civitai-blocks-react) | React hooks (`useBlockContext`, `useBuzzWorkflow`, `useViewer`, …) + iframe transport. Plus `/ui` (the `SettingsForm`). |
 | Go [`civitai` CLI](https://github.com/civitai/cli) | `civitai login` / `civitai app init` / `civitai app validate` / `civitai app submit` — scaffold and ship a block. (Local dev is the project's own `npm run dev:harness`.) Replaces the deprecated `@civitai/blocks-cli`. |
 
 ### Examples
 
-Eleven minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
+Minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
 one per feature, each with its own README. They are written in React with
 `@civitai/blocks-react`. Each runs offline against the SDK's mock host
 (`dev:harness`), or against the real backend (`dev:live`).
@@ -115,10 +118,10 @@ one per feature, each with its own README. They are written in React with
 | [`hello-world`](./starters/examples/hello-world) | lifecycle: `useBlockContext`, the host trust frame, self-set `data-theme` |
 | [`settings`](./starters/examples/settings) | manifest `settings` + the headless `SettingsForm`, publisher vs viewer scopes |
 | [`buzz-workflow`](./starters/examples/buzz-workflow) | `useBuzzWorkflow` estimate→submit→poll, the cost-quote-matches-charge rule |
-| [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
+| [`kv-storage`](./starters/examples/kv-storage) | 🔴 **Retired:** `useAppStorage`, which civitai.com removed on 2026-11-10 (`legacy_store_removed`). Use the [document store](./packages/civitai-sdk#document-storage) |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
 | [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
-| [`shared-board`](./starters/examples/shared-board) | `useSharedStorage` cross-viewer board beside per-user `useAppStorage` (flag + approval gated) |
+| [`shared-board`](./starters/examples/shared-board) | 🔴 **Retired:** `useSharedStorage` + `useAppStorage`, both removed by civitai.com on 2026-11-10 (`legacy_store_removed`). Use a `shared` collection in the [document store](./packages/civitai-sdk#document-storage) |
 | [`page-app`](./starters/examples/page-app) | the full-page app shape: manifest `page`, `useBlockBreakpoint`, sign-in/consent, navigation, `BlockGate` |
 | [`generate-studio`](./starters/examples/generate-studio) | page-app generation: checkpoint/LoRA pickers, txt2img + img2img, app queue, gated outputs, publish |
 | [`generation-kinds`](./starters/examples/generation-kinds) | the other `WorkflowBody` kinds: `customComfy` recipes and `step` chat-completion, plus `useWildcardPack` |
@@ -169,7 +172,7 @@ These bit us building the reference block; the examples + the guide bake in the 
   `BLOCK_INIT` is rejected and the block hangs on "Loading…".
 - 🔴 **Host-API access is enabled per ACCOUNT during the preview, separately
   from submit/approve** — an approved, live block can still get `401` on every
-  `useAppStorage()` call because the account was never enrolled, and neither
+  host-API call because the account was never enrolled, and neither
   your manifest scopes nor your app's approval has anything to do with it.
   `civitai app doctor` reports your account's state in one line. See
   [Preview access is on your ACCOUNT, not on your app](./docs/build-your-first-app-block.md#preview-access-is-on-your-account-not-on-your-app)

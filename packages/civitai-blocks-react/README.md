@@ -105,8 +105,9 @@ import '@civitai/app-sdk/safe-storage';
 
 Full rules + the `installSafeStorage()` / `createMemoryStorage()` API:
 [`@civitai/app-sdk` README → Web storage in a block](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk#web-storage-in-a-block-civitaiapp-sdksafe-storage).
-Remember the fallback is session-scoped — use [`useAppStorage()`](#useappstorage)
-for anything durable.
+Remember the fallback is session-scoped — use the document store
+([`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) in `@civitai/sdk`) for anything durable.
+`useAppStorage()` was that answer until civitai.com removed it on 2026-11-10.
 
 ## The hooks
 
@@ -322,8 +323,9 @@ const { publisherSettings, userSettings } = useBlockSettings();
 
 ### `useBuzzWorkflow()`
 
-The generation flow: `estimate` → `submit` → `poll`, host-mediated. Returns
-`{ estimate, submit, poll, status, result, error }`.
+The generation flow: `estimate` → `submit` → `poll` (or `watch`), host-mediated.
+Returns `{ estimate, submit, poll, watch, cancel, status, result, error }` — the
+`UseBuzzWorkflow` interface in `src/hooks/useBuzzWorkflow.ts` is the authority.
 
 ```tsx
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
@@ -1280,7 +1282,7 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 
 🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
 model-page slot does not answer it (the request times out), and `dev:live`
-replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
+replies `parse-failed`. Develop against the mock host (`npm run dev:harness`): `createMockHost` takes a
 `resourceFile` (the canned reply) and a `resourceFileError` (force a code);
 `setScenario({ resourceFileError: undefined })` clears the forced error.
 
@@ -1894,6 +1896,14 @@ async function onCancel(id: string) {
 
 ### `useAppStorage()`
 
+> 🔴 **Removed on 2026-11-10 — `@deprecated`.** civitai.com shut off the legacy app
+> store: every call is refused with a message that starts `legacy_store_removed:`,
+> so `get`, `set`, `delete`, `list` and `getQuota` reject. Declare a `private`
+> collection and use the document store,
+> [`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) in `@civitai/sdk`.
+> Moving an app: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this section describes the store as it behaved
+> before the removal.
+
 KV datastore, host-mediated. Keys are **namespaced** per (block instance,
 viewer); the byte and row **budgets** are enforced per (**app**, viewer), so
 every instance of one app shares one budget for that viewer.
@@ -2079,6 +2089,14 @@ how a block's error branch could pass every local run and never fire in
 production.
 
 ### `useSharedStorage()`
+
+> 🔴 **Removed on 2026-11-10 — `@deprecated`.** civitai.com shut off the legacy
+> shared store: every call is refused with a message that starts
+> `legacy_store_removed:`, so every method rejects. Declare a `shared` collection
+> (authorship, counters and marks are built in) and use the document store,
+> [`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) in `@civitai/sdk`.
+> Moving an app: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this section describes the store as it behaved
+> before the removal.
 
 App-scoped, append-only, community-votable SHARED datastore (every viewer sees
 the same list). Sibling of `useAppStorage`; anonymous viewers get the read path
@@ -4118,33 +4136,27 @@ is not done here.
 
 ## Examples
 
-Runnable, minimal blocks — one per feature, each with its own README:
-
-- [`hello-world`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/hello-world) — `useBlockContext`, lifecycle, `data-theme` (#60)
-- [`settings`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/settings) — manifest settings + `SettingsForm`
-- [`buzz-workflow`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/buzz-workflow) — `useBuzzWorkflow` (#59, #8/#9/#10, #19)
-- [`kv-storage`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/kv-storage) — `useAppStorage`
-- [`scopes-api`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/scopes-api) — scopes + REST + `useBlockToken`
-- [`buzz-purchase`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/buzz-purchase) — `useBuzzPurchase`
+Runnable, minimal blocks — one per feature, each with its own README. The
+[`starters/examples/` index](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples#readme)
+is the list, with the hooks each one uses; it is not copied here, so it cannot
+fall behind.
 
 ## Version compatibility
 
-| `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
-|---|---|---|
-| `0.78.x` | `^0.79.0` | `useResourceFile()` (`GET_RESOURCE_FILE`). Its types (`BlockResourceFile` and friends) come from the SDK's `0.79.0`; the hook imports no SDK value, so the declared peer floor is unchanged. |
-| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
-| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
-| `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
-| `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
-| `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
-| `0.26.x` | `^0.22.0` | `useViewer()` (`GET_VIEWER`) |
-| `0.25.x` | `^0.21.0` | `useBuzzTransactions`, `useBuzzAccounts`, `useDailyCompensation`, `useWildcardPack` |
-| `0.5.0` | `^0.7.0` | `useBuzzWorkflow().cancel()` (real server-side cancel, gotcha #51) |
-| `0.4.x` | `^0.6.0` | `useAppStorage`, `SettingsForm` (`/ui`) |
-| `0.3.x` | `^0.5.0` | earlier hook set |
+The pairing lives in two sources, not in a table here (a hand-kept table stopped
+at `0.78.x` and fell behind):
 
-Always keep `@civitai/app-sdk` at or above the paired minor — the React package
-peer-depends on the SDK's message/type contract.
+- this package's `package.json` `peerDependencies["@civitai/app-sdk"]` is the
+  range a release installs against;
+- [`CHANGELOG.md`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/CHANGELOG.md)
+  names, per release, the hooks it adds and any `@civitai/app-sdk` release it
+  needs (a new hook's types often come from a newer SDK than the declared floor);
+- [`PEER_FLOOR.md`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/PEER_FLOOR.md)
+  explains why that floor is deliberately wide.
+
+A pairing below what a hook needs fails at `tsc` with `Cannot find name '…'`, not
+at install. Keep `@civitai/app-sdk` at or above the release the changelog names —
+the React package peer-depends on the SDK's message/type contract.
 
 ## License
 
