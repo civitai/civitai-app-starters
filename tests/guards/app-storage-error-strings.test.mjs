@@ -8,8 +8,9 @@
  * `code: 'PAYLOAD_TOO_LARGE'` and a per-site `message`; the bridge
  * (`IframeHost.tsx:282`) forwards **`err.message`** and never the code. So
  * `PAYLOAD_TOO_LARGE` is a string no block can ever receive — and
- * `createMockHost`, the `kv-storage` harness, the contract doc on
- * `APP_STORAGE_SET_RESULT` and the example's only error branch all said it was
+ * `createMockHost`, the (since deleted) `kv-storage` example's harness, the
+ * contract doc on `APP_STORAGE_SET_RESULT` and that example's only error branch
+ * all said it was
  * THE string, for three releases. A block that branched on it took the
  * actionable arm under `dev:mock` and the generic arm in production, and
  * nothing in any build, test or type-check could see the difference.
@@ -118,10 +119,9 @@ const ERRORS_MODULE = 'packages/civitai-app-sdk/src/blocks/appStorageErrors.ts';
  */
 const MOCKS = [
   { file: 'packages/civitai-blocks-react/src/internal/mockHost.ts', rejections: 5 },
-  // `starters/examples/kv-storage/src/Harness.tsx` left this ledger when it
-  // stopped hand-rolling a KV store and mounted the SDK's `Harness` (i.e. the
-  // mockHost.ts above) instead. If an example ever answers APP_STORAGE_* itself
-  // again, the completeness walk below names it.
+  // No example answers APP_STORAGE_* itself (the retired `kv-storage` example's
+  // harness left this ledger before that example was deleted). If one ever does,
+  // the completeness walk below names it.
 ];
 
 /**
@@ -586,11 +586,13 @@ test('MOCKS is the COMPLETE set — #343 cannot reappear in a file nobody listed
 });
 
 test('the example a reader copies branches on the CLASSIFIER, not on host prose (#343)', () => {
-  // The sharpest consequence of #343 lived here: `kv-storage`'s only error arm
-  // tested `/payload_too_large/i`, so the actionable copy was unreachable in
-  // production while passing every local run. The fix is not "a wider regex" —
-  // it is that the example does not spell a host string at all.
-  const rel = 'starters/examples/kv-storage/src/App.tsx';
+  // The sharpest consequence of #343 lived in the since-deleted `kv-storage`
+  // example: its only error arm tested `/payload_too_large/i`, so the actionable
+  // copy was unreachable in production while passing every local run. The fix is
+  // not "a wider regex" — it is that the example does not spell a host string at
+  // all. `page-app` is the example that now carries `storageFailureMessage()`,
+  // and the one `docs/build-your-first-app-block.md` tells readers to copy.
+  const rel = 'starters/examples/page-app/src/App.tsx';
   const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
 
   const fnAt = src.indexOf('function storageFailureMessage');

@@ -118,10 +118,8 @@ one per feature, each with its own README. They are written in React with
 | [`hello-world`](./starters/examples/hello-world) | lifecycle: `useBlockContext`, the host trust frame, self-set `data-theme` |
 | [`settings`](./starters/examples/settings) | manifest `settings` + the headless `SettingsForm`, publisher vs viewer scopes |
 | [`buzz-workflow`](./starters/examples/buzz-workflow) | `useBuzzWorkflow` estimate→submit→poll, the cost-quote-matches-charge rule |
-| [`kv-storage`](./starters/examples/kv-storage) | 🔴 **Retired:** `useAppStorage`, which civitai.com removed on 2026-11-10 (`legacy_store_removed`). Use the [document store](./packages/civitai-sdk#document-storage) |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
 | [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
-| [`shared-board`](./starters/examples/shared-board) | 🔴 **Retired:** `useSharedStorage` + `useAppStorage`, both removed by civitai.com on 2026-11-10 (`legacy_store_removed`). Use a `shared` collection in the [document store](./packages/civitai-sdk#document-storage) |
 | [`page-app`](./starters/examples/page-app) | the full-page app shape: manifest `page`, `useBlockBreakpoint`, sign-in/consent, navigation, `BlockGate` |
 | [`generate-studio`](./starters/examples/generate-studio) | page-app generation: checkpoint/LoRA pickers, txt2img + img2img, app queue, gated outputs, publish |
 | [`generation-kinds`](./starters/examples/generation-kinds) | the other `WorkflowBody` kinds: `customComfy` recipes and `step` chat-completion, plus `useWildcardPack` |

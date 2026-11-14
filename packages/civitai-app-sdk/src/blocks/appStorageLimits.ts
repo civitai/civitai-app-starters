@@ -19,9 +19,8 @@
  *     banned numbers are the TRUE ceilings of neighbouring features there
  *     (the shared-storage app-wide quota, the iframe frame cap, Buzz figures),
  *     and a value ban over the package failed the build for saying so;
- *   - all of `starters/examples/kv-storage`;
- *   - and, in `packages/civitai-blocks-react/README.md`,
- *     `packages/civitai-app-sdk/README.md` and `starters/examples/README.md`,
+ *   - and, in `packages/civitai-blocks-react/README.md` and
+ *     `packages/civitai-app-sdk/README.md`,
  *     ONLY the App-Storage REGION — sections whose heading names App Storage,
  *     plus lines that name it themselves. `### useSharedStorage()` in the same
  *     file is not read.

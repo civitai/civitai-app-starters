@@ -110,10 +110,11 @@ const EXPORTED_CONSTANTS = [
 /**
  * Trees that are wholly about App Storage, scanned in full.
  *
- * `starters/examples/kv-storage` is the one example built on the hook — every
- * file in it, its README included, is App-Storage material.
+ * Empty since the retired `starters/examples/kv-storage` example (the one
+ * example built on the hook) was deleted. Kept, with its walk, so a future
+ * App-Storage-only tree has one place to be named.
  */
-const SCAN_DIRS = ['starters/examples/kv-storage'];
+const SCAN_DIRS = [];
 
 /**
  * CODE files that carry the ceilings, scanned in full and named individually.
@@ -150,16 +151,16 @@ const SCAN_FILES = [
 const SCAN_MARKDOWN = [
   { file: 'packages/civitai-blocks-react/README.md', anchor: 'APP_STORAGE_MAX_ROWS' },
   { file: 'packages/civitai-app-sdk/README.md', anchor: 'APP_STORAGE_' },
-  { file: 'starters/examples/README.md', anchor: 'kv-storage' },
 ];
 
 /**
  * A heading that opens an App-Storage section, or a line that names App
  * Storage on its own. Both readings are needed: the blocks-react README has a
- * `### useAppStorage()` SECTION, while `starters/examples/README.md` mentions
- * the feature only in one row of a table under a generic heading.
+ * `### useAppStorage()` SECTION, while a doc can mention the feature only in
+ * one row of a table under a generic heading (`starters/examples/README.md`
+ * did, until its App-Storage example was deleted).
  */
-const APP_STORAGE_ANCHOR = /useAppStorage|APP_STORAGE|kv-storage|App Storage/i;
+const APP_STORAGE_ANCHOR = /useAppStorage|APP_STORAGE|App Storage/i;
 
 /**
  * Per-line opt-out for a true statement that genuinely belongs on an in-scope
@@ -215,15 +216,9 @@ const EXPECTED_SCAN_UNITS = [
   'packages/civitai-blocks-react/src/hooks/useAppStorage.ts',
   'packages/civitai-blocks-react/src/internal/liveHost.ts',
   'packages/civitai-blocks-react/src/internal/mockHost.ts',
-  'starters/examples/README.md',
-  'starters/examples/kv-storage/README.md',
-  'starters/examples/kv-storage/src/App.tsx',
-  'starters/examples/kv-storage/src/Harness.tsx',
-  'starters/examples/kv-storage/src/main.tsx',
-  // #330 briefly added a per-scaffold `vite-plugin-block-manifest.ts` here. It
-  // is gone again — the gate now ships from `@civitai/app-sdk/vite`, so there
-  // are no per-scaffold copies to scan.
-  'starters/examples/kv-storage/vite.config.ts',
+  // `starters/examples/README.md` and the `starters/examples/kv-storage` tree
+  // left this list when that retired example was deleted: the README no longer
+  // mentions App Storage, and the tree is gone.
 ];
 
 /**
@@ -296,9 +291,8 @@ function scannableFiles() {
  *     this is what pulls in the whole `### useAppStorage()` prose block, and
  *     what STOPS at the next heading, leaving `### useSharedStorage()` and
  *     `### useImageUpload()` out;
- *   - or the line names App Storage itself — this is what catches the one row
- *     of a table in `starters/examples/README.md`, which sits under a heading
- *     that names nothing.
+ *   - or the line names App Storage itself — this is what catches a single
+ *     table row that sits under a heading that names nothing.
  *
  * Fenced code blocks inherit their enclosing section: a ``` fence inside the
  * App-Storage section is part of it, and a fence in another section is not.
@@ -632,24 +626,6 @@ test('the mock host DERIVES its storage defaults from the constants', () => {
       new RegExp(`const ${name} = ${constant};`).test(src),
       `${rel}: ${name} must be assigned directly from ${constant}, not re-derived`,
     );
-  }
-});
-
-test('the kv-storage harness takes its ceilings from the SDK mock host, unoverridden', () => {
-  // It used to hand-roll a KV store and carried its own copies of the three
-  // ceilings (pinned here as `const X = APP_STORAGE_…`). It now mounts the SDK
-  // `Harness`, whose defaults ARE the constants (the test above), so the
-  // property to hold is that the example passes no override of its own: a
-  // `storage={{ quotaBytes: … }}` here would re-open the gap the constants close.
-  const rel = 'starters/examples/kv-storage/src/Harness.tsx';
-  const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
-  assert.match(
-    src,
-    /import\s*\{[^}]*\bHarness\b[^}]*\}\s*from\s*'@civitai\/blocks-react\/testing'/,
-    `${rel}: expected to mount the SDK Harness from @civitai/blocks-react/testing`,
-  );
-  for (const override of [/\bstorage\s*=\s*\{/, /\bquotaBytes\b/, /\bvalueCapBytes\b/, /\blimitRows\b/]) {
-    assert.doesNotMatch(src, override, `${rel}: overrides a mock-host storage ceiling (${override})`);
   }
 });
 

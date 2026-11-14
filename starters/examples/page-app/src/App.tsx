@@ -580,8 +580,7 @@ function PinDetail({
 /**
  * Viewer copy THIS APP owns for a storage failure; the host's own words go to
  * the console, never to the screen (they are server prose, not copy). Branches
- * on `classifyAppStorageError`, never on the message. The full reasoning for
- * each arm is in the kv-storage example.
+ * on `classifyAppStorageError`, never on the message.
  */
 function storageFailureMessage(err: unknown, attempted: string): string {
   console.warn(`[page-app] could not ${attempted}:`, err instanceof Error ? err.message : err);

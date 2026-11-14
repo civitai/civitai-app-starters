@@ -4,7 +4,7 @@
  *
  * WHY THIS EXISTS
  * ===============
- * `createMockHost` (and the `kv-storage` harness built on the same idea) is the
+ * `createMockHost` is the
  * only thing between a block author and a production-only storage failure, so
  * the list of ways it LIES is load-bearing documentation. It is also duplicated
  * across documents that get edited at different times: when #347 was found, the
@@ -40,7 +40,7 @@ import { dirname, join, resolve } from 'node:path';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * Every KNOWN, OPEN way `createMockHost` / the `kv-storage` harness differ from
+ * Every KNOWN, OPEN way `createMockHost` differs from
  * the host. Add a row when one is found; delete a row when it is fixed AND the
  * docs stop listing it.
  */
@@ -103,11 +103,8 @@ const SITES = [
     marker: /not\W*\*{0,2}gate-for-gate\*{0,2} identical to the host/i,
     window: 25,
   },
-  {
-    file: 'starters/examples/kv-storage/README.md',
-    marker: /simulation, not a replica/i,
-    window: 25,
-  },
+  // `starters/examples/kv-storage/README.md` was the second site until that
+  // retired example was deleted; its caveat went with it.
 ];
 
 /** The lines a site's caveat spans, as one string. */

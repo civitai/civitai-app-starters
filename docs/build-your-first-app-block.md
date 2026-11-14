@@ -172,9 +172,9 @@ enrolment, your approval, or your manifest.
 Where to test storage instead:
 
 - `npm run dev:harness` (mock host) for the storage flows and your error
-  branches — it backs the bridge with an in-memory store and enforces the caps;
-  see [`kv-storage`](../starters/examples/kv-storage) for what the harness can
-  and cannot reproduce.
+  branches — it backs the bridge with an in-memory store and enforces the caps.
+  It is a simulation, not a replica: the `@civitai/blocks-react` README lists
+  the known ways the mock host differs from civitai.com.
 - the **block embedded on civitai.com**, opened by an enrolled account, for the
   real thing. That is the only arm that exercises row 1 and row 2 as production
   does.
@@ -185,7 +185,7 @@ have reproduced the paragraph above.
 ### Build for the refusal
 
 The preview makes a refused host call a **normal runtime state**, not an edge
-case. The `kv-storage` example's `storageFailureMessage()` is the shape to copy:
+case. The `page-app` example's `storageFailureMessage()` is the shape to copy:
 these account refusals are *not* in the classified ceiling family, so they land
 on the classifier's `default:` arm — keep that arm, and don't have it tell a
 viewer to retry something a retry cannot fix. Degrade (session-only state plus
