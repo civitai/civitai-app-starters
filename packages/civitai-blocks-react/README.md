@@ -603,6 +603,21 @@ An older host has none of the three: it resolves the estimate priced at the
 step's declared estimate. The mock host always quotes a registered step (at
 `generation.costPerGen`), so it never sends these codes.
 
+#### An unscanned source or an inline graph the host will not run
+
+These refusals come before anything is priced or reserved, on `estimate()`
+(`WorkflowEstimateError`), on `submit()` (`WorkflowSubmitError`) and as that
+body's cell of a batch estimate, as
+`{ workflowId: 'failed', status: 'failed', error, errorCode }` with no `cost`.
+Nothing is charged.
+
+| `errorCode` | Means | `error` | Retry the same body? |
+|---|---|---|---|
+| `'source-scan-pending'` | a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit |
+| `'inline-node-refused'` | an inline `customComfy` graph uses a node the host does not run inline: one that reads or writes a file path, or a loader whose input comes from another node, is an object, is a URL the host does not fetch, or names a local file. `checkComfyGraph` does not detect this | starts with `inline workflow uses nodes the host does not run inline: ` and names each node, e.g. `node 4 (LoadImage) names a local file in image; upload the media and pass its URL` | no — remove a node that reads or writes a file path; give loader inputs as literal values, and bring media in as Civitai uploads (pass the upload's `url`) |
+| `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
+| `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
+
 #### Several steps as one workflow: `kind: 'workflow'`
 
 A `kind: 'workflow'` body submits **several orchestrator steps as one

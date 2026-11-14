@@ -64,6 +64,8 @@ await check('the vendored schema is reachable from dist/ (defineBlock actually r
     name: 'Exports Probe',
     contentRating: 'g',
     scopes: [],
+    // A manifest must declare a surface (a page or a non-empty targets).
+    page: { path: '/', title: 'Exports Probe' },
   };
   assert.equal(defineBlock({ manifest }), manifest);
 });
@@ -79,6 +81,7 @@ await check('NEGATIVE CONTROL: the built copy can still say no', async () => {
           name: 'n',
           contentRating: 'g',
           scopes: [],
+          page: { path: '/', title: 'n' },
         },
       }),
     (err) => err instanceof BlockManifestError && err.field === 'blockId',

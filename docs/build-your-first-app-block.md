@@ -280,7 +280,10 @@ my-block/
 
 Only five of those are **required** by the
 [canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
-`version`, `name`, `contentRating`, `scopes`. The rest are optional.
+`version`, `name`, `contentRating`, `scopes`. A manifest must also declare at
+least one **surface**: a non-empty `targets` array (a model-page slot app, like
+this one) or a `page` object (a full-page app), or both. Either one alone is
+enough, so each is optional on its own. The rest are optional.
 
 > **There is no `appId` field.** The `civitai` CLI identifies your app by
 > `blockId`, and no project file holds a separate app id (an older

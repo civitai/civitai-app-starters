@@ -94,6 +94,10 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'step_quote_unpriced'
   // The pending-scan source refusal (civitai#8405).
   | 'source-scan-pending'
+  // The inline customComfy graph refusals (civitai#8488, and checkComfyGraph's two).
+  | 'inline-node-refused'
+  | 'not-api-format'
+  | 'model-filenames'
 >();
 const dailyLimit: BlockWorkflowSnapshot['errorCode'] = 'daily-limit-exceeded';
 const futureCode: BlockWorkflowSnapshot['errorCode'] = 'some-code-a-later-host-adds';

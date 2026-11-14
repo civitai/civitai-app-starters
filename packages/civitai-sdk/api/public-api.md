@@ -2538,6 +2538,23 @@ export interface BlockWorkflowSnapshot {
      * error, errorCode }` with NO `cost`. A host that predates these codes
      * resolves the estimate instead, priced at the step's declared estimate, so
      * there a registered-step estimate may not be a quote.
+     *  - `'source-scan-pending'` — a `kind: 'step'` or `kind: 'workflow'` input,
+     *    or an inline `customComfy` graph, names an image the viewer uploaded
+     *    whose scan has not finished. `error` reads `that image is still being
+     *    scanned — wait for it to finish before using it`. Estimate and submit
+     *    alike, before anything is reserved. Retry the same body once the
+     *    upload's scan verdict is `'scanned'`.
+     *  - `'inline-node-refused'` — an inline `customComfy` graph uses a node the
+     *    host does not run inline: one that reads or writes a file path, or a
+     *    loader whose input comes from another node, is an object, is a URL the
+     *    host does not fetch, or names a local file. `error` lists each node.
+     *    Estimate and submit alike, before anything is reserved. Change the
+     *    graph; `checkComfyGraph` does not detect this one.
+     *  - `'not-api-format'` / `'model-filenames'` — an inline `customComfy` graph
+     *    that is not ComfyUI API format, or whose loader names a model by
+     *    filename instead of an AIR. These are `checkComfyGraph`'s own codes, so
+     *    an app can catch them before sending. Estimate and submit alike, before
+     *    anything is reserved.
      *
      * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the host may add codes, and the SDK's
      * inbound validator accepts any string here. Handle an unrecognised code as a
@@ -2951,7 +2968,25 @@ export type KnownBlockWorkflowErrorCode = 'training-quote-rejected' | 'training-
  * finished. Retry once the upload's scan verdict is `scanned` (with
  * `asyncScan`, wait for it before submitting).
  */
- | 'source-scan-pending';
+ | 'source-scan-pending'
+/**
+ * An inline `customComfy` graph uses a node the host does not run inline: one
+ * that reads or writes a file path, or a loader whose input is not a literal
+ * value the host can check. `checkComfyGraph` does not detect this; change
+ * the graph.
+ */
+ | 'inline-node-refused'
+/**
+ * An inline `customComfy` graph is not ComfyUI API format. The same code
+ * `checkComfyGraph` reports; re-export the graph in API format.
+ */
+ | 'not-api-format'
+/**
+ * An inline `customComfy` graph's loader names a model by filename instead of
+ * an AIR. The same code `checkComfyGraph` reports; use AIRs declared in
+ * `resources`.
+ */
+ | 'model-filenames';
 
 /** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
 export interface BlockModelSubstitution {

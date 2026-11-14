@@ -1,5 +1,33 @@
 # @civitai/app-sdk
 
+## 0.87.0
+
+### Minor Changes
+
+- a8f03ac: Add `fetchGenerationSamplers` and `resolveGenerationSampler` to `@civitai/app-sdk/blocks`. They give the sampler options per model family that the on-site generator shows, read from `GET /api/v1/blocks/generation-samplers` with any block token.
+
+  - `fetchGenerationSamplers({ hostOrigin, token })` returns `{ ecosystems, baseModels }`. Each family carries `sampler: { options: { value, label }[], default } | null` plus per-model-version overrides.
+  - `resolveGenerationSampler(catalog, { baseModel, modelVersionId })` returns `{ known: true, sampler }`, where `sampler` is the control or `null` when the generator shows none. It checks the version override first, then the family. It returns `{ known: false, reason }` when the platform has no answer for that model, so an unknown family is never read as "no sampler".
+  - On a platform that predates the route (`404`), the getter throws `GenerationSamplersError` with `code: 'unsupported-platform'` instead of returning an empty list.
+  - `parseGenerationSamplers` validates a body you fetched yourself.
+
+### Patch Changes
+
+- 117e480: Document the generation refusals a host sends that had no README row, and declare the inline-graph ones.
+
+  - `KnownBlockWorkflowErrorCode` gains `'inline-node-refused'` (an inline `customComfy` graph uses a node the host does not run inline; civitai#8488), `'not-api-format'` and `'model-filenames'` (the two `checkComfyGraph` codes the host also refuses an inline graph with). The host already sends all three; the field stays an open string, so keep a `default` branch.
+  - `@civitai/blocks-react` README: a new `errorCode` table under `useBuzzWorkflow()` for `'source-scan-pending'` (civitai#8405) and the three inline-graph codes, each with the host's `error` text and what to do.
+
+## 0.86.0
+
+### Minor Changes
+
+- fa31f97: BREAKING (a `0.x` minor): `defineBlock` now refuses a manifest that declares no surface. A manifest must declare a `page` object (a full-page app) or a non-empty `targets` array (a model-page slot app), as civitai.com already requires at submit. The re-vendored canonical App Block manifest schema carries the rule, and the error names both fixes:
+
+  > manifest must declare at least one surface: add a "page" object for a full-page app (e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])
+
+  The same re-vendor declares the optional `bugs` field, a public issue-tracker or support link (an `https://` URL string, at most 200 characters), now typed on the manifest. A manifest that already carried a `bugs` key in another shape, such as npm's `{ url, email }` object, is refused.
+
 ## 0.85.0
 
 ### Minor Changes
@@ -922,15 +950,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                            single measurements on one machine.
+                                                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1838,10 +1866,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                              after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                       @civitai/components  0.4.2                   — 1 copy
+                                                                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

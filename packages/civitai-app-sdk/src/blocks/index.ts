@@ -345,6 +345,31 @@ export { BLOCK_INLINE_COMFY_MAX_NODES, BLOCK_INLINE_COMFY_MAX_GRAPH_BYTES } from
 export { checkComfyGraph } from './comfyGraph.js';
 export type { ComfyGraphCheck, ComfyGraphRefusal, ComfyModelFilenameInput } from './comfyGraph.js';
 
+/**
+ * Sampler options per model family, from the platform's own generator source
+ * (`GET /api/v1/blocks/generation-samplers`). An unknown family is reported as
+ * unknown, never as "no sampler"; a platform without the route throws
+ * `unsupported-platform`.
+ */
+export {
+  GENERATION_SAMPLERS_API_PATH,
+  GenerationSamplersError,
+  fetchGenerationSamplers,
+  parseGenerationSamplers,
+  resolveGenerationSampler,
+} from './generationSamplers.js';
+export type {
+  FetchGenerationSamplersOptions,
+  GenerationSamplerCatalog,
+  GenerationSamplerFamily,
+  GenerationSamplerField,
+  GenerationSamplerLookup,
+  GenerationSamplerLookupInput,
+  GenerationSamplerOption,
+  GenerationSamplersErrorCode,
+  GenerationSamplerUnknownReason,
+} from './generationSamplers.js';
+
 /** Host bound for the App Blocks `kind: 'workflow'` body — see `WorkflowBodyWorkflow`. */
 export { BLOCK_WORKFLOW_MAX_STEPS, BLOCK_WORKFLOW_REPEAT_MAX_ITERATIONS } from './types.js';
 
