@@ -3302,7 +3302,30 @@ describe('createLiveHost — OPEN_MEDIA_UPLOAD (refused: the upload needs the vi
     ]);
   });
 
-  it('useMediaUpload() rejects with the refusal in both modes', async () => {
+  it('replies MEDIA_UPLOAD_BATCH_RESULT with the same error and no upload, and logs once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    const items = [{ kind: 'image', bytes: new ArrayBuffer(4) }];
+    post('OPEN_MEDIA_UPLOAD_BATCH', { requestId: 'r-batch-1', purpose: 'generationSource', items });
+    post('OPEN_MEDIA_UPLOAD_BATCH', { requestId: 'r-batch-2', purpose: 'generationSource', items });
+    await waitFor(() =>
+      expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_BATCH_RESULT')).toHaveLength(2),
+    );
+    expect(inbound.messages.filter((m) => m.type === 'MEDIA_UPLOAD_BATCH_RESULT').map((m) => m.payload)).toEqual([
+      { requestId: 'r-batch-1', error: 'media upload is not supported in dev:live — use dev:mock' },
+      { requestId: 'r-batch-2', error: 'media upload is not supported in dev:live — use dev:mock' },
+    ]);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('OPEN_MEDIA_UPLOAD_BATCH received'))).toEqual([
+      '[createLiveHost] OPEN_MEDIA_UPLOAD_BATCH received but live dev mode cannot upload generation inputs ' +
+        '— useMediaUpload().uploadBatch() REJECTS. Test it against the real site, ' +
+        'or use createMockHost({ cannedMediaUploads }) in dev:mock.',
+    ]);
+  });
+
+  it('useMediaUpload() rejects with the refusal in all three modes', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     getTransport({ allowedParentOrigins: [ORIGIN] });
     try {
@@ -3319,6 +3342,9 @@ describe('createLiveHost — OPEN_MEDIA_UPLOAD (refused: the upload needs the vi
       });
       expect(
         await settle(result.current.upload({ kind: 'audio', bytes: new Uint8Array([0x49, 0x44, 0x33]).buffer })),
+      ).toEqual({ rejected: 'media upload is not supported in dev:live — use dev:mock' });
+      expect(
+        await settle(result.current.uploadBatch([{ kind: 'audio', bytes: new Uint8Array([0x49, 0x44, 0x33]).buffer }])),
       ).toEqual({ rejected: 'media upload is not supported in dev:live — use dev:mock' });
     } finally {
       resetTransport();
