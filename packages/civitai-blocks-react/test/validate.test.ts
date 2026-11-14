@@ -1240,12 +1240,14 @@ describe('isValidMediaUploadBatchResult', () => {
     expect(isValidMediaUploadBatchResult({ requestId: 'r', error: '' })).toBe(true);
     expect(isValidMediaUploadBatchResult({ requestId: 'r', error: 'no', results: 'x', expiresAt: 5 })).toBe(true);
   });
-  // The TOP-LEVEL shape: a reply this wrong is dropped whole.
+  // The TOP-LEVEL shape: a reply this wrong is dropped whole. (An ABSENT
+  // requestId passes the shape check, as for every reply, and is dropped as
+  // unroutable by the transport; a reply with too few or too many results is
+  // rejected by the hook, which knows the items.)
   it.each([
     ['not an object', 'MEDIA_UPLOAD_BATCH_RESULT'],
     ['null', null],
     ['requestId a number', { requestId: 7 }],
-    ['no requestId', { results: [{ index: 0, selected: image }] }],
     ['error not a string', { requestId: 'r', error: 5 }],
     ['error null', { requestId: 'r', error: null }],
     ['results not an array', ran({} as never)],
@@ -1313,7 +1315,7 @@ describe('projectInboundPayload — MEDIA_UPLOAD_BATCH_RESULT', () => {
     ['an entry with both selected and error', { index: 1, selected: image, error: 'busy' }],
     ['an entry with no index', { selected: image }],
     ['an entry whose index is a string', { index: '1', selected: image }],
-    ['an entry whose index is another position', { index: 7, selected: image }],
+    ['an entry whose index is negative', { index: -1, selected: image }],
     ['an entry error that is not a string', { index: 1, error: 5 }],
     ['a selected with a negative size', { index: 1, selected: { ...image, sizeBytes: -1 } }],
     ['a selected with an unknown kind', { index: 1, selected: { ...image, kind: 'gif' } }],
@@ -1340,6 +1342,11 @@ describe('projectInboundPayload — MEDIA_UPLOAD_BATCH_RESULT', () => {
     };
     expect(out.results).toEqual([{ index: 0, error: 'media upload failed' }]);
     expect(out.results[0]).not.toHaveProperty('selected');
+  });
+
+  it('passes a WELL-FORMED entry at the wrong position through as sent (the hook rejects the mismatch)', () => {
+    const payload = { requestId: 'r', results: [{ index: 1, selected: image }, { index: 0, selected: video }] };
+    expect(project(payload)).toBe(payload);
   });
 
   it('is identity when every entry is well formed (per-item errors included)', () => {

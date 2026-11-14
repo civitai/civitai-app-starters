@@ -16,7 +16,7 @@ import {
 import { throwOnReplyError } from '../internal/replyError.js';
 import {
   HUMAN_INTERACTION_TIMEOUT_MS,
-  MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS,
+  mediaUploadBatchDefaultTimeoutMs,
 } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
@@ -83,10 +83,15 @@ export interface MediaUploadBatchItem {
 /** Options for {@link UseMediaUpload.uploadBatch}. */
 export interface MediaUploadBatchOptions {
   /**
-   * How long to wait for the host's one reply, in milliseconds. Default
-   * {@link HUMAN_INTERACTION_TIMEOUT_MS} (10 minutes, for the viewer's confirm)
-   * plus {@link MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS} (60 s) per item. This
-   * REPLACES the whole bound.
+   * How long to wait for the host's one reply, in milliseconds. Default:
+   * 10 minutes (for the viewer's confirm) + 60 s per item + 1 s per MiB of the
+   * items' bytes (rounded up), at most 6 h 10 min: the host keeps a batch open
+   * for 6 hours after it starts, and past that the remaining items fail anyway.
+   * This REPLACES the whole bound, and is not capped.
+   *
+   * 🔴 A timeout ends only THIS wait. It does not cancel the host's batch and
+   * does not refund the viewer's daily quota (charged in full when the batch
+   * started); retrying at once may get `busy` and then the quota refusal.
    */
   timeoutMs?: number;
 }
@@ -180,6 +185,11 @@ export interface UseMediaUpload {
  *   in one batch, one batch at a time per page, and 1,200 files / 10 GB per
  *   viewer per UTC day across all apps. Uploads are kept for at least 30 days,
  *   the upload service's default retention (`expiresAt`).
+ *   🔴 The daily quota is charged when the batch STARTS (after the viewer
+ *   confirms), in full, for every valid item at its size as sent, and is not
+ *   refunded when an item then fails: re-submitting the failed items spends
+ *   quota again. The host keeps a batch open for 6 hours from its start;
+ *   items not uploaded by then fail. A timeout on this side cancels nothing.
  *
  * @example
  * // A recording made in the tab, passed into a step.
@@ -281,7 +291,11 @@ export function useMediaUpload(): UseMediaUpload {
         // The viewer answers a confirm, then the host uploads every file.
         {
           timeoutMs:
-            options?.timeoutMs ?? HUMAN_INTERACTION_TIMEOUT_MS + MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS * items.length,
+            options?.timeoutMs ??
+            mediaUploadBatchDefaultTimeoutMs(
+              items.length,
+              items.reduce((sum, { bytes }) => sum + (bytes instanceof ArrayBuffer ? bytes.byteLength : 0), 0),
+            ),
         },
       );
       // 🔴 BEFORE reading `results`: a whole-batch refusal carries none, and

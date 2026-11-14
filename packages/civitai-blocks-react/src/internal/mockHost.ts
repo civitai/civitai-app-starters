@@ -1723,11 +1723,16 @@ export interface MockHostOptions {
   mediaUploadBatchDeclined?: boolean;
   /**
    * Force an `OPEN_MEDIA_UPLOAD_BATCH` that passed the whole-batch checks to
-   * be refused as a whole with this `error`, before any item is looked at:
-   * the stand-in for the refusals the mock cannot produce, such as
-   * `no block token`, `busy` (the mock answers at once, so a batch is never
-   * still running when the next arrives), the viewer's daily quota, or a
-   * failure starting the batch. Absent → it runs.
+   * be refused as a whole with this `error`: the stand-in for the refusals the
+   * mock cannot produce. Placed where the host decides it:
+   * `no block token` and `busy` (the mock answers at once, so a batch is never
+   * still running when the next arrives) refuse before any item is looked at
+   * and before the confirm; any other value (the viewer's daily quota, the
+   * feature not available, a failure starting the batch) is the server
+   * refusing to START it, so it applies only to a batch with at least one
+   * valid item that the viewer confirmed. A batch with no valid item still
+   * answers its per-item errors, and a decline still answers a bare reply.
+   * Absent → it runs.
    * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
    */
   mediaUploadBatchError?: string;

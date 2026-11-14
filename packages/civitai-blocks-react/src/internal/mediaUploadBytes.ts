@@ -73,7 +73,11 @@ export const MEDIA_UPLOAD_BATCH_MAX_BYTES = 10 * 1024 ** 3;
  * promise that they are deleted then.
  */
 export const MEDIA_UPLOAD_BATCH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-/** The batch is not `{ purpose, items: [...objects] }`: `items` is not an array, or an entry is not an object. */
+/**
+ * The batch is not `{ purpose, items: [...objects] }`: `items` is not an array,
+ * or an entry is not an object. An ARRAY entry is an object here, as on the
+ * host: it is answered in its own result (the kind error), not refused as a whole.
+ */
 export const MEDIA_UPLOAD_BATCH_INVALID_ERROR = 'invalid media-upload batch request';
 /** No items, or more than {@link MEDIA_UPLOAD_BATCH_MAX_ITEMS}. */
 export const MEDIA_UPLOAD_BATCH_COUNT_ERROR = 'a batch holds 1 to 1200 files';
@@ -264,7 +268,9 @@ export type MediaUploadBatchWireItem = { kind?: unknown; bytes?: unknown; mimeTy
  * `useMediaUpload().uploadBatch` (before sending) and the mock host call it.
  * In the host's order:
  *   1. `purpose` not `'generationSource'` → purpose error;
- *   2. `items` not an array, or an entry not an object → invalid batch;
+ *   2. `items` not an array, or an entry not an object (`null` or a
+ *      primitive; an array entry IS an object, as on the host, and gets the
+ *      kind error in its own result) → invalid batch;
  *   3. fewer than 1 or more than {@link MEDIA_UPLOAD_BATCH_MAX_ITEMS} items →
  *      count error;
  *   4. the items' raw bytes (every entry whose `bytes` is an `ArrayBuffer`)
@@ -278,7 +284,7 @@ export function mediaUploadBatchRefusal(raw: { purpose?: unknown; items?: unknow
   const items = raw.items;
   if (!Array.isArray(items)) return MEDIA_UPLOAD_BATCH_INVALID_ERROR;
   for (const item of items) {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) return MEDIA_UPLOAD_BATCH_INVALID_ERROR;
+    if (typeof item !== 'object' || item === null) return MEDIA_UPLOAD_BATCH_INVALID_ERROR;
   }
   if (items.length < 1 || items.length > MEDIA_UPLOAD_BATCH_MAX_ITEMS) return MEDIA_UPLOAD_BATCH_COUNT_ERROR;
   let total = 0;
@@ -431,21 +437,33 @@ function mockBytesUpload(
 }
 
 /**
+ * The `forcedError` values the HOST decides before it looks at the items or
+ * asks the viewer: no block token, and a batch already running on the page.
+ * Every other forced value stands for the server refusing to START the batch,
+ * which happens only after the viewer confirmed.
+ */
+const MEDIA_UPLOAD_BATCH_PRE_CONFIRM_ERRORS: ReadonlySet<string> = new Set([
+  MEDIA_UPLOAD_NO_TOKEN_ERROR,
+  MEDIA_UPLOAD_BUSY_ERROR,
+]);
+
+/**
  * The mock host's whole answer to one routable `OPEN_MEDIA_UPLOAD_BATCH`, on a
- * page surface, in this order:
+ * page surface, in the host's order:
  *  1. the whole-batch refusal ({@link mediaUploadBatchRefusal}) → `{ error }`;
- *  2. `forcedError`, when set → `{ error }`: the stand-in for the whole-batch
- *     refusals the mock cannot produce (`no block token`, `busy` — the mock
- *     answers at once, so a batch is never still running when the next one
- *     arrives — the viewer's daily quota, the feature not available, a failure
- *     starting the batch). Placed after the request checks, before any item is
- *     looked at;
+ *  2. `forcedError` `no block token` or `busy` → `{ error }`: the host checks
+ *     both before any item and before the confirm (the mock answers at once,
+ *     so a batch is never still running when the next one arrives; `busy` is
+ *     forced);
  *  3. every item's verdict ({@link admitMediaUploadBatchItem}). When NO item
  *     is valid the host answers `{ results }` (the per-item errors) without
  *     asking the viewer and WITHOUT `expiresAt`, since nothing was uploaded;
- *     `declined` does not apply;
+ *     neither `declined` nor a later `forcedError` applies;
  *  4. `declined` → a bare reply (the viewer declined the host's confirm);
- *  5. otherwise `{ results, expiresAt }`: one entry per item, in item order,
+ *  5. any other `forcedError` → `{ error }`: the stand-in for the server
+ *     refusing to start the batch once the viewer confirmed (the viewer's daily
+ *     quota, the feature not available, a failure starting it);
+ *  6. otherwise `{ results, expiresAt }`: one entry per item, in item order,
  *     each the kind's canned upload ({@link mockBytesUpload}) or the item's
  *     refusal, and `expiresAt` = `now` + {@link MEDIA_UPLOAD_BATCH_RETENTION_MS}
  *     (30 days, the upload service's default retention).
@@ -463,9 +481,11 @@ export function mockMediaUploadBatchReply(args: {
   | Record<string, never> {
   const admitted = admitMediaUploadBatch(args.payload);
   if (!admitted.ok) return { error: admitted.error };
-  if (args.forcedError !== undefined) return { error: args.forcedError };
+  const forced = args.forcedError;
+  if (forced !== undefined && MEDIA_UPLOAD_BATCH_PRE_CONFIRM_ERRORS.has(forced)) return { error: forced };
   const anyValid = admitted.items.some((item) => item.ok);
   if (anyValid && args.declined) return {};
+  if (anyValid && forced !== undefined) return { error: forced };
   const results = admitted.items.map((item, index): BlockMediaUploadBatchItemResult =>
     item.ok
       ? { index, selected: mockBytesUpload(args.canned, item.kind, item.mimeType, item.bytes) }

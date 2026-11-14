@@ -55,13 +55,53 @@ export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
  * What `useMediaUpload().uploadBatch` adds to {@link HUMAN_INTERACTION_TIMEOUT_MS}
  * for EACH item, by default: 60 s. The host replies once, after the viewer
  * confirmed AND every item was uploaded (at most 3 at a time), so the bound
- * grows with the batch: 10 minutes for the viewer, plus a minute per file.
- * A caller can replace the whole bound with `uploadBatch(items, { timeoutMs })`.
+ * grows with the batch: 10 minutes for the viewer, plus a minute per file,
+ * plus {@link MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS} per MiB, at most
+ * {@link MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS}. A caller can replace the whole
+ * bound with `uploadBatch(items, { timeoutMs })`.
  *
  * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: the default
  * is always at least the human bound.
  */
 export const MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS = 60_000;
+
+/**
+ * What the `uploadBatch` default adds per MiB of the items' raw bytes (rounded
+ * up): 1 s, i.e. it allows for an upload as slow as about 1 MiB/s (8 Mbit/s)
+ * on top of the per-item allowance, so a batch of large videos is not cut off
+ * by a bound sized for small images.
+ */
+export const MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS = 1_000;
+
+/**
+ * The most the `uploadBatch` DEFAULT ever waits: 6 h 10 min. The host keeps a
+ * batch open for 6 hours from when it starts (after the viewer confirmed);
+ * past that it can no longer upload the remaining items, so waiting longer
+ * cannot get a better answer. The 10 minutes on top are
+ * {@link HUMAN_INTERACTION_TIMEOUT_MS}, the time the viewer has to confirm
+ * before the 6 hours begin.
+ *
+ * 🔴 A TIMEOUT ENDS ONLY THE BLOCK'S WAIT. It does not cancel the host's batch
+ * and does not refund the viewer's daily quota, which the host charged in full
+ * when the batch started. Retrying at once may get `busy` (the batch is still
+ * running) and then the daily quota refusal.
+ */
+export const MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS = 6 * 60 * 60_000 + HUMAN_INTERACTION_TIMEOUT_MS;
+
+/**
+ * The `uploadBatch` default bound for `itemCount` items holding `totalBytes`
+ * raw bytes: {@link HUMAN_INTERACTION_TIMEOUT_MS} + 60 s per item + 1 s per
+ * MiB (rounded up), at most {@link MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS}.
+ */
+export function mediaUploadBatchDefaultTimeoutMs(itemCount: number, totalBytes: number): number {
+  const mib = Math.ceil(totalBytes / (1024 * 1024));
+  return Math.min(
+    HUMAN_INTERACTION_TIMEOUT_MS +
+      MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS * itemCount +
+      MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS * mib,
+    MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS,
+  );
+}
 
 /**
  * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
@@ -127,8 +167,8 @@ const REQUEST_TIMEOUT_CLASS = {
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
   OPEN_MEDIA_UPLOAD: 'human', //           viewer picks a file, or a 64 MB upload + host retries
   // Viewer answers the host's confirm, then the host uploads up to 1200 files
-  // (3 at a time). `uploadBatch` waits the human bound PLUS
-  // MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS per item.
+  // (3 at a time). `uploadBatch` waits the human bound PLUS 60 s per item
+  // and 1 s per MiB, at most MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS (6 h 10 min).
   OPEN_MEDIA_UPLOAD_BATCH: 'human',
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)

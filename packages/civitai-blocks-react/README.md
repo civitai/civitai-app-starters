@@ -2715,7 +2715,12 @@ function UploadFrames({ frames }: { frames: Blob[] }) {
 
   async function onClick() {
     const items = await Promise.all(
-      frames.map(async (frame) => ({ kind: 'image' as const, bytes: await frame.arrayBuffer(), mimeType: frame.type })),
+      frames.map(async (frame) => ({
+        kind: 'image' as const,
+        bytes: await frame.arrayBuffer(),
+        // An untyped Blob has type '', which would fail every frame with a mismatch; omit it instead.
+        mimeType: frame.type || undefined,
+      })),
     );
     const batch = await uploadBatch(items);
     if (!batch) return; // the viewer declined; nothing was uploaded
@@ -2753,8 +2758,9 @@ What `uploadBatch` resolves and rejects with:
   or an upload-time one: `this image was refused by the upload service`,
   `this video was refused by the upload service` or
   `this audio was refused by the upload service` for a file the content scan
-  blocked, and `media upload failed — please try again`. One refused item does
-  not stop the others. `expiresAt` is an ISO timestamp: the uploaded files are
+  blocked, and `media upload failed — please try again`. An entry the host
+  sent malformed is answered as that item's `media upload failed`, rather than
+  the whole reply being dropped. One refused item does not stop the others. `expiresAt` is an ISO timestamp: the uploaded files are
   kept at least until then, which is at least 30 days (the upload service's
   default retention). It is not a promise that they are deleted at that time,
   so do not rely on a URL going away; pass the URLs into your steps before it.
@@ -2769,7 +2775,8 @@ What `uploadBatch` resolves and rejects with:
   batch, and `unsupported on this host` on a surface other than a page app.
 - **It refuses before sending,** with the host's own strings, what the host
   would refuse for the whole batch: `invalid media-upload batch request` (not
-  an array, or an entry that is not an object),
+  an array, or an entry that is `null` or not an object; an array entry is
+  sent, and answered with that item's kind error),
   `a batch holds 1 to 1200 files`, and `the batch exceeds the 10 GB limit` (the
   items' raw bytes added up). A problem with one item is **not** refused
   before sending: it comes back in that item's `error`.
@@ -2788,12 +2795,29 @@ Limits:
 | Batches at a time | one per page (`busy` otherwise) |
 | Per viewer, per UTC day, across all apps | 1,200 files and 10 GB (checked on the server; past it the batch rejects with `You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.`) |
 | Per-minute window | none (the 8 uploads / 128 MB per 60 s window applies to `upload` only, and a batch does not count against it) |
+| Batch window | 6 hours from the start (after the viewer confirms); an item not uploaded by then fails |
 | Uploads kept | at least 30 days, the upload service's default retention (`expiresAt`) |
 
-**Timeout:** by default `uploadBatch` waits 10 minutes for the viewer plus 60
-seconds per item (3 items: 13 minutes), then rejects with a
-`RequestTimeoutError`. `uploadBatch(items, { timeoutMs })` replaces that whole
-bound.
+🔴 **The daily quota is charged when the batch starts, in full.** Once the
+viewer confirms, the server charges every valid item, at its size as sent,
+before any file uploads. It is **not** refunded when an item then fails (a
+scan refusal, an upload failure, the 6 hour window running out), so
+re-submitting the failed items spends quota again. Items refused before the
+confirm (the per-item checks above) are not charged.
+
+**Timeout:** by default `uploadBatch` waits 10 minutes for the viewer, plus 60
+seconds per item, plus 1 second per MiB of the items' bytes (rounded up), and
+never more than 6 hours 10 minutes (the batch window plus the 10 minutes to
+confirm: past it the host cannot deliver the remaining items anyway). Three
+small images wait 13 minutes 1 second; two 64 MiB videos 14 minutes 8
+seconds. Then it rejects with a `RequestTimeoutError`.
+`uploadBatch(items, { timeoutMs })` replaces that whole bound, and is not
+capped.
+
+🔴 **A timeout ends only your app's wait.** It does not cancel the host's
+batch, which keeps uploading, and does not refund the quota it charged. A retry
+straight away may reject with `busy` (the first batch is still running on the
+page) and then with the daily quota refusal.
 
 🔴 **Needs a host that answers `OPEN_MEDIA_UPLOAD_BATCH`.** On a civitai.com
 that predates it, the request gets no answer and `uploadBatch` rejects with a
@@ -2808,8 +2832,13 @@ when no item was valid. Set
 (`uploadBatch` resolves `null`; a batch with no valid item still answers its
 per-item errors). The mock answers at once and has no server, so it never
 produces `busy`, `no block token`, the daily quota or the upload-time scan
-refusals on its own: set `mediaUploadBatchError: 'busy'` (or any other
-message) to refuse the whole batch. Both are live-tunable through
+refusals on its own: set `mediaUploadBatchError` to refuse the whole batch,
+placed where the host decides it. `'busy'` and `'no block token'` refuse
+before the items and the confirm; any other message (the daily quota, the
+feature not available, a failure starting the batch) refuses only a confirmed
+batch with at least one valid item, so a batch with no valid item still
+answers its per-item errors and a decline still resolves `null`. Both are
+live-tunable through
 `setScenario`. A model-slot `context` answers `unsupported on this host`, and
 `dev:live` rejects with the same message as `upload`.
 

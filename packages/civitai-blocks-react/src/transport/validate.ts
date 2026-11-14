@@ -2003,14 +2003,20 @@ function isValidMediaUploadBatchItemResult(e: unknown): boolean {
  * Reply to `OPEN_MEDIA_UPLOAD_BATCH`: `{ requestId, error }` (the whole batch
  * refused), a bare `{ requestId }` (declined), or
  * `{ requestId, results, expiresAt? }` (the batch ran) whose `results` is an
- * array of valid entries ({@link isValidMediaUploadBatchItemResult}) and whose
- * `expiresAt` is a string when present.
+ * array and whose `expiresAt` is a string when present.
  *
  * As for the single upload, a reply with a string `error` is accepted without
  * looking further: `uploadBatch` throws on a PRESENT `error` before it reads
  * `results`, and dropping the refusal would leave it waiting out its whole
  * timeout. Whether `results` lines up with the items sent (one per item, in
  * order) is checked by the hook, which knows the items.
+ *
+ * 🔴 THE ENTRIES ARE NOT CHECKED HERE, ON PURPOSE. The host answers once,
+ * after every file has uploaded; dropping the whole reply for one malformed
+ * entry left `uploadBatch` waiting out its timeout and the app learned none of
+ * the URLs. A malformed entry is instead answered as that item's error by
+ * {@link projectInboundPayload} ({@link projectMediaUploadBatchResults}), so
+ * no entry this predicate let through reaches block code unchecked.
  */
 export function isValidMediaUploadBatchResult(p: unknown): boolean {
   if (!isObject(p)) return false;
@@ -2019,8 +2025,40 @@ export function isValidMediaUploadBatchResult(p: unknown): boolean {
   if (p.error !== undefined) return true; // hook throws before reading `results`
   if (p.expiresAt !== undefined && typeof p.expiresAt !== 'string') return false;
   if (p.results === undefined) return true;
-  if (!Array.isArray(p.results)) return false;
-  return p.results.every(isValidMediaUploadBatchItemResult);
+  return Array.isArray(p.results);
+}
+
+/**
+ * The per-item error a malformed `MEDIA_UPLOAD_BATCH_RESULT` entry is
+ * answered with: the same generic string `useMediaUpload` falls back to for a
+ * refusal that carries no message.
+ */
+export const MEDIA_UPLOAD_BATCH_MALFORMED_ENTRY_ERROR = 'media upload failed';
+
+/**
+ * `MEDIA_UPLOAD_BATCH_RESULT.results` with every malformed entry (one that
+ * fails {@link isValidMediaUploadBatchItemResult}) replaced by
+ * `{ index: <its position>, error }`, so it is that item's failure rather than
+ * the whole reply's. Nothing of a malformed entry crosses, so a `url` is never
+ * paired with an item through an entry that did not check out. A WELL-FORMED
+ * entry is passed through as sent, its `index` included: results that do not
+ * line up with the items (the wrong count, or an `index` that is not its
+ * position) still reject in the hook with `MEDIA_UPLOAD_BATCH_MISMATCH_ERROR`,
+ * since then no pairing can be trusted. Identity when every entry is well
+ * formed, and for a reply with an `error` (the hook throws before reading
+ * `results`) or no array of `results` (the validator decides those).
+ */
+function projectMediaUploadBatchResults(payload: unknown): unknown {
+  if (!isObject(payload) || payload.error !== undefined) return payload;
+  const sent: unknown = payload.results;
+  if (!Array.isArray(sent)) return payload;
+  let changed = false;
+  const results = sent.map((entry: unknown, position: number) => {
+    if (isValidMediaUploadBatchItemResult(entry)) return entry;
+    changed = true;
+    return { index: position, error: MEDIA_UPLOAD_BATCH_MALFORMED_ENTRY_ERROR };
+  });
+  return changed ? { ...payload, results } : payload;
 }
 
 /**
@@ -2050,12 +2088,15 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: `IMAGES_RESULT` is the ONLY type projected today.
+ * 🔴 SCOPE, STATED HONESTLY: two types are projected today. `IMAGES_RESULT`
+ * (the hidden-entry allowlist) and `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}).
  * Every other type is returned by identity — this is not a general sanitizer and
  * must not be read as one. Add a case here (and say so in the type's validator
  * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
+  if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
   if (type !== 'IMAGES_RESULT') return payload;
   if (!isObject(payload)) return payload;
   const result = payload.result;
