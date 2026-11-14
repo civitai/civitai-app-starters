@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -2205,7 +2205,7 @@ describe('workflow snapshot queue/ETA fields', () => {
 // TODO(app_blocks_sdk_1gm9): swap in the real host-mapper fixture once the
 // civitai host PR that emits these fields is up.
 describe('host-workflow-snapshot.eta.json contract fixture', () => {
-  const path = fileURLToPath(new URL('./fixtures/host-workflow-snapshot.eta.json', import.meta.url));
+  const path = join(__dirname, 'fixtures/host-workflow-snapshot.eta.json');
 
   it('exists', () => {
     expect(existsSync(path)).toBe(true);

@@ -172,7 +172,7 @@ import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 function etaLine(snapshot: BlockWorkflowSnapshot): string | null {
   const eta = snapshot.eta;
   if (!eta) return null; // terminal, or a host that predates the field
-  if (eta.progress !== null) return `${Math.round(eta.progress * 100)}%`;
+  if (eta.progress !== null) return eta.progress.toLocaleString(undefined, { style: 'percent' });
   const at = eta.startsAt
     ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
