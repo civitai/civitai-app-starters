@@ -113,13 +113,15 @@ describe('createMockHost — queue / ETA / progress', () => {
 
     const [q1, q2] = updates;
     for (const q of [q1!, q2!]) {
-      expect(q.status).toBe('processing');
+      // Queued: 'pending', as the host reports a queued workflow.
+      expect(q.status).toBe('pending');
       expect(q.eta!.support).toBe('available');
       expect(typeof q.eta!.startsAt).toBe('string');
       expect(typeof q.eta!.completesAt).toBe('string');
       expect(Date.parse(q.eta!.completesAt!)).toBeGreaterThan(Date.parse(q.eta!.startsAt!));
     }
     for (const r of updates.slice(2, 4)) {
+      expect(r.status).toBe('processing');
       expect(r.eta!.startsAt).toBeNull();
       expect(r.eta!.completesAt).toBeNull();
       expect(r.eta!.support).toBeNull();
@@ -170,11 +172,15 @@ describe('createMockHost — queue / ETA / progress', () => {
         });
         // Queued: the queue only — no progress / startedAt / completedAt keys.
         expect(keys).toEqual(['$type', 'name', 'queue', 'status']);
+        expect(current!.status).toBe('pending');
+        expect(s.status).toBe('pending');
       } else {
         expect(current!.progress).toBe(s.eta!.progress);
         expect(typeof current!.startedAt).toBe('string');
         // Running: progress and startedAt — no queue / completedAt keys.
         expect(keys).toEqual(['$type', 'name', 'progress', 'startedAt', 'status']);
+        expect(current!.status).toBe('processing');
+        expect(s.status).toBe('processing');
       }
     }
     expect('eta' in final).toBe(false);

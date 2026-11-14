@@ -27,6 +27,14 @@ expectTypeOf(step.progress).toEqualTypeOf<number | null | undefined>();
 expectTypeOf(step.startedAt).toEqualTypeOf<string | null | undefined>();
 expectTypeOf(step.completedAt).toEqualTypeOf<string | null | undefined>();
 
+// The throttled-poll marker: optional, and only ever the literal `true`.
+expectTypeOf(snapshot.throttled).toEqualTypeOf<true | undefined>();
+const throttledReply: BlockWorkflowSnapshot = { workflowId: 'w', status: 'processing', throttled: true };
+void throttledReply;
+// @ts-expect-error — the marker is `true` or absent, never `false`.
+const notThrottled: BlockWorkflowSnapshot = { workflowId: 'w', status: 'processing', throttled: false };
+void notThrottled;
+
 // An old-host snapshot (none of the fields) is still a snapshot.
 const oldHost: BlockWorkflowSnapshot = {
   workflowId: 'w',

@@ -2222,6 +2222,27 @@ describe('workflow snapshot queue/ETA fields', () => {
     });
   });
 
+  // The throttled-poll marker (civitai/civitai#8980): a poll the host could not
+  // serve. Only the literal `true` is the marker; anything else is removed so it
+  // can never be mistaken for one, and the reply is delivered as a plain snapshot.
+  it('passes the throttled marker through, by identity', () => {
+    const placeholder = { workflowId: 'w', status: 'processing', throttled: true };
+    expect(isValidWorkflowSnapshot(placeholder)).toBe(true);
+    expect(deliver(placeholder)).toBe(placeholder);
+  });
+
+  it.each([
+    ['false', false],
+    ['a string', 'yes'],
+    ['1', 1],
+    ['null', null],
+  ])('strips a throttled value that is not true: %s', (_, throttled) => {
+    expect(deliver({ workflowId: 'w', status: 'processing', throttled })).toStrictEqual({
+      workflowId: 'w',
+      status: 'processing',
+    });
+  });
+
   it('leaves every other type alone', () => {
     const payload = reply({ ...QUEUED, eta: 'bad' });
     expect(projectInboundPayload('PUBLISH_RESULT', payload)).toBe(payload);
