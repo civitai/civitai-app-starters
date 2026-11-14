@@ -155,23 +155,27 @@ interface BlockInitPayload {
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot` (+ `BlockWorkflowEta`, `BlockWorkflowStepQueue` and `KnownBlockWorkflowQueueSupport` — queue position, ETA and progress, see below), `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
-**Queue position, ETA and progress.** A workflow snapshot from a poll can carry
-`eta` — a summary of the step that is queued or running now, `null` once the
-workflow is terminal — and each entry of `steps` can carry `queue` (only while
-that step is queued), `progress`, `startedAt` and `completedAt`. All of them are
-optional, and absent on a host that predates them. `progress` is a fraction from
-0 to 1 (`null` for multi-phase steps such as training), `queuedAhead` /
-`precedingJobs` count the jobs ahead in the queue, and every time is an ISO-8601
-string and an estimate. `support` is `'available' | 'unavailable' |
-'unsupported'` or a value added later (`'unavailable'` means no capacity right
-now):
+**Queue position, ETA and progress.** A non-terminal workflow snapshot from a
+poll can carry `eta`, a summary of the step that is queued or running now, for
+every kind of workflow. Each entry of `steps` can carry `queue` (only while that
+step is queued), `progress`, `startedAt` and `completedAt`. All of them are
+optional, and **absent means the same as `null`**: the host omits a field with
+nothing to report. A terminal snapshot has no `eta`, nor does a host that
+predates the field, nor a rate-limited poll the host answered without reading
+the workflow. `progress` is a fraction from 0 to 1, reported only for image and
+video generation steps. `queuedAhead` / `precedingJobs` count the jobs ahead in
+the queue; while a step is queued they refresh at most once per held poll
+(about every 15 s), since a held poll does not wake on queue drift. Every time
+is an ISO-8601 string and an estimate. `support` is `'available' |
+'unavailable' | 'unsupported'` or a value added later (`'unavailable'` means no
+capacity right now):
 
 ```ts
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 function etaLine(snapshot: BlockWorkflowSnapshot): string | null {
   const eta = snapshot.eta;
-  if (!eta) return null; // terminal, or a host that predates the field
+  if (!eta) return null; // nothing reported this time: keep showing the last line
   if (eta.progress !== null) return eta.progress.toLocaleString(undefined, { style: 'percent' });
   const at = eta.startsAt
     ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

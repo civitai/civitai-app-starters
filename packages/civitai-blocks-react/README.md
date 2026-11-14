@@ -623,40 +623,65 @@ Nothing is charged.
 A snapshot from `watch()` / `poll()` carries where the run is right now, for a
 progress bar or an "N ahead, starts ~HH:MM" line:
 
-- **`snapshot.eta`** summarises the step that is queued or running now (the
-  first queued step, else the first running step): `{ stepName, queuedAhead,
-  startsAt, completesAt, progress, support }`. While it is queued, `queuedAhead`
-  counts the jobs ahead of it and `startsAt` / `completesAt` are estimates;
-  while it runs, those two are `null` and `progress` moves. It is `null` once
-  the workflow is terminal.
+- **`snapshot.eta`** summarises the step that is queued or running now:
+  `{ stepName, queuedAhead, startsAt, completesAt, progress, support }`. The
+  host reads it off all of the workflow's orchestrator steps, so every kind has
+  one, not only `kind: 'workflow'`. It picks the first step with a queue
+  position, else the first running step. While that step is queued,
+  `queuedAhead` counts the jobs ahead of it and `startsAt` / `completesAt` are
+  estimates. While it runs, those two are `null` and `progress` moves.
 - **On each entry of `snapshot.steps`** (a `kind: 'workflow'` run): `queue`
   (`{ precedingJobs, estimatedStartAt, estimatedCompleteAt, support }`, present
   only while that step is queued), `progress`, `startedAt` and `completedAt`.
 
-`progress` is a **fraction from 0 to 1**, not a percentage, and is `null` for
-multi-phase steps such as training, whose own value restarts each phase. Every
-time is an ISO-8601 string and an **estimate**. `support: 'unavailable'` means
-there is no capacity for the step right now; treat a value you do not recognise
-like `'unsupported'` (no estimate). Every field is optional: a host that
-predates them sends none, so treat absent as "unknown". `status` is still the
-only thing that says the run is done.
+**Absent and `null` mean the same thing.** The host omits a field it has
+nothing to report rather than sending `null`. A terminal snapshot has no `eta`,
+and neither does a workflow with nothing queued or running. A host that predates
+these fields sends none of them. A poll the host answered without reading the
+workflow carries no `eta` either: a rate-limited poll replies
+`{ workflowId, status: 'processing' }` and nothing else. So on a non-terminal
+snapshot, an absent `eta` is not news that the queue went away. Keep showing the
+last value until `status` is terminal, as the example below does.
+
+🔴 **The queue position does not move on its own between status changes.** A
+held poll (`watch`) returns early when the workflow's status, a step's progress
+or a job event changes. It does not return when the queue ahead of a waiting
+step drains. So while a step is queued, `queuedAhead` and its estimates refresh
+at most once per held poll, about every 15 s. Once the step runs, `progress`
+updates promptly.
+
+`progress` is a **fraction from 0 to 1**, not a percentage. The host reports it
+only for image and video generation steps (`textToImage`, `imageGen`,
+`videoGen`). Other types, training among them, report a value that restarts
+each phase, so they get none. Every time is an ISO-8601 string and an
+**estimate**. `support: 'unavailable'` means there is no capacity for the step
+right now; treat a value you do not recognise like `'unsupported'` (no
+estimate). `status` is still the only thing that says the run is done.
 
 ```tsx
-import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+import type { BlockWorkflowEta } from '@civitai/app-sdk/blocks';
 import { useState } from 'react';
 
 function RunStatus({ workflowId }: { workflowId: string }) {
   const { watch } = useBuzzWorkflow();
-  const [snap, setSnap] = useState<BlockWorkflowSnapshot | null>(null);
+  const [eta, setEta] = useState<BlockWorkflowEta | null>(null);
 
   useEffect(() => {
     const ctl = new AbortController();
-    void watch(workflowId, { signal: ctl.signal, onUpdate: setSnap });
+    void watch(workflowId, {
+      signal: ctl.signal,
+      // Absent on a poll that carries nothing new: keep the last value.
+      onUpdate: (s) => {
+        if (s.eta) setEta(s.eta);
+      },
+    }).then(
+      () => setEta(null), // terminal
+      () => {}, // a watch error is shown elsewhere
+    );
     return () => ctl.abort();
   }, [watch, workflowId]);
 
-  const eta = snap?.eta;
-  if (!eta) return null; // terminal, not started, or an older host
+  if (!eta) return null;
   if (eta.progress !== null) {
     return <progress max={1} value={eta.progress} />;
   }
@@ -676,11 +701,17 @@ that does not have this shape (and likewise a malformed `queue`, `progress`,
 `startedAt` or `completedAt` on a step) and delivers the rest of the snapshot,
 so a bad estimate never costs you the status or the outputs.
 
-**Mock host:** the polls before `pollsUntilDone` report these fields: the first
-half of them queued (`queuedAhead` falling), the rest running (`progress`
-rising), and the terminal poll `eta: null`. `status` stays `'processing'` in
-both phases. With the default `pollsUntilDone: 2` the one non-terminal poll is a
-running one; pass `pollsUntilDone: 5` to see two of each.
+**Mock host:** the polls before `pollsUntilDone` report these fields, encoded
+as the host does (an empty field is omitted, not `null`). The first half of
+them are queued (`queuedAhead` falling) and the rest running (`progress` rising,
+for an image or video generation step). The terminal poll has no `eta`. `status`
+stays `'processing'` in both phases, where the host sends `'pending'` while
+queued. `stepName` is the host's own step name for each kind: `block-step` for
+`kind: 'step'` and `kind: 'training'`, `block-custom-comfy` for `customComfy`,
+and each step's `name` for `kind: 'workflow'`. A `textToImage` step is named by
+the orchestrator, which the mock cannot know, so it uses `$0`. With the default
+`pollsUntilDone: 2` the one non-terminal poll is a running one. Pass
+`pollsUntilDone: 5` to see two of each.
 
 #### Several steps as one workflow: `kind: 'workflow'`
 

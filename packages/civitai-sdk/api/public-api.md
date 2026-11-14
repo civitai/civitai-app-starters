@@ -2864,15 +2864,31 @@ export interface BlockWorkflowSnapshot {
     /**
      * Where the run is right now: a summary of the ONE step that is queued or
      * running, for a progress bar or an "N ahead, starts ~HH:MM" line. The host
-     * picks the first queued step, else the first running step. See
-     * {@link BlockWorkflowEta} for each field.
+     * reads it off ALL of the workflow's orchestrator steps, so a single-step kind
+     * (`textToImage`, `step`, `customComfy`, `training`) has one too, not only a
+     * `kind: 'workflow'` run. It picks the first step with a queue position, else
+     * the first `processing` step. See {@link BlockWorkflowEta} for each field.
      *
      * - **An object** while the workflow is not terminal and a step is queued or
      *   running.
-     * - **`null`** once the workflow is terminal (`succeeded`, `failed`,
-     *   `expired`, `canceled`).
-     * - **Absent** on a host that predates the field. Treat absent as "unknown",
-     *   not as "no queue".
+     * - **ABSENT OR `null` — READ THEM THE SAME.** The host OMITS the field when
+     *   it has nothing to report rather than sending `null`. That covers:
+     *   - a terminal workflow (`succeeded`, `failed`, `expired`, `canceled`);
+     *   - a workflow with no step queued or running;
+     *   - a host that predates the field;
+     *   - a poll the host answered without reading the workflow, such as a
+     *     rate-limited poll, which replies `{ workflowId, status: 'processing' }`
+     *     and nothing else.
+     *   So an absent `eta` on a non-terminal snapshot does not mean the queue went
+     *   away: a progress bar that must not flicker can keep its last value until
+     *   `status` is terminal.
+     *
+     * 🔴 THE QUEUE POSITION DOES NOT MOVE ON ITS OWN BETWEEN STATUS CHANGES. A held
+     * poll (`watch`) returns early when the workflow's status, a step's progress or
+     * a job event changes, NOT when the queue ahead of a waiting step drains. So
+     * while a step is queued, `queuedAhead` and its estimates refresh at most once
+     * per held poll (about every 15 s). Once the step runs, `progress` moves
+     * promptly.
      *
      * Every value in it is an ESTIMATE from the orchestrator's scheduler. Do not
      * gate on it; `status` is still the only thing that says the run is done.
@@ -2881,7 +2897,7 @@ export interface BlockWorkflowSnapshot {
      * await watch(workflowId, {
      *   onUpdate: (s) => {
      *     const eta = s.eta;
-     *     if (!eta) return setLine(null);
+     *     if (!eta) return; // absent: keep the last line (watch resolves when terminal)
      *     if (eta.progress !== null) return setBar(eta.progress); // running
      *     const at = eta.startsAt ? new Date(eta.startsAt) : null;
      *     setLine(
@@ -2922,27 +2938,31 @@ export interface BlockWorkflowStepSnapshot {
     error?: string;
     /**
      * The step's place in the orchestrator's queue. PRESENT ONLY WHILE THE STEP
-     * IS QUEUED (waiting for a worker); `null` or absent once it has started,
-     * once it is terminal, and on a host that predates the field. See
-     * {@link BlockWorkflowStepQueue}.
+     * IS QUEUED (waiting for a worker). Absent (read it as `null`) once the step
+     * has started, once it or the workflow is terminal, and on a host that
+     * predates the field. Its position refreshes at most once per held poll —
+     * see {@link BlockWorkflowSnapshot.eta}. See {@link BlockWorkflowStepQueue}.
      */
     queue?: BlockWorkflowStepQueue | null;
     /**
      * How much of this step is done, as a FRACTION from `0` to `1` (not a
-     * percentage). `null` when the orchestrator reports none, once the step is
-     * terminal, and for MULTI-PHASE steps such as training, whose orchestrator
-     * value restarts at 0 in each phase and so would move backwards. Absent on a
-     * host that predates the field.
+     * percentage). Absent or `null` (the same thing) when the orchestrator
+     * reports none, once the step or the workflow is terminal, on a host that
+     * predates the field, and for every step type whose orchestrator value is not
+     * a fraction of the whole step. The host reports it only for image and video
+     * generation (`textToImage`, `imageGen`, `videoGen`); multi-phase types such
+     * as training restart at 0 in each phase, so they get none.
      */
     progress?: number | null;
     /**
-     * When the step started running, as an ISO-8601 string. `null` until it has
-     * started. Absent on a host that predates the field.
+     * When the step started running, as an ISO-8601 string. Absent or `null`
+     * (the same thing) until it has started, and on a host that predates the
+     * field.
      */
     startedAt?: string | null;
     /**
-     * When the step finished, as an ISO-8601 string. `null` until it is
-     * terminal. Absent on a host that predates the field.
+     * When the step finished, as an ISO-8601 string. Absent or `null` (the same
+     * thing) until it is terminal, and on a host that predates the field.
      */
     completedAt?: string | null;
 }
@@ -2988,10 +3008,10 @@ export interface BlockWorkflowStepQueue {
  * {@link BlockWorkflowSnapshot.eta}: a summary of the step that is queued or
  * running now (the first queued step, else the first running step).
  *
- * WHILE QUEUED, `startsAt` and `completesAt` are the estimates and `progress`
- * is `null`. WHILE RUNNING, `startsAt` and `completesAt` are `null` and
- * `progress` moves. Every time is an ISO-8601 string and an
- * ESTIMATE.
+ * WHILE QUEUED, `queuedAhead`, `startsAt`, `completesAt` and `support` come
+ * from the step's queue and `progress` is `null`. WHILE RUNNING, those four
+ * are `null` and `progress` moves. Every time is an ISO-8601 string and an
+ * ESTIMATE. All six keys are always present when the object is.
  */
 export interface BlockWorkflowEta {
     /** The {@link BlockWorkflowStepSnapshot.name} of the step this summarises. */
@@ -3004,8 +3024,9 @@ export interface BlockWorkflowEta {
     completesAt: string | null;
     /**
      * How much of the step is done, as a FRACTION from `0` to `1`. `null` while
-     * it is queued, when the orchestrator reports none, and for multi-phase
-     * steps such as training (see {@link BlockWorkflowStepSnapshot.progress}).
+     * it is queued, when the orchestrator reports none, and for step types other
+     * than image and video generation (see
+     * {@link BlockWorkflowStepSnapshot.progress}).
      */
     progress: number | null;
     /**
