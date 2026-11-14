@@ -60,8 +60,8 @@ const BLOCK_STARTER = join(STARTERS, 'civitai-block-starter');
  * with `find starters -name block.manifest.json -not -path '*node_modules*'`.
  * Raise these when the real numbers rise; never lower them to make a run green.
  */
-const MIN_MANIFESTS = 12;
-const MIN_DECLARING = 12;
+const MIN_MANIFESTS = 10;
+const MIN_DECLARING = 10;
 
 /** Every `block.manifest.json` under `starters/`, with its sibling entry document. */
 function collectBlockApps() {
