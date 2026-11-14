@@ -15,6 +15,7 @@ import type {
   BlockResourcePickerType,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockPersistedGenerationSource,
   BlockImagePickerSource,
   BlockPickedImageInfo,
   BlockMediaKind,
@@ -754,6 +755,19 @@ export type ParentToBlockMessage =
       // signal (mirrors APP_WORKFLOWS_RESULT).
       type: 'PUBLISH_RESULT';
       payload: { requestId: string; result?: { imageIds: number[] }; error?: string };
+    }
+  | {
+      // Reply to PERSIST_GENERATION_SOURCE. On success `result` is the app's
+      // own output saved as a PRIVATE, scanned generation source
+      // ({@link BlockPersistedGenerationSource}: `url`/`width`/`height`, the
+      // `imageId`, and `ready`). `ready: false` means the scan had not finished
+      // within the host's wait (about 30 s); a generation using the source is
+      // refused with `source-scan-pending` until it does. On failure `error` is
+      // a FREE-TEXT string (a host refusal, such as an iframe/slot host that
+      // does not serve this message, or a forwarded server message) and
+      // `result` is absent.
+      type: 'GENERATION_SOURCE_PERSISTED';
+      payload: { requestId: string; result?: BlockPersistedGenerationSource; error?: string };
     }
   | {
       // Reply to CREATE_POST_FROM_APP. On success `result` carries the created
@@ -1547,6 +1561,21 @@ export type BlockToParentMessage =
       payload: { requestId: string; workflowId: string; imageIndexes?: number[]; title?: string };
     }
   | {
+      // Ask the host to save ONE output of one of the calling app's OWN
+      // workflows as a PRIVATE, scanned generation source, so the next
+      // generation can use it as an input. Like PUBLISH_GENERATION_OUTPUTS the
+      // block sends `workflowId` + `imageIndex` (an index into the workflow's
+      // `images` as seen via QUERY_APP_WORKFLOWS), NEVER a url: the host
+      // resolves the output server-side from the ownership-verified workflow.
+      // Unlike it, the image is private to the viewer, is not on the app's
+      // shared grid, and there is NO confirm dialog. The host waits up to about
+      // 30 s for the scan and replies with `GENERATION_SOURCE_PERSISTED`
+      // (`result.ready: false` when the scan is still pending). Page hosts only:
+      // an iframe/slot host replies with an `error`.
+      type: 'PERSIST_GENERATION_SOURCE';
+      payload: { requestId: string; workflowId: string; imageIndex: number };
+    }
+  | {
       // Ask the host to create a REAL, PUBLISHED Post on the VIEWER'S profile
       // from the calling app's OWN outputs. The strictly-more-consequential
       // SIBLING of PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row
@@ -2294,6 +2323,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'GET_RESOURCE_FILE',
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
+  'PERSIST_GENERATION_SOURCE',
   'CREATE_POST_FROM_APP',
   'RUN_TRAINING',
   'RUN_CONFIRMED_STEP',

@@ -125,6 +125,8 @@ export { useAppWorkflows } from './hooks/useAppWorkflows.js';
 export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
 export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
 export type { UsePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
+export { usePersistGenerationSource } from './hooks/usePersistGenerationSource.js';
+export type { UsePersistGenerationSource } from './hooks/usePersistGenerationSource.js';
 export { useGatedImages } from './hooks/useGatedImages.js';
 export type { UseGatedImages } from './hooks/useGatedImages.js';
 export { useSaveImage } from './hooks/useSaveImage.js';
@@ -207,6 +209,8 @@ export type {
   BlockResourceFileEntryFormat,
   BlockResourceFileErrorCode,
   BlockResourceFileMeta,
+  BlockPersistGenerationSourceRequest,
+  BlockPersistedGenerationSource,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,

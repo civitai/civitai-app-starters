@@ -332,6 +332,40 @@ export type BlockNavigateScope = 'app' | 'site';
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
+ * What a block sends in `PERSIST_GENERATION_SOURCE`: ONE output of one of the
+ * calling app's OWN workflows, named by `workflowId` and `imageIndex` (an index
+ * into that workflow's `images`, as seen via `QUERY_APP_WORKFLOWS` /
+ * `useAppWorkflows()`). Never a url: the host resolves the output server-side
+ * from the ownership-verified workflow.
+ */
+export interface BlockPersistGenerationSourceRequest {
+  workflowId: string;
+  imageIndex: number;
+}
+
+/**
+ * What the host returns from `PERSIST_GENERATION_SOURCE`
+ * (`GENERATION_SOURCE_PERSISTED.result`): the app's own output, saved as a
+ * PRIVATE, scanned generation source.
+ *
+ * `url` / `width` / `height` are a {@link BlockGenerationSourceImageInfo}, so
+ * the value (or that subset of it) goes straight into a `sourceImages` entry,
+ * or anywhere else a generation source is accepted.
+ *
+ * - The image is private to the viewer and is NOT on the app's shared grid.
+ *   The host shows no confirm.
+ * - `imageId` is the persisted `Image` row id.
+ * - `ready` says whether the scan finished. The host waits up to about 30 s for
+ *   it. `ready: false` means the scan is still running: a generation that uses
+ *   the source is refused with the `source-scan-pending` error code until it
+ *   finishes, so retry that generation later.
+ */
+export interface BlockPersistedGenerationSource extends BlockGenerationSourceImageInfo {
+  imageId: number;
+  ready: boolean;
+}
+
+/**
  * One image an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded — an
  * element of {@link BlockTrainingDataUploadResult.images}. Mirrors the host's
  * `TrainingDataUpload` in civitai/civitai's

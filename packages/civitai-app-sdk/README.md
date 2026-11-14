@@ -117,6 +117,37 @@ forces the per-app tag filter off the block token, so a block only ever sees the
 queue it produced. Mirrors civitai/civitai PR #3164; the `@civitai/blocks-react`
 `useAppWorkflows()` hook wraps both.
 
+`PERSIST_GENERATION_SOURCE` → `GENERATION_SOURCE_PERSISTED` saves ONE of those
+outputs as a **private, scanned generation source** for the next generation.
+The request is `{ requestId, workflowId, imageIndex }` (an index into the
+workflow's `images`; never a url) and the reply carries `result`, a
+`BlockPersistedGenerationSource` (`{ url, width, height, imageId, ready }`), or a
+free-text `error`. The image is private to the viewer and not on the app's
+shared grid, and there is no confirm dialog. The host waits up to about 30 s for
+the scan; `ready: false` means it is still pending, and a generation using the
+source is refused with `source-scan-pending` until it finishes. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, so they go into a
+`sourceImages` entry. Full-page app hosts only: an iframe/slot host replies with
+an `error`. The `@civitai/blocks-react` `usePersistGenerationSource()` hook
+wraps it:
+
+```ts
+import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
+
+declare const src: BlockPersistedGenerationSource; // from persist({ workflowId, imageIndex: 0 })
+declare const modelId: number, modelVersionId: number;
+
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
+// If `src.ready` was false, submitting `next` can fail with errorCode
+// 'source-scan-pending' (nothing is reserved); retry it later.
+```
+
 `isMessage(data, 'BLOCK_INIT')` is a **discriminator-only** narrowing helper — it
 checks `data.type`, NOT the payload shape. Anything crossing the iframe trust
 boundary must be payload-validated at the boundary (the React transport does this

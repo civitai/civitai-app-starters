@@ -132,6 +132,19 @@ export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
  */
 export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * The bound for `PERSIST_GENERATION_SOURCE` (`hooks/usePersistGenerationSource.ts`),
+ * a `'protocol'` request (there is no confirm, so no person in the loop) whose
+ * HOST work includes a wait: the host saves the output and then waits up to
+ * about 30 s for its scan before it replies (`ready: false` if the scan has not
+ * finished by then). That wait alone is the whole of
+ * {@link DEFAULT_REQUEST_TIMEOUT_MS}, so at the default the block would time out
+ * while the host was about to answer, and the host's valid reply would be
+ * dropped as unroutable. 45 s leaves the scan wait about 15 s for the save and
+ * the round-trip.
+ */
+export const PERSIST_GENERATION_SOURCE_TIMEOUT_MS = 45_000;
+
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
   /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
@@ -251,6 +264,10 @@ const REQUEST_TIMEOUT_CLASS = {
   // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
   // under a 110 s deadline, which the 30 s default would cut short.
   GET_RESOURCE_FILE: 'protocol',
+  // No confirm, so `'protocol'` — but sent under its own longer
+  // `PERSIST_GENERATION_SOURCE_TIMEOUT_MS`: the host waits up to ~30 s for the
+  // scan before it replies, which the 30 s default would cut short.
+  PERSIST_GENERATION_SOURCE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',
   // The host fetches the blob and triggers the browser's own download; it replies

@@ -54,6 +54,7 @@ import {
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
   type BlockGenerationSourceImageInfo,
+  type BlockPersistedGenerationSource,
   type BlockImageScanResult,
   type BuzzAccountType,
   type BlockBuzzTransaction,
@@ -1350,6 +1351,25 @@ export interface MockHostOptions {
    */
   publishError?: boolean | string | Error;
   /**
+   * The private, scanned generation source returned from
+   * `PERSIST_GENERATION_SOURCE` (what `usePersistGenerationSource().persist()`
+   * resolves with), whatever `workflowId` / `imageIndex` the block names.
+   * Absent → {@link DEFAULT_PERSISTED_GENERATION_SOURCE}, with `ready: true`.
+   * Pass one with `ready: false` to simulate a scan that is still pending (the
+   * real host then refuses a generation using it with `source-scan-pending`;
+   * this mock does not enforce that). Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  persistedGenerationSource?: BlockPersistedGenerationSource;
+  /**
+   * Force `PERSIST_GENERATION_SOURCE` to reply with the FREE-TEXT `error`
+   * variant instead of a source — exercises a rejected `persist()`. `true` → a
+   * default message; a string → that message; an `Error` → its `.message`.
+   * Absent → the persist succeeds. Live-tunable via {@link MockHost.setScenario},
+   * where `false` or `undefined` clears it.
+   */
+  persistGenerationSourceError?: boolean | string | Error;
+  /**
    * The per-viewer gated projection returned from `GET_IMAGES_BY_IDS` (what
    * `useGatedImages().getImages()` resolves with). Each entry is a
    * {@link BlockGatedImage} — `visible` (moderated projection incl. url) or
@@ -1955,6 +1975,8 @@ export type MockHostScenarioPatch = Pick<
   | 'appWorkflowsError'
   | 'publishImageIds'
   | 'publishError'
+  | 'persistedGenerationSource'
+  | 'persistGenerationSourceError'
   | 'gatedImages'
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
@@ -2446,6 +2468,34 @@ const DEFAULT_CREATE_POST_RESULT: BlockCreatePostResult = {
   imageIds: [9101, 9102],
 };
 
+/**
+ * Default source reported on `PERSIST_GENERATION_SOURCE` when
+ * {@link MockHostOptions.persistedGenerationSource} is omitted: a scanned
+ * (`ready: true`) Civitai-hosted image. Its `url` differs from
+ * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}'s so a block that confuses an
+ * uploaded source with a persisted output can tell them apart.
+ */
+const DEFAULT_PERSISTED_GENERATION_SOURCE: BlockPersistedGenerationSource = {
+  url: 'https://image.civitai.com/mock/original=true/dev-persisted-generation-source.jpeg',
+  width: 1024,
+  height: 1024,
+  imageId: 9201,
+  ready: true,
+};
+
+/** Default message for a simulated persist failure ({@link MockHostOptions.persistGenerationSourceError}). */
+const DEFAULT_PERSIST_GENERATION_SOURCE_ERROR = 'persisting the generation source failed';
+
+/** Normalize a {@link MockHostOptions.persistGenerationSourceError} value to an error string (or `undefined`). */
+function normalizePersistGenerationSourceError(
+  e: boolean | string | Error | undefined,
+): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  return e.message || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+}
+
 /** Normalize a {@link MockHostOptions.publishError} value to an error string (or `undefined`). */
 function normalizePublishError(e: boolean | string | Error | undefined): string | undefined {
   if (e === undefined || e === false) return undefined;
@@ -2858,6 +2908,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Publish-outputs bridge data + forced free-text-error knob.
   let publishImageIds: number[] = options.publishImageIds ?? DEFAULT_PUBLISH_IMAGE_IDS;
   let publishError: string | undefined = normalizePublishError(options.publishError);
+  // Persist-generation-source bridge data + forced free-text-error knob.
+  let persistedGenerationSource: BlockPersistedGenerationSource =
+    options.persistedGenerationSource ?? DEFAULT_PERSISTED_GENERATION_SOURCE;
+  let persistGenerationSourceError: string | undefined = normalizePersistGenerationSourceError(
+    options.persistGenerationSourceError,
+  );
   // Gated-image read bridge data + forced free-text-error knob.
   let gatedImages: BlockGatedImage[] = options.gatedImages ?? DEFAULT_GATED_IMAGES;
   let gatedImagesError: string | undefined = normalizeGatedImagesError(options.gatedImagesError);
@@ -4793,6 +4849,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'PERSIST_GENERATION_SOURCE': {
+            // Save one of the app's OWN outputs as a private, scanned generation
+            // source. No confirm, like the real page host. Drop a request with
+            // no requestId (unroutable). A forced error replies with the
+            // FREE-TEXT error variant; otherwise the canned source, for any
+            // workflowId / imageIndex.
+            if (!isRoutableRequestId(requestId)) return;
+            if (persistGenerationSourceError !== undefined) {
+              dispatchToBlock({
+                type: 'GENERATION_SOURCE_PERSISTED',
+                payload: { requestId, error: persistGenerationSourceError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'GENERATION_SOURCE_PERSISTED',
+              payload: { requestId, result: { ...persistedGenerationSource } },
+            });
+            return;
+          }
+
           case 'GET_IMAGES_BY_IDS': {
             // Per-viewer gated image read. Drop a request with no requestId
             // (unroutable). A forced error replies with the FREE-TEXT error variant
@@ -5859,6 +5936,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       appWorkflowsError = normalizeAppWorkflowsError(patch.appWorkflowsError);
     if (patch.publishImageIds !== undefined) publishImageIds = patch.publishImageIds;
     if (patch.publishError !== undefined) publishError = normalizePublishError(patch.publishError);
+    if (patch.persistedGenerationSource !== undefined) {
+      persistedGenerationSource = patch.persistedGenerationSource;
+    }
+    // Key PRESENCE, so `{ persistGenerationSourceError: undefined }` clears it.
+    if ('persistGenerationSourceError' in patch) {
+      persistGenerationSourceError = normalizePersistGenerationSourceError(
+        patch.persistGenerationSourceError,
+      );
+    }
     if (patch.gatedImages !== undefined) gatedImages = patch.gatedImages;
     if (patch.gatedImagesError !== undefined)
       gatedImagesError = normalizeGatedImagesError(patch.gatedImagesError);

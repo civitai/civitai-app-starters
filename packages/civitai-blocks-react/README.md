@@ -613,7 +613,7 @@ Nothing is charged.
 
 | `errorCode` | Means | `error` | Retry the same body? |
 |---|---|---|---|
-| `'source-scan-pending'` | a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit |
+| `'source-scan-pending'` | a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished, or a source [`usePersistGenerationSource()`](#usepersistgenerationsource) returned with `ready: false` | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit; for a persisted source, retry later |
 | `'inline-node-refused'` | an inline `customComfy` graph uses a node the host does not run inline: one that reads or writes a file path, or a loader whose input comes from another node, is an object, is a URL the host does not fetch, or names a local file. `checkComfyGraph` does not detect this | starts with `inline workflow uses nodes the host does not run inline: ` and names each node, e.g. `node 4 (LoadImage) names a local file in image; upload the media and pass its URL` | no — remove a node that reads or writes a file path; give loader inputs as literal values, and bring media in as Civitai uploads (pass the upload's `url`) |
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
@@ -1888,6 +1888,67 @@ async function onCancel(id: string) {
     await cancel(id); // optimistically flips the row to `canceled`
   } catch (err) {
     console.error('cancel failed', err);
+  }
+}
+```
+
+### `usePersistGenerationSource()`
+
+Turn one of the app's **own** finished outputs into a **private, scanned
+generation source**, to feed into the next generation (an img2img chain, a
+"refine this one" button). Returns `{ persist, isPending, error }`.
+
+`persist({ workflowId, imageIndex })` names the output the way
+`usePublishGenerationOutputs()` does — a workflow from this app's own subqueue
+and an index into its `images` (as `useAppWorkflows()` shows them), never a url —
+and resolves with `{ url, width, height, imageId, ready }`. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, usable as a `sourceImages`
+entry wherever a generation source is accepted.
+
+- The image is private to the viewer and is **not** on the app's shared grid.
+  There is **no confirm dialog**.
+- The host waits up to about 30 s for the scan, so the request waits up to 45 s.
+  **`ready: false`** means the scan is still pending: a generation that uses the
+  source is refused with the `source-scan-pending` error code. Keep the source
+  and retry the generation later.
+- It rejects with the host's error string — including on an iframe/slot host,
+  which does not serve this message (full-page app hosts only).
+- `dev:live` refuses it (it needs the viewer's signed-in session). Test it
+  against the mock host: `createMockHost` / `Harness` from
+  `@civitai/blocks-react/testing`, with `persistedGenerationSource` (the canned
+  reply, `ready: true` by default; pass one with `ready: false` to simulate a
+  pending scan) and `persistGenerationSourceError`.
+
+```tsx
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+declare const modelId: number, modelVersionId: number;
+const { submit } = useBuzzWorkflow();
+const { persist, isPending } = usePersistGenerationSource();
+
+// 1. Generate.
+const first = await submit({ kind: 'textToImage', modelId, modelVersionId, params: { prompt: 'a red fox' } });
+// …poll `first.workflowId` until it succeeds…
+
+// 2. Persist output 0 as a private source.
+const src = await persist({ workflowId: first.workflowId, imageIndex: 0 });
+
+// 3. Use it as the source of the next generation.
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
+try {
+  await submit(next);
+} catch (err) {
+  if (err instanceof WorkflowSubmitError && err.snapshot.errorCode === 'source-scan-pending') {
+    // Only when `src.ready` was false: the scan has not finished yet, and the
+    // host refused before reserving anything. Wait a little, then submit `next` again.
+  } else {
+    throw err;
   }
 }
 ```

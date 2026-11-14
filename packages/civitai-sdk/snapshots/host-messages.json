@@ -463,6 +463,22 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "PERSIST_GENERATION_SOURCE": {
+      "request": true,
+      "reply": "GENERATION_SOURCE_PERSISTED",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "POLL_WORKFLOW": {
       "request": true,
       "reply": "WORKFLOW_STATUS",
