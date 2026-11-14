@@ -66,6 +66,7 @@ import {
   type BlockResourceFileErrorCode,
   type AppWorkflow,
   type BlockModel3dOutput,
+  type BlockWorkflowOutput,
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
@@ -604,6 +605,25 @@ export interface MockGenerationScenario {
    * `model3dOutputs` on the rows you pass as {@link MockHostOptions.appWorkflows}.
    */
   model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * Make outputs of a succeeded snapshot RESTRICTED, so a block can render its
+   * locked state locally. Keys are 0-based positions in the snapshot's
+   * {@link BlockWorkflowSnapshot.outputs} (for a `kind: 'workflow'` run, counted
+   * across the steps in order); the value is the `reason` reported.
+   *
+   * As on the real host, a restricted position is `{ restricted: true, reason }`
+   * in `outputs` (and in its step's `outputs`) with no url, and its url is left
+   * out of `imageUrls`, the step's `imageUrls` and `model3dOutputs`. Every other
+   * output is `{ url }` — the mock rates nothing, so no `nsfwLevel`.
+   *
+   * `{ 1: 'pool' }` is the case of a viewer whose Buzz does not cover mature
+   * content; `{ 0: 'ceiling' }` an SFW app's output above its ceiling.
+   * Snapshot-only: for the app-queue read put `outputs` (and the matching
+   * `images`) on the rows you pass as {@link MockHostOptions.appWorkflows}.
+   * Live-tunable via `setScenario({ generation: { restrictedOutputs } })`.
+   * Default: unset (nothing restricted).
+   */
+  restrictedOutputs?: Readonly<Record<number, 'pool' | 'ceiling'>>;
 }
 
 /**
@@ -3257,33 +3277,57 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       body: MockWorkflowBody,
       statusOf: (index: number) => BlockWorkflowSnapshot['status'],
       failedError?: string,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs'> => {
       const lastVisible = body.steps.reduce((last, s, i) => (s.suppressOutput === true ? last : i), -1);
+      // Output positions run across the steps in order, as the union does.
+      let position = 0;
       const steps = body.steps.map((step, index) => {
         const status = statusOf(index);
         const name = mockWorkflowStepName(step, index);
         const visible = status === 'succeeded' && step.suppressOutput !== true;
+        const urls = !visible
+          ? []
+          : index === lastVisible
+            ? imagesFor(workflowId, body)
+            : [
+                `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
+                  name,
+                )}`,
+              ];
+        const view = outputsView(urls, position);
+        position += urls.length;
         return {
           name,
           $type: step.$type,
           status,
-          ...(visible
-            ? {
-                imageUrls:
-                  index === lastVisible
-                    ? imagesFor(workflowId, body)
-                    : [
-                        `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
-                          name,
-                        )}`,
-                      ],
-              }
-            : {}),
+          ...(view.imageUrls.length > 0 ? { imageUrls: view.imageUrls } : {}),
+          ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
           ...(status === 'failed' && failedError !== undefined ? { error: failedError } : {}),
         };
       });
       const imageUrls = steps.flatMap((s) => s.imageUrls ?? []);
-      return { steps, ...(imageUrls.length > 0 ? { imageUrls } : {}) };
+      const outputs = steps.flatMap((s) => s.outputs ?? []);
+      return {
+        steps,
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+        ...(outputs.length > 0 ? { outputs } : {}),
+      };
+    };
+
+    /**
+     * `urls` (the outputs from `start` on) as the host reports them: every one in
+     * `outputs`, a restricted one ({@link MockGenerationScenario.restrictedOutputs})
+     * as `{ restricted, reason }` and left out of `imageUrls`.
+     */
+    const outputsView = (
+      urls: readonly string[],
+      start = 0,
+    ): { imageUrls: string[]; outputs: BlockWorkflowOutput[] } => {
+      const outputs = urls.map((url, i): BlockWorkflowOutput => {
+        const reason = gen.restrictedOutputs?.[start + i];
+        return reason ? { restricted: true, reason } : { url };
+      });
+      return { imageUrls: outputs.flatMap((o) => (o.restricted === true ? [] : [o.url])), outputs };
     };
 
     /** A RUNNING `kind: 'workflow'` run after `polls` polls: steps finish in order. */
@@ -3291,7 +3335,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       workflowId: string,
       body: MockWorkflowBody,
       polls: number,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs'> => {
       const total = body.steps.length;
       const failing = failingWorkflowStep(body);
       const done = Math.min(
@@ -3454,21 +3498,29 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         };
       }
       // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
-      const model3d =
+      const model3dAll =
         gen.model3dOutputs && gen.model3dOutputs.length > 0 && passThroughStepType(body)
           ? gen.model3dOutputs.map((m) => ({ ...m }))
           : undefined;
+      // Every labelled model url is also an `imageUrls` entry on the real host.
+      const view = outputsView(
+        model3dAll && !gen.images && !gen.image
+          ? model3dAll.map((m) => m.url)
+          : imagesFor(workflowId, body),
+      );
+      // A restricted model's url is withheld from its label too.
+      const model3d = model3dAll?.filter((m) => view.imageUrls.includes(m.url));
       return {
         ...trainingFields(body),
-        ...(model3d ? { model3dOutputs: model3d } : {}),
+        ...(model3d && model3d.length > 0 ? { model3dOutputs: model3d } : {}),
         workflowId,
         status: 'succeeded' as const,
         cost: { total: cost },
-        // Every labelled model url is also an `imageUrls` entry on the real host.
-        imageUrls:
-          model3d && !gen.images && !gen.image
-            ? model3d.map((m) => m.url)
-            : imagesFor(workflowId, body),
+        // Omitted, as the host omits it, only when every output is restricted.
+        ...(view.imageUrls.length > 0 || view.outputs.length === 0
+          ? { imageUrls: view.imageUrls }
+          : {}),
+        ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
         // Pick-aware APPROXIMATION of the real backend's
         // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
         // LARGEST realized debit (`primaryDebitedAccountType`), and its currency

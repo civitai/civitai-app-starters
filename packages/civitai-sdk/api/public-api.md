@@ -2452,7 +2452,39 @@ export interface BlockWorkflowSnapshot {
          */
         authorFee?: number;
     };
+    /**
+     * The urls of the outputs you may load, in production order. A RESTRICTED
+     * output is NOT here (see {@link outputs}), so with a host that emits
+     * `outputs` this list can be shorter than `outputs`.
+     */
     imageUrls?: string[];
+    /**
+     * Every available output, in production order, with RESTRICTED outputs kept
+     * IN POSITION — the list to render a result grid from. Each entry is one of:
+     *
+     * - `{ url, nsfwLevel? }` — load and show it. `nsfwLevel` is the rating
+     *   (`'pg'`, `'pg13'`, `'r'`, `'x'`, `'xxx'`); it is absent while the output
+     *   is not rated yet.
+     * - `{ restricted: true, reason }` — **show a locked state, and do not try to
+     *   fetch it**: the entry carries no url, and the host withholds it. `reason`:
+     *   - `'pool'` — the Buzz that paid for this generation does not include
+     *     mature content for this viewer, and the output is above PG-13;
+     *   - `'ceiling'` — the output is above your app's maturity ceiling (an SFW
+     *     app on an SFW host), or above a cap the host put on the request.
+     *
+     * See {@link BlockWorkflowOutput}. Blocked and not-yet-available outputs are
+     * not listed here either, as in `imageUrls`.
+     *
+     * 🔴 `imageIndexes` (`publishGenerationOutputs`, `createPostFromApp`) index
+     * {@link AppWorkflow.images}, the same list as `imageUrls` — restricted
+     * outputs excluded — NOT this one.
+     *
+     * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and when
+     * the workflow has no available output. A malformed entry is removed by the
+     * SDK's inbound validator rather than dropping the whole reply, so a later
+     * entry moves up one position in that (malformed) reply.
+     */
+    outputs?: BlockWorkflowOutput[];
     error?: string;
     /**
      * A stable, machine-readable companion to {@link error}, for a block to
@@ -2951,10 +2983,16 @@ export interface BlockWorkflowStepSnapshot {
     $type: string;
     status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
     /**
-     * This step's own image urls. Omitted when it has none, and always omitted
-     * for a step submitted with `suppressOutput: true`.
+     * This step's own image urls, restricted outputs excluded. Omitted when it has
+     * none, and always omitted for a step submitted with `suppressOutput: true`.
      */
     imageUrls?: string[];
+    /**
+     * This step's own outputs, restricted ones in position — the same rules as
+     * {@link BlockWorkflowSnapshot.outputs}. Omitted with `imageUrls`'s rule, and
+     * present when every output of the step is restricted.
+     */
+    outputs?: BlockWorkflowOutput[];
     /**
      * The step's raw orchestrator output, minus its blobs — the same treatment
      * and the same caveats as {@link BlockWorkflowSnapshot.stepOutputs}: its shape
@@ -3089,6 +3127,58 @@ export interface BlockStepQuote {
     /** ISO-8601. The quote cannot be run after this. */
     expiresAt: string;
 }
+
+/**
+ * The rating of an output you may load ({@link BlockWorkflowOutput}). An unknown
+ * value is possible (the field is typed as these plus any string, and the SDK's
+ * inbound validator accepts any string); treat one as the most mature rating.
+ */
+export type KnownBlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+
+/**
+ * Why an output is restricted ({@link BlockWorkflowRestrictedOutput}). An unknown
+ * value is possible; treat it like `'ceiling'`.
+ *
+ * - `'pool'` — the Buzz that paid does not include mature content for this
+ *   viewer, and the output is above PG-13.
+ * - `'ceiling'` — the output is above the app's maturity ceiling, or above a
+ *   cap the host put on the request.
+ */
+export type KnownBlockWorkflowRestrictionReason = 'pool' | 'ceiling';
+
+/** An output you may load: an entry of {@link BlockWorkflowSnapshot.outputs}. */
+export interface BlockWorkflowAvailableOutput {
+    url: string;
+    /** Absent while the output is not rated yet. */
+    nsfwLevel?: KnownBlockWorkflowOutputRating | (string & {});
+    restricted?: never;
+    reason?: never;
+}
+
+/**
+ * A RESTRICTED output: an entry of {@link BlockWorkflowSnapshot.outputs} that
+ * carries NO url. Show a locked state in its place and do not try to fetch it.
+ */
+export interface BlockWorkflowRestrictedOutput {
+    restricted: true;
+    reason: KnownBlockWorkflowRestrictionReason | (string & {});
+    url?: never;
+    nsfwLevel?: never;
+}
+
+/**
+ * One entry of {@link BlockWorkflowSnapshot.outputs} /
+ * {@link BlockWorkflowStepSnapshot.outputs} / {@link AppWorkflow.outputs}.
+ * Narrow on `restricted === true`:
+ *
+ * ```ts
+ * for (const out of snapshot.outputs ?? []) {
+ *   if (out.restricted) renderLocked(out.reason);
+ *   else renderImage(out.url);
+ * }
+ * ```
+ */
+export type BlockWorkflowOutput = BlockWorkflowAvailableOutput | BlockWorkflowRestrictedOutput;
 
 /**
  * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
@@ -3243,7 +3333,8 @@ export interface AppWorkflowImage {
  *
  *   status:    the block-contract status — the orchestrator's
  *              `unassigned`/`preparing`/`scheduled` all collapse to `pending`.
- *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}).
+ *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}),
+ *              RESTRICTED outputs excluded. This is the list `imageIndexes` index.
  *   cost:      the workflow's realized/estimated buzz total, or `null` when absent.
  *   createdAt: ISO-8601 string.
  */
@@ -3283,6 +3374,15 @@ export interface AppWorkflow {
      * there are none (and on hosts that predate it).
      */
     model3dOutputs?: BlockModel3dOutput[];
+    /**
+     * Every available output, restricted ones IN POSITION — same value and rules
+     * as {@link BlockWorkflowSnapshot.outputs}. A restricted output is not in
+     * {@link AppWorkflow.images}, so `imageIndexes` (which index `images`) never
+     * name one.
+     *
+     * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts.
+     */
+    outputs?: BlockWorkflowOutput[];
 }
 
 /**

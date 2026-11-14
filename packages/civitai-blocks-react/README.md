@@ -618,6 +618,61 @@ Nothing is charged.
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
 
+#### Restricted outputs: `snapshot.outputs`
+
+A finished snapshot can hold an output the host will **not** hand your app. This
+happens in two cases. The Buzz that paid for the generation does not include mature
+content for this viewer, or the output is above your app's maturity ceiling (an SFW
+app on an SFW host). Such an output is **restricted**: the host withholds its url.
+
+`snapshot.outputs` lists every available output in order, restricted ones **in
+position**. Render your result grid from it:
+
+```tsx
+import type { BlockWorkflowOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
+  // An older host sends no `outputs`; fall back to the urls.
+  const outputs: BlockWorkflowOutput[] =
+    snapshot.outputs ?? (snapshot.imageUrls ?? []).map((url) => ({ url }));
+  return (
+    <div className="grid">
+      {outputs.map((out, i) =>
+        out.restricted === true ? (
+          // No url to load. Do not try to fetch anything for this tile.
+          <div key={i} className="locked">
+            {out.reason === 'pool' ? 'Mature content is not included with this Buzz' : 'Not available here'}
+          </div>
+        ) : (
+          <img key={i} src={out.url} alt="" />
+        ),
+      )}
+    </div>
+  );
+}
+```
+
+- `{ url, nsfwLevel? }`: load and show it. `nsfwLevel` is `'pg'`, `'pg13'`,
+  `'r'`, `'x'` or `'xxx'`, and is absent while the output is not rated yet.
+- `{ restricted: true, reason }`: **show a locked state; there is no url, and do
+  not try to fetch one.** `'pool'` means the paying Buzz does not include mature
+  content for this viewer and the output is above PG-13. `'ceiling'` means the
+  output is above your app's ceiling, or above a cap the host put on the request.
+  Treat an unknown `reason` like `'ceiling'`.
+- **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
+  `AppWorkflow.images` or `model3dOutputs`. Those lists can be shorter than
+  `outputs`, so do not pair them by index with `outputs`.
+- `steps[].outputs` follows the same rules for one step of a `kind: 'workflow'`
+  run, and `useAppWorkflows()` rows carry `outputs` too.
+- 🔴 **`imageIndexes`** on `publishGenerationOutputs` and on a `createPostFromApp`
+  workflow source index `AppWorkflow.images`, the list without restricted outputs.
+  They never index `outputs`.
+
+A malformed `outputs` entry is dropped by the transport rather than the whole
+reply, so a later entry in that reply moves up one place. In the mock host,
+`generation: { restrictedOutputs: { 1: 'pool' } }` restricts the output at
+position 1 of a succeeded snapshot, so you can see your locked state locally.
+
 #### Queue position, ETA and progress
 
 A snapshot from `watch()` / `poll()` carries where the run is right now, for a
@@ -849,8 +904,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
-last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+imageUrls?, outputs?, output?, error?, queue?, progress?, startedAt?, completedAt? }`
+(`outputs`: [Restricted outputs](#restricted-outputs-snapshotoutputs); the last four:
+[Queue position, ETA and progress](#queue-position-eta-and-progress)).
 Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level

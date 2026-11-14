@@ -797,6 +797,13 @@ submitted. `app.workflows` has no call for that confirmation step.
 | `cancel(workflowId)` | Stops it on the orchestrator and resolves the workflow as it now stands |
 | `list({ cursor?, limit? })` | A page of the workflows this app ran for this viewer, as `{ workflows, cursor }` |
 
+**Restricted outputs.** A snapshot's `outputs` (and each `list` row's) has every
+available output in order, with restricted ones in position as
+`{ restricted: true, reason: 'pool' | 'ceiling' }` and **no url**. Show a locked
+state for those and do not try to fetch them. A restricted output is not in
+`imageUrls` or a row's `images`. The types are `BlockWorkflowOutput`,
+`BlockWorkflowAvailableOutput` and `BlockWorkflowRestrictedOutput`.
+
 ### A refusal is an answer, not a throw
 
 When the host declines to price or run a body it answers **`200` with a
