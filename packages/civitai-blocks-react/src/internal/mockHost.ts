@@ -70,7 +70,9 @@ import {
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
+  type BlockWorkflowEta,
   type BlockWorkflowSnapshot,
+  type BlockWorkflowStepSnapshot,
   type BlockGatedImage,
   type BlockImagePickerSource,
   type BlockPickedImageInfo,
@@ -828,6 +830,40 @@ const passThroughStepType = (body: WorkflowBody): string | undefined => {
 };
 
 /**
+ * The step `$type`s the host reports `progress` for: image and video generation,
+ * whose orchestrator rate is a fraction of the whole step. Mirrors
+ * `WHOLE_STEP_PROGRESS_STEP_TYPES` in civitai/civitai#8980's
+ * `services/blocks/workflow.service`; every other type gets none.
+ */
+const MOCK_WHOLE_STEP_PROGRESS_STEP_TYPES: ReadonlySet<string> = new Set([
+  'textToImage',
+  'imageGen',
+  'videoGen',
+]);
+
+/**
+ * The orchestrator step a single-step body runs as, named as the host names it
+ * (civitai/civitai#8980): `block-step` for both `kind: 'step'` arms and for
+ * `kind: 'training'` (`BLOCK_STEP_NAME`), `block-custom-comfy` for
+ * `customComfy` (`BLOCK_CUSTOM_COMFY_STEP_NAME`). A `textToImage` step is
+ * submitted UNNAMED and named by the orchestrator, which the host source does
+ * not show, so the mock uses `$0` there. A body the mock did not see (an id
+ * restored after a reload) is treated as `textToImage`.
+ */
+const mockSingleStep = (body: WorkflowBody | undefined): { name: string; $type: string | undefined } => {
+  switch (body?.kind) {
+    case 'step':
+      return { name: 'block-step', $type: passThroughStepType(body) };
+    case 'training':
+      return { name: 'block-step', $type: 'training' };
+    case 'customComfy':
+      return { name: 'block-custom-comfy', $type: 'comfy' };
+    default:
+      return { name: '$0', $type: 'textToImage' };
+  }
+};
+
+/**
  * The real server's refusal for a TRAINING `$type` (`training`,
  * `imageResourceTraining`) on the confirmed-step path — at the estimate, where a
  * quote would otherwise be granted, and at the confirmed submit. Training runs
@@ -1229,8 +1265,21 @@ export interface MockHostOptions {
    * unaffected. Live-tunable via {@link MockHost.setScenario}.
    */
   cannedImageScan?: MockCannedImageScan;
-  /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
+  /**
+   * Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2.
+   * The polls before it report the queue and progress fields (`eta`, and a
+   * step's `queue` / `progress` / `startedAt`): the first half of them queued,
+   * the rest running. `5` gives two of each.
+   */
   pollsUntilDone?: number;
+  /**
+   * Which `POLL_WORKFLOW` requests (1-based, counted across the whole install)
+   * the mock answers as a poll the host could not serve:
+   * `{ workflowId, status: 'processing', throttled: true }`, the host's
+   * rate-limited reply. A throttled poll does not advance the workflow. Use it
+   * to exercise `watch` skipping such replies. Default: none.
+   */
+  throttledPolls?: readonly number[];
   /**
    * The `cost.total` reported on estimate + succeeded snapshots. Default 8.
    * @deprecated Prefer {@link MockGenerationScenario.costPerGen} on `generation`.
@@ -3311,6 +3360,107 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       );
     };
 
+    /** `POLL_WORKFLOW` requests seen by this install, for {@link MockHostOptions.throttledPolls}. */
+    let pollRequests = 0;
+
+    /** When each mock step started running (by workflow + step), so `startedAt` holds still across polls. */
+    const runStartedAt = new Map<string, string>();
+
+    /**
+     * The queue/ETA fields of a NON-terminal poll, so an app can be built
+     * against them, ENCODED AS THE HOST ENCODES THEM (civitai/civitai#8980): a
+     * field with nothing to report is OMITTED, never `null`. The first half of
+     * the non-terminal polls are QUEUED (the step carries only its `queue`;
+     * `precedingJobs` / `eta.queuedAhead` falling, start and finish estimates in
+     * the near future), the rest RUNNING (no `queue`; `startedAt` set, and
+     * `progress` rising for an image or video generation `$type` — the only ones
+     * the host reports it for). With the default `pollsUntilDone: 2` there is one
+     * non-terminal poll and it is a running one; give `pollsUntilDone: 5` to see
+     * two queued and two running polls. As on the host, the workflow (and a
+     * `kind: 'workflow'` run's waiting step) is `'pending'` while queued and
+     * `'processing'` once it runs. Terminal polls have no `eta`.
+     */
+    const etaView = (
+      workflowId: string,
+      polls: number,
+      stepName: string,
+      stepType: string | undefined,
+    ): {
+      eta: BlockWorkflowEta;
+      step: Pick<BlockWorkflowStepSnapshot, 'queue' | 'progress' | 'startedAt'>;
+    } => {
+      const nonTerminal = Math.max(1, pollsUntilDone - 1);
+      const queuedPolls = Math.floor(nonTerminal / 2);
+      const now = Date.now();
+      const iso = (ms: number) => new Date(ms).toISOString();
+      if (polls <= queuedPolls) {
+        const ahead = (queuedPolls - polls + 1) * 2;
+        const startsAt = iso(now + ahead * 4_000);
+        const completesAt = iso(now + ahead * 4_000 + 8_000);
+        return {
+          eta: { stepName, queuedAhead: ahead, startsAt, completesAt, progress: null, support: 'available' },
+          step: {
+            queue: {
+              precedingJobs: ahead,
+              estimatedStartAt: startsAt,
+              estimatedCompleteAt: completesAt,
+              support: 'available',
+            },
+          },
+        };
+      }
+      const running = nonTerminal - queuedPolls;
+      const progress =
+        stepType !== undefined && MOCK_WHOLE_STEP_PROGRESS_STEP_TYPES.has(stepType)
+          ? Math.min(1, (polls - queuedPolls) / (running + 1))
+          : null;
+      const key = `${workflowId}\u0000${stepName}`;
+      let startedAt = runStartedAt.get(key);
+      if (startedAt === undefined) {
+        startedAt = iso(now);
+        runStartedAt.set(key, startedAt);
+      }
+      return {
+        eta: { stepName, queuedAhead: null, startsAt: null, completesAt: null, progress, support: null },
+        step: { ...(progress !== null ? { progress } : {}), startedAt },
+      };
+    };
+
+    /**
+     * The `processing` snapshot of a poll: a multi-step run's steps, the step
+     * fields of {@link etaView} on its running step, and `eta`. A run that is
+     * not `kind: 'workflow'` has no `steps`, so only `eta` is added, naming the
+     * step as the host does ({@link mockSingleStep}).
+     */
+    const processingSnapshot = (workflowId: string, body: WorkflowBody | undefined, polls: number) => {
+      // QUEUED (the step has a queue position) reads 'pending', for the
+      // workflow and for its waiting step, as on the host; RUNNING reads
+      // 'processing'.
+      if (body?.kind !== 'workflow') {
+        const single = mockSingleStep(body);
+        const { eta, step } = etaView(workflowId, polls, single.name, single.$type);
+        return {
+          workflowId,
+          status: step.queue ? ('pending' as const) : ('processing' as const),
+          eta,
+        };
+      }
+      const view = workflowProgressView(workflowId, body, polls);
+      const current = view.steps?.find((s) => s.status === 'processing');
+      if (!current) return { workflowId, status: 'processing' as const, ...view };
+      const { eta, step } = etaView(workflowId, polls, current.name, current.$type);
+      const queued = step.queue !== undefined;
+      return {
+        workflowId,
+        status: queued ? ('pending' as const) : ('processing' as const),
+        ...view,
+        steps: view.steps!.map((s) =>
+          s === current ? { ...s, ...step, ...(queued ? { status: 'pending' as const } : {}) } : s,
+        ),
+        eta,
+      };
+    };
+
     /** Index of the step `generation.failWorkflowStep` names, or `-1`. */
     const failingWorkflowStep = (body: MockWorkflowBody): number => {
       const target = gen.failWorkflowStep;
@@ -4213,6 +4363,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
+            // The host's answer to a poll it could not serve: not read, not
+            // advanced, and flagged so the SDK does not treat it as an update.
+            pollRequests += 1;
+            if (options.throttledPolls?.includes(pollRequests)) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: { workflowId, status: 'processing' as const, throttled: true as const } },
+              });
+              return;
+            }
             // An id this mock did not submit (e.g. restored from storage after a
             // reload) gets a record on its first poll, so it counts down to done
             // like any other instead of answering `processing` forever.
@@ -4271,17 +4431,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             } else {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: {
-                  requestId,
-                  snapshot: {
-                    workflowId,
-                    status: 'processing' as const,
-                    // A multi-step run reports how far its steps have got.
-                    ...(wf.body?.kind === 'workflow'
-                      ? workflowProgressView(workflowId, wf.body, polls)
-                      : {}),
-                  },
-                },
+                // A multi-step run reports how far its steps have got; every
+                // run reports its queue position or progress (`etaView`).
+                payload: { requestId, snapshot: processingSnapshot(workflowId, wf.body, polls) },
               });
             }
             return;

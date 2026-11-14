@@ -188,7 +188,39 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot` (+ `BlockWorkflowEta`, `BlockWorkflowStepQueue` and `KnownBlockWorkflowQueueSupport` — queue position, ETA and progress, see below), `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+
+**Queue position, ETA and progress.** A non-terminal workflow snapshot from a
+poll can carry `eta`, a summary of the step that is queued or running now, for
+every kind of workflow. Each entry of `steps` can carry `queue` (only while that
+step is queued), `progress`, `startedAt` and `completedAt`. All of them are
+optional, and **absent means the same as `null`**: the host omits a field with
+nothing to report. A terminal snapshot has no `eta`, nor does a host that
+predates the field. A poll the host could not serve (rate-limited) answers
+`{ workflowId, status: 'processing', throttled: true }`: not a real update, and
+`@civitai/blocks-react`'s `watch` skips it. A throttled answer to a cancel means
+the cancel was not issued: `useBuzzWorkflow().cancel()` rejects with
+`WorkflowCancelNotIssuedError`; retry it. `progress` is a fraction from 0 to 1, reported only for image and
+video generation steps. `queuedAhead` / `precedingJobs` count the jobs ahead in
+the queue; while a step is queued they refresh at most once per held poll
+(about every 15 s), since a held poll does not wake on queue drift. Every time
+is an ISO-8601 string and an estimate. `support` is `'available' |
+'unavailable' | 'unsupported'` or a value added later (`'unavailable'` means no
+capacity right now):
+
+```ts
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+function etaLine(snapshot: BlockWorkflowSnapshot): string | null {
+  const eta = snapshot.eta;
+  if (!eta) return null; // terminal, or nothing queued or running
+  if (eta.progress !== null) return eta.progress.toLocaleString(undefined, { style: 'percent' });
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return `${eta.queuedAhead ?? '?'} ahead${at ? `, starts ~${at}` : ''}`;
+}
+```
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),

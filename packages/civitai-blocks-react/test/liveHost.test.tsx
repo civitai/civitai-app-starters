@@ -695,6 +695,7 @@ describe('createLiveHost — workflow forwarding', () => {
     const snap = payload.snapshot as BlockWorkflowSnapshot;
     expect(snap.status).toBe('failed');
     expect(snap.error).toMatch(/NSFW prompt rejected/);
+    expect('throttled' in snap).toBe(false); // a real snapshot is never marked
     expect(pollCalls).toBe(1); // a real failed status is not retried
   });
 
@@ -721,6 +722,9 @@ describe('createLiveHost — workflow forwarding', () => {
     expect(snap.status).not.toBe('failed');
     expect(snap.workflowId).toBe('wf_1'); // keeps the id so the block maps it back
     expect(snap.error).toMatch(/unauthorized/);
+    // A poll the host could not serve, marked as production's
+    // `pollFailureSnapshot` marks it, so `watch` does not treat it as an update.
+    expect(snap.throttled).toBe(true);
     // 1 initial + 3 retries (POLL_RETRY_BACKOFF_MS has 3 entries).
     expect(pollCalls).toBe(4);
   });

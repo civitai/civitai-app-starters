@@ -1,0 +1,51 @@
+{
+  "$comment": "The host's own contract fixtures: a copy of the two whole-snapshot expectations (`toStrictEqual`) in civitai/civitai#8980's src/server/services/blocks/__tests__/workflow.service.test.ts, describe 'snapshotFromWorkflow — queue/ETA/progress contract fixtures'. Empty fields are OMITTED, as the host encodes them. Re-copy if the host changes them.",
+  "queued": {
+    "workflowId": "wf_contract_queued",
+    "status": "pending",
+    "cost": { "total": 24 },
+    "steps": [
+      {
+        "name": "gen",
+        "$type": "imageGen",
+        "status": "pending",
+        "queue": {
+          "precedingJobs": 7,
+          "estimatedStartAt": "2026-11-14T12:00:07Z",
+          "estimatedCompleteAt": "2026-11-14T12:01:13Z",
+          "support": "available"
+        }
+      }
+    ],
+    "eta": {
+      "stepName": "gen",
+      "queuedAhead": 7,
+      "startsAt": "2026-11-14T12:00:07Z",
+      "completesAt": "2026-11-14T12:01:13Z",
+      "progress": null,
+      "support": "available"
+    }
+  },
+  "processing": {
+    "workflowId": "wf_contract_processing",
+    "status": "processing",
+    "cost": { "total": 31 },
+    "steps": [
+      {
+        "name": "clip",
+        "$type": "videoGen",
+        "status": "processing",
+        "progress": 0.42,
+        "startedAt": "2026-11-14T12:00:21Z"
+      }
+    ],
+    "eta": {
+      "stepName": "clip",
+      "queuedAhead": null,
+      "startsAt": null,
+      "completesAt": null,
+      "progress": 0.42,
+      "support": null
+    }
+  }
+}
