@@ -1,5 +1,23 @@
 # @civitai/components-chat
 
+## 0.35.2
+
+### Patch Changes
+
+- deb209e: Dictation works again on the orchestrator's `/mcp/v2`, the server the chat connects to. `/mcp/v2` has no `transcribe_audio` tool; it was removed in the discovery-first rewrite. Each recorded phrase now runs the `transcription` step through `run_step` with `whatif: false`, because `whatif` defaults to `true` there, which only prices the step. Its input is `{ mediaUrl, returnTimeStamps: false, language? }`. The words come from the step's `output.text`. A failed step rejects with the step's own error, and a recording with no audio track rejects with "The recording has no sound in it."
+
+  The built-in system prompt no longer tells the assistant to call `caption_media` or `transcribe_audio`, which `/mcp/v2` does not have. It now says the assistant cannot see images or hear audio, that captions it already knows are listed with the files, and that it should ask the user when a file has none. The README's dictation section and the `mcp.orchestration.exclude` note now say the same.
+
+  The dead caption plumbing is gone: the chat no longer special-cases `caption_media` or `transcribe_audio` results into attachment captions (`onCaption` on the tool context), and the built-in tool views no longer list those two tools. Neither tool exists on `/mcp/v2`, so nothing reached that code. Captions already saved on old conversations still show in the prompt.
+
+- 5d7c6f1: Docs: the published READMEs stop teaching the legacy stores civitai.com removed on 2026-11-10, and hand-copied lists point at their sources instead.
+
+  - `@civitai/blocks-react`: the `useBuzzWorkflow()` return list now includes `watch` and `cancel`. The Examples list and the version-compatibility table (which stopped at `0.78.x`) are replaced by pointers to `starters/examples/`, the package's `peerDependencies` and `CHANGELOG.md`.
+  - `@civitai/app-sdk`: the README points at `src/blocks/messages.ts` for the message unions instead of a hand-copied list, and names the document store for durable data.
+  - `@civitai/sdk`: the README's "Both give you" table lists `app.storage`, `app.sharedStorage` and `app.subListings`. `BREAKING.md` no longer quotes a hook count or a `withBlockScope` route count.
+  - `@civitai/components-react`: the README names `CivitaiWorkflowButton`, the second binding kept out of the barrel.
+  - `@civitai/components-chat`: the README says its property table is not the full list and points at `CivitaiChat`'s `static properties`.
+
 ## 0.35.1
 
 ### Patch Changes
