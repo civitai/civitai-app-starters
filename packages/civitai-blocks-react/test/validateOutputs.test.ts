@@ -11,11 +11,13 @@ import {
  * The inbound validator and `outputs` (`BlockWorkflowSnapshot.outputs`,
  * `BlockWorkflowStepSnapshot.outputs`, `AppWorkflow.outputs`).
  *
- * A MALFORMED entry is STRIPPED, not fatal — the precedent of the queue/ETA
- * fields: `isValidWorkflowSnapshot` does not look at `outputs`, and
- * `projectInboundPayload` removes each malformed entry (or the whole field when
- * it is not an array) from every reply that carries a snapshot or a listing row.
- * Rejecting the reply instead would drop its status and every other output.
+ * A MALFORMED entry is not fatal — the precedent of the queue/ETA fields:
+ * `isValidWorkflowSnapshot` does not look at `outputs`, and `projectInboundPayload`
+ * REPLACES each malformed entry IN PLACE with the restricted placeholder
+ * `{ restricted: true, reason: 'ceiling' }` (the whole field goes only when it is
+ * not an array). Never removed: indexes are positions in `outputs`, so a removed
+ * entry would move every later position. Rejecting the reply instead would drop its
+ * status and every other output.
  *
  * A restricted entry that carries a url is malformed, so a url the host meant to
  * withhold never reaches block code labelled as restricted.
@@ -25,6 +27,8 @@ const OK_A = { url: 'https://img.test/a.png', nsfwLevel: 'pg' };
 const OK_B = { url: 'https://img.test/b.png' };
 const POOL = { restricted: true, reason: 'pool' };
 const CEILING = { restricted: true, reason: 'ceiling' };
+/** What a malformed entry becomes: a locked slot in the SAME position. */
+const PLACEHOLDER = { restricted: true, reason: 'ceiling' };
 
 /** The host's own expectation for a mixed workflow (civitai/civitai `block-output-restriction.test.ts`, case e). */
 const HOST_MIXED = {
@@ -88,14 +92,16 @@ describe('outputs on a workflow snapshot', () => {
     expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
   });
 
-  it.each(MALFORMED)('strips %s, keeping the rest of the snapshot', (_label, bad) => {
+  it.each(MALFORMED)('replaces %s in place, keeping every position', (_label, bad) => {
     const s = snapshot({ outputs: [OK_A, bad, POOL, OK_B] });
     // The snapshot itself is still valid: the reply is not dropped.
     expect(isValidWorkflowSnapshot(s)).toBe(true);
     const projected = projectInboundPayload('WORKFLOW_STATUS', { requestId: 'r', snapshot: s }) as {
       snapshot: Record<string, unknown>;
     };
-    expect(projected.snapshot).toStrictEqual(snapshot({ outputs: [OK_A, POOL, OK_B] }));
+    expect(projected.snapshot).toStrictEqual(snapshot({ outputs: [OK_A, PLACEHOLDER, POOL, OK_B] }));
+    // 🔴 POSITIONS DO NOT SHIFT: OK_B is still at index 3.
+    expect((projected.snapshot.outputs as unknown[])[3]).toStrictEqual(OK_B);
     expect(JSON.stringify(projected)).not.toContain('leak.png');
   });
 
@@ -110,7 +116,7 @@ describe('outputs on a workflow snapshot', () => {
     }
   });
 
-  it("strips a malformed entry from a step's outputs too", () => {
+  it("replaces a malformed entry in a step's outputs too", () => {
     const step = { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: [OK_A.url] };
     const s = snapshot({
       steps: [{ ...step, outputs: [{ restricted: true, reason: 'pool', url: 'https://img.test/leak.png' }, OK_A] }],
@@ -118,7 +124,8 @@ describe('outputs on a workflow snapshot', () => {
     const projected = projectInboundPayload('WORKFLOW_STATUS', { requestId: 'r', snapshot: s }) as {
       snapshot: { steps: unknown[] };
     };
-    expect(projected.snapshot.steps).toStrictEqual([{ ...step, outputs: [OK_A] }]);
+    expect(projected.snapshot.steps).toStrictEqual([{ ...step, outputs: [PLACEHOLDER, OK_A] }]);
+    expect(JSON.stringify(projected)).not.toContain('leak.png');
   });
 
   it.each([
@@ -133,7 +140,7 @@ describe('outputs on a workflow snapshot', () => {
       requestId: 'r',
       snapshot: snapshot({ outputs: [OK_A, { url: '' }] }),
     }) as { snapshot: { outputs: unknown[] } };
-    expect(projected.snapshot.outputs).toStrictEqual([OK_A]);
+    expect(projected.snapshot.outputs).toStrictEqual([OK_A, PLACEHOLDER]);
   });
 
   it('is applied to each ESTIMATE_BATCH_RESULT cell', () => {
@@ -141,7 +148,10 @@ describe('outputs on a workflow snapshot', () => {
       requestId: 'r',
       snapshots: [snapshot({ outputs: [{ url: '' }, OK_B] }), snapshot()],
     }) as { snapshots: Array<{ outputs: unknown[] }> };
-    expect(projected.snapshots.map((s) => s.outputs)).toStrictEqual([[OK_B], [OK_A, POOL, OK_B]]);
+    expect(projected.snapshots.map((s) => s.outputs)).toStrictEqual([
+      [PLACEHOLDER, OK_B],
+      [OK_A, POOL, OK_B],
+    ]);
   });
 });
 
@@ -165,22 +175,25 @@ describe('outputs on an AppWorkflow row', () => {
     expect(projectInboundPayload('CANCEL_APP_WORKFLOW_RESULT', cancel)).toBe(cancel);
   });
 
-  it.each(MALFORMED)('APP_WORKFLOWS_RESULT strips %s from a row', (_label, bad) => {
+  it.each(MALFORMED)('APP_WORKFLOWS_RESULT replaces %s in place in a row', (_label, bad) => {
     const list = {
       requestId: 'q',
       result: { workflows: [row({ outputs: [bad, OK_A, POOL] }), row()], cursor: null },
     };
     expect(isValidAppWorkflowsResult(list)).toBe(true);
     const projected = projectInboundPayload('APP_WORKFLOWS_RESULT', list) as typeof list;
-    expect(projected.result.workflows).toStrictEqual([row(), row()]);
+    expect(projected.result.workflows).toStrictEqual([
+      row({ outputs: [PLACEHOLDER, OK_A, POOL] }),
+      row(),
+    ]);
     expect(JSON.stringify(projected)).not.toContain('leak.png');
   });
 
-  it.each(MALFORMED)('CANCEL_APP_WORKFLOW_RESULT strips %s', (_label, bad) => {
+  it.each(MALFORMED)('CANCEL_APP_WORKFLOW_RESULT replaces %s in place', (_label, bad) => {
     const cancel = { requestId: 'c', result: { workflow: row({ outputs: [OK_A, bad, POOL] }) } };
     expect(isValidCancelAppWorkflowResult(cancel)).toBe(true);
     const projected = projectInboundPayload('CANCEL_APP_WORKFLOW_RESULT', cancel) as typeof cancel;
-    expect(projected.result.workflow).toStrictEqual(row());
+    expect(projected.result.workflow).toStrictEqual(row({ outputs: [OK_A, PLACEHOLDER, POOL] }));
   });
 
   it('an error reply is untouched', () => {

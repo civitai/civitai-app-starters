@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { usePersistGenerationSource } from '../src/hooks/usePersistGenerationSource.js';
+import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
@@ -68,6 +70,45 @@ describe('createMockHost — restricted outputs', () => {
     expect(snap.status).toBe('succeeded');
     return snap;
   }
+
+  it('🔴 publish and persist refuse a RESTRICTED position by name; a later position still works', async () => {
+    const host = createMockHost({
+      consentGranted: true,
+      pollsUntilDone: 1,
+      generation: { images: IMAGES, restrictedOutputs: { 1: 'pool' } },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => ({
+      flow: useBuzzWorkflow(),
+      pub: usePublishGenerationOutputs(),
+      src: usePersistGenerationSource(),
+    }));
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let workflowId = '';
+    await act(async () => {
+      workflowId = (await result.current.flow.submit(TEXT)).workflowId;
+      await result.current.flow.poll(workflowId);
+    });
+    const outcome = async (p: () => Promise<unknown>) => {
+      let out: unknown;
+      await act(async () => {
+        out = await p().then(
+          () => 'ok',
+          (e: Error) => e.message,
+        );
+      });
+      return out;
+    };
+    expect(await outcome(() => result.current.pub.publish({ workflowId, imageIndexes: [1] }))).toBe(
+      'output 1 is restricted',
+    );
+    expect(await outcome(() => result.current.src.persist({ workflowId, imageIndex: 1 }))).toContain(
+      'output 1 is restricted',
+    );
+    // Positions do not shift: index 2 is the third output, and is not restricted.
+    expect(await outcome(() => result.current.pub.publish({ workflowId, imageIndexes: [2] }))).toBe('ok');
+    expect(await outcome(() => result.current.src.persist({ workflowId, imageIndex: 2 }))).toBe('ok');
+  });
 
   it('without the option, every output is { url } and imageUrls is unchanged', async () => {
     const snap = await run({ images: IMAGES });
