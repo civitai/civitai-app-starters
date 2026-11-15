@@ -110,6 +110,72 @@ describe('createMockHost — restricted outputs', () => {
     expect(await outcome(() => result.current.src.persist({ workflowId, imageIndex: 2 }))).toBe('ok');
   });
 
+  async function mountWithPublish(generation: NonNullable<Parameters<typeof createMockHost>[0]>['generation']) {
+    const host = createMockHost({ consentGranted: true, pollsUntilDone: 1, generation });
+    uninstall = host.install();
+    const { result } = renderHook(() => ({ flow: useBuzzWorkflow(), pub: usePublishGenerationOutputs() }));
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let workflowId = '';
+    let snap!: BlockWorkflowSnapshot;
+    await act(async () => {
+      workflowId = (await result.current.flow.submit(TEXT)).workflowId;
+      snap = await result.current.flow.poll(workflowId);
+    });
+    const publish = async (imageIndexes?: number[]) => {
+      let out: unknown;
+      await act(async () => {
+        out = await result.current.pub
+          .publish({ workflowId, ...(imageIndexes ? { imageIndexes } : {}) })
+          .then(
+            () => 'ok',
+            (e: Error) => e.message,
+          );
+      });
+      return out;
+    };
+    return { host, result, workflowId, snap, publish };
+  }
+
+  it('pendingOutputs: held with ratingPending, rated after N succeeded reads, slot unchanged', async () => {
+    const { result, workflowId, snap, publish } = await mountWithPublish({
+      images: IMAGES,
+      pendingOutputs: { 1: 1 },
+    });
+    expect(snap.outputs).toStrictEqual([{ url: IMAGES[0] }, { pending: true }, { url: IMAGES[2] }]);
+    expect(snap.ratingPending).toBe(true);
+    expect(snap.imageUrls).toStrictEqual([IMAGES[0], IMAGES[2]]);
+    expect(await publish([1])).toBe('output 1 is still being rated, try again shortly');
+    expect(await publish()).toBe('output 1 is still being rated, try again shortly');
+    let rated!: BlockWorkflowSnapshot;
+    await act(async () => {
+      rated = await result.current.flow.poll(workflowId);
+    });
+    expect(rated.outputs).toStrictEqual(IMAGES.map((url) => ({ url })));
+    expect(rated).not.toHaveProperty('ratingPending');
+  });
+
+  it('blockedOutputs: the slot is kept as { blocked: true }, and naming it is refused', async () => {
+    const { snap, publish } = await mountWithPublish({ images: IMAGES, blockedOutputs: [0] });
+    expect(snap.outputs).toStrictEqual([{ blocked: true }, { url: IMAGES[1] }, { url: IMAGES[2] }]);
+    expect(snap.imageUrls).toStrictEqual([IMAGES[1], IMAGES[2]]);
+    expect(await publish([0])).toBe('output 0 is not available');
+    expect(await publish([1])).toBe('ok');
+  });
+
+  it('S4: an all-restricted publish with imageIndexes omitted is refused, as on the host', async () => {
+    const { publish } = await mountWithPublish({
+      images: IMAGES,
+      restrictedOutputs: { 0: 'pool', 1: 'pool', 2: 'ceiling' },
+    });
+    expect(await publish()).toBe('workflow has no available outputs to publish');
+  });
+
+  it('S4: the refusal uses the scenario the workflow RAN under, not the current one', async () => {
+    const { host, publish } = await mountWithPublish({ images: IMAGES, restrictedOutputs: { 1: 'pool' } });
+    host.setScenario({ generation: { restrictedOutputs: {} } });
+    expect(await publish([1])).toBe('output 1 is restricted');
+  });
+
   it('without the option, every output is { url } and imageUrls is unchanged', async () => {
     const snap = await run({ images: IMAGES });
     expect(snap.imageUrls).toStrictEqual(IMAGES);

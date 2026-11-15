@@ -877,6 +877,57 @@ describe('AppClient.workflows — throttled poll replies', () => {
   });
 });
 
+// A final snapshot can still hold an output not rated yet (`ratingPending: true`,
+// civitai/civitai#8994): watch keeps reading for up to two minutes after the final status.
+describe('AppClient.workflows — a final snapshot with a rating pending', () => {
+  const HELD = snapshot('succeeded', {
+    outputs: [{ pending: true }, { url: 'https://example.test/b.png' }],
+    imageUrls: ['https://example.test/b.png'],
+    ratingPending: true,
+  });
+  const RATED = snapshot('succeeded', {
+    outputs: [{ url: 'https://example.test/a.png', nsfwLevel: 'pg' }, { url: 'https://example.test/b.png' }],
+    imageUrls: ['https://example.test/a.png', 'https://example.test/b.png'],
+  });
+
+  it('keeps reading after the final status and ends once the rating lands', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: RATED }),
+    ]);
+    const seen: BlockWorkflowSnapshot[] = [];
+    for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s);
+    expect(calls).toHaveLength(3);
+    // The repeated held snapshot is not re-yielded; the rated one is.
+    expect(seen).toEqual([HELD, RATED]);
+  });
+
+  it('the window runs out: the watch ends on the last snapshot, outputs still pending', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const start = Date.now();
+    let reads = 0;
+    const later = () => {
+      reads += 1;
+      // Each read lands 50 s after the last, so the two-minute window closes.
+      vi.setSystemTime(start + reads * 50_000);
+      return json(200, { snapshot: HELD });
+    };
+    const { workflows, calls } = await client(Array.from({ length: 20 }, () => later));
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(HELD);
+    // Read 1 opens the window at +50 s; reads at +100 s and +150 s are inside it;
+    // the read at +200 s is past it, and ends the watch.
+    expect(calls).toHaveLength(4);
+  });
+
+  it('a final snapshot with nothing pending ends the watch at once', async () => {
+    const { workflows, calls } = await client([() => json(200, { snapshot: RATED })]);
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(RATED);
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe('AppClient.workflows — which token reaches it', () => {
   const blockToken = { raw: 'jwt', scopes: ['ai:write:budgeted'], expiresAt: new Date(0), kind: 'block' as const };
 

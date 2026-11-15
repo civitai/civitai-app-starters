@@ -12,6 +12,8 @@ import { expectTypeOf } from 'vitest';
 import type {
   AppWorkflow,
   BlockWorkflowAvailableOutput,
+  BlockWorkflowBlockedOutput,
+  BlockWorkflowPendingOutput,
   BlockWorkflowOutput,
   BlockWorkflowRestrictedOutput,
   BlockWorkflowSnapshot,
@@ -35,13 +37,35 @@ if (out.restricted === true) {
   expectTypeOf(out).toEqualTypeOf<BlockWorkflowRestrictedOutput>();
   expectTypeOf(out.reason).toEqualTypeOf<KnownBlockWorkflowRestrictionReason | (string & {})>();
   expectTypeOf(out.url).toEqualTypeOf<undefined>();
-} else {
+} else if (out.pending !== true && out.blocked !== true) {
   expectTypeOf(out).toEqualTypeOf<BlockWorkflowAvailableOutput>();
   expectTypeOf(out.url).toEqualTypeOf<string>();
   expectTypeOf(out.nsfwLevel).toEqualTypeOf<
     KnownBlockWorkflowOutputRating | (string & {}) | undefined
   >();
 }
+
+// --- pending / blocked: no url, no rating, narrowed by their own marker ---
+if (out.pending === true) {
+  expectTypeOf(out).toEqualTypeOf<BlockWorkflowPendingOutput>();
+  expectTypeOf(out.url).toEqualTypeOf<undefined>();
+}
+if (out.blocked === true) {
+  expectTypeOf(out).toEqualTypeOf<BlockWorkflowBlockedOutput>();
+  expectTypeOf(out.url).toEqualTypeOf<undefined>();
+}
+expectTypeOf(snapshot.ratingPending).toEqualTypeOf<true | undefined>();
+expectTypeOf(step.ratingPending).toEqualTypeOf<true | undefined>();
+expectTypeOf(listed.ratingPending).toEqualTypeOf<true | undefined>();
+const held: BlockWorkflowOutput = { pending: true };
+const blockedOut: BlockWorkflowOutput = { blocked: true };
+void [held, blockedOut];
+// @ts-expect-error — a pending entry never carries a url.
+const pendingLeak: BlockWorkflowOutput = { pending: true, url: 'https://x/p.png' };
+void pendingLeak;
+// @ts-expect-error — one marker per entry.
+const twoMarkers: BlockWorkflowOutput = { pending: true, blocked: true };
+void twoMarkers;
 
 // The url is not readable as a string before narrowing.
 expectTypeOf(out.url).toEqualTypeOf<string | undefined>();

@@ -87,6 +87,50 @@ describe('outputs on a workflow snapshot', () => {
     }
   });
 
+  it('pending and blocked entries, and ratingPending: true, cross by identity', () => {
+    const payload = {
+      requestId: 'r',
+      snapshot: snapshot({
+        outputs: [OK_A, { pending: true }, { blocked: true }, POOL],
+        ratingPending: true,
+        steps: [
+          {
+            name: 'gen',
+            $type: 'imageGen',
+            status: 'succeeded',
+            outputs: [{ pending: true }],
+            ratingPending: true,
+          },
+        ],
+      }),
+    };
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+  });
+
+  it.each([
+    ['a pending entry with a url', { pending: true, url: 'https://img.test/leak.png' }],
+    ['a blocked entry with a rating', { blocked: true, nsfwLevel: 'r' }],
+    ['two markers at once', { pending: true, blocked: true }],
+    ['pending: false', { pending: false }],
+  ])('replaces %s in place', (_label, bad) => {
+    const projected = projectInboundPayload('WORKFLOW_STATUS', {
+      requestId: 'r',
+      snapshot: snapshot({ outputs: [OK_A, bad, OK_B] }),
+    }) as { snapshot: { outputs: unknown[] } };
+    expect(projected.snapshot.outputs).toStrictEqual([OK_A, PLACEHOLDER, OK_B]);
+    expect(JSON.stringify(projected)).not.toContain('leak.png');
+  });
+
+  it('strips a ratingPending that is not true, at the snapshot and step level', () => {
+    const step = { name: 'gen', $type: 'imageGen', status: 'succeeded' };
+    const projected = projectInboundPayload('WORKFLOW_STATUS', {
+      requestId: 'r',
+      snapshot: snapshot({ ratingPending: 'yes', steps: [{ ...step, ratingPending: 1 }] }),
+    }) as { snapshot: Record<string, unknown> };
+    expect(projected.snapshot).not.toHaveProperty('ratingPending');
+    expect(projected.snapshot.steps).toStrictEqual([step]);
+  });
+
   it('an old-host snapshot with no outputs is untouched', () => {
     const payload = { requestId: 'r', snapshot: snapshot({ outputs: undefined }) };
     expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
