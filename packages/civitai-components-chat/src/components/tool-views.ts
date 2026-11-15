@@ -253,8 +253,6 @@ export const BUILT_IN_VIEWS: Record<string, ToolView> = {
   get_model: { activity: 'Reading about that model…' },
   get_model_version: { activity: 'Reading about that model…' },
   search_images: { activity: 'Looking at examples…' },
-  caption_media: { activity: 'Looking at your file…' },
-  transcribe_audio: { activity: 'Listening…' },
 };
 
 /** The page's views come first; a view without `render` keeps the built-in card and only renames the activity. */

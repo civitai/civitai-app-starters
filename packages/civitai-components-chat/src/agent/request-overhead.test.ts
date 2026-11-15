@@ -31,7 +31,6 @@ function measuredOverhead(): number {
     panels: {} as never,
     findAttachment: () => undefined,
     resolveArgs: async (args) => args,
-    onCaption: () => undefined,
   });
   const definitions = Object.entries(tools).map(([name, tool]) => ({
     type: 'function',

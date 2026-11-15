@@ -10,6 +10,16 @@ const defaultName = chatConfig.name;
 afterEach(() => configureChat({ name: defaultName }));
 
 describe('system prompt', () => {
+  it('names no orchestration tool that /mcp/v2 lacks', () => {
+    // civitai-orchestration McpEndpoints.V2Tools: FindServicesTools, StepTools, WebTools, WorkflowTools, GuideTools.
+    // caption_media and transcribe_audio exist only on /mcp (v1), which this package does not connect to.
+    const v2 = ['find_services', 'get_input_schema', 'run_step', 'run_workflow', 'web_search', 'fetch_page', 'get_workflow', 'cancel_workflow', 'list_workflows', 'get_guide'];
+    const chat = ['search_models', 'get_model', 'get_model_version', 'search_images', 'open_panel', 'update_panel', 'close_panel', 'update_instructions', 'ask_choice', 'post_to_civitai'];
+    const named = new Set(buildSystemPrompt({ now, canPost: true }).match(/\b[a-z]+(?:_[a-z]+)+\b/g));
+    expect(named.has('run_step')).toBe(true); // the extraction sees tool names at all
+    expect([...named].filter((name) => !v2.includes(name) && !chat.includes(name))).toEqual([]);
+  });
+
   it('only offers what the assistant can do with the tools it has', () => {
     const prompt = buildSystemPrompt({ now, tools: ['search_models', 'ask_choice'] });
     expect(prompt).toContain('You cannot make or change pictures, videos or audio here');

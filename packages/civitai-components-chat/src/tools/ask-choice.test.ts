@@ -23,7 +23,6 @@ function askChoice() {
     posts: { available: false },
     findAttachment: () => undefined,
     resolveArgs: async (args: Record<string, unknown>) => args,
-    onCaption: () => undefined,
   } as unknown as TurnToolContext;
   const tools = buildToolSet({ orchestration: [], site: [] }, ctx);
   return { tools, run: (input: unknown) => (tools[ASK_CHOICE] as unknown as { execute: (input: unknown, opts: unknown) => Promise<unknown> }).execute(input, { toolCallId: 'c', messages: [] }) };
