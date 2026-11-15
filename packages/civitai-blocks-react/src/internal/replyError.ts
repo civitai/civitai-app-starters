@@ -11,7 +11,7 @@
  * `error: ''` is FALSY but PRESENT. A validator early-accepts it and therefore
  * SKIPS the success-field checks, so a hook testing `if (result.error)` sails
  * past and reads fields the validator never verified. The wire types make this
- * invisible to `tsc`: `SHARED_LIST_RESULT.items` is typed REQUIRED while
+ * invisible to `tsc`: a reply's success field is typed REQUIRED while
  * `error` is optional, so `result.items.map(...)` compiles and then throws
  * `Cannot read properties of undefined` at runtime — or worse, returns
  * `undefined` typed as `number` with no throw at all.
@@ -37,7 +37,7 @@
  * compile clean:
  *
  *   - `throwOnFailedReply` on a reply with NO `ok` field (e.g.
- *     `SHARED_GET_COUNT_RESULT`) — `!result.ok` is `!undefined`, so EVERY
+ *     `BUZZ_BALANCE_RESULT`) — `!result.ok` is `!undefined`, so EVERY
  *     successful reply throws. Loud, but invisible to the type checker.
  *   - `throwOnReplyError` on a reply that HAS `ok` — the `!ok` check is
  *     silently skipped, so `{ ok: false }` with no error resolves as SUCCESS.

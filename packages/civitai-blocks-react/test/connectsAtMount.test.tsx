@@ -39,7 +39,6 @@ const PARENT_ORIGIN = 'https://civitai.com';
 type HookCall = () => unknown;
 
 const CASES: Record<string, HookCall> = {
-  useAppStorage: () => entry.useAppStorage(),
   useAppWorkflows: () => entry.useAppWorkflows(),
   useBatchEstimate: () => entry.useBatchEstimate(),
   useBlockAnalytics: () => entry.useBlockAnalytics(),
@@ -82,7 +81,6 @@ const CASES: Record<string, HookCall> = {
   useRunConfirmedStep: () => entry.useRunConfirmedStep(),
   useRunTraining: () => entry.useRunTraining(),
   useSaveImage: () => entry.useSaveImage(),
-  useSharedStorage: () => entry.useSharedStorage(),
   useTip: () => entry.useTip(),
   useTipAllowance: () => entry.useTipAllowance(),
   useUploadImageBytes: () => entry.useUploadImageBytes(),

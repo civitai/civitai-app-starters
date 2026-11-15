@@ -1468,9 +1468,8 @@ export type WorkflowBodyTextToImage = {
     /**
      * Optional shared-storage key of the published content this generation runs on
      * behalf of. The server resolves it to the content's author for attribution
-     * (see the G5 civitai PR). Opaque string — the block passes back the `key` it
-     * got from `useSharedStorage()` for the content being generated against; omit
-     * when not applicable.
+     * (see the G5 civitai PR). Opaque string — the block passes back the `key` of
+     * the shared entry the generation runs against; omit when not applicable.
      */
     sharedContentKey?: string;
     /**

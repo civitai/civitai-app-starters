@@ -48,9 +48,9 @@
  *     the rule gets walked.
  *   • **`??`**, deliberately. `requestId ?? ''` is a nullish DEFAULT on an emit
  *     path — nobody branches on the result, it goes straight onto the wire — and
- *     `liveHost.ts` has 37 of them. Flagging them would force a 37-site
- *     behaviour change to satisfy a guard. They are instead an ASSERTED COUNT
- *     below, so a 38th cannot appear without someone deciding.
+ *     `liveHost.ts` has 7 of them. Flagging them would force a behaviour
+ *     change at each to satisfy a guard. They are instead an ASSERTED COUNT
+ *     below, so an 8th cannot appear without someone deciding.
  *   • **Another package.** It reads only `civitai-blocks-react/src`.
  *   • **Whether the predicate is CORRECT.** It proves the decision is made in
  *     one place; that the place is right is
@@ -239,8 +239,9 @@ const HELPER_CALL_LEDGER = {
   // +1 isValidEstimateBatchResult, +1 isValidConfirmedStepResult, +1 isValidImagePickerResult,
   // +2 isValidEntityReactionResult / isValidEntityReactionsResult, +1 isValidMediaUploadResult,
   // -1 isValidTrainingDatasetResult (its reply was removed, civitai/civitai#6461),
-  // +1 isValidResourceFileResult (#664), +1 isValidMediaUploadBatchResult
-  'transport/validate.ts': 43,
+  // +1 isValidResourceFileResult (#664), +1 isValidMediaUploadBatchResult,
+  // -13 the App Storage / shared-storage reply validators (legacy stores removed)
+  'transport/validate.ts': 30,
 };
 
 test('every consolidated call site is accounted for (asserted ledger)', () => {
@@ -259,7 +260,8 @@ test('every consolidated call site is accounted for (asserted ledger)', () => {
  * The `requestId ?? ''` emit-path defaults the detector deliberately ignores.
  * Asserted so the set cannot grow unnoticed — see the limits above.
  */
-const NULLISH_DEFAULT_LEDGER = { 'internal/liveHost.ts': 37 };
+// 37 → 7 when the legacy-store bridges (APP_STORAGE_* / SHARED_*) were removed.
+const NULLISH_DEFAULT_LEDGER = { 'internal/liveHost.ts': 7 };
 
 test('the ignored `requestId ??` emit-path defaults are an asserted count', () => {
   const actual = {};
@@ -321,8 +323,8 @@ test('mutation battery: every re-introduced spelling is caught BY THIS DETECTOR'
     assert.ok(mutated.includes(spelling), `${label}: mutant text absent after splice`);
     assert.equal(
       (mutated.match(new RegExp(ANCHOR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length,
-      41,
-      `${label}: expected exactly one of the 42 anchors to be replaced`,
+      28,
+      `${label}: expected exactly one of the 29 anchors to be replaced`,
     );
 
     const hits = findOpenCodedDecisions(mutated);

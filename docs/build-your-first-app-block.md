@@ -78,7 +78,7 @@ so it is orthogonal to whether your app exists, whether it is approved, which
 scopes your manifest declares, and which scopes your token carries.
 
 That means an app can be submitted, approved, built, DNS'd and serving live at
-`https://<blockId>.civit.ai/` while **every** `useAppStorage()` call it makes
+`https://<blockId>.civit.ai/` while **every** host API call it makes
 still answers `401`, because the account the call is made for is not enabled.
 Nothing is wrong with the app, and no change to the app can fix it.
 
@@ -88,9 +88,8 @@ answers:
 1. **Your account is not in the preview** — the enablement step below, and
    `civitai app doctor` tells you in one line.
 2. **The request reached the host with no session at all** — which is what
-   `npm run dev:live` does today, for everyone. That one is not about your
-   account; see [Why `dev:live` cannot exercise App
-   Storage](#why-devlive-cannot-exercise-app-storage).
+   `npm run dev:live` does today, for everyone: the live host sends the dev
+   token and no civitai.com session cookie. That one is not about your account.
 
 ### The enablement step
 
@@ -111,7 +110,7 @@ civitai.com those two facts line up in your favour: the same preview gate also
 decides whether a block **renders in its slot at all**, so a viewer who can see
 your block has already passed it. That is worth knowing because it narrows what
 a `401` can mean: during the preview it points at a request that reached the host
-**without a session** — the `dev:live` case below — far more often than at an
+**without a session** — the `dev:live` case above — far more often than at an
 unenrolled viewer.
 
 ### Check it in one command
@@ -149,46 +148,15 @@ gate, which is why checking your app's status and your token's scopes explains
 nothing when you hit the first two rows — and it is why those two rows are the
 only ones an enrolment fixes.
 
-### Why `dev:live` cannot exercise App Storage
+### Legacy App Storage
 
-🔴 **Its refusal is byte-identical to the one an unenrolled account gets, and it
-is not about your account.** Row 1's gate is keyed on the **browser session on
-the host page**. Under
-`npm run dev:live` there isn't one: the live host forwards the protocol to
-the backend's `apps.storage.*` procedures carrying
-`Authorization: Bearer <dev token>` and **no civitai session cookie** — either
-same-origin to your dev server's `/api` proxy (the examples and the `page-money`
-template), which has no civitai.com cookie to send, or cross-origin to
-`https://civitai.com`, where `createLiveHost` in
-[`@civitai/blocks-react`](../packages/civitai-blocks-react/src/internal/liveHost.ts)
-sets no `credentials` option and the browser default omits cookies.
-
-With no session the host evaluates the account gate **without an account**, and
-during the preview that path refuses. So App Storage under `dev:live` answers
-`401` for **every** developer, enrolled or not, before any app lookup and before
-your token's scopes are read. Do not read that `401` as a verdict on your
-enrolment, your approval, or your manifest.
-
-Where to test storage instead:
-
-- `npm run dev:harness` (mock host) for the storage flows and your error
-  branches — it backs the bridge with an in-memory store and enforces the caps.
-  It is a simulation, not a replica: the `@civitai/blocks-react` README lists
-  the known ways the mock host differs from civitai.com.
-- the **block embedded on civitai.com**, opened by an enrolled account, for the
-  real thing. That is the only arm that exercises row 1 and row 2 as production
-  does.
-
-If the embedded block succeeds and `dev:live` refuses, nothing is wrong: you
-have reproduced the paragraph above.
+`useAppStorage()` and `useSharedStorage()` were removed from `@civitai/blocks-react` (civitai.com refuses those stores since 2026-11-10); use the document store, `app.storage.collection(name)` in `@civitai/sdk`.
 
 ### Build for the refusal
 
 The preview makes a refused host call a **normal runtime state**, not an edge
-case. The `page-app` example's `storageFailureMessage()` is the shape to copy:
-these account refusals are *not* in the classified ceiling family, so they land
-on the classifier's `default:` arm — keep that arm, and don't have it tell a
-viewer to retry something a retry cannot fix. Degrade (session-only state plus
+case. Keep a generic arm for a refusal you do not recognise, and don't have it
+tell a viewer to retry something a retry cannot fix. Degrade (session-only state plus
 an honest notice) rather than rendering nothing.
 
 ## 1. Scaffold

@@ -204,10 +204,12 @@ test('CONTROL — the extractors find a real, non-trivial set (not a vacuous zer
   const src = read(LIVE_HOST);
   // Floors, not exact counts — the file grows. A regex that stops matching
   // collapses to 0 and trips here long before it can make a claim vacuous.
-  assert.ok(caseBlocks(src).length >= 40, `caseBlocks found ${caseBlocks(src).length}, expected >= 40`);
+  // 35, not 40: the fifteen legacy-store cases were removed.
+  assert.ok(caseBlocks(src).length >= 35, `caseBlocks found ${caseBlocks(src).length}, expected >= 35`);
   assert.ok(
-    trpcProcedures(src).length >= 25,
-    `trpcProcedures found ${trpcProcedures(src).length}, expected >= 25`,
+    // 12, not 25: the fifteen apps.storage.* / apps.shared.* procedures were removed.
+    trpcProcedures(src).length >= 12,
+    `trpcProcedures found ${trpcProcedures(src).length}, expected >= 12`,
   );
   assert.ok(restEndpoints(src).length >= 1, 'restEndpoints found none');
   assert.ok(fetchChokepoints(src) >= 2, `fetchChokepoints found ${fetchChokepoints(src)}`);

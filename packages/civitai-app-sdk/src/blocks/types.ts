@@ -1022,9 +1022,8 @@ export type WorkflowBodyTextToImage = {
   /**
    * Optional shared-storage key of the published content this generation runs on
    * behalf of. The server resolves it to the content's author for attribution
-   * (see the G5 civitai PR). Opaque string — the block passes back the `key` it
-   * got from `useSharedStorage()` for the content being generated against; omit
-   * when not applicable.
+   * (see the G5 civitai PR). Opaque string — the block passes back the `key` of
+   * the shared entry the generation runs against; omit when not applicable.
    */
   sharedContentKey?: string;
   /**
@@ -3607,7 +3606,7 @@ export type BlockManifest = BlockManifestV1;
  * DATE WIRE CAVEAT: `date` is documented as ISO-8601 to match the SDK's
  * wire convention, BUT the host currently forwards the raw tRPC `result` over a
  * structured-clone `postMessage` (it does NOT `.toISOString()`-map it the way
- * the `SHARED_LIST` bridge does), so at runtime `date` arrives as a `Date`
+ * the removed `SHARED_LIST` bridge did), so at runtime `date` arrives as a `Date`
  * INSTANCE. The block-side guard + `useBuzzTransactions` hook tolerate BOTH a
  * `Date` and an ISO string (rehydrating to `Date`), so either representation
  * round-trips correctly. See `civitai-blocks-react`'s `isValidBuzzTransactionsResult`.

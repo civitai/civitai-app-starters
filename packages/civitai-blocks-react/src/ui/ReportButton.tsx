@@ -14,11 +14,11 @@ const NOTE_STYLE = {
 
 /**
  * The post-write abuse seam for a shared board: a two-step control that files a
- * row for PLATFORM moderator review via `useSharedStorage().report()`.
+ * row for PLATFORM moderator review through the caller's `onReport`.
  *
  * 🔴 REPORTING IS ESCALATION, NOT REMOVAL, and this component exists so that
- * fact is stated identically in every block. `report()` files the row and its
- * own contract says filing does NOT hide it — a moderator decides. An app owner
+ * fact is stated identically in every block. Filing a report does NOT hide the
+ * row — a moderator decides. An app owner
  * has no server-side hide to offer instead either: `update` and `withdraw` are
  * author-scoped, so they reject for anyone but the row's author.
  *
@@ -34,7 +34,7 @@ const NOTE_STYLE = {
  * already produced.
  *
  * The caller decides WHO sees it. Render it only for a viewer who is signed in
- * and does not own the row: `report` rejects for an anonymous viewer, and an
+ * and does not own the row: a report needs a signed-in viewer, and an
  * author has a real Remove. Offering it otherwise is offering an error.
  *
  * @example
@@ -46,7 +46,7 @@ const NOTE_STYLE = {
  *     key={item.key}
  *     noun="generator"
  *     reported={myReports.has(item.key)}
- *     onReport={() => shared.report(item.key)}
+ *     onReport={() => reportRow(item.key)}
  *     data-testid={`gen-${item.key}-report`}
  *   />
  * )}

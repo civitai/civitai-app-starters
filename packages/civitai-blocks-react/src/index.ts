@@ -308,17 +308,3 @@ export type {
   UseNestedDocument,
   UseNestedDocumentOptions,
 } from './hooks/useNestedDocument.js';
-export { useAppStorage } from './hooks/useAppStorage.js';
-export type {
-  AppStorageKeyEntry,
-  AppStorageListResult,
-  AppStorageQuota,
-  UseAppStorage,
-} from './hooks/useAppStorage.js';
-export { useSharedStorage, SharedStorageRateLimitError } from './hooks/useSharedStorage.js';
-export type {
-  SharedAppendValue,
-  SharedListItem,
-  SharedListResult,
-  UseSharedStorage,
-} from './hooks/useSharedStorage.js';

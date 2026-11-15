@@ -62,7 +62,7 @@ export interface UsePublishGenerationOutputs {
  * @example
  * const { publish } = usePublishGenerationOutputs();
  * const imageIds = await publish({ workflowId: w.workflowId, imageIndexes: [0, 2] });
- * // …store imageIds via useSharedStorage() so the grid can read them back gated.
+ * // …store imageIds in a shared collection so the grid can read them back gated.
  */
 export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
   useTransportConnection();

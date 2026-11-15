@@ -465,8 +465,7 @@ round-trip probe shows they're unusable. Rules:
 - The fallback is **session-scoped** — nothing survives a reload. That's the
   honest semantic at an opaque origin. Treat storage as a cache; use the
   document store (`app.storage.collection(name)` in `@civitai/sdk`) for anything
-  durable. The app-storage messages (`useAppStorage` in `@civitai/blocks-react`)
-  were that answer until civitai.com removed that store on 2026-11-10.
+  durable.
 
 Most apps need to do nothing. Two cases where you reach for it explicitly:
 

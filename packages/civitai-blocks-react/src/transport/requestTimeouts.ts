@@ -224,11 +224,6 @@ const REQUEST_TIMEOUT_CLASS = {
   TRACK_EVENT: 'no-reply',
 
   // ── Protocol round-trips: the host answers, no person in the loop ───────
-  APP_STORAGE_DELETE: 'protocol',
-  APP_STORAGE_GET: 'protocol',
-  APP_STORAGE_LIST: 'protocol',
-  APP_STORAGE_QUOTA: 'protocol',
-  APP_STORAGE_SET: 'protocol',
   CANCEL_APP_WORKFLOW: 'protocol',
   CANCEL_WORKFLOW: 'protocol',
   // The workflow trio is server-bound, not person-bound. It carries its OWN
@@ -266,16 +261,6 @@ const REQUEST_TIMEOUT_CLASS = {
   // host without it refuses `needs-consent` at once.
   SET_ENTITY_REACTION: 'protocol',
   GET_ENTITY_REACTIONS: 'protocol',
-  SHARED_APPEND: 'protocol',
-  SHARED_GET: 'protocol',
-  SHARED_GET_COUNT: 'protocol',
-  SHARED_GET_COUNTS: 'protocol',
-  SHARED_LIST: 'protocol',
-  SHARED_REPORT: 'protocol',
-  SHARED_UNVOTE: 'protocol',
-  SHARED_UPDATE: 'protocol',
-  SHARED_VOTE: 'protocol',
-  SHARED_WITHDRAW: 'protocol',
 } satisfies Record<BlockToParentMessageType, RequestTimeoutClass>;
 
 /** The keys of {@link REQUEST_TIMEOUT_CLASS} bucketed as `C`, at the type level. */

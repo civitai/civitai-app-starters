@@ -2,14 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { getTransport } from '@civitai/blocks-react';
 import { Harness as MockHost } from '@civitai/blocks-react/testing';
-// 🔴 `/live` is the REAL backend. This app spends no Buzz, and its storage calls
-// are forwarded there but refused (`401`: a local harness has no civitai.com
-// browser session). It has its own subpath (never `/testing`) so the import
-// line itself says so.
+// 🔴 `/live` is the REAL backend. This app spends no Buzz. It has its own
+// subpath (never `/testing`) so the import line itself says so.
 import { createLiveHost } from '@civitai/blocks-react/live';
 
 import manifest from '../block.manifest.json' with { type: 'json' };
-import { BOARD_KEY, type Board } from './board.js';
 
 /**
  * Dev-only host for `npm run dev:harness` (mock) and `npm run dev:live` (real
@@ -24,27 +21,13 @@ export function installDevTransport() {
   getTransport({ allowedParentOrigins: [window.location.origin] });
 }
 
-/**
- * A starting board, so the page has something on it the first time you open it.
- * Placeholder ids and labels: "Open on Civitai" goes wherever the id points.
- */
-const SEED_BOARD: Board = {
-  pins: [
-    { modelId: 4201, label: 'Portrait checkpoint', note: 'Good skin texture at low CFG.', addedAt: 1759700000000 },
-    { modelId: 133005, label: 'Go-to SDXL base', note: '', addedAt: 1759710000000 },
-    { modelId: 7240, label: 'Watercolour LoRA', note: 'Weight 0.6 is plenty.', addedAt: 1759720000000 },
-  ],
-};
-
 export function Harness({ children }: { children: ReactNode }) {
   if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
   // The SDK's mock host: no network, no Buzz. Its default `context` is already a
   // complete PAGE slot (`slotId: 'app.page'`, `slug`, `subPath: ''`, viewer
   // ids), which is what this app runs in, so none is passed.
   //
-  // `declaredScopes` is the manifest's own list: drop `apps:storage:read` or
-  // `apps:storage:write` from block.manifest.json and every load or save is
-  // refused here, as the real host refuses it.
+  // `declaredScopes` is the manifest's own list.
   //
   // URL knobs: `?viewer=anon` (the sign-in path), `?theme=light`,
   // `?consent=ungrantable` (the CONSENT_UNAVAILABLE path). URL wins over props.
@@ -52,7 +35,6 @@ export function Harness({ children }: { children: ReactNode }) {
     <MockHost
       declaredScopes={manifest.scopes}
       blockId={manifest.blockId}
-      storage={{ seed: { [BOARD_KEY]: SEED_BOARD } }}
       // 🔴 MOCK DIVERGENCE #1 — consent. The stock mock GRANTS any known scope a
       // block names in `requestConsent({ scopes })`, declared or not. The real
       // page host grants only the consent-gated scopes the MINT found missing,

@@ -22,7 +22,7 @@ back to, adds a note, and opens them on Civitai later.
 | `useRequestConsent()` → `useBlockToken().scopes` → `useViewer()` | `AccountPanel`, `ViewerName` |
 | `useConsentUnavailable()`: stop asking when the host says "never" | `AccountPanel` |
 | `useBlockAnalytics()` with events declared under `analytics.events` | `App`, `AccountPanel`, `PinDetail`, `block.manifest.json` |
-| `useAppStorage()`: the whole board in one per-viewer row | `App`, `src/board.ts` |
+| The board lives in memory for the session (persist it with the document store, `app.storage.collection(name)` in `@civitai/sdk`) | `App`, `src/board.ts` |
 
 ## What a page app changes
 
@@ -69,8 +69,7 @@ is always removed (the `consentGatedScopes` strip in the same handler). The host
 scope"). So `AccountPanel`:
 
 1. **Anonymous** → **Sign in** calls `requestSignIn()`, and the host opens
-   civitai.com's login. Storage `get` answers null for an anonymous viewer, so
-   there is no board to load and no form.
+   civitai.com's login. An anonymous viewer has no board and no form.
 2. **Signed in, scope missing** → **Show my name** calls
    `requestConsent({ scopes: ['user:read:self'] })`. The scope must be named:
    without it the host cannot prove a refusal and stays silent. On grant the
@@ -123,8 +122,7 @@ npm install           # inside this monorepo: pnpm install, at the root
 npm run dev:harness   # → http://localhost:5186
 ```
 
-The mock host's default context is a complete page slot (slug `mock-app`), and
-`src/Harness.tsx` seeds a three-pin board. Try `?viewer=anon` (sign-in),
+The mock host's default context is a complete page slot (slug `mock-app`). Try `?viewer=anon` (sign-in),
 `?consent=ungrantable` (the refusal), `?theme=light`. The corner log lists
 every message the app sends.
 
@@ -135,17 +133,11 @@ every message the app sends.
 | `NAVIGATE` | ignored, so `useCivitaiRoute()` never moves | app scope → `ROUTE_CHANGED` | reflects app-scoped navigations as `ROUTE_CHANGED` |
 | `REQUEST_CONSENT` | grants any known scope, declared or not | grants only missing **declared** scopes | `consentGrantable` follows whether the manifest declares `user:read:self` |
 | `GET_VIEWER` | answers with no scope check | refuses without `user:read:self` | not changed. The app never sends it without the scope |
-| storage scopes | enforced from `declaredScopes` | enforced | manifest `scopes` passed as `declaredScopes` |
 
-So removing `user:read:self`, `apps:storage:read` or `apps:storage:write` from
-the manifest makes the harness refuse consent, loading or saving, as
-production would.
+So removing `user:read:self` from the manifest makes the harness refuse
+consent, as production would.
 
 `npm run dev:live` runs the app against the real backend. The live host also
-reflects app navigation. This app spends no Buzz, and its board does not load or
-save there: the live host forwards `useAppStorage()` and the server refuses it
-with `401` (`Apps access is not enabled for this browser session`), because a
-local harness never has a civitai.com browser session. That says nothing about
-your account or your app. Exercise the board under `dev:harness`. See
+reflects app navigation. This app spends no Buzz. See
 [the examples README](../README.md#against-the-real-backend-devlive).
 See the [root README](../../../README.md) for submit → review → deploy.

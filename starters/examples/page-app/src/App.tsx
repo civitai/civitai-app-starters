@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 
 import {
-  useAppStorage,
   useBlockAnalytics,
   useBlockBreakpoint,
   useBlockContext,
@@ -14,18 +13,16 @@ import {
   useRequestSignIn,
   useViewer,
 } from '@civitai/blocks-react';
-import { Alert, Badge, Button, Card, Group, Stack, TextInput, Textarea } from '@civitai/blocks-react/ui';
-import { classifyAppStorageError, isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
+import { Badge, Button, Card, Group, Stack, TextInput, Textarea } from '@civitai/blocks-react/ui';
+import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 import {
-  BOARD_KEY,
   EMPTY_BOARD,
   MAX_LABEL,
   MAX_NOTE,
   MAX_PINS,
   parseModelId,
   parseRoute,
-  readBoard,
   type Board,
   type Pin,
 } from './board.js';
@@ -53,7 +50,6 @@ export function App() {
   const route = parseRoute(useCivitaiRoute()); // read on EVERY render, never copied into state
   const { navigate } = useCivitaiNavigate();
   const { track } = useBlockAnalytics();
-  const storage = useAppStorage();
 
   // Keep <html> in step with the host theme: BLOCK_INIT first, then every live
   // THEME_CHANGE. Gated on `ready`: before BLOCK_INIT `theme` is a placeholder.
@@ -66,60 +62,24 @@ export function App() {
   // is a viewer. The name comes from `useViewer()`, behind consent (AccountPanel).
   const signedIn = ready && isSignedIn(viewer);
 
+  // The board lives in memory for this session. To keep it across visits, store
+  // it in the document store: a `private` collection through
+  // `app.storage.collection(name)` in `@civitai/sdk`.
   const [board, setBoard] = useState<Board>(EMPTY_BOARD);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
 
-  // Load the board once we know who is looking. Anonymous viewers have no
-  // per-viewer store (`get` answers null), so there is nothing to load.
+  // A signed-out viewer has no board.
   useEffect(() => {
-    if (!ready) return;
-    if (!signedIn) {
-      setBoard(EMPTY_BOARD);
-      setLoaded(true);
-      return;
-    }
-    let cancelled = false;
-    storage
-      .get(BOARD_KEY)
-      .then((value) => {
-        if (cancelled) return;
-        setBoard(readBoard(value));
-        setLoaded(true);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setProblem(storageFailureMessage(err, 'load your board'));
-        setLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, signedIn, storage]);
+    if (ready && !signedIn) setBoard(EMPTY_BOARD);
+  }, [ready, signedIn]);
 
-  /** Write the whole board, and only show it once the host has accepted it. */
-  const save = useCallback(
-    async (next: Board, attempted: string): Promise<boolean> => {
-      setSaving(true);
-      setProblem(null);
-      try {
-        await storage.set(BOARD_KEY, next);
-        setBoard(next);
-        return true;
-      } catch (err) {
-        setProblem(storageFailureMessage(err, attempted));
-        return false;
-      } finally {
-        setSaving(false);
-      }
-    },
-    [storage],
-  );
+  const save = useCallback(async (next: Board): Promise<boolean> => {
+    setBoard(next);
+    return true;
+  }, []);
 
   const addPin = useCallback(
     async (pin: Pin) => {
-      const ok = await save({ pins: [pin, ...board.pins] }, 'save that pin');
+      const ok = await save({ pins: [pin, ...board.pins] });
       if (ok) track('pin_added');
       return ok;
     },
@@ -128,7 +88,7 @@ export function App() {
 
   const removePin = useCallback(
     async (modelId: number) => {
-      const ok = await save({ pins: board.pins.filter((p) => p.modelId !== modelId) }, 'remove that pin');
+      const ok = await save({ pins: board.pins.filter((p) => p.modelId !== modelId) });
       if (!ok) return;
       track('pin_removed');
       // Leaving the detail page of a pin that no longer exists.
@@ -153,16 +113,14 @@ export function App() {
   const slug = isPageSlotContext(context) ? context.slug : null;
 
   const account = <AccountPanel signedIn={signedIn} />;
-  const form = signedIn ? <AddPinForm board={board} disabled={!loaded || saving} onAdd={addPin} /> : null;
+  const form = signedIn ? <AddPinForm board={board} onAdd={addPin} /> : null;
 
   const main =
     route.view === 'pin' ? (
       <PinDetail
         pin={board.pins.find((p) => p.modelId === route.modelId) ?? null}
-        loaded={loaded}
         slug={slug}
         wide={bp.atLeast('sm')}
-        saving={saving}
         onBack={() => navigate('')}
         onRemove={removePin}
       />
@@ -178,7 +136,7 @@ export function App() {
         </Stack>
       </Card>
     ) : (
-      <BoardGrid board={board} loaded={loaded} signedIn={signedIn} saving={saving} onOpen={openPin} onRemove={removePin} />
+      <BoardGrid board={board} signedIn={signedIn} onOpen={openPin} onRemove={removePin} />
     );
 
   return (
@@ -194,12 +152,6 @@ export function App() {
             {board.pins.length} / {MAX_PINS} pinned
           </span>
         </header>
-
-        {problem ? (
-          <Alert color="error" withCloseButton onClose={() => setProblem(null)}>
-            {problem}
-          </Alert>
-        ) : null}
 
         {sidebar ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: gutter, alignItems: 'start' }}>
@@ -349,11 +301,9 @@ function ViewerName() {
 
 function AddPinForm({
   board,
-  disabled,
   onAdd,
 }: {
   board: Board;
-  disabled: boolean;
   onAdd: (pin: Pin) => Promise<boolean>;
 }) {
   const [source, setSource] = useState('');
@@ -402,7 +352,7 @@ function AddPinForm({
             onChange={(e) => setNote(e.target.value)}
           />
           <Group>
-            <Button type="submit" disabled={disabled}>
+            <Button type="submit">
               Pin it
             </Button>
           </Group>
@@ -414,20 +364,15 @@ function AddPinForm({
 
 function BoardGrid({
   board,
-  loaded,
   signedIn,
-  saving,
   onOpen,
   onRemove,
 }: {
   board: Board;
-  loaded: boolean;
   signedIn: boolean;
-  saving: boolean;
   onOpen: (modelId: number) => void;
   onRemove: (modelId: number) => void;
 }) {
-  if (!loaded) return <span style={dimmed}>Loading your board…</span>;
   if (board.pins.length === 0) {
     return (
       <Card>
@@ -458,7 +403,7 @@ function BoardGrid({
               <Button size="sm" variant="light" onClick={() => onOpen(pin.modelId)}>
                 Details
               </Button>
-              <Button size="sm" variant="subtle" disabled={saving} onClick={() => onRemove(pin.modelId)}>
+              <Button size="sm" variant="subtle" onClick={() => onRemove(pin.modelId)}>
                 Remove
               </Button>
             </Group>
@@ -471,18 +416,14 @@ function BoardGrid({
 
 function PinDetail({
   pin,
-  loaded,
   slug,
   wide,
-  saving,
   onBack,
   onRemove,
 }: {
   pin: Pin | null;
-  loaded: boolean;
   slug: string | null;
   wide: boolean;
-  saving: boolean;
   onBack: () => void;
   onRemove: (modelId: number) => void;
 }) {
@@ -501,7 +442,6 @@ function PinDetail({
     </Group>
   );
 
-  if (!loaded) return <span style={dimmed}>Loading…</span>;
   if (!pin) {
     return (
       <Stack gap={8}>
@@ -552,7 +492,7 @@ function PinDetail({
             onFocus={(e) => e.currentTarget.select()}
           />
         ) : null}
-        <Button variant="subtle" color="error" disabled={saving} onClick={() => onRemove(pin.modelId)}>
+        <Button variant="subtle" color="error" onClick={() => onRemove(pin.modelId)}>
           Remove from board
         </Button>
       </Stack>
@@ -575,31 +515,6 @@ function PinDetail({
       )}
     </Stack>
   );
-}
-
-/**
- * Viewer copy THIS APP owns for a storage failure; the host's own words go to
- * the console, never to the screen (they are server prose, not copy). Branches
- * on `classifyAppStorageError`, never on the message.
- */
-function storageFailureMessage(err: unknown, attempted: string): string {
-  console.warn(`[page-app] could not ${attempted}:`, err instanceof Error ? err.message : err);
-  switch (classifyAppStorageError(err)) {
-    case 'value-too-large':
-      return 'Your board is too big to save. Remove a pin or shorten a note.';
-    case 'user-row-limit':
-    case 'user-quota-exceeded':
-      return 'Your storage for this app is full. Remove a pin to make room.';
-    case 'app-quota-exceeded':
-    case 'app-row-limit':
-      return 'This app is out of storage space. Saving is unavailable right now.';
-    case 'request-failed':
-      return `Could not ${attempted}. Please try again.`;
-    default:
-      // Unrecognised: an expired token, a missing storage scope, … — retrying
-      // fixes none of them, so promise no remedy. Reloading re-mints the token.
-      return `Could not ${attempted}. Saving may be unavailable here; reloading the page can help.`;
-  }
 }
 
 const dimmed: CSSProperties = { color: 'var(--civitai-color-text-dimmed)' };

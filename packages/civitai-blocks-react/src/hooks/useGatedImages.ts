@@ -42,7 +42,7 @@ export interface UseGatedImages {
 /**
  * Read per-viewer gated display data for a list of image ids via the
  * host-mediated `GET_IMAGES_BY_IDS` → `IMAGES_RESULT` bridge — the read side of
- * a cross-user image grid (e.g. ids stored via `useSharedStorage()`).
+ * a cross-user image grid (e.g. ids stored in a shared document-store collection).
  *
  * The host applies the requesting viewer's browsing-level clamp server-side and
  * returns each image as `visible` (url, plus a rating UNLESS it is the viewer's

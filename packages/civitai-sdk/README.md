@@ -468,9 +468,8 @@ if (app.storage.mode === 'local-preview') {
 - **No imports.** `collection(name, { from })` is refused locally with the server's own
   answer to a dev token, 403 `not_eligible` (`import_dev_token`); nothing is sent. Test
   a fork reading its parent with [the fake's `sources`](#a-fake-document-store).
-- **Only the document store.** The deprecated `app.storage.get/set/…`,
-  `app.sharedStorage` and `@civitai/blocks-react`'s `useAppStorage` /
-  `useSharedStorage` keep calling the real routes, which refuse a preview.
+- **Only the document store.** The deprecated `app.storage.get/set/…` and
+  `app.sharedStorage` keep calling the real routes, which refuse a preview.
 - **Only on the host's signal.** `app.storage.mode` is latched when `initialize()`
   resolves, and never inferred from the token: a published app whose manifest forgot
   `apps:storage` holds a token that looks the same, and keeps getting the real
@@ -637,10 +636,6 @@ try {
   else throw error;
 }
 ```
-
-If you are porting from `@civitai/blocks-react`'s `useSharedStorage`, the bridge
-*host* normalised all of this for you and nothing normalises it here;
-[`BREAKING.md`](./BREAKING.md) covers what the port does and does not cost.
 
 `withdraw` answers `{ ok: true, deleted: false }` identically for another
 author's key, an already-withdrawn row and a key that never existed — it is not

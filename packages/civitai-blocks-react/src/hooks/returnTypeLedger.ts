@@ -49,7 +49,6 @@ import type { BlockPickedImageInfo } from '@civitai/app-sdk/blocks';
 
 import type { ImagePickerMultiple } from './useImagePicker.js';
 import type {
-  useAppStorage,
   useAppWorkflows,
   useBatchEstimate,
   useBlockAnalytics,
@@ -91,14 +90,12 @@ import type {
   useRunConfirmedStep,
   useRunTraining,
   useSaveImage,
-  useSharedStorage,
   useTip,
   useTipAllowance,
   useUploadImageBytes,
   useViewer,
   useWildcardPack,
   useWorkflowBatch,
-  UseAppStorage,
   UseAppWorkflows,
   UseBatchEstimate,
   UseBlockAnalytics,
@@ -140,7 +137,6 @@ import type {
   UseRunConfirmedStep,
   UseRunTraining,
   UseSaveImage,
-  UseSharedStorage,
   UseTip,
   UseTipAllowance,
   UseUploadImageBytes,
@@ -155,7 +151,6 @@ type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 /** Compiles only when `T` is `true`. A `false` here IS the build failure. */
 type Assert<T extends true> = T;
 
-type _useAppStorage = Assert<Exact<ReturnType<typeof useAppStorage>, UseAppStorage>>;
 type _useAppWorkflows = Assert<Exact<ReturnType<typeof useAppWorkflows>, UseAppWorkflows>>;
 type _useBatchEstimate = Assert<Exact<ReturnType<typeof useBatchEstimate>, UseBatchEstimate>>;
 type _useBlockAnalytics = Assert<Exact<ReturnType<typeof useBlockAnalytics>, UseBlockAnalytics>>;
@@ -229,7 +224,6 @@ type _useRunConfirmedStep = Assert<
 >;
 type _useRunTraining = Assert<Exact<ReturnType<typeof useRunTraining>, UseRunTraining>>;
 type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>>;
-type _useSharedStorage = Assert<Exact<ReturnType<typeof useSharedStorage>, UseSharedStorage>>;
 type _useTip = Assert<Exact<ReturnType<typeof useTip>, UseTip>>;
 type _useTipAllowance = Assert<Exact<ReturnType<typeof useTipAllowance>, UseTipAllowance>>;
 type _useUploadImageBytes = Assert<
