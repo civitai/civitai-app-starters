@@ -199,8 +199,12 @@ show a locked state and do not try to fetch it. `reason: 'pool'` means the Buzz
 that paid does not include mature content for this viewer and the output is above
 PG-13. `'ceiling'` means it is above your app's maturity ceiling, or above a cap
 the host put on the request. A restricted output is not in `imageUrls` (nor
-`AppWorkflow.images`, which `imageIndexes` index), so those lists can be shorter
-than `outputs`. An older host sends no `outputs`:
+`AppWorkflow.images`), so those lists can be shorter than `outputs` and are
+**not for indexing**: `imageIndexes` (publish, post) and `imageIndex` (persist)
+are **positions in `outputs`**, which never move when a rating lands late, and
+naming a restricted position is refused with `output N is restricted`. A malformed
+entry reaches you as `{ restricted: true, reason: 'ceiling' }` in its own slot.
+An older host sends no `outputs`:
 
 ```ts
 import type { BlockWorkflowOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';

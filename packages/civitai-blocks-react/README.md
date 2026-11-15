@@ -660,18 +660,24 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
   output is above your app's ceiling, or above a cap the host put on the request.
   Treat an unknown `reason` like `'ceiling'`.
 - **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
-  `AppWorkflow.images` or `model3dOutputs`. Those lists can be shorter than
-  `outputs`, so do not pair them by index with `outputs`.
+  `AppWorkflow.images` or `model3dOutputs`. Those lists are convenience views,
+  can be shorter than `outputs`, and are **not for indexing**.
 - `steps[].outputs` follows the same rules for one step of a `kind: 'workflow'`
   run, and `useAppWorkflows()` rows carry `outputs` too.
-- 🔴 **`imageIndexes`** on `publishGenerationOutputs` and on a `createPostFromApp`
-  workflow source index `AppWorkflow.images`, the list without restricted outputs.
-  They never index `outputs`.
+- 🔴 **An index is a position in `outputs`.** `imageIndexes` on
+  `publishGenerationOutputs` and on a `createPostFromApp` workflow source, and
+  `imageIndex` on `persistGenerationSource`, name the output at that position. A
+  restricted output keeps its slot, so an index never moves when a rating lands
+  late. Naming a restricted position is **refused** with `output N is restricted`;
+  the host never picks another output. An omitted `imageIndexes` means every
+  available output that is not restricted.
 
-A malformed `outputs` entry is dropped by the transport rather than the whole
-reply, so a later entry in that reply moves up one place. In the mock host,
+A malformed `outputs` entry is **replaced in place** by the transport with
+`{ restricted: true, reason: 'ceiling' }`, so the reply is kept, the slot shows
+as locked, and no position moves. In the mock host,
 `generation: { restrictedOutputs: { 1: 'pool' } }` restricts the output at
-position 1 of a succeeded snapshot, so you can see your locked state locally.
+position 1 of a succeeded snapshot, and publish / post / persist naming position
+1 reply `output 1 is restricted`, so you can exercise both locally.
 
 #### Queue position, ETA and progress
 
@@ -2073,7 +2079,9 @@ generation source**, to feed into the next generation (an img2img chain, a
 
 `persist({ workflowId, imageIndex })` names the output the way
 `usePublishGenerationOutputs()` does — a workflow from this app's own subqueue
-and an index into its `images` (as `useAppWorkflows()` shows them), never a url —
+and the output's **position in its `outputs`** (as `useAppWorkflows()` or a
+snapshot shows them; see [Restricted outputs](#restricted-outputs-snapshotoutputs)),
+never a url —
 and resolves with `{ url, width, height, imageId, ready }`. `url` / `width` /
 `height` are a `BlockGenerationSourceImageInfo`, usable as a `sourceImages`
 entry wherever a generation source is accepted.
@@ -2084,8 +2092,8 @@ entry wherever a generation source is accepted.
   Use `usePublishGenerationOutputs()` to put an output on the grid.
 - **Same gates as publishing.** It needs `ai:write:budgeted`, a signed-in viewer
   who is the token's subject, and a FINISHED workflow from this app's own
-  subqueue. An `imageIndex` out of range, or an output that is not available, is
-  refused.
+  subqueue. An `imageIndex` out of range, an output that is not available, or a
+  restricted position (`output N is restricted`) is refused.
 - **Size.** The output is re-stored on Civitai, downscaled to fit 2048 px if it
   is larger. An output under 64 px is refused.
 - **Scanned.** The host waits up to about 30 s for the scan (the whole request,

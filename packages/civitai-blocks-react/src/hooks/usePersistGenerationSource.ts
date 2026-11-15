@@ -44,8 +44,10 @@ const PERSIST_FAILED = 'failed to persist the generation source';
  * `PERSIST_GENERATION_SOURCE` → `GENERATION_SOURCE_PERSISTED` bridge.
  *
  * Like `usePublishGenerationOutputs()`, the block names the output by
- * `workflowId` and `imageIndex` (an index into the workflow's `images` as seen
- * via `useAppWorkflows()`), never by url: the host resolves it server-side from
+ * `workflowId` and `imageIndex` (the output's POSITION in the workflow's
+ * `outputs`, as seen via `useAppWorkflows()` or a snapshot — not an index into
+ * `images`; a restricted position is refused with `output N is restricted`),
+ * never by url: the host resolves it server-side from
  * the ownership-verified workflow. Unlike publishing, the image is private to
  * the viewer, is NOT on the app's shared grid, and there is NO confirm dialog.
  *

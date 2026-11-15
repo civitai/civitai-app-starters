@@ -333,10 +333,13 @@ export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
  * What a block sends in `PERSIST_GENERATION_SOURCE`: ONE output of one of the
- * calling app's OWN workflows, named by `workflowId` and `imageIndex` (an index
- * into that workflow's `images`, as seen via `QUERY_APP_WORKFLOWS` /
- * `useAppWorkflows()`). Never a url: the host resolves the output server-side
- * from the ownership-verified workflow.
+ * calling app's OWN workflows, named by `workflowId` and `imageIndex` — the
+ * output's POSITION in that workflow's `outputs` ({@link AppWorkflow.outputs} /
+ * {@link BlockWorkflowSnapshot.outputs}), which keeps restricted outputs in place,
+ * so an index never moves when a rating lands late. NOT an index into `images` /
+ * `imageUrls`. A restricted position is refused (`output N is restricted`). Never a
+ * url: the host resolves the output server-side from the ownership-verified
+ * workflow.
  */
 export interface BlockPersistGenerationSourceRequest {
   workflowId: string;
@@ -2217,6 +2220,9 @@ export interface BlockWorkflowSnapshot {
    * The urls of the outputs you may load, in production order. A RESTRICTED
    * output is NOT here (see {@link outputs}), so with a host that emits
    * `outputs` this list can be shorter than `outputs`.
+   *
+   * 🔴 NOT FOR INDEXING. `imageIndexes` / `imageIndex` are positions in
+   * {@link outputs}; a position here can point at a different output.
    */
   imageUrls?: string[];
   /**
@@ -2236,14 +2242,18 @@ export interface BlockWorkflowSnapshot {
    * See {@link BlockWorkflowOutput}. Blocked and not-yet-available outputs are
    * not listed here either, as in `imageUrls`.
    *
-   * 🔴 `imageIndexes` (`publishGenerationOutputs`, `createPostFromApp`) index
-   * {@link AppWorkflow.images}, the same list as `imageUrls` — restricted
-   * outputs excluded — NOT this one.
+   * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes`
+   * (`publishGenerationOutputs`, `createPostFromApp`) and `imageIndex`
+   * (`persistGenerationSource`) name an output by its position here. A restricted
+   * output keeps its slot, so an index never moves when a rating lands late.
+   * Naming a restricted position is refused with `output N is restricted` — the
+   * host never picks another output. `imageUrls` / {@link AppWorkflow.images} drop
+   * restricted outputs and are NOT index spaces.
    *
    * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and when
-   * the workflow has no available output. A malformed entry is removed by the
-   * SDK's inbound validator rather than dropping the whole reply, so a later
-   * entry moves up one position in that (malformed) reply.
+   * the workflow has no available output. A malformed entry is REPLACED in place
+   * by `{ restricted: true, reason: 'ceiling' }` by the SDK's inbound validator,
+   * so the reply is kept and no position moves.
    */
   outputs?: BlockWorkflowOutput[];
   error?: string;
@@ -2740,8 +2750,9 @@ export interface BlockWorkflowStepSnapshot {
   $type: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
   /**
-   * This step's own image urls, restricted outputs excluded. Omitted when it has
-   * none, and always omitted for a step submitted with `suppressOutput: true`.
+   * This step's own image urls, restricted outputs excluded — not for indexing.
+   * Omitted when it has none, and always omitted for a step submitted with
+   * `suppressOutput: true`.
    */
   imageUrls?: string[];
   /**
@@ -4223,7 +4234,8 @@ export interface AppWorkflowImage {
  *   status:    the block-contract status — the orchestrator's
  *              `unassigned`/`preparing`/`scheduled` all collapse to `pending`.
  *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}),
- *              RESTRICTED outputs excluded. This is the list `imageIndexes` index.
+ *              RESTRICTED outputs excluded. A convenience view, NOT for indexing:
+ *              `imageIndexes` / `imageIndex` are positions in `outputs`.
  *   cost:      the workflow's realized/estimated buzz total, or `null` when absent.
  *   createdAt: ISO-8601 string.
  */
@@ -4265,9 +4277,9 @@ export interface AppWorkflow {
   model3dOutputs?: BlockModel3dOutput[];
   /**
    * Every available output, restricted ones IN POSITION — same value and rules
-   * as {@link BlockWorkflowSnapshot.outputs}. A restricted output is not in
-   * {@link AppWorkflow.images}, so `imageIndexes` (which index `images`) never
-   * name one.
+   * as {@link BlockWorkflowSnapshot.outputs}. THIS is the index space of
+   * `imageIndexes` / `imageIndex`; a restricted output is not in
+   * {@link AppWorkflow.images}, which is not.
    *
    * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts.
    */

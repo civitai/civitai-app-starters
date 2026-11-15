@@ -1546,8 +1546,10 @@ export type BlockToParentMessage =
   | {
       // Ask the host to PUBLISH selected outputs of ONE of the calling app's OWN
       // workflows (from its app subqueue) as bare, REAL-SCANNED public Image rows.
-      // The block sends `workflowId` + optional `imageIndexes` (indexes into the
-      // workflow's `images` as seen via QUERY_APP_WORKFLOWS) — NEVER urls: the
+      // The block sends `workflowId` + optional `imageIndexes` (POSITIONS in the
+      // workflow's `outputs` as seen via QUERY_APP_WORKFLOWS / a snapshot — not
+      // indexes into `images`; a restricted position is refused with `output N is
+      // restricted`) — NEVER urls: the
       // HOST resolves the orchestrator urls server-side from the ownership-
       // verified workflow, so the iframe can't inject an arbitrary blob. FAIL-
       // CLOSED server-side: the host re-derives (viewer, app, workflowId)
@@ -1556,7 +1558,7 @@ export type BlockToParentMessage =
       // no gallery attach, no rewards/notifications. Host reads via
       // `blocks.publishGenerationOutputs` → `PUBLISH_RESULT`. Host-chrome shows a
       // consent confirm before publishing. `imageIndexes` absent ⇒ all available
-      // outputs. `title` is an optional advisory label (host MAY ignore it).
+      // outputs that are not restricted. `title` is an optional advisory label (host MAY ignore it).
       type: 'PUBLISH_GENERATION_OUTPUTS';
       payload: { requestId: string; workflowId: string; imageIndexes?: number[]; title?: string };
     }
@@ -1564,8 +1566,9 @@ export type BlockToParentMessage =
       // Ask the host to save ONE output of one of the calling app's OWN
       // workflows as a PRIVATE, scanned generation source, so the next
       // generation can use it as an input. Like PUBLISH_GENERATION_OUTPUTS the
-      // block sends `workflowId` + `imageIndex` (an index into the workflow's
-      // `images` as seen via QUERY_APP_WORKFLOWS), NEVER a url: the host
+      // block sends `workflowId` + `imageIndex` (a POSITION in the workflow's
+      // `outputs`, not an index into `images`; a restricted position is refused),
+      // NEVER a url: the host
       // resolves the output server-side from the ownership-verified workflow.
       // Unlike it, the image is private to the viewer, is not on the app's
       // shared grid, and there is NO confirm dialog. The host waits up to about

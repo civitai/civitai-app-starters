@@ -801,7 +801,9 @@ submitted. `app.workflows` has no call for that confirmation step.
 available output in order, with restricted ones in position as
 `{ restricted: true, reason: 'pool' | 'ceiling' }` and **no url**. Show a locked
 state for those and do not try to fetch them. A restricted output is not in
-`imageUrls` or a row's `images`. The types are `BlockWorkflowOutput`,
+`imageUrls` or a row's `images`, which are therefore not for indexing:
+`imageIndexes` are positions in `outputs`, and naming a restricted one is refused
+with `output N is restricted`. The types are `BlockWorkflowOutput`,
 `BlockWorkflowAvailableOutput` and `BlockWorkflowRestrictedOutput`.
 
 ### A refusal is an answer, not a throw
