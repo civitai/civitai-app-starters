@@ -877,6 +877,97 @@ describe('AppClient.workflows — throttled poll replies', () => {
   });
 });
 
+// A final snapshot can still hold an output not rated yet (`ratingPending: true`,
+// civitai/civitai#8994): watch keeps reading for up to two minutes after the final status.
+describe('AppClient.workflows — a final snapshot with a rating pending', () => {
+  const HELD = snapshot('succeeded', {
+    outputs: [{ pending: true }, { url: 'https://example.test/b.png' }],
+    imageUrls: ['https://example.test/b.png'],
+    ratingPending: true,
+  });
+  const RATED = snapshot('succeeded', {
+    outputs: [{ url: 'https://example.test/a.png', nsfwLevel: 'pg' }, { url: 'https://example.test/b.png' }],
+    imageUrls: ['https://example.test/a.png', 'https://example.test/b.png'],
+  });
+
+  it('keeps reading after the final status and ends once the rating lands', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: RATED }),
+    ]);
+    const seen: BlockWorkflowSnapshot[] = [];
+    for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s);
+    expect(calls).toHaveLength(3);
+    // The repeated held snapshot is not re-yielded; the rated one is.
+    expect(seen).toEqual([HELD, RATED]);
+  });
+
+  it('the window runs out: the watch ends on the last snapshot, outputs still pending', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const start = Date.now();
+    let reads = 0;
+    const later = () => {
+      reads += 1;
+      // Each read lands 50 s after the last, so the two-minute window closes.
+      vi.setSystemTime(start + reads * 50_000);
+      return json(200, { snapshot: HELD });
+    };
+    const { workflows, calls } = await client(Array.from({ length: 20 }, () => later));
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(HELD);
+    // Read 1 opens the window at +50 s; reads at +100 s and +150 s are inside it;
+    // the read at +200 s is past it, and ends the watch.
+    expect(calls).toHaveLength(4);
+  });
+
+  it('a failed read inside the window ends the watch on the last snapshot, never rejects', async () => {
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: HELD }),
+      // A non-transient failure: outside the window this would reject.
+      () => json(400, { error: 'bad request' }),
+    ]);
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(HELD);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('an abort inside the window ends the watch on the last snapshot, never rejects', async () => {
+    const controller = new AbortController();
+    const { workflows } = await client([
+      () => {
+        queueMicrotask(() => controller.abort(new Error('stop')));
+        return json(200, { snapshot: HELD });
+      },
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: HELD }),
+    ]);
+    await expect(
+      workflows.wait(WORKFLOW_ID, { intervalMs: 50, signal: controller.signal })
+    ).resolves.toEqual(HELD);
+  });
+
+  it('CONTROL: an abort before any final snapshot still rejects with its reason', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop');
+    const { workflows } = await client([
+      () => {
+        queueMicrotask(() => controller.abort(reason));
+        return json(200, { snapshot: snapshot('processing') });
+      },
+      () => json(200, { snapshot: snapshot('processing') }),
+    ]);
+    await expect(
+      workflows.wait(WORKFLOW_ID, { intervalMs: 50, signal: controller.signal })
+    ).rejects.toBe(reason);
+  });
+
+  it('a final snapshot with nothing pending ends the watch at once', async () => {
+    const { workflows, calls } = await client([() => json(200, { snapshot: RATED })]);
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(RATED);
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe('AppClient.workflows — which token reaches it', () => {
   const blockToken = { raw: 'jwt', scopes: ['ai:write:budgeted'], expiresAt: new Date(0), kind: 'block' as const };
 

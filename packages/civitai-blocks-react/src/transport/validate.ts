@@ -330,7 +330,8 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
   if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
   // 🔴 `eta` (and each step's `queue` / `progress` / `startedAt` /
-  // `completedAt`, and the `throttled` marker) is DELIBERATELY NOT CHECKED HERE. These are estimates,
+  // `completedAt`, the `throttled` marker, and `outputs` at both levels) is
+  // DELIBERATELY NOT CHECKED HERE. These are estimates,
   // re-sent on every poll; rejecting the snapshot over one would drop the
   // status and outputs with it and stall `watch` until its timeout. A malformed
   // one is instead removed by `projectInboundPayload` →
@@ -390,10 +391,73 @@ function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly s
 }
 
 /**
+ * One well-formed entry of `outputs` (`BlockWorkflowOutput`): EITHER an output to
+ * load — a non-empty `url`, an optional string `nsfwLevel`, no `restricted` and no
+ * `reason` — OR a restricted one — `restricted: true`, a string `reason`, and NO
+ * `url` and NO `nsfwLevel`. `reason` and `nsfwLevel` are checked as strings, not
+ * against today's members, for the open-union reason given at
+ * {@link isValidWorkflowSnapshot}.
+ *
+ * 🔴 A restricted entry that carries a `url` is MALFORMED and replaced whole (see
+ * {@link MALFORMED_OUTPUT_PLACEHOLDER}), so a url the host meant to withhold never
+ * reaches block code under a "restricted" label.
+ */
+function isValidWorkflowOutput(o: unknown): boolean {
+  if (!isObject(o)) return false;
+  const markers = ['restricted', 'pending', 'blocked'].filter((k) => o[k] !== undefined);
+  if (markers.length > 1) return false;
+  if (o.restricted === true) {
+    return typeof o.reason === 'string' && o.url === undefined && o.nsfwLevel === undefined;
+  }
+  // `{ pending: true }` / `{ blocked: true }`: the marker and nothing a block could load.
+  if (o.pending === true || o.blocked === true) {
+    return o.url === undefined && o.nsfwLevel === undefined && o.reason === undefined;
+  }
+  if (markers.length > 0 || o.reason !== undefined) return false;
+  if (!isNonEmptyString(o.url)) return false;
+  return o.nsfwLevel === undefined || typeof o.nsfwLevel === 'string';
+}
+
+/**
+ * What a malformed `outputs` entry is REPLACED with: a restricted entry, so the slot
+ * keeps its position (indexes are positions in `outputs` and must never shift) and
+ * block code shows a locked tile and fetches nothing. `'ceiling'` because the docs
+ * already tell a block to treat an unknown reason like it.
+ */
+export const MALFORMED_OUTPUT_PLACEHOLDER = Object.freeze({
+  restricted: true as const,
+  reason: 'ceiling' as const,
+});
+
+/**
+ * `obj` with its `outputs` projected: each malformed entry REPLACED IN PLACE by
+ * {@link MALFORMED_OUTPUT_PLACEHOLDER} (never removed — that would move every later
+ * position), or the whole field removed when it is not an array. `obj` itself when
+ * nothing changes.
+ */
+function withValidOutputs<T extends Record<string, unknown>>(input: T): T {
+  // The rating-pending marker is the literal `true` or nothing, like `throttled`.
+  const obj =
+    input.ratingPending !== undefined && input.ratingPending !== true
+      ? withoutKeys(input, ['ratingPending'])
+      : input;
+  const outputs = obj.outputs;
+  if (outputs === undefined) return obj;
+  if (!Array.isArray(outputs)) return withoutKeys(obj, ['outputs']);
+  if (outputs.every(isValidWorkflowOutput)) return obj;
+  return {
+    ...obj,
+    outputs: outputs.map((o) => (isValidWorkflowOutput(o) ? o : { ...MALFORMED_OUTPUT_PLACEHOLDER })),
+  };
+}
+
+/**
  * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
  * `throttled` that is not `true` at the top level, and `queue`, `progress`,
- * `startedAt` and `completedAt` on each entry of `steps` — and everything else
- * as sent. The unit removed is the
+ * `startedAt` and `completedAt` on each entry of `steps` — and each malformed
+ * entry of `outputs` replaced in place by a restricted placeholder, at the top
+ * level and on each step (see {@link withValidOutputs}), and everything else as
+ * sent. The unit removed is the
  * whole field: an `eta` with one bad member goes entirely, because a partial
  * object would not have the published shape.
  *
@@ -413,12 +477,14 @@ export function projectWorkflowSnapshot(s: unknown): unknown {
       const drop = STEP_ETA_FIELDS.filter(
         ([key, ok]) => step[key] !== undefined && !ok(step[key]),
       ).map(([key]) => key);
-      if (drop.length === 0) return step;
+      const projected = withValidOutputs(withoutKeys(step, drop));
+      if (projected === step) return step;
       changed = true;
-      return withoutKeys(step, drop);
+      return projected;
     });
     if (changed) out = { ...out, steps };
   }
+  out = withValidOutputs(out);
   if (s.eta !== undefined && !isValidWorkflowEta(s.eta)) out = withoutKeys(out, ['eta']);
   // The throttled-poll marker is the literal `true` or nothing: any other value
   // is removed, so it can never be read as the marker (and `watch` never drops a
@@ -444,6 +510,29 @@ function projectEstimateBatchReply(payload: unknown): unknown {
     return projected;
   });
   return changed ? { ...payload, snapshots } : payload;
+}
+
+/**
+ * `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` with each row's `outputs`
+ * projected by {@link withValidOutputs}. Identity when nothing is removed.
+ */
+function projectAppWorkflowsReply(type: string, payload: unknown): unknown {
+  if (!isObject(payload) || !isObject(payload.result)) return payload;
+  const result = payload.result;
+  if (type === 'CANCEL_APP_WORKFLOW_RESULT') {
+    if (!isObject(result.workflow)) return payload;
+    const workflow = withValidOutputs(result.workflow);
+    return workflow === result.workflow ? payload : { ...payload, result: { ...result, workflow } };
+  }
+  if (!Array.isArray(result.workflows)) return payload;
+  let changed = false;
+  const workflows = result.workflows.map((w: unknown) => {
+    if (!isObject(w)) return w;
+    const projected = withValidOutputs(w);
+    if (projected !== w) changed = true;
+    return projected;
+  });
+  return changed ? { ...payload, result: { ...result, workflows } } : payload;
 }
 
 /** The inbound types whose payload carries one `snapshot`. */
@@ -2000,6 +2089,9 @@ export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
   if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
   if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
+  if (type === 'APP_WORKFLOWS_RESULT' || type === 'CANCEL_APP_WORKFLOW_RESULT') {
+    return projectAppWorkflowsReply(type, payload);
+  }
   if (type !== 'IMAGES_RESULT') return payload;
   if (!isObject(payload)) return payload;
   const result = payload.result;

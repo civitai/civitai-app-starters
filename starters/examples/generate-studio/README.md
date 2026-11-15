@@ -178,8 +178,10 @@ drops prompts, params and resources. `cancel()` stops a pending row in place.
 Both need `ai:write:budgeted` (`blocks.router.ts` `queryAppWorkflows` and `cancelAppWorkflow`). After a run
 settles, the app re-reads the history and the wallet.
 
-**Publish** calls `usePublishGenerationOutputs().publish({ workflowId,
-imageIndexes })`. It names *indexes into this list's `images`*, never URLs. The
+**Publish** calls `usePublishGenerationOutputs().publish({ workflowId })` with no
+`imageIndexes`, which publishes every available output. When you do pass
+`imageIndexes`, they are *positions in the row's `outputs`* (restricted, pending and
+blocked outputs keep their slot), never indexes into `images` and never URLs. The
 host shows a confirm, re-uploads the outputs and fully scans them, and returns
 `Image` ids (`blocks.router.ts` `publishGenerationOutputs`, and the `PUBLISH_GENERATION_OUTPUTS` handler in `PageBlockHost.tsx`). It
 also needs `ai:write:budgeted` (`blocks.router.ts` `publishGenerationOutputs`).

@@ -59,6 +59,7 @@ import {
   type BlockResourceFileErrorCode,
   type AppWorkflow,
   type BlockModel3dOutput,
+  type BlockWorkflowOutput,
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
@@ -572,7 +573,65 @@ export interface MockGenerationScenario {
    * `model3dOutputs` on the rows you pass as {@link MockHostOptions.appWorkflows}.
    */
   model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * Make outputs of a succeeded snapshot RESTRICTED, so a block can render its
+   * locked state locally. Keys are 0-based positions in the snapshot's
+   * {@link BlockWorkflowSnapshot.outputs} (for a `kind: 'workflow'` run, counted
+   * across the steps in order); the value is the `reason` reported.
+   *
+   * As on the real host, a restricted position is `{ restricted: true, reason }`
+   * in `outputs` (and in its step's `outputs`) with no url, and its url is left
+   * out of `imageUrls`, the step's `imageUrls` and `model3dOutputs`. Every other
+   * output is `{ url }` — the mock rates nothing, so no `nsfwLevel`.
+   *
+   * `{ 1: 'pool' }` is the case of a viewer whose Buzz does not cover mature
+   * content; `{ 0: 'ceiling' }` an output above the viewer's own browsing level
+   * (capped by the app's maturity ceiling).
+   *
+   * Positions are the index space of `PUBLISH_GENERATION_OUTPUTS` /
+   * `CREATE_POST_FROM_APP` `imageIndexes` and `PERSIST_GENERATION_SOURCE`'s
+   * `imageIndex`: naming a restricted position of a workflow this mock ran is
+   * refused with the host's `output N is restricted`, on all three.
+   * Snapshot-only: for the app-queue read put `outputs` (and the matching
+   * `images`) on the rows you pass as {@link MockHostOptions.appWorkflows}.
+   * Live-tunable via `setScenario({ generation: { restrictedOutputs } })`.
+   * Default: unset (nothing restricted).
+   */
+  restrictedOutputs?: Readonly<Record<number, 'pool' | 'ceiling'>>;
+  /**
+   * Hold outputs of a succeeded snapshot as NOT RATED YET, the way the host holds an
+   * unrated output whose rating could still restrict it: position → how many
+   * succeeded reads (polls) it stays `{ pending: true }`, with no url, before it is
+   * reported as `{ url }`. While any is held the snapshot (and its step) carries
+   * `ratingPending: true`, so `watch` keeps polling. Publish / post / persist naming a
+   * held position reply `output N is still being rated, try again shortly`, and so do
+   * publish and post with `imageIndexes` omitted while one is held.
+   * `{ 0: 2 }` holds output 0 for the first two reads after success.
+   */
+  pendingOutputs?: Readonly<Record<number, number>>;
+  /**
+   * Positions of a succeeded snapshot reported as BLOCKED by moderation:
+   * `{ blocked: true }`, no url, never available, and the slot is kept. Naming one is
+   * refused with the host's string for each surface: publish `output N is not
+   * available`, post `workflow has no available outputs to post`, persist `that
+   * output is not available to use as a source`.
+   */
+  blockedOutputs?: readonly number[];
+  /**
+   * Positions of a succeeded snapshot that will NEVER be rated (a training sample, a
+   * 3D model on a finished step with no rating source),
+   * on a host whose rating could restrict them: reported as
+   * `{ restricted: true, reason: 'unrated' }` — terminal, no url, no `ratingPending`,
+   * refused like any restricted position.
+   */
+  neverRatedOutputs?: readonly number[];
 }
+
+/** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
+type MockOutputScenario = Pick<
+  MockGenerationScenario,
+  'restrictedOutputs' | 'pendingOutputs' | 'blockedOutputs' | 'neverRatedOutputs'
+>;
 
 /**
  * The pass-through training `$type` a body names, if any. Exact match — the
@@ -2878,8 +2937,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         canceled?: boolean;
         /** Per-step prices of a `kind: 'workflow'` run, fixed at submit. */
         stepCosts?: number[];
+        /**
+         * The output scenario the workflow RAN under, fixed at submit — so a later
+         * `setScenario` does not re-restrict a finished workflow's outputs.
+         */
+        outputScenario?: MockOutputScenario;
+        /** Succeeded reads so far, for {@link MockGenerationScenario.pendingOutputs}. */
+        successReads?: number;
       }
     >();
+    /** The output-shaping knobs of the CURRENT scenario, as a workflow records them. */
+    const currentOutputScenario = (): MockOutputScenario => ({
+      ...(gen.restrictedOutputs ? { restrictedOutputs: { ...gen.restrictedOutputs } } : {}),
+      ...(gen.pendingOutputs ? { pendingOutputs: { ...gen.pendingOutputs } } : {}),
+      ...(gen.blockedOutputs ? { blockedOutputs: [...gen.blockedOutputs] } : {}),
+      ...(gen.neverRatedOutputs ? { neverRatedOutputs: [...gen.neverRatedOutputs] } : {}),
+    });
+    const outputScenarioOf = (workflowId: string): MockOutputScenario =>
+      workflows.get(workflowId)?.outputScenario ?? currentOutputScenario();
     // Training: the blob keys this install's uploads handed out (by identity —
     // the host's per-block-instance memory), and the quotes its estimates stored
     // (id → what a run is checked against).
@@ -2984,33 +3059,130 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       body: MockWorkflowBody,
       statusOf: (index: number) => BlockWorkflowSnapshot['status'],
       failedError?: string,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs' | 'ratingPending'> => {
       const lastVisible = body.steps.reduce((last, s, i) => (s.suppressOutput === true ? last : i), -1);
+      // Output positions run across the steps in order, as the union does.
+      let position = 0;
       const steps = body.steps.map((step, index) => {
         const status = statusOf(index);
         const name = mockWorkflowStepName(step, index);
         const visible = status === 'succeeded' && step.suppressOutput !== true;
+        const urls = !visible
+          ? []
+          : index === lastVisible
+            ? imagesFor(workflowId, body)
+            : [
+                `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
+                  name,
+                )}`,
+              ];
+        const view = outputsView(workflowId, urls, position);
+        position += urls.length;
         return {
           name,
           $type: step.$type,
           status,
-          ...(visible
-            ? {
-                imageUrls:
-                  index === lastVisible
-                    ? imagesFor(workflowId, body)
-                    : [
-                        `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
-                          name,
-                        )}`,
-                      ],
-              }
-            : {}),
+          ...(view.imageUrls.length > 0 ? { imageUrls: view.imageUrls } : {}),
+          ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
+          ...(view.ratingPending ? { ratingPending: true as const } : {}),
           ...(status === 'failed' && failedError !== undefined ? { error: failedError } : {}),
         };
       });
       const imageUrls = steps.flatMap((s) => s.imageUrls ?? []);
-      return { steps, ...(imageUrls.length > 0 ? { imageUrls } : {}) };
+      const outputs = steps.flatMap((s) => s.outputs ?? []);
+      return {
+        steps,
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+        ...(outputs.length > 0 ? { outputs } : {}),
+        ...(outputs.some((o) => o.pending === true) ? { ratingPending: true as const } : {}),
+      };
+    };
+
+    /**
+     * The host's refusal for naming an output POSITION that is not usable — of a
+     * workflow this mock ran, under the scenario it ran under — or `undefined`.
+     * Publish, post and persist alike. Indexes are positions in `outputs`, so a
+     * restricted, held or blocked one is refused by name, never swapped for another.
+     * `indexes === undefined` is publish's "every available output": refused while one
+     * is still being rated, and when none is usable.
+     */
+    const outputIndexRefusal = (
+      surface: 'publish' | 'post' | 'persist',
+      workflowId: unknown,
+      indexes: readonly unknown[] | undefined,
+    ): string | undefined => {
+      if (typeof workflowId !== 'string' || !workflows.has(workflowId)) return undefined;
+      const outputs = (succeededSnapshot(workflowId, { peek: true }).outputs ??
+        []) as BlockWorkflowOutput[];
+      const shape = (i: number) => {
+        const o = outputs[i];
+        if (!o) return 'missing';
+        if (o.restricted === true) return 'restricted';
+        if (o.pending === true) return 'pending';
+        if (o.blocked === true) return 'blocked';
+        return 'usable';
+      };
+      // The host's strings, per surface (`blocks.router.ts` publish,
+      // `block-post.service.ts` post, `block-generation-source.service.ts` persist).
+      const noneUsable =
+        surface === 'post'
+          ? 'workflow has no available outputs to post'
+          : 'workflow has no available outputs to publish';
+      const blocked = (i: number) =>
+        surface === 'publish'
+          ? `output ${i} is not available`
+          : surface === 'post'
+            ? 'workflow has no available outputs to post'
+            : 'that output is not available to use as a source';
+      if (indexes === undefined) {
+        // "Every available output" waits while one is still being rated (publish, post).
+        const held = outputs.findIndex((_, i) => shape(i) === 'pending');
+        if (held !== -1) return `output ${held} is still being rated, try again shortly`;
+        if (!outputs.some((_, i) => shape(i) === 'usable')) return noneUsable;
+        return undefined;
+      }
+      for (const i of indexes) {
+        if (typeof i !== 'number') continue;
+        const kind = shape(i);
+        if (kind === 'restricted') return `output ${i} is restricted`;
+        if (kind === 'pending') return `output ${i} is still being rated, try again shortly`;
+        if (kind === 'blocked') return blocked(i);
+      }
+      return undefined;
+    };
+
+    /**
+     * `urls` (the outputs from `start` on) as the host reports them, under the output
+     * scenario `workflowId` ran under: every one in `outputs`; a restricted one
+     * ({@link MockGenerationScenario.restrictedOutputs}) as `{ restricted, reason }`, a
+     * held one ({@link MockGenerationScenario.pendingOutputs}) as `{ pending: true }`
+     * and a blocked one ({@link MockGenerationScenario.blockedOutputs}) as
+     * `{ blocked: true }`, each left out of `imageUrls`.
+     */
+    const outputsView = (
+      workflowId: string,
+      urls: readonly string[],
+      start = 0,
+    ): { imageUrls: string[]; outputs: BlockWorkflowOutput[]; ratingPending: boolean } => {
+      const scenario = outputScenarioOf(workflowId);
+      const reads = workflows.get(workflowId)?.successReads ?? 0;
+      const outputs = urls.map((url, i): BlockWorkflowOutput => {
+        const position = start + i;
+        if (scenario.blockedOutputs?.includes(position)) return { blocked: true };
+        if (scenario.neverRatedOutputs?.includes(position)) {
+          return { restricted: true, reason: 'unrated' };
+        }
+        const reason = scenario.restrictedOutputs?.[position];
+        if (reason) return { restricted: true, reason };
+        const heldFor = scenario.pendingOutputs?.[position];
+        if (heldFor !== undefined && reads <= heldFor) return { pending: true };
+        return { url };
+      });
+      return {
+        imageUrls: outputs.flatMap((o) => (typeof o.url === 'string' ? [o.url] : [])),
+        outputs,
+        ratingPending: outputs.some((o) => o.pending === true),
+      };
     };
 
     /** A RUNNING `kind: 'workflow'` run after `polls` polls: steps finish in order. */
@@ -3018,7 +3190,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       workflowId: string,
       body: MockWorkflowBody,
       polls: number,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs' | 'ratingPending'> => {
       const total = body.steps.length;
       const failing = failingWorkflowStep(body);
       const done = Math.min(
@@ -3167,8 +3339,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       };
     };
 
-    const succeededSnapshot = (workflowId: string) => {
+    const succeededSnapshot = (workflowId: string, opts: { peek?: boolean } = {}) => {
       const wf = workflows.get(workflowId);
+      // Counts the reads for `pendingOutputs`; a refusal check only peeks.
+      if (wf && !opts.peek) wf.successReads = (wf.successReads ?? 0) + 1;
       const cost = wf?.cost ?? legacyCost;
       const body = wf?.body ?? ({} as WorkflowBody);
       if (body.kind === 'workflow') {
@@ -3182,21 +3356,31 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         };
       }
       // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
-      const model3d =
+      const model3dAll =
         gen.model3dOutputs && gen.model3dOutputs.length > 0 && passThroughStepType(body)
           ? gen.model3dOutputs.map((m) => ({ ...m }))
           : undefined;
+      // Every labelled model url is also an `imageUrls` entry on the real host.
+      const view = outputsView(
+        workflowId,
+        model3dAll && !gen.images && !gen.image
+          ? model3dAll.map((m) => m.url)
+          : imagesFor(workflowId, body),
+      );
+      // A restricted model's url is withheld from its label too.
+      const model3d = model3dAll?.filter((m) => view.imageUrls.includes(m.url));
       return {
         ...trainingFields(body),
-        ...(model3d ? { model3dOutputs: model3d } : {}),
+        ...(model3d && model3d.length > 0 ? { model3dOutputs: model3d } : {}),
         workflowId,
         status: 'succeeded' as const,
         cost: { total: cost },
-        // Every labelled model url is also an `imageUrls` entry on the real host.
-        imageUrls:
-          model3d && !gen.images && !gen.image
-            ? model3d.map((m) => m.url)
-            : imagesFor(workflowId, body),
+        // Omitted, as the host omits it, only when every output is restricted.
+        ...(view.imageUrls.length > 0 || view.outputs.length === 0
+          ? { imageUrls: view.imageUrls }
+          : {}),
+        ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
+        ...(view.ratingPending ? { ratingPending: true as const } : {}),
         // Pick-aware APPROXIMATION of the real backend's
         // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
         // LARGEST realized debit (`primaryDebitedAccountType`), and its currency
@@ -4008,6 +4192,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               cost,
               body,
               ...(body.kind === 'workflow' ? { stepCosts: workflowStepCosts(body) } : {}),
+              outputScenario: currentOutputScenario(),
             });
             dispatchToBlock({
               type: 'WORKFLOW_SUBMITTED',
@@ -4476,6 +4661,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               }
               adopted.push(...ids);
             }
+            // `workflow` sources: a NAMED restricted position is refused, as on the host.
+            for (const source of sources as Array<{
+              kind?: unknown;
+              workflowId?: unknown;
+              imageIndexes?: unknown;
+            }>) {
+              if (source?.kind !== 'workflow') continue;
+              const refusal = outputIndexRefusal(
+                'post',
+                source.workflowId,
+                Array.isArray(source.imageIndexes) ? source.imageIndexes : undefined,
+              );
+              if (refusal !== undefined) {
+                dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
+                return;
+              }
+            }
             // Posted: the adopted images now have a `postId`, so never again.
             for (const id of adopted) postableImageIds.delete(id);
             dispatchToBlock({
@@ -4552,6 +4754,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               polls: 0,
               cost: quote.total,
               body: raw as WorkflowBody,
+              outputScenario: currentOutputScenario(),
             });
             return reply({ snapshot: { workflowId, status: 'pending' } });
           }
@@ -4638,6 +4841,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               polls: 0,
               cost: quote.total,
               body: raw as WorkflowBody,
+              outputScenario: currentOutputScenario(),
             });
             return reply({ snapshot: { workflowId, status: 'pending' } });
           }
@@ -4653,6 +4857,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 type: 'PUBLISH_RESULT',
                 payload: { requestId, error: publishError },
               });
+              return;
+            }
+            const publishRefusal = outputIndexRefusal(
+              'publish',
+              typed.payload?.workflowId,
+              typed.payload?.imageIndexes,
+            );
+            if (publishRefusal !== undefined) {
+              dispatchToBlock({ type: 'PUBLISH_RESULT', payload: { requestId, error: publishRefusal } });
               return;
             }
             for (const id of publishImageIds) postableImageIds.add(id);
@@ -4674,6 +4887,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               dispatchToBlock({
                 type: 'GENERATION_SOURCE_PERSISTED',
                 payload: { requestId, error: persistGenerationSourceError },
+              });
+              return;
+            }
+            const persistPayload = typed.payload as { workflowId?: unknown; imageIndex?: unknown } | undefined;
+            const persistRefusal = outputIndexRefusal('persist', persistPayload?.workflowId, [
+              persistPayload?.imageIndex,
+            ]);
+            if (persistRefusal !== undefined) {
+              dispatchToBlock({
+                type: 'GENERATION_SOURCE_PERSISTED',
+                payload: { requestId, error: persistRefusal },
               });
               return;
             }

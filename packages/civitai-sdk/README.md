@@ -798,6 +798,18 @@ submitted. `app.workflows` has no call for that confirmation step.
 | `cancel(workflowId)` | Stops it on the orchestrator and resolves the workflow as it now stands |
 | `list({ cursor?, limit? })` | A page of the workflows this app ran for this viewer, as `{ workflows, cursor }` |
 
+**Restricted outputs.** A snapshot's `outputs` (and each `list` row's) has every
+available output in order. An entry is `{ url, nsfwLevel? }`,
+`{ restricted: true, reason: 'pool' | 'ceiling' | 'unrated' }`, `{ pending: true }`
+(not rated yet; the snapshot carries `ratingPending: true`) or `{ blocked: true }`,
+and only the first has a url. Show a locked state for the others and do not try to
+fetch them. They are not in `imageUrls` or a row's `images`, which are therefore not
+for indexing: `imageIndexes` are positions in `outputs`, and naming a restricted one
+is refused with `output N is restricted`. `watch` / `wait` keep reading for up to two
+minutes after a final status while `ratingPending` is set. The types are
+`BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`,
+`BlockWorkflowPendingOutput` and `BlockWorkflowBlockedOutput`.
+
 ### A refusal is an answer, not a throw
 
 When the host declines to price or run a body it answers **`200` with a

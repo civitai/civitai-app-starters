@@ -14,10 +14,11 @@ import { Published } from './Published.js';
  * prompts, params or resources come back, only status, images and cost.
  * Needs `ai:write:budgeted`, the same scope as submitting.
  *
- * Publish: `usePublishGenerationOutputs().publish({ workflowId, imageIndexes })`
- * turns outputs of one of these workflows into public, fully-scanned `Image`
- * rows after the host shows the viewer a confirm. It names INDEXES into this
- * list's `images` — never URLs — so a block can only publish its own outputs.
+ * Publish: `usePublishGenerationOutputs().publish({ workflowId })` turns the
+ * available outputs of one of these workflows into public, fully-scanned `Image`
+ * rows after the host shows the viewer a confirm. It names the workflow — never
+ * URLs — so a block can only publish its own outputs. `imageIndexes`, when given,
+ * are POSITIONS in the row's `outputs`, not indexes into `images`.
  */
 export function History({ history }: { history: ReturnType<typeof useAppWorkflows> }) {
   const { workflows, loading, error, refetch, cancel } = history;
@@ -31,7 +32,10 @@ export function History({ history }: { history: ReturnType<typeof useAppWorkflow
     setBusy(w.workflowId);
     setNote(null);
     try {
-      const imageIds = await publish({ workflowId: w.workflowId, imageIndexes: w.images.map((_, i) => i) });
+      // No `imageIndexes`: publish every available output. Indexes are positions in
+      // `w.outputs`, NOT in `w.images` (which drops restricted outputs), so building
+      // them from `images` would name the wrong output after a restricted one.
+      const imageIds = await publish({ workflowId: w.workflowId });
       setPublished((p) => ({ ...p, [w.workflowId]: imageIds }));
     } catch (err) {
       // Free-text host error (a dismissed confirm, a rate limit, a scan failure):

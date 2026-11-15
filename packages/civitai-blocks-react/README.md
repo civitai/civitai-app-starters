@@ -619,6 +619,91 @@ Nothing is charged.
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
 
+#### Restricted outputs: `snapshot.outputs`
+
+A finished snapshot can hold an output the host will **not** hand your app. This
+happens in two cases. The Buzz that paid for the generation does not include mature
+content for this viewer, or the output is above the viewer's own browsing level,
+capped by your app's maturity ceiling (an SFW app on an SFW host caps every viewer at
+PG-13). Such an output is **restricted**: the host withholds its url.
+
+`snapshot.outputs` lists every available output in order, restricted ones **in
+position**. Render your result grid from it:
+
+```tsx
+import type { BlockWorkflowOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
+  // An older host sends no `outputs`; fall back to the urls.
+  const outputs: BlockWorkflowOutput[] =
+    snapshot.outputs ?? (snapshot.imageUrls ?? []).map((url) => ({ url }));
+  return (
+    <div className="grid">
+      {outputs.map((out, i) =>
+        out.restricted === true ? (
+          // No url to load. Do not try to fetch anything for this tile.
+          <div key={i} className="locked">
+            {out.reason === 'pool' ? 'Mature content is not included with this Buzz' : 'Not available here'}
+          </div>
+        ) : out.pending === true ? (
+          // Not rated yet: `snapshot.ratingPending` is set and `watch` keeps polling.
+          <div key={i} className="processing">Still processing</div>
+        ) : out.blocked === true ? (
+          <div key={i} className="locked">Not available</div>
+        ) : (
+          <img key={i} src={out.url} alt="" />
+        ),
+      )}
+    </div>
+  );
+}
+```
+
+- `{ url, nsfwLevel? }`: load and show it. `nsfwLevel` is `'pg'`, `'pg13'`,
+  `'r'`, `'x'` or `'xxx'`, and is absent when there is no rating to report and
+  none could restrict the output (an output whose rating could is `{ pending }`).
+- `{ restricted: true, reason }`: **show a locked state; there is no url, and do
+  not try to fetch one.** `'pool'` means the paying Buzz does not include mature
+  content for this viewer and the output is above PG-13. `'ceiling'` means the
+  output is above the viewer's own browsing level, capped by your app's maturity
+  ceiling, or above a cap the host put on the request.
+  `'unrated'` means no rating will ever arrive for it (a training sample, a 3D
+  model on a finished step with no rating source) and one could restrict it; it
+  never becomes available. A video from an engine the orchestrator does not rate is
+  delivered with its url while unrated, as on Civitai. Treat an unknown `reason`
+  like `'ceiling'`.
+- **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
+  `AppWorkflow.images` or `model3dOutputs`. Those lists are convenience views,
+  can be shorter than `outputs`, and are **not for indexing**.
+- `{ pending: true }`: **not rated yet**, and its rating could still restrict it, so
+  the host holds the url. The snapshot carries `ratingPending: true`; `watch` keeps
+  polling for up to two minutes after the final status and resolves once the rating
+  lands (or with the last snapshot, still pending). Publishing, posting or persisting
+  it is refused with `output N is still being rated, try again shortly`, and so is
+  publishing with `imageIndexes` omitted while any output is pending.
+- `{ blocked: true }`: blocked by moderation. It keeps its slot and never becomes
+  available; naming it is refused.
+- ⚠️ **Migration:** an app that built `imageIndexes` from `images` / `imageUrls`
+  positions (`images.map((_, i) => i)`) now names a different output whenever an
+  earlier one is restricted, pending or blocked. Build them from `outputs` positions,
+  or omit `imageIndexes`.
+- `steps[].outputs` follows the same rules for one step of a `kind: 'workflow'`
+  run, and `useAppWorkflows()` rows carry `outputs` too.
+- 🔴 **An index is a position in `outputs`.** `imageIndexes` on
+  `publishGenerationOutputs` and on a `createPostFromApp` workflow source, and
+  `imageIndex` on `persistGenerationSource`, name the output at that position. A
+  restricted output keeps its slot, so an index never moves when a rating lands
+  late. Naming a restricted position is **refused** with `output N is restricted`;
+  the host never picks another output. An omitted `imageIndexes` means every
+  available output that is not restricted.
+
+A malformed `outputs` entry is **replaced in place** by this package's transport with
+`{ restricted: true, reason: 'ceiling' }`, so the reply is kept, the slot shows
+as locked, and no position moves. In the mock host,
+`generation: { restrictedOutputs: { 1: 'pool' } }` restricts the output at
+position 1 of a succeeded snapshot, and publish / post / persist naming position
+1 reply `output 1 is restricted`, so you can exercise both locally.
+
 #### Queue position, ETA and progress
 
 A snapshot from `watch()` / `poll()` carries where the run is right now, for a
@@ -850,8 +935,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
-last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+imageUrls?, outputs?, output?, error?, queue?, progress?, startedAt?, completedAt? }`
+(`outputs`: [Restricted outputs](#restricted-outputs-snapshotoutputs); the last four:
+[Queue position, ETA and progress](#queue-position-eta-and-progress)).
 Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
@@ -2018,7 +2104,9 @@ generation source**, to feed into the next generation (an img2img chain, a
 
 `persist({ workflowId, imageIndex })` names the output the way
 `usePublishGenerationOutputs()` does — a workflow from this app's own subqueue
-and an index into its `images` (as `useAppWorkflows()` shows them), never a url —
+and the output's **position in its `outputs`** (as `useAppWorkflows()` or a
+snapshot shows them; see [Restricted outputs](#restricted-outputs-snapshotoutputs)),
+never a url —
 and resolves with `{ url, width, height, imageId, ready }`. `url` / `width` /
 `height` are a `BlockGenerationSourceImageInfo`, usable as a `sourceImages`
 entry wherever a generation source is accepted.
@@ -2029,8 +2117,8 @@ entry wherever a generation source is accepted.
   Use `usePublishGenerationOutputs()` to put an output on the grid.
 - **Same gates as publishing.** It needs `ai:write:budgeted`, a signed-in viewer
   who is the token's subject, and a FINISHED workflow from this app's own
-  subqueue. An `imageIndex` out of range, or an output that is not available, is
-  refused.
+  subqueue. An `imageIndex` out of range, an output that is not available, or a
+  restricted position (`output N is restricted`) is refused.
 - **Size.** The output is re-stored on Civitai, downscaled to fit 2048 px if it
   is larger. An output under 64 px is refused.
 - **Scanned.** The host waits up to about 30 s for the scan (the whole request,

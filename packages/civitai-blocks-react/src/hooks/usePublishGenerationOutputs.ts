@@ -14,8 +14,10 @@ export interface UsePublishGenerationOutputs {
    * (from its generator subqueue) as bare, REAL-SCANNED public `Image` rows, and
    * resolve with the created image ids (order matches the resolved outputs).
    *
-   * The block sends the `workflowId` + optional `imageIndexes` (indexes into the
-   * workflow's `images` as seen via `useAppWorkflows()`) — NEVER urls. The host
+   * The block sends the `workflowId` + optional `imageIndexes` (POSITIONS in the
+   * workflow's `outputs` as seen via `useAppWorkflows()` or a snapshot — not
+   * indexes into `images`; a restricted position is refused with `output N is
+   * restricted`, never swapped for another output) — NEVER urls. The host
    * resolves the orchestrator urls server-side from the ownership-verified
    * workflow, so the iframe can't inject an arbitrary blob. FAIL-CLOSED
    * server-side: the host re-derives (viewer, app, workflowId) ownership before
@@ -23,7 +25,7 @@ export interface UsePublishGenerationOutputs {
    * runs the FULL image-scan pipeline (no skip) — the returned ids are bare
    * (post-less), scanned `Image` rows with no Post / gallery attach / rewards /
    * notifications. Host-chrome shows a consent confirm before publishing. Omit
-   * `imageIndexes` to publish all available outputs; `title` is an optional
+   * `imageIndexes` to publish all available outputs that are not restricted; `title` is an optional
    * advisory label the host MAY ignore.
    *
    * 🔴 CONSENT-GATED, SO IT WAITS ON A PERSON. Host-chrome shows a confirm

@@ -178,6 +178,15 @@ const DEFAULT_WATCH_INTERVAL_MS = 1_500;
 /** Total `watch` budget, in ms. Generation can legitimately take minutes. */
 const DEFAULT_WATCH_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * How long `watch` keeps polling AFTER a final status while the snapshot carries
+ * `ratingPending: true` (an output not rated yet, held by the host). The orchestrator
+ * rates the last output seconds after it marks the workflow succeeded, with no event to
+ * wait on, so `watch` reads again at its usual pacing until the flag clears or this
+ * runs out, then resolves with the last snapshot (outputs still pending).
+ */
+export const RATING_PENDING_WATCH_WINDOW_MS = 2 * 60_000;
+
 /** How many CONSECUTIVE transport failures `watch` absorbs before rejecting. */
 const DEFAULT_WATCH_MAX_RETRIES = 3;
 
@@ -893,6 +902,15 @@ export interface UseBuzzWorkflow {
    * Watch a workflow to completion. Resolves with the TERMINAL snapshot; calls
    * `onUpdate` with every intermediate snapshot along the way.
    *
+   * 🔴 A TERMINAL SNAPSHOT WITH `ratingPending: true` (an output the host holds
+   * because it is not rated yet) does not end the watch at once: it keeps polling at
+   * the usual pacing for up to {@link RATING_PENDING_WATCH_WINDOW_MS} (2 minutes),
+   * calling `onUpdate` as usual, and resolves as soon as the flag clears — or, when
+   * the window runs out, with the last snapshot, its outputs still pending. The window
+   * also ends at `timeoutMs`, whichever comes first. Once a final snapshot is in hand
+   * the run is over: a transport failure, a throttled reply, the deadline or an abort
+   * inside the window resolves with that snapshot (status `'done'`) — it never rejects.
+   *
    * This is the replacement for the `useEffect` + `setTimeout` backoff every
    * block used to hand-write around {@link UseBuzzWorkflow.poll}. The app
    * consumes a promise and/or a callback; the loop lives here.
@@ -1400,6 +1418,18 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // snapshot ever arrived (see the end of the loop).
       let throttledOnly: BlockWorkflowSnapshot | null = null;
       let consecutiveFailures = 0;
+      // Set at the first FINAL snapshot that still has an output being rated: the end of
+      // the rating window — whichever comes first of the caller's deadline and
+      // RATING_PENDING_WATCH_WINDOW_MS.
+      let ratingDeadline: number | null = null;
+      // That final snapshot (and each later one). Once it exists the run is OVER; the
+      // window only waits for a rating, so nothing inside it may turn a finished run
+      // into a rejection.
+      let finalSnapshot: BlockWorkflowSnapshot | null = null;
+      const resolveFinal = (snapshot: BlockWorkflowSnapshot) => {
+        setStatus('done');
+        return snapshot;
+      };
 
       // 🔴 SEQUENTIAL BY CONSTRUCTION. Every iteration AWAITS its poll before
       // scheduling the next, so at most one request per watched workflow is
@@ -1418,6 +1448,13 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
           // single transport failure would otherwise kill a run that a
           // caller-written retry loop used to survive.
           consecutiveFailures += 1;
+          // Inside the rating window: a failure ends the wait, not the run.
+          if (
+            finalSnapshot &&
+            (consecutiveFailures > maxRetries || Date.now() >= (ratingDeadline ?? deadline))
+          ) {
+            return resolveFinal(finalSnapshot);
+          }
           if (consecutiveFailures > maxRetries || Date.now() >= deadline) {
             setError(err as Error);
             setStatus('error');
@@ -1435,7 +1472,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         // snapshot, and the loop polls again on the usual interval.
         if (snapshot.throttled === true) {
           throttledOnly ??= snapshot;
-          if (Date.now() + interval >= deadline) break;
+          if (Date.now() + interval >= (ratingDeadline ?? deadline)) break;
           await sleep(interval, options?.signal);
           continue;
         }
@@ -1453,8 +1490,18 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         options?.onUpdate?.(snapshot);
 
         if (TERMINAL_STATUSES.has(snapshot.status)) {
-          setStatus('done');
-          return snapshot;
+          // 🔴 A FINAL STATUS IS NOT THE LAST WORD WHILE A RATING IS PENDING. Keep
+          // reading at the usual pacing for up to RATING_PENDING_WATCH_WINDOW_MS, then
+          // resolve with the last snapshot, its outputs still pending.
+          finalSnapshot = snapshot;
+          if (snapshot.ratingPending === true && !options?.signal?.aborted) {
+            ratingDeadline ??= Math.min(Date.now() + RATING_PENDING_WATCH_WINDOW_MS, deadline);
+            if (Date.now() + interval < ratingDeadline) {
+              await sleep(interval, options?.signal);
+              continue;
+            }
+          }
+          return resolveFinal(snapshot);
         }
         // Budget exhausted: resolve with what we have rather than throwing. A
         // non-terminal result is a legitimate answer ("still running"), and the
@@ -1463,6 +1510,8 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         await sleep(interval, options?.signal);
       }
 
+      // Aborted inside the rating window: the run is over, so the hook is done too.
+      if (finalSnapshot) return resolveFinal(last ?? finalSnapshot);
       // Aborted or timed out with a snapshot in hand — resolve with it.
       if (last) return last;
       // Only throttled replies ever came back: resolve with one, flag and all,

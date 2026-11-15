@@ -1230,7 +1230,67 @@ export interface BlockWorkflowSnapshot {
      */
     authorFee?: number;
   };
+  /**
+   * The urls of the outputs you may load, in production order. A RESTRICTED
+   * output is NOT here (see {@link outputs}), so with a host that emits
+   * `outputs` this list can be shorter than `outputs`.
+   *
+   * 🔴 NOT FOR INDEXING. `imageIndexes` / `imageIndex` are positions in
+   * {@link outputs}; a position here can point at a different output.
+   */
   imageUrls?: string[];
+  /**
+   * Every available output, in production order, with RESTRICTED, PENDING and
+   * BLOCKED outputs kept IN POSITION — the list to render a result grid from. Each
+   * entry is exactly one of:
+   *
+   * - `{ url, nsfwLevel? }` — load and show it. `nsfwLevel` is the rating
+   *   (`'pg'`, `'pg13'`, `'r'`, `'x'`, `'xxx'`); it is absent when there is no
+   *   rating to report and none could restrict the output.
+   * - `{ restricted: true, reason }` — **show a locked state, and do not try to
+   *   fetch it**: the entry carries no url, and the host withholds it. `reason`:
+   *   - `'pool'` — the Buzz that paid for this generation does not include
+   *     mature content for this viewer, and the output is above PG-13;
+   *   - `'ceiling'` — the output is above the viewer's own browsing level, capped
+   *     by your app's maturity ceiling (an SFW app on an SFW host caps every
+   *     viewer at PG-13), above a cap the host put on the request, or blocked as
+   *     mature content;
+   *   - `'unrated'` — no rating will ever arrive for it (a training sample, a 3D
+   *     model on a finished step with no rating source) and one could restrict it.
+   *     Terminal: it never becomes available. (A video from an engine the
+   *     orchestrator does not rate is DELIVERED with its url while unrated, as on
+   *     Civitai — its provider moderates it.)
+   * - `{ pending: true }` — not rated yet; no url and no `nsfwLevel`. See
+   *   {@link ratingPending}.
+   * - `{ blocked: true }` — blocked by moderation; no url, keeps its slot, never
+   *   becomes available.
+   *
+   * See {@link BlockWorkflowOutput}. Not-yet-available outputs are not listed, as in
+   * `imageUrls`.
+   *
+   * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes`
+   * (`publishGenerationOutputs`, `createPostFromApp`) and `imageIndex`
+   * (`persistGenerationSource`) name an output by its position here. A restricted
+   * output keeps its slot, so an index never moves when a rating lands late.
+   * Naming a restricted position is refused with `output N is restricted` — the
+   * host never picks another output. `imageUrls` / {@link AppWorkflow.images} drop
+   * restricted outputs and are NOT index spaces.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and when
+   * the workflow has no available output. In `@civitai/blocks-react`, the inbound
+   * validator REPLACES a malformed entry in place with
+   * `{ restricted: true, reason: 'ceiling' }`, so the reply is kept and no position
+   * moves (`@civitai/sdk` does not validate replies).
+   */
+  outputs?: BlockWorkflowOutput[];
+  /**
+   * `true` while any entry of {@link outputs} is `{ pending: true }`. The workflow
+   * can be in a final status and still gain a rating, so read it again until this is
+   * absent. `watch` in `@civitai/blocks-react` and `@civitai/sdk` keeps polling for up
+   * to two minutes after the final status while it is set, then resolves with the last
+   * snapshot, outputs still pending. 🔴 REQUIRES A HOST VERSION THAT EMITS IT.
+   */
+  ratingPending?: true;
   error?: string;
   /**
    * A stable, machine-readable companion to {@link error}, for a block to
@@ -1725,10 +1785,19 @@ export interface BlockWorkflowStepSnapshot {
   $type: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
   /**
-   * This step's own image urls. Omitted when it has none, and always omitted
-   * for a step submitted with `suppressOutput: true`.
+   * This step's own image urls, restricted outputs excluded — not for indexing.
+   * Omitted when it has none, and always omitted for a step submitted with
+   * `suppressOutput: true`.
    */
   imageUrls?: string[];
+  /**
+   * This step's own outputs, restricted ones in position — the same rules as
+   * {@link BlockWorkflowSnapshot.outputs}. Omitted with `imageUrls`'s rule, and
+   * present when every output of the step is restricted.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /** `true` while any of this step's `outputs` is pending — see {@link BlockWorkflowSnapshot.ratingPending}. */
+  ratingPending?: true;
   /**
    * The step's raw orchestrator output, minus its blobs — the same treatment
    * and the same caveats as {@link BlockWorkflowSnapshot.stepOutputs}: its shape
@@ -1863,6 +1932,110 @@ export interface BlockStepQuote {
   /** ISO-8601. The quote cannot be run after this. */
   expiresAt: string;
 }
+
+/**
+ * The rating of an output you may load ({@link BlockWorkflowOutput}). An unknown
+ * value is possible (the field is typed as these plus any string, and the SDK's
+ * inbound validator accepts any string); treat one as the most mature rating.
+ */
+export type KnownBlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+
+/**
+ * Why an output is restricted ({@link BlockWorkflowRestrictedOutput}). An unknown
+ * value is possible; treat it like `'ceiling'`.
+ *
+ * - `'pool'` — the Buzz that paid does not include mature content for this
+ *   viewer, and the output is above PG-13.
+ * - `'ceiling'` — the output is above the viewer's own browsing level, capped by
+ *   the app's maturity ceiling, above a cap the host put on the request, or
+ *   blocked as mature content.
+ * - `'unrated'` — no rating will ever arrive for the output and one could restrict
+ *   it, so the host fails closed. Terminal; does not set `ratingPending`.
+ */
+export type KnownBlockWorkflowRestrictionReason = 'pool' | 'ceiling' | 'unrated';
+
+/** An output you may load: an entry of {@link BlockWorkflowSnapshot.outputs}. */
+export interface BlockWorkflowAvailableOutput {
+  url: string;
+  /**
+   * Absent when the output has no rating to report: the host HOLDS an unrated output
+   * whose rating could still restrict it ({@link BlockWorkflowPendingOutput}), so an
+   * entry with a url and no rating is one nothing could restrict.
+   */
+  nsfwLevel?: KnownBlockWorkflowOutputRating | (string & {});
+  restricted?: never;
+  reason?: never;
+  pending?: never;
+  blocked?: never;
+}
+
+/**
+ * An output NOT RATED YET whose rating could still restrict it (the viewer's level,
+ * capped by your app's maturity ceiling, is below the top rating, the workflow refused
+ * mature content, or the host capped it).
+ * There is no url until the rating lands. The orchestrator can mark a workflow
+ * succeeded seconds before it rates the last output, so the snapshot carries
+ * {@link BlockWorkflowSnapshot.ratingPending}: poll again — `@civitai/blocks-react`'s
+ * and `@civitai/sdk`'s `watch` do, for up to two minutes after the final status.
+ * Show a "still processing" tile; publishing, posting or persisting this position is
+ * refused with `output N is still being rated, try again shortly`.
+ */
+export interface BlockWorkflowPendingOutput {
+  pending: true;
+  url?: never;
+  nsfwLevel?: never;
+  restricted?: never;
+  reason?: never;
+  blocked?: never;
+}
+
+/**
+ * An output BLOCKED by moderation. It keeps its position (so no index moves when a
+ * block lands late) and carries no url and no rating; it never becomes available.
+ * Publishing, posting or persisting it is refused. A maturity block reads as a
+ * {@link BlockWorkflowRestrictedOutput} with `reason: 'ceiling'` instead.
+ */
+export interface BlockWorkflowBlockedOutput {
+  blocked: true;
+  url?: never;
+  nsfwLevel?: never;
+  restricted?: never;
+  reason?: never;
+  pending?: never;
+}
+
+/**
+ * A RESTRICTED output: an entry of {@link BlockWorkflowSnapshot.outputs} that
+ * carries NO url. Show a locked state in its place and do not try to fetch it.
+ */
+export interface BlockWorkflowRestrictedOutput {
+  restricted: true;
+  reason: KnownBlockWorkflowRestrictionReason | (string & {});
+  url?: never;
+  nsfwLevel?: never;
+  pending?: never;
+  blocked?: never;
+}
+
+/**
+ * One entry of {@link BlockWorkflowSnapshot.outputs} /
+ * {@link BlockWorkflowStepSnapshot.outputs} / {@link AppWorkflow.outputs}.
+ * Narrow on `restricted === true`:
+ *
+ * ```ts
+ * for (const out of snapshot.outputs ?? []) {
+ *   if (out.restricted === true) renderLocked(out.reason);
+ *   else if (out.pending === true) renderProcessing();
+ *   else if (out.blocked === true) renderUnavailable();
+ *   else renderImage(out.url);
+ * }
+ * ```
+ */
+export type BlockWorkflowOutput =
+  | BlockWorkflowAvailableOutput
+  | BlockWorkflowRestrictedOutput
+  | BlockWorkflowPendingOutput
+  | BlockWorkflowBlockedOutput;
 
 /**
  * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
@@ -2031,7 +2204,9 @@ export interface AppWorkflowImage {
  *
  *   status:    the block-contract status — the orchestrator's
  *              `unassigned`/`preparing`/`scheduled` all collapse to `pending`.
- *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}).
+ *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}),
+ *              RESTRICTED outputs excluded. A convenience view, NOT for indexing:
+ *              `imageIndexes` / `imageIndex` are positions in `outputs`.
  *   cost:      the workflow's realized/estimated buzz total, or `null` when absent.
  *   createdAt: ISO-8601 string.
  */
@@ -2071,6 +2246,17 @@ export interface AppWorkflow {
    * there are none (and on hosts that predate it).
    */
   model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * Every available output, restricted ones IN POSITION — same value and rules
+   * as {@link BlockWorkflowSnapshot.outputs}. THIS is the index space of
+   * `imageIndexes` / `imageIndex`; a restricted output is not in
+   * {@link AppWorkflow.images}, which is not.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /** Same value and rule as {@link BlockWorkflowSnapshot.ratingPending}. */
+  ratingPending?: true;
 }
 
 /**
