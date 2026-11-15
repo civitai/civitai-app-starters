@@ -332,6 +332,40 @@ export type BlockNavigateScope = 'app' | 'site';
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
+ * What a block sends in `PERSIST_GENERATION_SOURCE`: ONE output of one of the
+ * calling app's OWN workflows, named by `workflowId` and `imageIndex` (an index
+ * into that workflow's `images`, as seen via `QUERY_APP_WORKFLOWS` /
+ * `useAppWorkflows()`). Never a url: the host resolves the output server-side
+ * from the ownership-verified workflow.
+ */
+export interface BlockPersistGenerationSourceRequest {
+  workflowId: string;
+  imageIndex: number;
+}
+
+/**
+ * What the host returns from `PERSIST_GENERATION_SOURCE`
+ * (`GENERATION_SOURCE_PERSISTED.result`): the app's own output, saved as a
+ * PRIVATE, scanned generation source.
+ *
+ * `url` / `width` / `height` are a {@link BlockGenerationSourceImageInfo}, so
+ * the value (or that subset of it) goes straight into a `sourceImages` entry,
+ * or anywhere else a generation source is accepted.
+ *
+ * - The image is private to the viewer and is NOT on the app's shared grid.
+ *   The host shows no confirm.
+ * - `imageId` is the persisted `Image` row id.
+ * - `ready` says whether the scan finished. The host waits up to about 30 s for
+ *   it. `ready: false` means the scan is still running: a generation that uses
+ *   the source is refused with the `source-scan-pending` error code until it
+ *   finishes, so retry that generation later.
+ */
+export interface BlockPersistedGenerationSource extends BlockGenerationSourceImageInfo {
+  imageId: number;
+  ready: boolean;
+}
+
+/**
  * One image an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded — an
  * element of {@link BlockTrainingDataUploadResult.images}. Mirrors the host's
  * `TrainingDataUpload` in civitai/civitai's
@@ -2278,9 +2312,10 @@ export interface BlockWorkflowSnapshot {
    * error, errorCode }` with NO `cost`. A host that predates these codes
    * resolves the estimate instead, priced at the step's declared estimate, so
    * there a registered-step estimate may not be a quote.
-   *  - `'source-scan-pending'` — a `kind: 'step'` or `kind: 'workflow'` input,
-   *    or an inline `customComfy` graph, names an image the viewer uploaded
-   *    whose scan has not finished. `error` reads `that image is still being
+   *  - `'source-scan-pending'` — a `kind: 'textToImage'` source image, a
+   *    `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy`
+   *    graph, names an image the viewer uploaded (or a source kept with
+   *    `PERSIST_GENERATION_SOURCE`) whose scan has not finished. `error` reads `that image is still being
    *    scanned — wait for it to finish before using it`. Estimate and submit
    *    alike, before anything is reserved. Retry the same body once the
    *    upload's scan verdict is `'scanned'`.

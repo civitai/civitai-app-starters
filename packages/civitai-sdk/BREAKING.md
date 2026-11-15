@@ -24,6 +24,7 @@ messages have no destination yet.
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
 | `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
+| `PERSIST_GENERATION_SOURCE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows it (the host reply ledger lists it): `request('PERSIST_GENERATION_SOURCE', { workflowId, imageIndex })` resolves with the source itself (`{ url, width, height, imageId, ready }`, unwrapped from `result`) on a full-page app host |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
 | `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `GET_RESOURCE_FILE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows all three (the host reply ledger lists them): `request('GET_RESOURCE_FILE', { modelVersionId, fileId? })` resolves with `{ file }` on a full-page app host |
 | `TRACK_EVENT` | `app.host.track(eventName, properties)` | **Carried**, same wire as `useBlockAnalytics().track`. 🔴 Only events and properties DECLARED under the manifest's `analytics.events` are recorded — see below |

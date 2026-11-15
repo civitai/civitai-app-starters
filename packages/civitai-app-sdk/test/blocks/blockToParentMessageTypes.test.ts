@@ -115,6 +115,15 @@ describe('BLOCK_TO_PARENT_MESSAGE_TYPES', () => {
     expect(BLOCK_TO_PARENT_MESSAGE_TYPES).toContain('BLOCK_MESSAGE_REJECTED');
   });
 
+  it('declares PERSIST_GENERATION_SOURCE (HQ app_blocks_sdk_x7dw), in the union and the array', () => {
+    // The equality above holds whether or not the message exists, so this is the
+    // assertion that the protocol actually grew. Both sides, because the array
+    // alone would report the type while the union could not send it.
+    expect(deriveUnionMembersFromSource()).toContain('PERSIST_GENERATION_SOURCE');
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES).toContain('PERSIST_GENERATION_SOURCE');
+    expect(boundBlockToParentMessageType('PERSIST_GENERATION_SOURCE')).toBe('PERSIST_GENERATION_SOURCE');
+  });
+
   it('cannot collide with the `other` bucket', () => {
     // Every real type is SCREAMING_SNAKE_CASE, so the lowercase sentinel is safe —
     // asserted rather than left to the eye, because a future lowercase message

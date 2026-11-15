@@ -1330,9 +1330,10 @@ export interface BlockWorkflowSnapshot {
    * error, errorCode }` with NO `cost`. A host that predates these codes
    * resolves the estimate instead, priced at the step's declared estimate, so
    * there a registered-step estimate may not be a quote.
-   *  - `'source-scan-pending'` — a `kind: 'step'` or `kind: 'workflow'` input,
-   *    or an inline `customComfy` graph, names an image the viewer uploaded
-   *    whose scan has not finished. `error` reads `that image is still being
+   *  - `'source-scan-pending'` — a `kind: 'textToImage'` source image, a
+   *    `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy`
+   *    graph, names an image the viewer uploaded (or a source kept with
+   *    `PERSIST_GENERATION_SOURCE`) whose scan has not finished. `error` reads `that image is still being
    *    scanned — wait for it to finish before using it`. Estimate and submit
    *    alike, before anything is reserved. Retry the same body once the
    *    upload's scan verdict is `'scanned'`.

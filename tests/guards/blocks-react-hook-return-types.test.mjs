@@ -91,6 +91,7 @@ const HOOK_FILES = [
   'useImageUpload',
   'useMediaUpload',
   'useNestedDocument',
+  'usePersistGenerationSource',
   'usePublishGenerationOutputs',
   'useReactions',
   'useRequestConsent',
