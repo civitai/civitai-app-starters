@@ -23,11 +23,10 @@
  *     `window.location.origin` (the React `<Harness>` is documented for that).
  *  3. Dispatches a configurable `BLOCK_INIT`, then answers the full protocol.
  *
- * SCENARIOS (Layer 1 of the local-dev DX): the {@link MockHostOptions.generation},
- * {@link MockHostOptions.buzz}, and {@link MockHostOptions.storage} groups let a
- * dev simulate REAL costs, slow gens, FAILURES, an insufficient-Buzz balance,
- * and a working KV store with a quota — entirely synthetically, so the full
- * money / error / storage UX is exercisable locally without spending a single
+ * SCENARIOS (Layer 1 of the local-dev DX): the {@link MockHostOptions.generation}
+ * and {@link MockHostOptions.buzz} groups let a dev simulate REAL costs, slow
+ * gens, FAILURES and an insufficient-Buzz balance — entirely synthetically, so
+ * the full money / error UX is exercisable locally without spending a single
  * Buzz or touching the network. The returned {@link MockHost} exposes
  * `setScenario()` + a `buzz` handle so a harness UI can flip scenarios
  * mid-session.
@@ -39,13 +38,6 @@
  */
 
 import {
-  APP_STORAGE_ERROR_REQUEST_FAILED,
-  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
-  APP_STORAGE_ERROR_USER_ROW_LIMIT,
-  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
-  APP_STORAGE_MAX_BYTES,
-  APP_STORAGE_MAX_ROWS,
-  APP_STORAGE_MAX_VALUE_BYTES,
   BrowsingLevel,
   SFW_LEVELS,
   type BlockContext,
@@ -84,7 +76,6 @@ import {
   type BlockRunTrainingHostError,
   type BlockTrainingDataImage,
   type ColorDomain,
-  type SharedStorageValue,
   type Theme,
   type ViewerInfo,
   type WorkflowBody,
@@ -99,12 +90,6 @@ import {
   resolveUngrantableConsentNotice,
 } from './consent.js';
 import { PAGE_CHECKPOINT_PERSIST_ERROR, emulatesPageHost } from './hostSurface.js';
-import {
-  requiredStorageScope,
-  storageResultType,
-  storageScopeDeniedMessage,
-  storageScopeDeniedPayload,
-} from './mockHostScopes.js';
 import {
   governsIdempotencyKey,
   idempotencyKeyDeniedMessage,
@@ -215,24 +200,6 @@ const ALL_LEVELS =
 
 const DEV_TOKEN = 'dev.mockhost.mock.jwt.NOT.A.REAL.RS256';
 const BUDGETED_SCOPE = 'ai:write:budgeted';
-
-/**
- * Host storage ceilings, taken from the SDK's single definition.
- *
- * 🔴 NEVER RE-TYPE THESE AS LITERALS. They were literals once, copied from the
- * host's APP-WIDE umbrella rather than the per-viewer clamp it actually
- * enforces — 25x too large on bytes and **1000x** on rows. A block that seeded
- * 5,000 rows passed
- * `dev:mock` reporting 0.5% of its row budget used, and failed on the 1,001st
- * write in production. The mock's job is to fail where production fails, so
- * the defaults ARE the production values; {@link MockStorageScenario.quotaBytes}
- * / {@link MockStorageScenario.limitRows} remain for tests that want something
- * smaller. See `@civitai/app-sdk/blocks`'s `appStorageLimits.ts` for
- * provenance and the re-derivation command.
- */
-const DEFAULT_STORAGE_QUOTA_BYTES = APP_STORAGE_MAX_BYTES;
-const DEFAULT_STORAGE_VALUE_CAP_BYTES = APP_STORAGE_MAX_VALUE_BYTES;
-const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
@@ -1070,131 +1037,6 @@ export interface MockBuzzBalance {
 }
 
 /**
- * STORAGE scenario controls — drive the in-memory KV backend that answers the
- * `APP_STORAGE_*` protocol, so the W4 KV apps (e.g. Prompt Library) can test
- * load / quota / error states against `createMockHost` directly instead of
- * hand-injecting a fake store.
- */
-export interface MockStorageScenario {
-  /**
-   * Initial KV contents (key → JSON value) the store is seeded with. `get`
-   * returns these immediately; they count against the simulated quota.
-   */
-  seed?: Record<string, unknown>;
-  /**
-   * Simulated per-(app, viewer) byte quota. A `set` that would cross it
-   * resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED }` —
-   * the host's own `'per-user storage quota exceeded'`. Defaults to
-   * `APP_STORAGE_MAX_BYTES`.
-   *
-   * Each ceiling answers its OWN host-authored message (#343), so
-   * `classifyAppStorageError()` distinguishes them here exactly as it does in
-   * production. It did not always: for three releases every ceiling answered
-   * the literal `'PAYLOAD_TOO_LARGE'`, a string the bridge can never send,
-   * which made a block's actionable error branch pass locally and take the
-   * generic arm live.
-   *
-   * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
-   * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
-   * bytes (`octet_length(value::jsonb::text)`), which is larger for every
-   * container — ~1.5x for a long array of small integers, and measured up to
-   * 44.4x for a numeric-heavy one (an array of `1e308`). So this ceiling is
-   * more generous than production's, by a factor that depends on the data,
-   * and unlike the mock's other known
-   * divergences that error is PERMISSIVE: a fixture that fits here can be
-   * rejected live. civitai/civitai-app-starters#347. Size against
-   * `getQuota()`, and treat a local pass as evidence, not proof.
-   */
-  quotaBytes?: number;
-  /**
-   * Per-value byte cap. A `set` whose serialized value exceeds it resolves
-   * `{ ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE }`. Defaults to
-   * `APP_STORAGE_MAX_VALUE_BYTES`.
-   *
-   * 🔴 LOWERING THIS DOES NOT CHANGE THE MESSAGE. The emitted string always
-   * names the host's REAL cap (`value exceeds 64KB cap` today), because that
-   * is the string a block has to match in production and the mock exists to
-   * exercise that match. This knob makes the gate cheap to TRIP in a test; it
-   * is not a claim that the host's cap moved.
-   */
-  valueCapBytes?: number;
-  /**
-   * Simulated per-(app, viewer) row ceiling. A `set` that would ADD a row past
-   * it resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT }` — the
-   * host's `'per-user row limit exceeded'`, distinct from the byte gates'
-   * message, so a block can tell "no slots left" from "no space left" locally.
-   * Overwriting an existing key adds no row and is never refused by this gate.
-   * Defaults to `APP_STORAGE_MAX_ROWS`.
-   *
-   * 🔴 THIS WAS REPORTED BUT NOT ENFORCED. `getQuota` returned it from the
-   * start while the write path checked only `quotaBytes`, so a row-limit
-   * overrun — the ceiling a block is most likely to hit, since rows fill long
-   * before bytes do — passed `dev:mock` silently and failed only in
-   * production. Reporting a limit nobody enforces is worse than not reporting
-   * one: it reads as coverage.
-   */
-  limitRows?: number;
-  /**
-   * Force the next N storage MUTATIONS (`set`/`delete`) to fail with the
-   * bridge's generic `'storage request failed'`
-   * ({@link APP_STORAGE_ERROR_REQUEST_FAILED}) — the string the host sends
-   * when the failure carries no message of its own. Counts down; exercises the
-   * retryable arm of a block's error UX, as opposed to the five ceilings,
-   * which retrying cannot fix.
-   *
-   * It used to answer `'STORAGE_UNAVAILABLE'`, which no host has ever sent.
-   */
-  failNext?: number;
-}
-
-/**
- * A seed entry for the in-memory SHARED store. `value` is the contributed
- * `{ title, body? }` record; `authorUserId` defaults to the viewer's id;
- * `voters` seeds the set of user-ids who've up-voted it (so `count` and the
- * per-user one-vote invariant start populated). Newest seeds list first.
- */
-export interface MockSharedSeed {
-  value: SharedStorageValue;
-  authorUserId?: number;
-  voters?: number[];
-}
-
-/**
- * SHARED-storage scenario controls — drive the in-memory, app-scoped, votable
- * backend that answers the `SHARED_*` protocol, so App-Blocks SHARED apps can
- * develop/test against `createMockHost` directly. Sibling of
- * {@link MockStorageScenario}.
- */
-export interface MockSharedScenario {
-  /** Initial entries the store is seeded with (listed newest-first, in order). */
-  seed?: MockSharedSeed[];
-  /**
-   * Force the next N SHARED mutations (`append`/`vote`/`unvote`/`withdraw`) to
-   * fail with a generic `SHARED_UNAVAILABLE` error (counts down) — exercises the
-   * error UX.
-   */
-  failNext?: number;
-  /**
-   * Refuse the next N shared WRITES (`append`/`update`/`vote`/`unvote`/
-   * `withdraw`/`report`) as RATE-LIMITED (counts down), the way the platform
-   * does when a per-(viewer, app) budget is empty: the reply carries the
-   * server's refusal text plus `rateLimit` metadata, so the hook rejects with
-   * `SharedStorageRateLimitError`. Checked before {@link failNext}, as the
-   * server checks the budget before attempting the write. Live-tunable via
-   * `setScenario({ shared: { rateLimitNext } })`.
-   */
-  rateLimitNext?: number;
-  /**
-   * The metadata a {@link rateLimitNext} refusal carries. `retryAfterSeconds`
-   * defaults to 60; `retryAt` defaults to now + `retryAfterSeconds`, computed
-   * when each refusal is sent. Pass a malformed value to exercise a block's
-   * fallback: the hook parses it, ignores the malformed value and throws a plain
-   * `Error`.
-   */
-  rateLimit?: { retryAfterSeconds?: number; retryAt?: string };
-}
-
-/**
  * Drives `createMockHost`. Every field is optional with a sensible default so
  * `createMockHost()` works out of the box. Each block configures SCENARIOS
  * here instead of forking the host code.
@@ -1889,70 +1731,15 @@ export interface MockHostOptions {
   disallowedAccountTypes?: BuzzAccountType[];
   /**
    * The scopes the app's `block.manifest.json` DECLARES — the set the real
-   * host's token mint draws from.
+   * host's token mint draws from. Pass what your manifest declares:
+   * `createMockHost({ declaredScopes: manifest.scopes })`.
    *
-   * 🔴 **STORAGE IS GATED ON THIS, AND THE DEFAULT IS EMPTY.** A storage op whose
-   * scope is not in here is refused exactly as the server refuses it, because the
-   * server's test is presence in the block's approved scope set (see
-   * `BLOCK_SCOPES` in `@civitai/app-sdk`) and an undeclared scope is never
-   * approved. Omit this and every `APP_STORAGE_*` / `SHARED_*` call fails.
-   *
-   * That is a DELIBERATE BREAKING DEFAULT. Until this existed the mock host
-   * served storage unconditionally, so an app that forgot the scopes passed its
-   * whole suite and the dev harness and then failed every save in production —
-   * the one storage failure mode that actually ships was the only one the mock
-   * could not produce. A default of "permissive" would have left that true for
-   * every app that did not opt in, i.e. precisely the apps that did not know the
-   * scopes existed.
-   *
-   * Pass what your manifest declares — ideally by importing your own
-   * `block.manifest.json` as `manifest`, so the two cannot drift:
-   *
-   * ```ts
-   * createMockHost({ declaredScopes: manifest.scopes });
-   * ```
-   *
-   * ⚠️ The `import` line is described rather than shown ON PURPOSE, and please
-   * do not helpfully add it back. `tests/guards/blocks-react-entry-directory-names.test.mjs`
-   * extracts import specifiers with a raw regex over the whole file —
-   * `/\bfrom\s*['"]([^'"]+)['"]/g`, comments included — so a `from '…'` inside a
-   * doc comment is read as a real edge and resolved against THIS file's
-   * directory. A relative path to a consumer's manifest does not exist from
-   * here, and the guard fails with `unresolvable specifier`. Measured: it went
-   * red on all five `Starter (…)` matrix legs.
-   *
-   * A test that only exercises storage mechanics (quota, caps, row limits) and
-   * does not care about authorization should declare the storage scopes
-   * explicitly rather than reach for a permissive flag — there is none, on
-   * purpose.
-   *
-   * ⚠️ Scopes OTHER than storage are not read from here yet. `ai:write:budgeted`
-   * keeps its own `consentGranted` flag, because `buzzBudget` is conditional on
-   * it and `setScenario` can toggle it mid-session; giving one scope two sources
-   * of truth is how they drift.
+   * Read today only by the reactions bridge (`social:react:self`, see
+   * {@link MockHostOptions.reactionStates}). `ai:write:budgeted` keeps its own
+   * `consentGranted` flag, because `buzzBudget` is conditional on it and
+   * `setScenario` can toggle it mid-session.
    */
   declaredScopes?: string[];
-  /**
-   * STORAGE scenario: in-memory KV backend (seed / quota / failNext). See
-   * {@link MockStorageScenario}. When omitted, the store starts EMPTY with the
-   * v0 defaults.
-   *
-   * ⚠️ This governs the BACKEND, not authorization. Storage is additionally
-   * gated on {@link MockHostOptions.declaredScopes}, which defaults to empty —
-   * so a scenario alone no longer makes storage answer. (It used to: this doc
-   * said `APP_STORAGE_*` was "answered either way", and that was the defect.)
-   */
-  storage?: MockStorageScenario;
-  /**
-   * SHARED scenario: in-memory, app-scoped, votable backend (seed / failNext).
-   * See {@link MockSharedScenario}. When omitted, the shared store starts EMPTY.
-   *
-   * ⚠️ As with {@link MockHostOptions.storage}, this governs the BACKEND and not
-   * authorization: `SHARED_*` is additionally gated on
-   * {@link MockHostOptions.declaredScopes} (`apps:storage:shared:read` /
-   * `:write`), which defaults to empty.
-   */
-  shared?: MockSharedScenario;
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
   theme?: Theme;
   /**
@@ -2054,8 +1841,6 @@ export type MockHostScenarioPatch = Pick<
   | 'cannedImageScan'
   | 'generation'
   | 'buzz'
-  | 'storage'
-  | 'shared'
   | 'buzzBalanceError'
   | 'viewerResult'
   | 'viewerError'
@@ -2112,7 +1897,7 @@ export interface MockBuzzHandle {
  * `const uninstall = createMockHost(opts).install()` keeps working unchanged).
  *
  * After install, a harness UI can drive scenarios live:
- *  - `setScenario(patch)` — merge new generation/buzz/storage/failMode controls.
+ *  - `setScenario(patch)` — merge new generation/buzz/failMode controls.
  *    `setScenario({ resourceFileError: undefined })` clears a forced resource-file error.
  *  - `setTheme('light' | 'dark')` — flip the site theme and push `THEME_CHANGE`.
  *  - `buzz.setBalance(n)` / `buzz.getBalance()` — flip the simulated wallet.
@@ -2675,19 +2460,10 @@ function primaryFunder(balance: MockBuzzBalance): BuzzAccountType {
   return 'blue';
 }
 
-/** Byte size of a JSON value as the mock store would persist it. */
-function jsonByteSize(value: unknown): number {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value ?? null)).length;
-  } catch {
-    return 0;
-  }
-}
-
 /**
  * Reads the URL query toggles the gen-matrix dev harness uses, so a starter's
  * dev harness keeps working with `?viewer/?consent/?fail/?theme/?pick/?pickCkpt`.
- * Layer-1 additions: `?balance/?latency/?costPerGen/?authorFee/?failNext/?failRate/?seed`
+ * Layer-1 additions: `?balance/?latency/?costPerGen/?authorFee/?failNext/?failRate`
  * map onto the new scenario groups so a dev can flip out-of-Buzz /
  * failures / latency without editing code. `?capRefusal=1` (or `=<text>`) sets
  * {@link MockGenerationScenario.submitCapRefusal}.
@@ -2814,16 +2590,6 @@ export function readMockHostUrlOptions(
 
   if (Object.keys(generation).length > 0) out.generation = generation;
   if (Object.keys(buzz).length > 0) out.buzz = buzz;
-
-  const seed = params.get('seed');
-  if (seed) {
-    try {
-      const parsed = JSON.parse(seed) as Record<string, unknown>;
-      if (parsed && typeof parsed === 'object') out.storage = { seed: parsed };
-    } catch {
-      /* ignore malformed ?seed= */
-    }
-  }
 
   return out;
 }
@@ -2956,7 +2722,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let collectionFollowError: string | undefined = options.collectionFollowError;
   // App reactions: per-image state + a forced-error knob, owned by
   // `./mockHostReactions.ts`. The scope test is PRESENCE in the manifest's
-  // declared scopes, the same set the storage gate reads.
+  // declared scopes.
   const reactionScopeDeclared = (options.declaredScopes ?? []).includes(REACTION_SCOPE);
   const reactions = createMockReactions({
     seed: options.reactionStates,
@@ -3027,89 +2793,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let gatedImagesError: string | undefined = normalizeGatedImagesError(options.gatedImagesError);
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
   let disallowedAccounts = new Set<BuzzAccountType>(options.disallowedAccountTypes ?? []);
-
-  // ---- Storage scenario (in-memory KV backend) ----
-  const storageScenario: MockStorageScenario = { ...(options.storage ?? {}) };
-  const store = new Map<string, { value: unknown; updatedAt: string }>();
-  const seedNow = new Date().toISOString();
-  for (const [k, v] of Object.entries(storageScenario.seed ?? {})) {
-    store.set(k, { value: v, updatedAt: seedNow });
-  }
-  let storageFailNext = storageScenario.failNext ?? 0;
-  const quotaBytes = storageScenario.quotaBytes ?? DEFAULT_STORAGE_QUOTA_BYTES;
-  const valueCapBytes = storageScenario.valueCapBytes ?? DEFAULT_STORAGE_VALUE_CAP_BYTES;
-  const limitRows = storageScenario.limitRows ?? DEFAULT_STORAGE_LIMIT_ROWS;
-
-  const usedBytes = () => {
-    let total = 0;
-    for (const [k, row] of store) total += jsonByteSize(row.value) + k.length;
-    return total;
-  };
-
-  // ---- SHARED scenario (in-memory, app-scoped, votable backend) ----
-  // The "current mock user" whose identity the host injects — every SHARED
-  // vote/append is attributed to it. A single-user mock, so the per-user
-  // one-vote set is naturally satisfied (voting twice keeps count at 1).
-  const mockUserId = viewer?.id ?? 0;
-  const sharedScenario: MockSharedScenario = { ...(options.shared ?? {}) };
-  interface SharedRow {
-    key: string;
-    seq: number;
-    authorUserId: number;
-    value: SharedStorageValue;
-    voters: Set<number>;
-    createdAt: string;
-    updatedAt: string;
-  }
-  const sharedStore = new Map<string, SharedRow>();
-  let sharedSeq = 0;
-  let sharedFailNext = sharedScenario.failNext ?? 0;
-  let sharedRateLimitNext = sharedScenario.rateLimitNext ?? 0;
-  let sharedRateLimitMeta = sharedScenario.rateLimit;
-  /**
-   * When a {@link MockSharedScenario.rateLimitNext} refusal is pending, consume
-   * one and return the reply's error fields; otherwise `null`. The message
-   * matches the platform's wording per write family
-   * (`apps-shared.router.ts`: submissions / votes / withdrawals / reports).
-   */
-  const takeSharedRateLimit = (
-    noun: 'submissions' | 'votes' | 'withdrawals' | 'reports',
-  ): { error: string; rateLimit: { retryAfterSeconds: number; retryAt: string } } | null => {
-    if (sharedRateLimitNext <= 0) return null;
-    sharedRateLimitNext -= 1;
-    const retryAfterSeconds = sharedRateLimitMeta?.retryAfterSeconds ?? 60;
-    const retryAt =
-      sharedRateLimitMeta?.retryAt ?? new Date(Date.now() + retryAfterSeconds * 1000).toISOString();
-    return {
-      error: `Too many ${noun} — retry in ${retryAfterSeconds}s`,
-      rateLimit: { retryAfterSeconds, retryAt },
-    };
-  };
-  const sharedNow = new Date().toISOString();
-  // Seed newest-LAST so the last-listed seed has the highest seq (newest-first).
-  for (const s of sharedScenario.seed ?? []) {
-    sharedSeq += 1;
-    const key = `shared_${sharedSeq}`;
-    sharedStore.set(key, {
-      key,
-      seq: sharedSeq,
-      authorUserId: s.authorUserId ?? mockUserId,
-      value: s.value,
-      voters: new Set(s.voters ?? []),
-      createdAt: sharedNow,
-      updatedAt: sharedNow,
-    });
-  }
-  const sharedItemWire = (row: SharedRow) => ({
-    key: row.key,
-    authorUserId: row.authorUserId,
-    value: row.value,
-    count: row.voters.size,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    // Per-viewer vote state (the mock's `mockUserId` is the "requesting viewer").
-    viewerVoted: row.voters.has(mockUserId),
-  });
 
   /** Why a `kind: 'workflow'` body has no price quote, or `null` when it is quoted. */
   const workflowQuoteFailure = (): MockWorkflowQuoteFailure | null => {
@@ -3233,19 +2916,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
      * precisely what `./consent.js`'s header warns about.
      */
     const extraGrantedScopes = new Set<string>();
-    /**
-     * What the app's manifest DECLARES — the set the real host's token mint draws
-     * from, and the set the storage gate tests presence in.
-     *
-     * 🔴 Deliberately NOT defaulted to anything permissive. See
-     * {@link MockHostOptions.declaredScopes}: a permissive default would leave the
-     * pre-gate behaviour in place for every app that did not opt in, which is the
-     * population the gate exists for.
-     *
-     * This is a SNAPSHOT at install time, unlike `consentGranted`, which
-     * `setScenario` can toggle. A manifest does not change mid-session.
-     */
-    const declaredScopeSet = new Set<string>(options.declaredScopes ?? []);
     /** Everything the CURRENT token carries. One reader, so the two cannot drift. */
     const currentScopes = (): string[] => [
       ...(consentGranted ? [BUDGETED_SCOPE] : []),
@@ -3781,31 +3451,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
         const requestId = typed.payload?.requestId;
 
-        // ---- THE STORAGE SCOPE GATE — see ./mockHostScopes.ts ----
-        //
-        // The server's test is PRESENCE in the block's approved scope set, so an
-        // UNDECLARED scope is refused before the backend is ever consulted. That
-        // ordering is the point: it refuses even when the scenario, the quota and
-        // the row budget would all have allowed the op, because production does.
-        //
-        // 🔴 IT SITS AHEAD OF THE SWITCH SO ONE RULE COVERS EVERY SURFACE. The
-        // alternative — a check inside each of the 15 storage handlers — is the
-        // shape that regenerates the same omission at every new site: a storage
-        // message added later is governed the moment it joins the table in
-        // `mockHostScopes.ts`, rather than whenever someone remembers to copy a
-        // guard into its handler.
-        {
-          const needed = requiredStorageScope(typed.type);
-          if (needed !== null && !declaredScopeSet.has(needed)) {
-            const error = storageScopeDeniedMessage(typed.type, needed);
-            dispatchToBlock({
-              type: storageResultType(typed.type),
-              payload: storageScopeDeniedPayload(typed.type, requestId, error),
-            });
-            return;
-          }
-        }
-
         // ---- THE IDEMPOTENCY-KEY FORMAT GATE — see ./mockHostIdempotency.ts ----
         //
         // The host's rule is a zod `.regex()` on the procedure INPUT, so it fires
@@ -3814,10 +3459,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         // even when the scenario, the balance and the spend cap would all have
         // allowed the submit, because production refuses it then too.
         //
-        // 🔴 IT SITS AHEAD OF THE SWITCH for the same reason the storage gate
-        // does: one rule covering every surface, so a future money message that
-        // gains an `idempotencyKey` is governed by joining the table rather than
-        // by someone remembering to copy a check into its handler.
+        // 🔴 IT SITS AHEAD OF THE SWITCH so one rule covers every surface: a
+        // future money message that gains an `idempotencyKey` is governed by
+        // joining the table rather than by someone remembering to copy a check
+        // into its handler.
         {
           const refusal = governsIdempotencyKey(typed.type)
             ? idempotencyKeyRefusal(typed.payload)
@@ -5578,487 +5223,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
-          // ---- Civitai Apps KV datastore (W4) — in-memory backend ----
-          case 'APP_STORAGE_GET': {
-            const key = typed.payload?.key ?? '';
-            const row = store.get(key);
-            dispatchToBlock({
-              type: 'APP_STORAGE_GET_RESULT',
-              payload: { requestId, value: row ? row.value : null },
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_SET': {
-            const key = typed.payload?.key ?? '';
-            const value = typed.payload?.value;
-            if (storageFailNext > 0) {
-              storageFailNext -= 1;
-              dispatchToBlock({
-                type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_REQUEST_FAILED },
-              });
-              return;
-            }
-            const sizeBytes = jsonByteSize(value);
-            if (sizeBytes > valueCapBytes) {
-              dispatchToBlock({
-                type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE },
-              });
-              return;
-            }
-            // Quota check: projected usage after this upsert.
-            //
-            // ⚠️ TWO KNOWN DIVERGENCES FROM THE HOST LIVE ON THIS ONE GATE,
-            // and they run in OPPOSITE directions.
-            //
-            // 1. SHAPE — civitai/civitai-app-starters#345. The host's byte
-            //    gates are `!isNonIncreasing`-guarded: a write whose stored
-            //    bytes do not increase skips them even when the store is
-            //    already over quota, which is how a block with no delete
-            //    affordance gets back under the byte cap. This gate is
-            //    unconditional, so `dev:mock` REFUSES a shrinking overwrite
-            //    production would land. Restrictive: a local failure that is
-            //    not real.
-            //
-            // 2. 🔴 UNIT — civitai/civitai-app-starters#347, and this is the
-            //    dangerous one. `jsonByteSize` counts WIRE bytes; the host
-            //    counts STORED bytes, `octet_length(value::jsonb::text)`.
-            //    `jsonb`'s canonical text inserts a space after every `:` and
-            //    every `,`, so stored > wire for every container — approaching
-            //    1.5x for a long array of small integers, and up to 44.4x for
-            //    a numeric-heavy one (`1e308` is stored as its 309 digits).
-            //    This gate therefore ADMITS writes
-            //    production rejects. Permissive: a local pass that is not
-            //    real, which is the direction that ships a bug.
-            //
-            // Neither is fixed here, and #347 is why #345 cannot be: mirroring
-            // the host's gate requires the STORED unit, which this mock does
-            // not have. A stored-size model guessed rather than measured would
-            // be wrong in the permissive direction, i.e. no better than today
-            // — so #347 asks for a fixture table of (value, host
-            // `octet_length`) pairs first, and #345 lands on top of it.
-            const existing = store.get(key);
-            const existingBytes = existing ? jsonByteSize(existing.value) + key.length : 0;
-            const projected = usedBytes() - existingBytes + sizeBytes + key.length;
-            if (projected > quotaBytes) {
-              dispatchToBlock({
-                type: 'APP_STORAGE_SET_RESULT',
-                // The PER-USER message, not the app-wide one: `quotaBytes`
-                // defaults to `APP_STORAGE_MAX_BYTES`, which is the per-(app,
-                // viewer) clamp. The mock models no app-wide umbrella at all,
-                // so it can never emit `APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED`
-                // — a block still has to handle that string, and the only
-                // place it is reachable is production.
-                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED },
-              });
-              return;
-            }
-            // Row check, mirroring the host's `isInsert && rowCount + 1 >
-            // USER_ROW_LIMIT` gate.
-            //
-            // 🔴 `isInsert` IS LOAD-BEARING, not a micro-optimisation. Without
-            // it, a store sitting exactly AT the ceiling would refuse to
-            // overwrite a key it already holds — and since only the owning
-            // viewer can delete their own rows, an app whose UI has no delete
-            // affordance would be permanently stuck with no way back under the
-            // cap. The host is `isInsert`-guarded for the same reason.
-            if (!existing && store.size + 1 > limitRows) {
-              dispatchToBlock({
-                type: 'APP_STORAGE_SET_RESULT',
-                // Per-user again, and for the same reason as the byte gate
-                // above: `limitRows` defaults to `APP_STORAGE_MAX_ROWS`.
-                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT },
-              });
-              return;
-            }
-            store.set(key, { value, updatedAt: new Date().toISOString() });
-            dispatchToBlock({
-              type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId, ok: true, sizeBytes },
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_DELETE': {
-            const key = typed.payload?.key ?? '';
-            if (storageFailNext > 0) {
-              storageFailNext -= 1;
-              dispatchToBlock({
-                type: 'APP_STORAGE_DELETE_RESULT',
-                payload: {
-                  requestId,
-                  ok: false,
-                  deleted: false,
-                  error: APP_STORAGE_ERROR_REQUEST_FAILED,
-                },
-              });
-              return;
-            }
-            const had = store.delete(key);
-            dispatchToBlock({
-              type: 'APP_STORAGE_DELETE_RESULT',
-              payload: { requestId, ok: true, deleted: had },
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_LIST': {
-            const prefix = typed.payload?.prefix ?? '';
-            const limit = typed.payload?.limit ?? 100;
-            const cursor = typed.payload?.cursor;
-            // Cursor = base64 of the last returned key (matches the hook's
-            // documented `nextCursor` contract).
-            const afterKey = cursor ? safeAtob(cursor) : undefined;
-            const allKeys = [...store.entries()]
-              .filter(([k]) => k.startsWith(prefix))
-              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-            const startIdx = afterKey
-              ? allKeys.findIndex(([k]) => k > afterKey)
-              : 0;
-            const slice = (startIdx < 0 ? [] : allKeys.slice(startIdx)).slice(0, limit);
-            const keys = slice.map(([key, row]) => ({ key, updatedAt: row.updatedAt }));
-            const last = slice[slice.length - 1]?.[0];
-            const hasMore =
-              last !== undefined &&
-              allKeys.findIndex(([k]) => k === last) < allKeys.length - 1;
-            dispatchToBlock({
-              type: 'APP_STORAGE_LIST_RESULT',
-              payload: {
-                requestId,
-                keys,
-                ...(hasMore && last ? { nextCursor: safeBtoa(last) } : {}),
-              },
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_QUOTA': {
-            dispatchToBlock({
-              type: 'APP_STORAGE_QUOTA_RESULT',
-              payload: {
-                requestId,
-                usedBytes: usedBytes(),
-                rowCount: store.size,
-                limitBytes: quotaBytes,
-                limitRows,
-              },
-            });
-            return;
-          }
-
-          // ---- Civitai Apps SHARED datastore — in-memory votable backend ----
-          case 'SHARED_LIST': {
-            const prefix = typed.payload?.prefix ?? '';
-            const limit = typed.payload?.limit ?? 100;
-            const cursor = typed.payload?.cursor;
-            // Newest-first: highest seq first.
-            const all = [...sharedStore.values()]
-              .filter((r) => r.key.startsWith(prefix))
-              .sort((a, b) => b.seq - a.seq);
-            // Cursor = base64 of the last returned key (matches the hook's
-            // opaque-nextCursor contract).
-            const afterKey = cursor ? safeAtob(cursor) : undefined;
-            const startIdx = afterKey ? all.findIndex((r) => r.key === afterKey) + 1 : 0;
-            const slice = (startIdx <= 0 && afterKey ? [] : all.slice(startIdx)).slice(0, limit);
-            const items = slice.map(sharedItemWire);
-            const last = slice[slice.length - 1]?.key;
-            const hasMore =
-              last !== undefined && all.findIndex((r) => r.key === last) < all.length - 1;
-            dispatchToBlock({
-              type: 'SHARED_LIST_RESULT',
-              payload: {
-                requestId,
-                items,
-                ...(hasMore && last ? { nextCursor: safeBtoa(last) } : {}),
-              },
-            });
-            return;
-          }
-
-          case 'SHARED_GET_COUNT': {
-            const key = typed.payload?.key ?? '';
-            const row = sharedStore.get(key);
-            dispatchToBlock({
-              type: 'SHARED_GET_COUNT_RESULT',
-              payload: { requestId, count: row ? row.voters.size : 0 },
-            });
-            return;
-          }
-
-          case 'SHARED_GET_COUNTS': {
-            const keys = typed.payload?.keys ?? [];
-            const counts: Record<string, number> = {};
-            for (const k of keys) counts[k] = sharedStore.get(k)?.voters.size ?? 0;
-            dispatchToBlock({
-              type: 'SHARED_GET_COUNTS_RESULT',
-              payload: { requestId, counts },
-            });
-            return;
-          }
-
-          case 'SHARED_APPEND': {
-            const appendLimited = takeSharedRateLimit('submissions');
-            if (appendLimited) {
-              dispatchToBlock({
-                type: 'SHARED_APPEND_RESULT',
-                payload: { requestId, key: '', ...appendLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_APPEND_RESULT',
-                payload: { requestId, key: '', error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const value = typed.payload?.value as SharedStorageValue | undefined;
-            if (!value || typeof value.title !== 'string' || value.title.length === 0) {
-              dispatchToBlock({
-                type: 'SHARED_APPEND_RESULT',
-                payload: { requestId, key: '', error: 'INVALID_VALUE' },
-              });
-              return;
-            }
-            sharedSeq += 1;
-            const key = `shared_${sharedSeq}`;
-            const now = new Date().toISOString();
-            sharedStore.set(key, {
-              key,
-              seq: sharedSeq,
-              authorUserId: mockUserId,
-              value: {
-                title: value.title,
-                ...(value.body !== undefined ? { body: value.body } : {}),
-                // Echo the opaque app-owned `data` blob unmodified (mirrors the
-                // real host storing it alongside the moderated title/body).
-                ...(value.data !== undefined ? { data: value.data } : {}),
-              },
-              voters: new Set<number>(),
-              createdAt: now,
-              updatedAt: now,
-            });
-            dispatchToBlock({
-              type: 'SHARED_APPEND_RESULT',
-              payload: { requestId, key },
-            });
-            return;
-          }
-
-          case 'SHARED_VOTE': {
-            const key = typed.payload?.key ?? '';
-            const voteLimited = takeSharedRateLimit('votes');
-            if (voteLimited) {
-              dispatchToBlock({
-                type: 'SHARED_VOTE_RESULT',
-                payload: { requestId, count: 0, ...voteLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_VOTE_RESULT',
-                payload: { requestId, count: 0, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const row = sharedStore.get(key);
-            if (!row) {
-              dispatchToBlock({
-                type: 'SHARED_VOTE_RESULT',
-                payload: { requestId, count: 0, error: 'NOT_FOUND' },
-              });
-              return;
-            }
-            // Set membership → one vote per user (voting twice is a no-op).
-            row.voters.add(mockUserId);
-            row.updatedAt = new Date().toISOString();
-            dispatchToBlock({
-              type: 'SHARED_VOTE_RESULT',
-              payload: { requestId, count: row.voters.size },
-            });
-            return;
-          }
-
-          case 'SHARED_UNVOTE': {
-            const key = typed.payload?.key ?? '';
-            const unvoteLimited = takeSharedRateLimit('votes');
-            if (unvoteLimited) {
-              dispatchToBlock({
-                type: 'SHARED_UNVOTE_RESULT',
-                payload: { requestId, count: 0, ...unvoteLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_UNVOTE_RESULT',
-                payload: { requestId, count: 0, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const row = sharedStore.get(key);
-            if (!row) {
-              dispatchToBlock({
-                type: 'SHARED_UNVOTE_RESULT',
-                payload: { requestId, count: 0, error: 'NOT_FOUND' },
-              });
-              return;
-            }
-            row.voters.delete(mockUserId);
-            row.updatedAt = new Date().toISOString();
-            dispatchToBlock({
-              type: 'SHARED_UNVOTE_RESULT',
-              payload: { requestId, count: row.voters.size },
-            });
-            return;
-          }
-
-          case 'SHARED_WITHDRAW': {
-            const key = typed.payload?.key ?? '';
-            const withdrawLimited = takeSharedRateLimit('withdrawals');
-            if (withdrawLimited) {
-              dispatchToBlock({
-                type: 'SHARED_WITHDRAW_RESULT',
-                payload: { requestId, ok: false, deleted: false, ...withdrawLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_WITHDRAW_RESULT',
-                payload: { requestId, ok: false, deleted: false, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const had = sharedStore.delete(key);
-            dispatchToBlock({
-              type: 'SHARED_WITHDRAW_RESULT',
-              payload: { requestId, ok: true, deleted: had },
-            });
-            return;
-          }
-
-          case 'SHARED_UPDATE': {
-            const key = typed.payload?.key ?? '';
-            const updateLimited = takeSharedRateLimit('submissions');
-            if (updateLimited) {
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: { requestId, ok: false, ...updateLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: { requestId, ok: false, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const row = sharedStore.get(key);
-            // NOT_FOUND — the key is missing (mirrors the host's missing/hidden
-            // rejection). Checked before the author gate so a non-author can't
-            // probe for a row's existence.
-            if (!row) {
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: { requestId, ok: false, error: 'NOT_FOUND' },
-              });
-              return;
-            }
-            // FORBIDDEN — author gate: only the contributing viewer can update
-            // in place (the real host re-derives `author_user_id === caller`).
-            if (row.authorUserId !== mockUserId) {
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: { requestId, ok: false, error: 'FORBIDDEN' },
-              });
-              return;
-            }
-            // Belt on title (mirrors SHARED_APPEND's INVALID_VALUE check).
-            const value = typed.payload?.value as SharedStorageValue | undefined;
-            if (!value || typeof value.title !== 'string' || value.title.length === 0) {
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: { requestId, ok: false, error: 'INVALID_VALUE' },
-              });
-              return;
-            }
-            // In-place update: preserve key/voters/createdAt; replace the value
-            // and bump updatedAt (mirrors the real "preserving key/votes/reports").
-            row.value = {
-              title: value.title,
-              ...(value.body !== undefined ? { body: value.body } : {}),
-              ...(value.data !== undefined ? { data: value.data } : {}),
-            };
-            row.updatedAt = new Date().toISOString();
-            dispatchToBlock({
-              type: 'SHARED_UPDATE_RESULT',
-              payload: { requestId, ok: true },
-            });
-            return;
-          }
-
-          case 'SHARED_GET': {
-            const key = typed.payload?.key ?? '';
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_GET_RESULT',
-                payload: { requestId, item: null, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            const row = sharedStore.get(key);
-            dispatchToBlock({
-              type: 'SHARED_GET_RESULT',
-              payload: { requestId, item: row ? sharedItemWire(row) : null },
-            });
-            return;
-          }
-
-          case 'SHARED_REPORT': {
-            const key = typed.payload?.key ?? '';
-            const reportLimited = takeSharedRateLimit('reports');
-            if (reportLimited) {
-              dispatchToBlock({
-                type: 'SHARED_REPORT_RESULT',
-                payload: { requestId, ok: false, ...reportLimited },
-              });
-              return;
-            }
-            if (sharedFailNext > 0) {
-              sharedFailNext -= 1;
-              dispatchToBlock({
-                type: 'SHARED_REPORT_RESULT',
-                payload: { requestId, ok: false, error: 'SHARED_UNAVAILABLE' },
-              });
-              return;
-            }
-            // NOT_FOUND for a missing key (mirrors the server's row pre-check).
-            if (!sharedStore.has(key)) {
-              dispatchToBlock({
-                type: 'SHARED_REPORT_RESULT',
-                payload: { requestId, ok: false, error: 'NOT_FOUND' },
-              });
-              return;
-            }
-            // Filing a report does NOT hide the row (a moderator decides).
-            dispatchToBlock({
-              type: 'SHARED_REPORT_RESULT',
-              payload: { requestId, ok: true },
-            });
-            return;
-          }
-
           case 'SAVE_IMAGE': {
             // The mock host can't trigger a real browser download; it applies
             // the host's request-shape gate and, for `bytes`, the host's
@@ -6342,18 +5506,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       gatedImagesError = normalizeGatedImagesError(patch.gatedImagesError);
     if (patch.disallowedAccountTypes !== undefined)
       disallowedAccounts = new Set(patch.disallowedAccountTypes);
-    if (patch.storage !== undefined) {
-      // Only the live-tunable storage knob (`failNext`) is applied mid-session;
-      // seed/quota are install-time (re-install to change the backing store).
-      if (patch.storage.failNext !== undefined) storageFailNext = patch.storage.failNext;
-    }
-    if (patch.shared !== undefined) {
-      // `failNext`, `rateLimitNext` and `rateLimit` are live-tunable; `seed` is
-      // install-time (re-install to change the backing store).
-      if (patch.shared.failNext !== undefined) sharedFailNext = patch.shared.failNext;
-      if (patch.shared.rateLimitNext !== undefined) sharedRateLimitNext = patch.shared.rateLimitNext;
-      if (patch.shared.rateLimit !== undefined) sharedRateLimitMeta = patch.shared.rateLimit;
-    }
   }
 
   const buzzHandle: MockBuzzHandle = {

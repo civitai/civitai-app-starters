@@ -22,7 +22,7 @@
   - a pending position: `output N is still being rated, try again shortly`;
   - a blocked position: refused as not available.
   - With `imageIndexes` omitted, publish and post wait while any output is pending, and refuse when none is usable. `imageUrls` and `images` are convenience views, not for indexing.
-- `@civitai/app-sdk` adds new types on `./blocks`: `BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`, `BlockWorkflowPendingOutput`, `BlockWorkflowBlockedOutput`, `KnownBlockWorkflowOutputRating` and `KnownBlockWorkflowRestrictionReason`. The pinned `./blocks` export count moves from 234 to 241. `@civitai/sdk` adds the same types on its root, from its generated copy of the workflow contract.
+- `@civitai/app-sdk` adds new types on `./blocks`: `BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`, `BlockWorkflowPendingOutput`, `BlockWorkflowBlockedOutput`, `KnownBlockWorkflowOutputRating` and `KnownBlockWorkflowRestrictionReason`. The pinned `./blocks` export count moves from 229 to 236. `@civitai/sdk` adds the same types on its root, from its generated copy of the workflow contract.
 - `@civitai/blocks-react`: **a malformed `outputs` entry is replaced in place, not fatal.** `isValidWorkflowSnapshot` does not check `outputs`. The transport's `projectInboundPayload` replaces each malformed entry with the placeholder `{ restricted: true, reason: 'ceiling' }`, so no position moves, and removes the whole field only when it is not an array.
   - A restricted entry with a url, a pending or blocked entry with a url or rating, and an entry with two markers are all malformed.
   - A `ratingPending` that is not `true` is stripped.

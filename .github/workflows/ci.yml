@@ -188,7 +188,9 @@ jobs:
     name: ${{ format('{0}Core (all packages)', needs.lanes.outputs.name-prefix) }}
     needs: lanes
     if: ${{ !cancelled() && (needs.lanes.outputs.sdk != 'false' || needs.lanes.outputs.civitai-sdk != 'false' || needs.lanes.outputs.blocks-react != 'false' || needs.lanes.outputs.design-system != 'false' || needs.lanes.outputs.readme-snippets != 'false' || needs.lanes.outputs.examples != 'false' || needs.lanes.outputs.packaging != 'false' || needs.lanes.outputs.public-types != 'false' || needs.lanes.outputs.agent-runner != 'false') }}
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-latest (now 26.04) `playwright install chromium` fails
+    # with "Playwright does not support chromium on ubuntu26.04-x64".
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     # The sum of what the nine jobs this replaces measured at p50 was about 8

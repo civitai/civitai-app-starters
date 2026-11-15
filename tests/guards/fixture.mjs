@@ -79,7 +79,7 @@ export const DEFAULT_STARTERS = {
  */
 const EXAMPLE_PINS = { '@civitai/app-sdk': '^0.31.0', '@civitai/blocks-react': '^0.39.0' };
 export const DEFAULT_EXAMPLES = Object.fromEntries(
-  ['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase'].map((n) => [
+  ['hello-world', 'settings', 'buzz-workflow', 'monetize', 'scopes-api', 'buzz-purchase'].map((n) => [
     n,
     { ...EXAMPLE_PINS },
   ]),

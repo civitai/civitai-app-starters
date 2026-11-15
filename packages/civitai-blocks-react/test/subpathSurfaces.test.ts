@@ -100,8 +100,9 @@ const TESTING_VALUES = [
 ] as const;
 
 /**
- * `HarnessProps`, `MockHostOptions` and `MockSharedSeed` have direct fleet
- * consumers; the rest are the transitive closure that makes those four values
+ * `HarnessProps` and `MockHostOptions` have direct fleet consumers (so did
+ * `MockSharedSeed`, removed with the legacy stores); the rest are the
+ * transitive closure that makes those values
  * NAMEABLE — each appears in the signature of a kept value or as the type of a
  * property of a kept type, so a consumer hoisting a sub-object out of an options
  * literal can name it.
@@ -127,9 +128,6 @@ const TESTING_TYPES = [
   'MockMediaUploads',
   // The value type of `MockHostOptions.reactionStates`.
   'MockReactionSeed',
-  'MockSharedScenario',
-  'MockSharedSeed',
-  'MockStorageScenario',
   // The string values of `MockGenerationScenario.workflowUnpriced`.
   'MockWorkflowQuoteFailure',
   // The second argument of a `CostSpec` function for a `kind: 'workflow'` body.

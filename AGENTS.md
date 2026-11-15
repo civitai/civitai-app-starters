@@ -9,7 +9,7 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 | Use this when… | Starter |
 |---|---|
 | Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` — web components (`@civitai/sdk` + the `<civitai-*>` elements from `@civitai/components`), no UI framework |
-| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name>` scaffolds from its own embedded templates (`internal/scaffold/templates/`: `page-money` — the default, Vite + React + TS — `page-vite`, `static`), not from this repo. Or copy one of the React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
+| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name> --template page-money` scaffolds Vite + React + TS from the CLI's own embedded templates (`internal/scaffold/templates/`), not from this repo. Without `--template` it uses `page-elements` (Vite + TypeScript, no framework); `civitai app create --help` lists the rest. Or copy one of the React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |
@@ -119,4 +119,4 @@ Merge to `main` → review the auto-generated *Version Packages* PR → merge it
 - [`packages/civitai-app-sdk/README.md`](./packages/civitai-app-sdk/README.md) — full SDK API reference.
 - [`packages/civitai-blocks-react/README.md`](./packages/civitai-blocks-react/README.md) — React hooks + iframe transport for Civitai Apps.
 - [`RELEASING.md`](./RELEASING.md) — SDK publish + changeset workflow.
-- [Civitai OAuth quickstart](https://developer.civitai.com/docs/oauth) — official upstream docs.
+- [Civitai OAuth quickstart](https://developer.civitai.com/site/oauth/quickstart) — official upstream docs.

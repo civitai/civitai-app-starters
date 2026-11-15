@@ -41,6 +41,12 @@ Generate `SESSION_SECRET`:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+`CIVITAI_AUTH_URL` (optional, default `https://auth.civitai.com`) is the auth hub
+the OAuth endpoints (authorize, token, revoke) are called on. It is separate from
+`CIVITAI_BASE_URL`, the main site, which the OAuth calls never use. Leave it
+unset in production; set both when you develop against a local Civitai and its
+auth hub (`.env.example` has the details).
+
 ## File layout
 
 ```

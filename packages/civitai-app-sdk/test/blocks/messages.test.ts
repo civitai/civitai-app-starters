@@ -6,7 +6,6 @@ import type {
   BlockToParentMessage,
   ConsentUnavailablePayload,
   ParentToBlockMessage,
-  SharedStorageValue,
 } from '../../src/blocks/messages.js';
 import type {
   BlockGenerationSourceImageInfo,
@@ -469,7 +468,7 @@ describe('async-scan display upload: pending handle + IMAGE_SCAN_RESOLVED', () =
   });
 });
 
-describe('WorkflowBody + SharedStorageValue widened fields (type-level)', () => {
+describe('WorkflowBody widened fields (type-level)', () => {
   it('WorkflowBody carries optional sourceImage + sharedContentKey (img2img / attribution)', () => {
     const body: WorkflowBody = {
       kind: 'textToImage',
@@ -537,16 +536,6 @@ describe('WorkflowBody + SharedStorageValue widened fields (type-level)', () => 
     expect(plain.sourceImages).toBeUndefined();
   });
 
-  it('SharedStorageValue carries an optional opaque `data` payload', () => {
-    const value: SharedStorageValue = {
-      title: 'My generator',
-      body: 'notes',
-      data: { spec: { steps: 20 }, version: 1 },
-    };
-    expect(value.data).toEqual({ spec: { steps: 20 }, version: 1 });
-    const minimal: SharedStorageValue = { title: 'no data' };
-    expect(minimal.data).toBeUndefined();
-  });
 });
 
 describe('THEME_CHANGE (host-pushed live site theme)', () => {

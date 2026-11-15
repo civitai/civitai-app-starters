@@ -9,15 +9,15 @@
 ## Stack
 
 TypeScript strict, ESM-only, zero runtime dependencies. Built with `tsc`
-to `dist/`. Tested with `vitest`. Published to npm with subpath exports
-(`./oauth`, `./scopes`, `./cookies`, `./orchestrator`).
+to `dist/`. Tested with `vitest`. Published to npm with subpath exports: `package.json`
+`exports` is the list (it is not copied here, so it cannot fall behind).
 
 ## Where things live
 
 | Path | Purpose |
 |---|---|
 | `src/oauth/` | PKCE, authorize URL builder, code exchange, refresh, revoke, `fetchMe`. The OAuth flow as stateless functions. |
-| `src/scopes/` | `TokenScope` bitmask + `bitmaskFromScopes` / `scopesFromBitmask` / `hasScope` / `getScopeLabel`. Mirrors `civitai/civitai`'s `src/shared/constants/token-scope.constants.ts` — keep in sync. |
+| `src/scopes/` | `TokenScope` bitmask + `bitmaskFromScopes` / `scopesFromBitmask` / `hasScope` / `getScopeLabel`. Mirrors `civitai/civitai`'s `packages/civitai-auth/src/token-scope.ts` (`@civitai/auth/token-scope`) — keep in sync. `src/shared/constants/token-scope.constants.ts` there is now only a re-export shim of that file, so do not diff against it. The opt-in bits above `Full` (`1 << 25` and up) are not mirrored here today. |
 | `src/cookies/` | AES-256-GCM `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
 | `src/orchestrator/` | Orchestrator client factory, `estimateWorkflow` / `submitWorkflow` / `getWorkflow` / `pollWorkflow`, `buildTextToImageBody`, types + `OrchestratorError`. |
 | `src/blocks/` | Civitai Apps contract: `BlockManifestV1`, `BLOCK_SCOPES`, typed parent↔block `postMessage` protocol. **Subpath-only** (`@civitai/app-sdk/blocks`) — deliberately not re-exported from `src/index.ts` so default-imports stay lean. Hooks + iframe transport live in [`@civitai/blocks-react`](../civitai-blocks-react/) so this module stays runtime-agnostic. 🔴 **Zero runtime dependencies, and it must stay that way** — this ships into sandboxed iframes and every app inherits its install graph. Anything needing a dependency or `node:*` goes in a node-only subpath (see `src/manifest/`, `src/vite/`). |

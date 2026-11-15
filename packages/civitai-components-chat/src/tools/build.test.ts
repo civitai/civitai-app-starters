@@ -49,7 +49,6 @@ function context(overrides: Partial<TurnToolContext> = {}) {
           ? { id, kind: 'image', source: { type: 'upload', blobId: 'b' } }
           : undefined,
     resolveArgs: vi.fn(async (args) => ({ ...args, mediaUrl: args.mediaUrl === 'up1-1' ? 'https://x/photo' : args.mediaUrl })),
-    onCaption: vi.fn(),
     ...overrides,
   };
   return ctx;
@@ -63,7 +62,7 @@ describe('buildToolSet', () => {
     const tools = buildToolSet(catalog(), context());
     const names = Object.keys(tools);
     expect(names).toEqual(
-      expect.arrayContaining(['run_step', 'run_workflow', 'find_services', 'get_input_schema', 'get_guide', 'caption_media', 'search_models', 'get_model', 'ask_choice']),
+      expect.arrayContaining(['run_step', 'run_workflow', 'find_services', 'get_input_schema', 'get_guide', 'web_search', 'fetch_page', 'search_models', 'get_model', 'ask_choice']),
     );
     for (const denied of ['get_workflow', 'cancel_workflow', 'list_workflows']) {
       expect(names).not.toContain(denied);
@@ -135,12 +134,12 @@ describe('buildToolSet', () => {
     expect(jobs.all()).toEqual([]);
   });
 
-  it('passes other tools through with attachment ids resolved, remembering captions of uploads', async () => {
-    const ctx = context();
+  it('passes other tools through with their arguments resolved', async () => {
+    const ctx = context({ resolveArgs: vi.fn(async (args) => ({ ...args, resolved: true })) });
     const tools = buildToolSet(catalog(), ctx);
-    await run(tools.caption_media, { mediaUrl: 'up1-1' });
-    expect(ctx.orchestration.callTool).toHaveBeenCalledWith('caption_media', { mediaUrl: 'https://x/photo' }, expect.anything());
-    expect(ctx.onCaption).toHaveBeenCalledWith('up1-1', 'Found 1 model(s)');
+    expect(await run(tools.web_search, { query: 'cat photos' })).toEqual({ text: 'Found 1 model(s)', models: expect.any(Array) });
+    expect(ctx.resolveArgs).toHaveBeenCalledWith({ query: 'cat photos' });
+    expect(ctx.orchestration.callTool).toHaveBeenCalledWith('web_search', { query: 'cat photos', resolved: true }, expect.anything());
   });
 
   it('returns model recommendations alongside the text for model search', async () => {

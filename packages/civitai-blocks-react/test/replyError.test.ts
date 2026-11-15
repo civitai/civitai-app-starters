@@ -5,20 +5,12 @@ import { throwOnFailedReply, throwOnReplyError } from '../src/internal/replyErro
 /**
  * Direct truth table for the single-sourced reply-reject predicate.
  *
- * These helpers are exercised indirectly at 17 hook sites. Until this change,
- * two of those sites COULD NOT see a defect in them: `useSharedStorage.withdraw`
- * and `useAppStorage.delete` each throw a SECOND, longer message that begins
- * with the helper's own fallback, so an unanchored `toThrow('…')` substring-
- * matched either throw. A mutation sweep confirmed it — flipping
- * `throwOnFailedReply` back to truthiness survived at exactly those two sites.
- *
- * 🔴 BOTH ASSERTIONS ARE NOW ANCHORED (`/^…$/`), in the same commit as this
- * file, and that is what makes them able to see it — M1 now dies at both. The
- * anchors are load-bearing, NOT stylistic: revert either to a plain string and
- * the suite stays green while M1's kill count drops from 9 to 7, restoring the
- * vacuous-assertion hole. Dropping `!result.ok` still survives at three sites
- * (`withdraw`, `delete`, `set`), which no anchoring can fix — that one is
- * killed here and only here.
+ * These helpers are exercised indirectly at every hook site that uses them, and
+ * a hook test can miss a defect here: a hook that throws a second, longer
+ * message beginning with the helper's fallback lets an unanchored `toThrow('…')`
+ * substring-match either throw. (A mutation sweep found exactly that at two
+ * legacy-store hook sites, since removed.) Every assertion below is anchored
+ * (`/^…$/`) for that reason; the anchors are load-bearing, not stylistic.
  *
  * So the predicate gets its own test, keyed on nothing but its inputs.
  */
@@ -68,11 +60,8 @@ describe('throwOnFailedReply — for replies carrying the `{ ok, error }` pair',
 
   // The string is ARBITRARY on purpose — this helper is protocol-agnostic and
   // passes through whatever the host sent. It used to read `PAYLOAD_TOO_LARGE`,
-  // which is a value no host can put on an App Storage reply: that is the TRPC
-  // CODE and the bridge forwards the MESSAGE (#343). A fixture that spells a
-  // fiction teaches the fiction; the real strings live in the app-sdk's
-  // `blocks/appStorageErrors.ts`, and `classifyAppStorageError` (exported from
-  // `@civitai/app-sdk/blocks`) is what matches them.
+  // which is a TRPC CODE the bridge never forwards — it forwards the MESSAGE
+  // (#343). A fixture that spells a fiction teaches the fiction.
   it('throws the host text on ok:false with a non-empty error', () => {
     expect(() => throwOnFailedReply({ ok: false, error: 'host text' }, FB)).toThrow(/^host text$/);
   });

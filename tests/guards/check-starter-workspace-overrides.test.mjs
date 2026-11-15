@@ -102,12 +102,12 @@ describe('check-starter-workspace-overrides', () => {
     // like the starter case above: one pin added, one flipped, so coverage stays
     // at the floor and the ban is the only rule that can fail the run.
     const examples = clone(DEFAULT_EXAMPLES);
-    examples['kv-storage']['@civitai/theme'] = '^0.2.0'; // 26 -> 27 covered
-    examples['kv-storage']['@civitai/app-sdk'] = 'workspace:^'; // 27 -> 26, at the floor
+    examples['monetize']['@civitai/theme'] = '^0.2.0'; // 26 -> 27 covered
+    examples['monetize']['@civitai/app-sdk'] = 'workspace:^'; // 27 -> 26, at the floor
     const r = await guard({ examples });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER/);
-    assert.match(r.stderr, /starters\/examples\/kv-storage\/package\.json/);
+    assert.match(r.stderr, /starters\/examples\/monetize\/package\.json/);
     assert.doesNotMatch(r.stderr, /COVERAGE FLOOR/);
   });
 
