@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 14 = blocks.* (14)
- * switch case labels .... 39, of which 16 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 40, of which 17 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -109,6 +109,10 @@
  *     publishing against the mock host — `createMockHost` or `Harness` from
  *     `@civitai/blocks-react/testing`, with the `publishImageIds` /
  *     `publishError` options. Replies with a refusal.
+ *   • PERSIST_GENERATION_SOURCE — saving an output as a private, scanned source
+ *     requires the same signed-in session; test it against the mock host, with
+ *     the `persistedGenerationSource` / `persistGenerationSourceError` options.
+ *     Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • GET_RESOURCE_FILE — the same session-authed resolve plus in-tab
@@ -1122,10 +1126,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 payload: {
                   requestId,
                   // keeps the workflowId so the block maps it back to the right card.
+                  // A transient failure is a poll the host could not serve, so it
+                  // carries `throttled: true` as production's
+                  // `pollFailureSnapshot` does, and `watch` does not treat it
+                  // as an update.
                   snapshot: {
                     workflowId,
                     status: transient ? ('processing' as const) : ('failed' as const),
                     error: r.error ?? 'poll failed',
+                    ...(transient ? { throttled: true as const } : {}),
                   },
                 },
               });
@@ -1566,6 +1575,41 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                   'does not have; test publishing against the mock host — createMockHost or ' +
                   'Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
                   'publishError options',
+              },
+            });
+            return;
+          }
+
+          case 'PERSIST_GENERATION_SOURCE': {
+            // UNSUPPORTED in live, for the same reason as PUBLISH_GENERATION_OUTPUTS
+            // directly above: on civitai.com the page host resolves the workflow's
+            // output, saves it and waits for its scan through the viewer's
+            // signed-in session, which the local harness does not have.
+            //
+            // FREE TEXT, like the publish refusal. `usePersistGenerationSource`
+            // rejects with it as the message. Test it against the mock host —
+            // `createMockHost` or `Harness` from `@civitai/blocks-react/testing`,
+            // with the `persistedGenerationSource` / `persistGenerationSourceError`
+            // options.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'persist-generation-source',
+              'PERSIST_GENERATION_SOURCE is not supported in dev:live (it requires the ' +
+                "viewer's signed-in civitai.com session, which the local harness does not have). " +
+                'Replying with a refusal. Test it against the mock host — createMockHost or ' +
+                'Harness from @civitai/blocks-react/testing, with the persistedGenerationSource / ' +
+                'persistGenerationSourceError options.',
+            );
+            dispatchToBlock({
+              type: 'GENERATION_SOURCE_PERSISTED',
+              payload: {
+                requestId,
+                error:
+                  'persisting a generation source is not supported in dev:live — it requires ' +
+                  "the viewer's signed-in civitai.com session, which the local harness does " +
+                  'not have; test it against the mock host — createMockHost or Harness from ' +
+                  '@civitai/blocks-react/testing, with the persistedGenerationSource / ' +
+                  'persistGenerationSourceError options',
               },
             });
             return;

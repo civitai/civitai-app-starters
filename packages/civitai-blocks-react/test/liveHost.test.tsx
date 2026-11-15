@@ -693,6 +693,7 @@ describe('createLiveHost — workflow forwarding', () => {
     const snap = payload.snapshot as BlockWorkflowSnapshot;
     expect(snap.status).toBe('failed');
     expect(snap.error).toMatch(/NSFW prompt rejected/);
+    expect('throttled' in snap).toBe(false); // a real snapshot is never marked
     expect(pollCalls).toBe(1); // a real failed status is not retried
   });
 
@@ -719,6 +720,9 @@ describe('createLiveHost — workflow forwarding', () => {
     expect(snap.status).not.toBe('failed');
     expect(snap.workflowId).toBe('wf_1'); // keeps the id so the block maps it back
     expect(snap.error).toMatch(/unauthorized/);
+    // A poll the host could not serve, marked as production's
+    // `pollFailureSnapshot` marks it, so `watch` does not treat it as an update.
+    expect(snap.throttled).toBe(true);
     // 1 initial + 3 retries (POLL_RETRY_BACKOFF_MS has 3 entries).
     expect(pollCalls).toBe(4);
   });
@@ -2371,6 +2375,59 @@ describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed
 
     expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
       /PUBLISH_GENERATION_OUTPUTS/,
+    );
+  });
+});
+
+describe('createLiveHost — PERSIST_GENERATION_SOURCE (refused: needs a signed-in session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // The page host resolves the output, saves it and waits for its scan through
+  // the viewer's signed-in session, which this harness does not have. It must
+  // refuse on the reply channel at once — never fall through to `default:`
+  // (a 120 s hang in the hook) and never touch the network.
+  it('replies GENERATION_SOURCE_PERSISTED with an actionable error and makes no network call', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock = vi.fn(async () => {
+      throw new Error('PERSIST_GENERATION_SOURCE must not touch the network');
+    });
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const callsAfterInit = fetchMock.mock.calls.length;
+
+    post('PERSIST_GENERATION_SOURCE', { requestId: 'r-persist', workflowId: 'wf_1', imageIndex: 0 });
+    const payload = await waitForMessage(inbound, 'GENERATION_SOURCE_PERSISTED');
+
+    expect(payload.requestId).toBe('r-persist');
+    expect('result' in payload).toBe(false);
+    expect(payload.error).toBe(
+      'persisting a generation source is not supported in dev:live — it requires the ' +
+        "viewer's signed-in civitai.com session, which the local harness does not have; test " +
+        'it against the mock host — createMockHost or Harness from ' +
+        '@civitai/blocks-react/testing, with the persistedGenerationSource / ' +
+        'persistGenerationSourceError options',
+    );
+    expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+      /PERSIST_GENERATION_SOURCE/,
     );
   });
 });

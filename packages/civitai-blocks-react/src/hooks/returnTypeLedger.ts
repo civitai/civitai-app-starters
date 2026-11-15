@@ -81,6 +81,7 @@ import type {
   useImageUpload,
   useMediaUpload,
   useNestedDocument,
+  usePersistGenerationSource,
   usePublishGenerationOutputs,
   useReactions,
   useRequestConsent,
@@ -128,6 +129,7 @@ import type {
   UseImageUpload,
   UseMediaUpload,
   UseNestedDocument,
+  UsePersistGenerationSource,
   UsePublishGenerationOutputs,
   UseReactions,
   UseRequestConsent,
@@ -210,6 +212,9 @@ type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrig
  */
 type _useImageUpload = Assert<Exact<ReturnType<typeof useImageUpload>, UseImageUpload>>;
 type _useNestedDocument = Assert<Exact<ReturnType<typeof useNestedDocument>, UseNestedDocument>>;
+type _usePersistGenerationSource = Assert<
+  Exact<ReturnType<typeof usePersistGenerationSource>, UsePersistGenerationSource>
+>;
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;

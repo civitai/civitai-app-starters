@@ -46,6 +46,7 @@ import {
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
   type BlockGenerationSourceImageInfo,
+  type BlockPersistedGenerationSource,
   type BlockImageScanResult,
   type BuzzAccountType,
   type BlockBuzzTransaction,
@@ -61,7 +62,9 @@ import {
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
+  type BlockWorkflowEta,
   type BlockWorkflowSnapshot,
+  type BlockWorkflowStepSnapshot,
   type BlockGatedImage,
   type BlockImagePickerSource,
   type BlockPickedImageInfo,
@@ -135,15 +138,15 @@ import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
 /**
- * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
- * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
- * `params.accountType`; a `step` body (EITHER arm) and a `customComfy` INLINE
- * body have NO account preference at all — the host's `blockStepBodySchema`,
- * `blockPassThroughStepBodySchema` and `blockInlineComfyBodySchema` are all
- * `.strict()` with no `accountType` anywhere, so there is no field to read and
- * `undefined` (let the host pick) is the accurate answer rather than a fallback.
- * That is why `case 'step'` needs no second narrow on the arm, unlike
- * `customComfy`: both step arms give the same answer.
+ * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody}, a
+ * `step` body (EITHER arm) and a `workflow` body it's the top-level
+ * `accountType` (once per workflow, never per step); on a `customComfy` RECIPE
+ * body it lives under `params.accountType`; a `customComfy` INLINE body and a
+ * `training` body have NO account preference at all — the host's
+ * `blockInlineComfyBodySchema` and `blockTrainingBodySchema` are `.strict()`
+ * with no `accountType`, so `undefined` (let the host pick) is the accurate
+ * answer rather than a fallback. `case 'step'` needs no second narrow on the
+ * arm, unlike `customComfy`: both step arms carry the field in the same place.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
@@ -169,14 +172,14 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     case 'customComfy':
       return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
-      return undefined;
-    // A training body names no pool either: the host's `blockTrainingBodySchema`
-    // is `.strict()` with no `accountType`.
+      return body.accountType;
+    // A training body names no pool: the host's `blockTrainingBodySchema` is
+    // `.strict()` with no `accountType`.
     case 'training':
       return undefined;
-    // Nor does a multi-step body: the kind has no `accountType` field.
+    // One pick for the whole multi-step workflow, on the body.
     case 'workflow':
-      return undefined;
+      return body.accountType;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
       // fail to compile, right here, rather than defaulting somewhere.
@@ -794,6 +797,40 @@ const passThroughStepType = (body: WorkflowBody): string | undefined => {
 };
 
 /**
+ * The step `$type`s the host reports `progress` for: image and video generation,
+ * whose orchestrator rate is a fraction of the whole step. Mirrors
+ * `WHOLE_STEP_PROGRESS_STEP_TYPES` in civitai/civitai#8980's
+ * `services/blocks/workflow.service`; every other type gets none.
+ */
+const MOCK_WHOLE_STEP_PROGRESS_STEP_TYPES: ReadonlySet<string> = new Set([
+  'textToImage',
+  'imageGen',
+  'videoGen',
+]);
+
+/**
+ * The orchestrator step a single-step body runs as, named as the host names it
+ * (civitai/civitai#8980): `block-step` for both `kind: 'step'` arms and for
+ * `kind: 'training'` (`BLOCK_STEP_NAME`), `block-custom-comfy` for
+ * `customComfy` (`BLOCK_CUSTOM_COMFY_STEP_NAME`). A `textToImage` step is
+ * submitted UNNAMED and named by the orchestrator, which the host source does
+ * not show, so the mock uses `$0` there. A body the mock did not see (an id
+ * restored after a reload) is treated as `textToImage`.
+ */
+const mockSingleStep = (body: WorkflowBody | undefined): { name: string; $type: string | undefined } => {
+  switch (body?.kind) {
+    case 'step':
+      return { name: 'block-step', $type: passThroughStepType(body) };
+    case 'training':
+      return { name: 'block-step', $type: 'training' };
+    case 'customComfy':
+      return { name: 'block-custom-comfy', $type: 'comfy' };
+    default:
+      return { name: '$0', $type: 'textToImage' };
+  }
+};
+
+/**
  * The real server's refusal for a TRAINING `$type` (`training`,
  * `imageResourceTraining`) on the confirmed-step path — at the estimate, where a
  * quote would otherwise be granted, and at the confirmed submit. Training runs
@@ -1070,8 +1107,21 @@ export interface MockHostOptions {
    * unaffected. Live-tunable via {@link MockHost.setScenario}.
    */
   cannedImageScan?: MockCannedImageScan;
-  /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
+  /**
+   * Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2.
+   * The polls before it report the queue and progress fields (`eta`, and a
+   * step's `queue` / `progress` / `startedAt`): the first half of them queued,
+   * the rest running. `5` gives two of each.
+   */
   pollsUntilDone?: number;
+  /**
+   * Which `POLL_WORKFLOW` requests (1-based, counted across the whole install)
+   * the mock answers as a poll the host could not serve:
+   * `{ workflowId, status: 'processing', throttled: true }`, the host's
+   * rate-limited reply. A throttled poll does not advance the workflow. Use it
+   * to exercise `watch` skipping such replies. Default: none.
+   */
+  throttledPolls?: readonly number[];
   /**
    * The `cost.total` reported on estimate + succeeded snapshots. Default 8.
    * @deprecated Prefer {@link MockGenerationScenario.costPerGen} on `generation`.
@@ -1191,6 +1241,25 @@ export interface MockHostOptions {
    * {@link MockHost.setScenario}.
    */
   publishError?: boolean | string | Error;
+  /**
+   * The private, scanned generation source returned from
+   * `PERSIST_GENERATION_SOURCE` (what `usePersistGenerationSource().persist()`
+   * resolves with), whatever `workflowId` / `imageIndex` the block names.
+   * Absent → {@link DEFAULT_PERSISTED_GENERATION_SOURCE}, with `ready: true`.
+   * Pass one with `ready: false` to simulate a scan that is still pending (the
+   * real host then refuses a generation using it with `source-scan-pending`;
+   * this mock does not enforce that). Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  persistedGenerationSource?: BlockPersistedGenerationSource;
+  /**
+   * Force `PERSIST_GENERATION_SOURCE` to reply with the FREE-TEXT `error`
+   * variant instead of a source — exercises a rejected `persist()`. `true` → a
+   * default message; a string → that message; an `Error` → its `.message`.
+   * Absent → the persist succeeds. Live-tunable via {@link MockHost.setScenario},
+   * where `false` or `undefined` clears it.
+   */
+  persistGenerationSourceError?: boolean | string | Error;
   /**
    * The per-viewer gated projection returned from `GET_IMAGES_BY_IDS` (what
    * `useGatedImages().getImages()` resolves with). Each entry is a
@@ -1591,6 +1660,7 @@ export interface MockHostOptions {
   postableImageIds?: number[];
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
+   * (on any body that carries one — see `preferredAccountType`)
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
    * block picks a pool the app's maturity policy disallows; the mock mirrors
@@ -1740,6 +1810,8 @@ export type MockHostScenarioPatch = Pick<
   | 'appWorkflowsError'
   | 'publishImageIds'
   | 'publishError'
+  | 'persistedGenerationSource'
+  | 'persistGenerationSourceError'
   | 'gatedImages'
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
@@ -2231,6 +2303,34 @@ const DEFAULT_CREATE_POST_RESULT: BlockCreatePostResult = {
   imageIds: [9101, 9102],
 };
 
+/**
+ * Default source reported on `PERSIST_GENERATION_SOURCE` when
+ * {@link MockHostOptions.persistedGenerationSource} is omitted: a scanned
+ * (`ready: true`) Civitai-hosted image. Its `url` differs from
+ * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}'s so a block that confuses an
+ * uploaded source with a persisted output can tell them apart.
+ */
+const DEFAULT_PERSISTED_GENERATION_SOURCE: BlockPersistedGenerationSource = {
+  url: 'https://image.civitai.com/mock/original=true/dev-persisted-generation-source.jpeg',
+  width: 1024,
+  height: 1024,
+  imageId: 9201,
+  ready: true,
+};
+
+/** Default message for a simulated persist failure ({@link MockHostOptions.persistGenerationSourceError}). */
+const DEFAULT_PERSIST_GENERATION_SOURCE_ERROR = 'persisting the generation source failed';
+
+/** Normalize a {@link MockHostOptions.persistGenerationSourceError} value to an error string (or `undefined`). */
+function normalizePersistGenerationSourceError(
+  e: boolean | string | Error | undefined,
+): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  return e.message || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+}
+
 /** Normalize a {@link MockHostOptions.publishError} value to an error string (or `undefined`). */
 function normalizePublishError(e: boolean | string | Error | undefined): string | undefined {
   if (e === undefined || e === false) return undefined;
@@ -2624,6 +2724,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Publish-outputs bridge data + forced free-text-error knob.
   let publishImageIds: number[] = options.publishImageIds ?? DEFAULT_PUBLISH_IMAGE_IDS;
   let publishError: string | undefined = normalizePublishError(options.publishError);
+  // Persist-generation-source bridge data + forced free-text-error knob.
+  let persistedGenerationSource: BlockPersistedGenerationSource =
+    options.persistedGenerationSource ?? DEFAULT_PERSISTED_GENERATION_SOURCE;
+  let persistGenerationSourceError: string | undefined = normalizePersistGenerationSourceError(
+    options.persistGenerationSourceError,
+  );
   // Gated-image read bridge data + forced free-text-error knob.
   let gatedImages: BlockGatedImage[] = options.gatedImages ?? DEFAULT_GATED_IMAGES;
   let gatedImagesError: string | undefined = normalizeGatedImagesError(options.gatedImagesError);
@@ -2925,6 +3031,107 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       );
     };
 
+    /** `POLL_WORKFLOW` requests seen by this install, for {@link MockHostOptions.throttledPolls}. */
+    let pollRequests = 0;
+
+    /** When each mock step started running (by workflow + step), so `startedAt` holds still across polls. */
+    const runStartedAt = new Map<string, string>();
+
+    /**
+     * The queue/ETA fields of a NON-terminal poll, so an app can be built
+     * against them, ENCODED AS THE HOST ENCODES THEM (civitai/civitai#8980): a
+     * field with nothing to report is OMITTED, never `null`. The first half of
+     * the non-terminal polls are QUEUED (the step carries only its `queue`;
+     * `precedingJobs` / `eta.queuedAhead` falling, start and finish estimates in
+     * the near future), the rest RUNNING (no `queue`; `startedAt` set, and
+     * `progress` rising for an image or video generation `$type` — the only ones
+     * the host reports it for). With the default `pollsUntilDone: 2` there is one
+     * non-terminal poll and it is a running one; give `pollsUntilDone: 5` to see
+     * two queued and two running polls. As on the host, the workflow (and a
+     * `kind: 'workflow'` run's waiting step) is `'pending'` while queued and
+     * `'processing'` once it runs. Terminal polls have no `eta`.
+     */
+    const etaView = (
+      workflowId: string,
+      polls: number,
+      stepName: string,
+      stepType: string | undefined,
+    ): {
+      eta: BlockWorkflowEta;
+      step: Pick<BlockWorkflowStepSnapshot, 'queue' | 'progress' | 'startedAt'>;
+    } => {
+      const nonTerminal = Math.max(1, pollsUntilDone - 1);
+      const queuedPolls = Math.floor(nonTerminal / 2);
+      const now = Date.now();
+      const iso = (ms: number) => new Date(ms).toISOString();
+      if (polls <= queuedPolls) {
+        const ahead = (queuedPolls - polls + 1) * 2;
+        const startsAt = iso(now + ahead * 4_000);
+        const completesAt = iso(now + ahead * 4_000 + 8_000);
+        return {
+          eta: { stepName, queuedAhead: ahead, startsAt, completesAt, progress: null, support: 'available' },
+          step: {
+            queue: {
+              precedingJobs: ahead,
+              estimatedStartAt: startsAt,
+              estimatedCompleteAt: completesAt,
+              support: 'available',
+            },
+          },
+        };
+      }
+      const running = nonTerminal - queuedPolls;
+      const progress =
+        stepType !== undefined && MOCK_WHOLE_STEP_PROGRESS_STEP_TYPES.has(stepType)
+          ? Math.min(1, (polls - queuedPolls) / (running + 1))
+          : null;
+      const key = `${workflowId}\u0000${stepName}`;
+      let startedAt = runStartedAt.get(key);
+      if (startedAt === undefined) {
+        startedAt = iso(now);
+        runStartedAt.set(key, startedAt);
+      }
+      return {
+        eta: { stepName, queuedAhead: null, startsAt: null, completesAt: null, progress, support: null },
+        step: { ...(progress !== null ? { progress } : {}), startedAt },
+      };
+    };
+
+    /**
+     * The `processing` snapshot of a poll: a multi-step run's steps, the step
+     * fields of {@link etaView} on its running step, and `eta`. A run that is
+     * not `kind: 'workflow'` has no `steps`, so only `eta` is added, naming the
+     * step as the host does ({@link mockSingleStep}).
+     */
+    const processingSnapshot = (workflowId: string, body: WorkflowBody | undefined, polls: number) => {
+      // QUEUED (the step has a queue position) reads 'pending', for the
+      // workflow and for its waiting step, as on the host; RUNNING reads
+      // 'processing'.
+      if (body?.kind !== 'workflow') {
+        const single = mockSingleStep(body);
+        const { eta, step } = etaView(workflowId, polls, single.name, single.$type);
+        return {
+          workflowId,
+          status: step.queue ? ('pending' as const) : ('processing' as const),
+          eta,
+        };
+      }
+      const view = workflowProgressView(workflowId, body, polls);
+      const current = view.steps?.find((s) => s.status === 'processing');
+      if (!current) return { workflowId, status: 'processing' as const, ...view };
+      const { eta, step } = etaView(workflowId, polls, current.name, current.$type);
+      const queued = step.queue !== undefined;
+      return {
+        workflowId,
+        status: queued ? ('pending' as const) : ('processing' as const),
+        ...view,
+        steps: view.steps!.map((s) =>
+          s === current ? { ...s, ...step, ...(queued ? { status: 'pending' as const } : {}) } : s,
+        ),
+        eta,
+      };
+    };
+
     /** Index of the step `generation.failWorkflowStep` names, or `-1`. */
     const failingWorkflowStep = (body: MockWorkflowBody): number => {
       const target = gen.failWorkflowStep;
@@ -2970,7 +3177,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           status: 'succeeded' as const,
           cost: { total: cost },
           ...workflowStepsView(workflowId, body, () => 'succeeded'),
-          spentAccountType: primaryFunder(buzzBalance),
+          // Pick-aware, like the single-step stamp below (same approximation).
+          spentAccountType: preferredAccountType(body) ?? primaryFunder(buzzBalance),
         };
       }
       // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
@@ -3162,6 +3370,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
           if (!consentGranted) {
             return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
+          }
+          // Disallowed-account path, as on SUBMIT_WORKFLOW: the real host refuses a
+          // picked pool outside the app's maturity policy on EVERY estimate too
+          // (civitai/civitai#8985), before pricing, and the page host catches that
+          // BAD_REQUEST into `failureSnapshot(err)`. Same message as the submit.
+          const estimatePick = preferredAccountType(body);
+          if (estimatePick && disallowedAccounts.has(estimatePick)) {
+            return { workflowId: 'failed', status: 'failed', error: disallowedAccountError(estimatePick) };
           }
           // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
           // kind-agnostic rule above, because the real arm is not a priced
@@ -3802,6 +4018,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
+            // The host's answer to a poll it could not serve: not read, not
+            // advanced, and flagged so the SDK does not treat it as an update.
+            pollRequests += 1;
+            if (options.throttledPolls?.includes(pollRequests)) {
+              dispatchToBlock({
+                type: 'WORKFLOW_STATUS',
+                payload: { requestId, snapshot: { workflowId, status: 'processing' as const, throttled: true as const } },
+              });
+              return;
+            }
             // An id this mock did not submit (e.g. restored from storage after a
             // reload) gets a record on its first poll, so it counts down to done
             // like any other instead of answering `processing` forever.
@@ -3860,17 +4086,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             } else {
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
-                payload: {
-                  requestId,
-                  snapshot: {
-                    workflowId,
-                    status: 'processing' as const,
-                    // A multi-step run reports how far its steps have got.
-                    ...(wf.body?.kind === 'workflow'
-                      ? workflowProgressView(workflowId, wf.body, polls)
-                      : {}),
-                  },
-                },
+                // A multi-step run reports how far its steps have got; every
+                // run reports its queue position or progress (`etaView`).
+                payload: { requestId, snapshot: processingSnapshot(workflowId, wf.body, polls) },
               });
             }
             return;
@@ -4385,6 +4603,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (isTrainingStepTypeName(b.$type)) {
               return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
             }
+            // A disallowed pick is refused BEFORE the quote is claimed, so the quote
+            // is kept — the host resolves the currencies ahead of its replay claim
+            // (civitai/civitai#8985). Same message as the submit.
+            const confirmedPick = preferredAccountType(b as unknown as WorkflowBody);
+            if (confirmedPick && disallowedAccounts.has(confirmedPick)) {
+              return reply({ error: disallowedAccountError(confirmedPick) });
+            }
             quote.spent = true;
             // The body is hashed AFTER the claim, so a body the server cannot bind
             // (non-plain-JSON input) and a body that differs both consume the quote.
@@ -4434,6 +4659,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
               payload: { requestId, result: { imageIds: [...publishImageIds] } },
+            });
+            return;
+          }
+
+          case 'PERSIST_GENERATION_SOURCE': {
+            // Save one of the app's OWN outputs as a private, scanned generation
+            // source. No confirm, like the real page host. Drop a request with
+            // no requestId (unroutable). A forced error replies with the
+            // FREE-TEXT error variant; otherwise the canned source, for any
+            // workflowId / imageIndex.
+            if (!isRoutableRequestId(requestId)) return;
+            if (persistGenerationSourceError !== undefined) {
+              dispatchToBlock({
+                type: 'GENERATION_SOURCE_PERSISTED',
+                payload: { requestId, error: persistGenerationSourceError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'GENERATION_SOURCE_PERSISTED',
+              payload: { requestId, result: { ...persistedGenerationSource } },
             });
             return;
           }
@@ -5023,6 +5269,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       appWorkflowsError = normalizeAppWorkflowsError(patch.appWorkflowsError);
     if (patch.publishImageIds !== undefined) publishImageIds = patch.publishImageIds;
     if (patch.publishError !== undefined) publishError = normalizePublishError(patch.publishError);
+    if (patch.persistedGenerationSource !== undefined) {
+      persistedGenerationSource = patch.persistedGenerationSource;
+    }
+    // Key PRESENCE, so `{ persistGenerationSourceError: undefined }` clears it.
+    if ('persistGenerationSourceError' in patch) {
+      persistGenerationSourceError = normalizePersistGenerationSourceError(
+        patch.persistGenerationSourceError,
+      );
+    }
     if (patch.gatedImages !== undefined) gatedImages = patch.gatedImages;
     if (patch.gatedImagesError !== undefined)
       gatedImagesError = normalizeGatedImagesError(patch.gatedImagesError);

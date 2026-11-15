@@ -97,7 +97,9 @@ const RESERVED_STEP_NAME = 'block-step';
 const STEP_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 /** The only keys a reference object may carry. */
 const REF_KEYS: ReadonlySet<string> = new Set(['$ref', 'path', 'default', 'format']);
-const BODY_KEYS: ReadonlySet<string> = new Set(['kind', 'steps', 'arguments']);
+const BODY_KEYS: ReadonlySet<string> = new Set(['kind', 'steps', 'arguments', 'accountType']);
+/** The host's spendable-pool enum (`blockAccountTypeSchema`): one pick per workflow body. */
+const ACCOUNT_TYPES: ReadonlySet<unknown> = new Set(['blue', 'green', 'yellow']);
 const STEP_KEYS: ReadonlySet<string> = new Set(['name', '$type', 'input', 'suppressOutput']);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -400,6 +402,7 @@ export function mockUnquotedWorkflowEstimateRefusal(failure: MockWorkflowQuoteFa
 type WellFormedWorkflowBody = {
   steps: Array<{ name?: string; $type: string; input: Record<string, unknown>; suppressOutput?: boolean }>;
   arguments?: Record<string, unknown>;
+  accountType?: 'blue' | 'green' | 'yellow';
 };
 
 /**
@@ -412,6 +415,7 @@ export function isWellFormedWorkflowShape(body: unknown): body is WellFormedWork
   if (!isPlainObject(body) || !Object.keys(body).every((key) => BODY_KEYS.has(key))) return false;
   if (!Array.isArray(body.steps) || body.steps.length === 0) return false;
   if (body.arguments !== undefined && !isPlainObject(body.arguments)) return false;
+  if (body.accountType !== undefined && !ACCOUNT_TYPES.has(body.accountType)) return false;
   for (const step of body.steps) {
     if (!isPlainObject(step) || !Object.keys(step).every((key) => STEP_KEYS.has(key))) return false;
     const { name, $type, input, suppressOutput } = step;

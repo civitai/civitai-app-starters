@@ -112,6 +112,41 @@ forces the per-app tag filter off the block token, so a block only ever sees the
 queue it produced. Mirrors civitai/civitai PR #3164; the `@civitai/blocks-react`
 `useAppWorkflows()` hook wraps both.
 
+`PERSIST_GENERATION_SOURCE` → `GENERATION_SOURCE_PERSISTED` saves ONE of those
+outputs as a **private, scanned generation source** for the next generation.
+The request is `{ requestId, workflowId, imageIndex }` (an index into the
+workflow's `images`; never a url) and the reply carries `result`, a
+`BlockPersistedGenerationSource` (`{ url, width, height, imageId, ready }`), or a
+free-text `error`. The image is private to the viewer and not on the app's
+shared grid, and there is no confirm dialog. The host waits up to about thirty
+seconds for the scan; `ready: false` means it is still pending, and a generation using the
+source is refused with `source-scan-pending` until it finishes. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, so they go into a
+`sourceImages` entry (a `textToImage` source image is refused with
+`source-scan-pending` too). It is idempotent per (viewer, app, `workflowId`,
+`imageIndex`): asking again returns the same image with its current `ready`.
+Full-page app hosts only: the iframe/slot host, review mode, a block that is not
+ready yet and App Assistant dev-tunnel previews all reply with an `error`. The
+`@civitai/blocks-react` `usePersistGenerationSource()` hook wraps it; its README
+section lists the size and rate limits:
+
+```ts
+import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
+
+declare const src: BlockPersistedGenerationSource; // from persist({ workflowId, imageIndex: 0 })
+declare const modelId: number, modelVersionId: number;
+
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
+// If `src.ready` was false, submitting `next` can fail with errorCode
+// 'source-scan-pending' (nothing is reserved); retry it later.
+```
+
 `isMessage(data, 'BLOCK_INIT')` is a **discriminator-only** narrowing helper — it
 checks `data.type`, NOT the payload shape. Anything crossing the iframe trust
 boundary must be payload-validated at the boundary (the React transport does this
@@ -148,7 +183,39 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDataImage`, `BlockTrainingDataUploadResult`, `BlockRunTrainingHostError` and the `BLOCK_TRAINING_*` bounds), `WorkflowBodyWorkflow` (+ `WorkflowBodyWorkflowStep`, `WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowStepSnapshot` and `BLOCK_WORKFLOW_MAX_STEPS`), `BlockStepQuote` / `BlockRunConfirmedStepHostError` (+ `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, `BLOCK_STEP_QUOTE_ID_REGEX`), `BlockModel3dOutput`, `BlockWorkflowSnapshot` (+ `BlockWorkflowEta`, `BlockWorkflowStepQueue` and `KnownBlockWorkflowQueueSupport` — queue position, ETA and progress, see below), `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+
+**Queue position, ETA and progress.** A non-terminal workflow snapshot from a
+poll can carry `eta`, a summary of the step that is queued or running now, for
+every kind of workflow. Each entry of `steps` can carry `queue` (only while that
+step is queued), `progress`, `startedAt` and `completedAt`. All of them are
+optional, and **absent means the same as `null`**: the host omits a field with
+nothing to report. A terminal snapshot has no `eta`, nor does a host that
+predates the field. A poll the host could not serve (rate-limited) answers
+`{ workflowId, status: 'processing', throttled: true }`: not a real update, and
+`@civitai/blocks-react`'s `watch` skips it. A throttled answer to a cancel means
+the cancel was not issued: `useBuzzWorkflow().cancel()` rejects with
+`WorkflowCancelNotIssuedError`; retry it. `progress` is a fraction from 0 to 1, reported only for image and
+video generation steps. `queuedAhead` / `precedingJobs` count the jobs ahead in
+the queue; while a step is queued they refresh at most once per held poll
+(about every 15 s), since a held poll does not wake on queue drift. Every time
+is an ISO-8601 string and an estimate. `support` is `'available' |
+'unavailable' | 'unsupported'` or a value added later (`'unavailable'` means no
+capacity right now):
+
+```ts
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+function etaLine(snapshot: BlockWorkflowSnapshot): string | null {
+  const eta = snapshot.eta;
+  if (!eta) return null; // terminal, or nothing queued or running
+  if (eta.progress !== null) return eta.progress.toLocaleString(undefined, { style: 'percent' });
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return `${eta.queuedAhead ?? '?'} ahead${at ? `, starts ~${at}` : ''}`;
+}
+```
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -222,6 +289,18 @@ const body: WorkflowBody = {
   maxBuzz: 10,
 };
 ```
+
+**Choosing the Buzz pool.** Both step arms, and a `kind: 'workflow'` body (once for the whole
+workflow, never per step), take an optional `accountType` (`'blue' | 'green' | 'yellow'`), as a
+`textToImage` body does. The host tries that pool first and keeps the app's other allowed pools
+as fallback — an SFW app may spend `blue` and `green`, a mature app `blue` and `yellow`. A pool
+outside that set is refused on the estimate and the submit alike; omit the field for the
+default order, blue first. A pick does **not** guarantee an unrestricted output: when the picked
+pool runs out the fallback pays, and a fallback to `blue` can still leave a mature output
+restricted. On a confirmed step, `accountType` is part of the quoted body — submit with the pool
+you estimated with. **Release order: host first** — civitai/civitai must accept the field
+(civitai/civitai#8985) before an app sends it, because a host that predates it refuses the whole
+body as an unknown key. Leaving it out works on every host.
 
 **Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
 can still run when the **viewer confirms its exact price** in Civitai's own dialog

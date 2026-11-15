@@ -80,6 +80,7 @@ describe('createMockHost — pass-through training', () => {
     expect(snap.status).toBe('succeeded');
     expect(snap.publishedModel).toBeUndefined();
     // The full key set: no trainedEpochs, no checkpoint url field, no fabricated stepOutputs.
+    // No `eta`: the host omits it on a terminal snapshot.
     expect(Object.keys(snap).sort()).toEqual(
       ['cost', 'imageUrls', 'spentAccountType', 'status', 'workflowId'].sort(),
     );

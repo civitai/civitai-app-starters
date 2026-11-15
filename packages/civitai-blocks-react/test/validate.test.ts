@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -27,6 +30,7 @@ import {
   isValidWorkflowSnapshot,
   payloadValidatorFor,
   projectInboundPayload,
+  projectWorkflowSnapshot,
 } from '../src/transport/validate.js';
 
 const validInit = {
@@ -1395,6 +1399,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('RESOURCE_FILE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('GENERATION_SOURCE_PERSISTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
@@ -1621,5 +1626,306 @@ describe('isValidCollectionFollowResult', () => {
 
   it('rejects a non-object result', () => {
     expect(isValidCollectionFollowResult({ requestId: 'r', result: 'ok' })).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Queue position, ETA and progress (`eta`, and a step's `queue` / `progress` /
+// `startedAt` / `completedAt`). The contract is shared with the civitai host.
+//
+// 🔴 A MALFORMED ONE IS STRIPPED, NOT FATAL. `isValidWorkflowSnapshot` does not
+// look at these fields; `projectInboundPayload` removes a malformed one and
+// delivers the rest, so a bad estimate never drops status and outputs (and
+// stalls `watch`). Every expectation below is written out literally.
+// ──────────────────────────────────────────────────────────────────────────
+describe('workflow snapshot queue/ETA fields', () => {
+  const QUEUED = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'pending',
+        queue: {
+          precedingJobs: 3,
+          estimatedStartAt: '2026-11-14T12:00:20.000Z',
+          estimatedCompleteAt: '2026-11-14T12:00:45.000Z',
+          support: 'available',
+        },
+        progress: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    },
+  };
+  const PROCESSING = {
+    workflowId: 'wf_p',
+    status: 'processing',
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'processing',
+        queue: null,
+        progress: 0.42,
+        startedAt: '2026-11-14T12:00:21.000Z',
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: 0.42,
+      support: null,
+    },
+  };
+  const reply = (snapshot: unknown) => ({ requestId: 'r1', snapshot });
+  const deliver = (snapshot: unknown) => {
+    const payload = reply(snapshot);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    return (projectInboundPayload('WORKFLOW_STATUS', payload) as { snapshot: unknown }).snapshot;
+  };
+
+  it('passes a well-formed QUEUED snapshot through unchanged, by identity', () => {
+    const payload = reply(QUEUED);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta).toEqual({
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(out.snapshot.steps[0]!.queue?.precedingJobs).toBe(3);
+  });
+
+  it('passes a well-formed PROCESSING snapshot through unchanged, by identity', () => {
+    const payload = reply(PROCESSING);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.startedAt).toBe('2026-11-14T12:00:21.000Z');
+  });
+
+  it('passes an old-host snapshot with none of the fields', () => {
+    const old = { workflowId: 'w', status: 'processing', steps: [{ name: 'draw', $type: 'imageGen', status: 'processing' }] };
+    expect(isValidWorkflowSnapshot(old)).toBe(true);
+    const payload = reply(old);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect(projectWorkflowSnapshot(old)).toBe(old);
+  });
+
+  // 🔴 ABSENT MEANS NULL. The host omits a field with nothing to report rather
+  // than sending null, so a NON-terminal snapshot can lack `eta` and every step
+  // field (nothing queued or running, or a poll the host did not read). It must
+  // cross untouched, with the keys still absent.
+  it.each([
+    ['a queued step with only its queue (host encoding)', {
+      workflowId: 'w', status: 'pending',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'pending', queue: QUEUED.steps[0]!.queue }],
+      eta: QUEUED.eta,
+    }],
+    ['a running step with no progress, queue or completedAt', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'train', $type: 'training', status: 'processing', startedAt: '2026-11-14T12:00:21Z' }],
+      eta: { ...PROCESSING.eta, stepName: 'train', progress: null },
+    }],
+    ['no eta and no step fields at all', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'processing' }],
+    }],
+    ['the rate-limited placeholder', { workflowId: 'w', status: 'processing' }],
+  ])('passes a non-terminal snapshot with the eta fields absent: %s', (_, snapshot) => {
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    // By identity: nothing was added, so an absent key stays absent.
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  it.each([
+    ['eta: null (terminal)', { ...PROCESSING, status: 'succeeded', eta: null }],
+    ['eta absent (terminal, host encoding)', { workflowId: 'w', status: 'succeeded' }],
+    ['progress 0 and 1, the inclusive bounds', { ...PROCESSING, eta: { ...PROCESSING.eta, progress: 1 }, steps: [{ ...PROCESSING.steps[0]!, progress: 0 }] }],
+    ['precedingJobs / queuedAhead 0', { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: 0 }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, precedingJobs: 0 } }] }],
+    ['a support value the SDK does not know yet', { ...QUEUED, eta: { ...QUEUED.eta, support: 'someFutureValue' }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, support: '' } }] }],
+    // Timestamps are not parsed: any string is kept.
+    ['timestamps that are not ISO dates', { ...QUEUED, eta: { ...QUEUED.eta, startsAt: 'soon', completesAt: '' }, steps: [{ ...QUEUED.steps[0]!, startedAt: 'x', completedAt: 'y' }] }],
+    ['every field null', { ...QUEUED, eta: { stepName: '', queuedAhead: null, startsAt: null, completesAt: null, progress: null, support: null }, steps: [{ ...QUEUED.steps[0]!, queue: { precedingJobs: null, estimatedStartAt: null, estimatedCompleteAt: null, support: 'unsupported' } }] }],
+  ])('keeps the lenient case: %s', (_, snapshot) => {
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  // The whole known FIELD is removed; nothing else moves. `status`, `imageUrls`
+  // and the rest of the step survive.
+  const queuedWithoutEta = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: QUEUED.steps,
+  };
+  it.each([
+    ['eta.progress 1.5', { progress: 1.5 }],
+    ['eta.progress a string', { progress: '0.5' }],
+    ['eta.progress -0.1', { progress: -0.1 }],
+    ['eta.progress NaN', { progress: Number.NaN }],
+    ['eta.queuedAhead -1', { queuedAhead: -1 }],
+    ['eta.queuedAhead 2.5', { queuedAhead: 2.5 }],
+    ['eta.support a number', { support: 7 }],
+    ['eta.startsAt a number', { startsAt: 1_700_000_000_000 }],
+    ['eta.stepName missing', { stepName: undefined }],
+  ])('strips a malformed eta (%s) and keeps the rest', (_, patch) => {
+    const eta: Record<string, unknown> = { ...QUEUED.eta, ...patch };
+    if ('stepName' in patch) delete eta.stepName;
+    const out = deliver({ ...QUEUED, eta });
+    expect(out).toStrictEqual(queuedWithoutEta);
+  });
+
+  it.each([
+    ['a string', 'soon'],
+    ['an array', []],
+    ['a number', 3],
+  ])('strips an eta that is %s', (_, eta) => {
+    expect(deliver({ ...QUEUED, eta })).toStrictEqual(queuedWithoutEta);
+  });
+
+  const queuedStep = QUEUED.steps[0]!;
+  it.each([
+    ['queue.precedingJobs -1', { queue: { ...queuedStep.queue, precedingJobs: -1 } }, 'queue'],
+    ['queue.precedingJobs 2.5', { queue: { ...queuedStep.queue, precedingJobs: 2.5 } }, 'queue'],
+    ['queue.support a number', { queue: { ...queuedStep.queue, support: 1 } }, 'queue'],
+    ['queue.estimatedStartAt missing', { queue: { precedingJobs: 3, estimatedCompleteAt: null, support: 'available' } }, 'queue'],
+    ['queue a string', { queue: '3 ahead' }, 'queue'],
+    ['progress 1.5', { progress: 1.5 }, 'progress'],
+    ['progress a string', { progress: '42%' }, 'progress'],
+    ['startedAt a number', { startedAt: 5 }, 'startedAt'],
+    ['completedAt an object', { completedAt: {} }, 'completedAt'],
+  ])('strips a malformed step %s and keeps the rest', (_, patch, removed) => {
+    const out = deliver({ ...QUEUED, steps: [{ ...queuedStep, ...patch }] });
+    const expectedStep: Record<string, unknown> = { ...queuedStep };
+    delete expectedStep[removed];
+    expect(out).toStrictEqual({ ...QUEUED, steps: [expectedStep] });
+    expect(Object.keys((out as typeof QUEUED).steps[0]!)).not.toContain(removed);
+  });
+
+  it('strips per step: a bad second step does not touch the first or the eta', () => {
+    const second = { name: 'upscale', $type: 'imageUpscaler', status: 'pending', progress: 7 };
+    const out = deliver({ ...QUEUED, steps: [queuedStep, second] });
+    expect(out).toStrictEqual({
+      ...QUEUED,
+      steps: [queuedStep, { name: 'upscale', $type: 'imageUpscaler', status: 'pending' }],
+    });
+  });
+
+  it('still REJECTS a malformed field it always rejected, eta or no eta', () => {
+    expect(isValidWorkflowSnapshot({ ...QUEUED, steps: [{ ...queuedStep, status: 'queued' }] })).toBe(false);
+    expect(isValidWorkflowSnapshot({ ...QUEUED, imageUrls: 'x' })).toBe(false);
+  });
+
+  // 🔴 The SEAM: the projection is wired for every reply that carries a
+  // snapshot. A type missing from this list would deliver a malformed eta raw.
+  it.each([
+    'ESTIMATE_RESULT',
+    'WORKFLOW_SUBMITTED',
+    'WORKFLOW_STATUS',
+    'WORKFLOW_CANCELED',
+    'TRAINING_RESULT',
+    'CONFIRMED_STEP_RESULT',
+  ])('projects the snapshot of %s', (type) => {
+    const out = projectInboundPayload(type, reply({ ...QUEUED, eta: { ...QUEUED.eta, progress: 2 } }));
+    expect(out).toStrictEqual(reply(queuedWithoutEta));
+  });
+
+  it('projects each cell of ESTIMATE_BATCH_RESULT', () => {
+    const aggregate = { total: 0, pricedCells: 0, cellCount: 2 };
+    const bad = { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: -3 } };
+    const payload = { requestId: 'r', snapshots: [PROCESSING, bad], aggregate };
+    expect(isValidEstimateBatchResult(payload)).toBe(true);
+    expect(projectInboundPayload('ESTIMATE_BATCH_RESULT', payload)).toStrictEqual({
+      requestId: 'r',
+      snapshots: [PROCESSING, queuedWithoutEta],
+      aggregate,
+    });
+  });
+
+  // The throttled-poll marker (civitai/civitai#8980): a poll the host could not
+  // serve. Only the literal `true` is the marker; anything else is removed so it
+  // can never be mistaken for one, and the reply is delivered as a plain snapshot.
+  it('passes the throttled marker through, by identity', () => {
+    const placeholder = { workflowId: 'w', status: 'processing', throttled: true };
+    expect(isValidWorkflowSnapshot(placeholder)).toBe(true);
+    expect(deliver(placeholder)).toBe(placeholder);
+  });
+
+  it.each([
+    ['false', false],
+    ['a string', 'yes'],
+    ['1', 1],
+    ['null', null],
+  ])('strips a throttled value that is not true: %s', (_, throttled) => {
+    expect(deliver({ workflowId: 'w', status: 'processing', throttled })).toStrictEqual({
+      workflowId: 'w',
+      status: 'processing',
+    });
+  });
+
+  it('leaves every other type alone', () => {
+    const payload = reply({ ...QUEUED, eta: 'bad' });
+    expect(projectInboundPayload('PUBLISH_RESULT', payload)).toBe(payload);
+  });
+});
+
+// The host's own contract fixtures: a copy of the two whole-snapshot
+// expectations (`toStrictEqual`) pinned in civitai/civitai#8980's
+// `src/server/services/blocks/__tests__/workflow.service.test.ts`. Empty
+// fields are OMITTED there, as the host sends them.
+describe('host-workflow-snapshot.eta.json contract fixture', () => {
+  const path = join(__dirname, 'fixtures/host-workflow-snapshot.eta.json');
+
+  it('exists', () => {
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it.each(['queued', 'processing'])('the %s snapshot validates and crosses unchanged', (key) => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const snapshot = fixture[key];
+    expect(snapshot).toBeDefined();
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    const payload = { requestId: 'r', snapshot };
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect((snapshot as { eta?: unknown }).eta).not.toBeUndefined();
+  });
+
+  it('is the host copy: its ids, step names and values', () => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(fixture.queued!.workflowId).toBe('wf_contract_queued');
+    expect(fixture.queued!.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: '2026-11-14T12:00:07Z',
+      completesAt: '2026-11-14T12:01:13Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(fixture.processing!.workflowId).toBe('wf_contract_processing');
+    expect(fixture.processing!.steps).toEqual([
+      { name: 'clip', $type: 'videoGen', status: 'processing', progress: 0.42, startedAt: '2026-11-14T12:00:21Z' },
+    ]);
   });
 });

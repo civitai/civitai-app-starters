@@ -614,10 +614,111 @@ Nothing is charged.
 
 | `errorCode` | Means | `error` | Retry the same body? |
 |---|---|---|---|
-| `'source-scan-pending'` | a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit |
+| `'source-scan-pending'` | a `kind: 'textToImage'` source image (`sourceImages` / `sourceImage`), a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished, or a source [`usePersistGenerationSource()`](#usepersistgenerationsource) returned with `ready: false` | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit; for a persisted source, call `persist()` again with the same `workflowId` and `imageIndex` until it answers `ready: true` |
 | `'inline-node-refused'` | an inline `customComfy` graph uses a node the host does not run inline: one that reads or writes a file path, or a loader whose input comes from another node, is an object, is a URL the host does not fetch, or names a local file. `checkComfyGraph` does not detect this | starts with `inline workflow uses nodes the host does not run inline: ` and names each node, e.g. `node 4 (LoadImage) names a local file in image; upload the media and pass its URL` | no — remove a node that reads or writes a file path; give loader inputs as literal values, and bring media in as Civitai uploads (pass the upload's `url`) |
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
+
+#### Queue position, ETA and progress
+
+A snapshot from `watch()` / `poll()` carries where the run is right now, for a
+progress bar or an "N ahead, starts ~HH:MM" line:
+
+- **`snapshot.eta`** summarises the step that is queued or running now:
+  `{ stepName, queuedAhead, startsAt, completesAt, progress, support }`. The
+  host reads it off all of the workflow's orchestrator steps, so every kind has
+  one, not only `kind: 'workflow'`. It picks the first step with a queue
+  position, else the first running step. While that step is queued,
+  `queuedAhead` counts the jobs ahead of it and `startsAt` / `completesAt` are
+  estimates. While it runs, those two are `null` and `progress` moves.
+- **On each entry of `snapshot.steps`** (a `kind: 'workflow'` run): `queue`
+  (`{ precedingJobs, estimatedStartAt, estimatedCompleteAt, support }`, present
+  only while that step is queued), `progress`, `startedAt` and `completedAt`.
+
+**Absent and `null` mean the same thing.** The host omits a field it has
+nothing to report rather than sending `null`. A terminal snapshot has no `eta`,
+and neither does a workflow with nothing queued or running. A host that predates
+these fields sends none of them.
+
+**A throttled poll is not an update, and `watch` already skips it.** When the
+host cannot serve a poll (it is rate-limited), it answers
+`{ workflowId, status: 'processing', throttled: true }` without reading the
+workflow. `watch` does not pass that reply to `onUpdate` and keeps the previous
+real snapshot (its `eta`, `steps` and `cost`) as `result`. It then polls again,
+so an app's progress bar does not blank on a refused poll. `poll()` returns
+such a reply as is, so check `snapshot.throttled`, but it does not replace
+`result` either. `cancel()` rejects on such a reply with
+`WorkflowCancelNotIssuedError`, since the cancel was not issued (see the cancel
+note below). The `dev:live` host marks its own transient poll-failure reply the
+same way. A host that predates the marker sends the same reply without
+`throttled`, and that one still reaches `onUpdate`.
+
+🔴 **The queue position does not move on its own between status changes.** A
+held poll (`watch`) returns early when the workflow's status, a step's progress
+or a job event changes. It does not return when the queue ahead of a waiting
+step drains. So while a step is queued, `queuedAhead` and its estimates refresh
+at most once per held poll, about every 15 s. Once the step runs, `progress`
+updates promptly.
+
+`progress` is a **fraction from 0 to 1**, not a percentage. The host reports it
+only for image and video generation steps (`textToImage`, `imageGen`,
+`videoGen`). Other types, training among them, report a value that restarts
+each phase, so they get none. Every time is an ISO-8601 string and an
+**estimate**. `support: 'unavailable'` means there is no capacity for the step
+right now; treat a value you do not recognise like `'unsupported'` (no
+estimate). `status` is still the only thing that says the run is done.
+
+```tsx
+import type { BlockWorkflowEta } from '@civitai/app-sdk/blocks';
+import { useState } from 'react';
+
+function RunStatus({ workflowId }: { workflowId: string }) {
+  const { watch } = useBuzzWorkflow();
+  const [eta, setEta] = useState<BlockWorkflowEta | null>(null);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    void watch(workflowId, {
+      signal: ctl.signal,
+      onUpdate: (s) => setEta(s.eta ?? null), // throttled polls never arrive here
+    }).then(
+      () => setEta(null), // terminal
+      () => {}, // a watch error is shown elsewhere
+    );
+    return () => ctl.abort();
+  }, [watch, workflowId]);
+
+  if (!eta) return null;
+  if (eta.progress !== null) {
+    return <progress max={1} value={eta.progress} />;
+  }
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return (
+    <span>
+      {eta.queuedAhead ?? '?'} ahead{at ? `, starts ~${at}` : ''}
+    </span>
+  );
+}
+```
+
+🔴 **A malformed value is dropped, not fatal.** The transport removes an `eta`
+that does not have this shape (and likewise a malformed `queue`, `progress`,
+`startedAt` or `completedAt` on a step) and delivers the rest of the snapshot,
+so a bad estimate never costs you the status or the outputs.
+
+**Mock host:** the polls before `pollsUntilDone` report these fields, encoded
+as the host does (an empty field is omitted, not `null`). The first half of
+them are queued (`status: 'pending'`, `queuedAhead` falling) and the rest
+running (`status: 'processing'`, `progress` rising for an image or video
+generation step). The terminal poll has no `eta`. `throttledPolls: [n, …]`
+answers those `POLL_WORKFLOW` requests (1-based) as throttled replies. `stepName` is the host's own step name for each kind: `block-step` for
+`kind: 'step'` and `kind: 'training'`, `block-custom-comfy` for `customComfy`,
+and each step's `name` for `kind: 'workflow'`. A `textToImage` step is named by
+the orchestrator, which the mock cannot know, so it uses `$0`. With the default
+`pollsUntilDone: 2` the one non-terminal poll is a running one. Pass
+`pollsUntilDone: 5` to see two of each.
 
 #### Several steps as one workflow: `kind: 'workflow'`
 
@@ -749,7 +850,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
+last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
 fields keep their meaning: `status` and `cost` are the whole workflow's, and
@@ -819,6 +922,14 @@ as `cost.total`.
 > stops spending Buzz. Before that, cancel was client-side only (stop polling). If
 > your installed version predates 0.5.0, do the client-side half and add the
 > `cancel(...)` call after upgrading.
+>
+> 🔴 **A throttled cancel was not issued.** If the host cannot serve the cancel
+> (it answers `throttled: true`), `cancel()` REJECTS with
+> `WorkflowCancelNotIssuedError` (`code: 'cancel-not-issued'`, plus
+> `workflowId` and the reply as `snapshot`). The workflow is still running and
+> still spending, so retry the cancel after a short wait. The hook's `result`,
+> `status` and `error` are left as they were. Any other reply resolves as
+> before, with `status` becoming `'done'`.
 
 ### `useBatchEstimate()`
 
@@ -1172,8 +1283,14 @@ if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
 ```
 
 > Per-account Buzz: `useBuzzWorkflow().submit(body)` also takes an optional
-> `body.accountType` (`'blue' | 'green' | 'yellow'`) — a *preference* for which
-> pool funds the generation; the host clamps it server-side.
+> `body.accountType` (`'blue' | 'green' | 'yellow'`) — the pool tried *first*,
+> with the app's other allowed pools as fallback. It rides top-level on a
+> `textToImage` body, on both `kind: 'step'` arms and once per `kind: 'workflow'`
+> body (under `params` on a `customComfy` recipe). A pool the app may not spend
+> is refused on the estimate and the submit. A pick does not guarantee an
+> unrestricted output: a fallback to `blue` can still restrict a mature one.
+> On a step or workflow body, send it only once the host accepts it
+> (civitai/civitai#8985): an older host refuses the whole body.
 
 ### `useViewer()`
 
@@ -1889,6 +2006,92 @@ async function onCancel(id: string) {
     await cancel(id); // optimistically flips the row to `canceled`
   } catch (err) {
     console.error('cancel failed', err);
+  }
+}
+```
+
+### `usePersistGenerationSource()`
+
+Turn one of the app's **own** finished outputs into a **private, scanned
+generation source**, to feed into the next generation (an img2img chain, a
+"refine this one" button). Returns `{ persist, isPending, error }`.
+
+`persist({ workflowId, imageIndex })` names the output the way
+`usePublishGenerationOutputs()` does — a workflow from this app's own subqueue
+and an index into its `images` (as `useAppWorkflows()` shows them), never a url —
+and resolves with `{ url, width, height, imageId, ready }`. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, usable as a `sourceImages`
+entry wherever a generation source is accepted.
+
+- **Private, no confirm.** The image is stored for the viewer with no post and
+  is **not** on the app's shared grid; `useGatedImages()` and a
+  `useCreatePostFromApp()` `published` source do not accept it. No dialog opens.
+  Use `usePublishGenerationOutputs()` to put an output on the grid.
+- **Same gates as publishing.** It needs `ai:write:budgeted`, a signed-in viewer
+  who is the token's subject, and a FINISHED workflow from this app's own
+  subqueue. An `imageIndex` out of range, or an output that is not available, is
+  refused.
+- **Size.** The output is re-stored on Civitai, downscaled to fit 2048 px if it
+  is larger. An output under 64 px is refused.
+- **Scanned.** The host waits up to about 30 s for the scan (the whole request,
+  fetch and store included, runs under one server deadline, so `persist()` waits
+  up to 120 s). `ready: true` means a generation accepts `url` now. **`ready:
+  false`** means the scan has not finished: a generation that uses the source —
+  a `textToImage` `sourceImages` entry included — is refused with the
+  `source-scan-pending` error code. An output the scan blocks, or holds for
+  review, is answered with an error.
+- **Idempotent.** One image per (viewer, app, `workflowId`, `imageIndex`):
+  calling `persist()` again with the same pair returns the same image, without
+  storing another, with its current `ready`. That is how to wait for a pending
+  scan.
+- **Where it works.** The full-page app host only. It rejects with the host's
+  error on the model-page slot (iframe) host, in review mode, before the block is
+  ready, and on App Assistant dev-tunnel previews (they have no workflow record
+  for the app). The host allows 60 per hour per viewer.
+- `dev:live` refuses it (it needs the viewer's signed-in session). Test it
+  against the mock host: `createMockHost` / `Harness` from
+  `@civitai/blocks-react/testing`, with `persistedGenerationSource` (the canned
+  reply, `ready: true` by default; pass one with `ready: false` to simulate a
+  pending scan) and `persistGenerationSourceError`. The mock does not enforce
+  `source-scan-pending`.
+
+```tsx
+import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
+
+declare const modelId: number, modelVersionId: number;
+declare function sleep(ms: number): Promise<void>;
+const { submit, watch } = useBuzzWorkflow();
+const { persist, isPending } = usePersistGenerationSource();
+
+// 1. Generate, and wait for the workflow to FINISH — persist() refuses one that has not.
+const first = await submit({ kind: 'textToImage', modelId, modelVersionId, params: { prompt: 'a red fox' } });
+const done = await watch(first.workflowId);
+if (done.status !== 'succeeded') throw new Error('the first generation did not succeed');
+
+// 2. Persist output 0 as a private source. Same (workflowId, imageIndex) ⇒ same
+//    image, so calling again is how to wait for a pending scan.
+let src: BlockPersistedGenerationSource = await persist({ workflowId: done.workflowId, imageIndex: 0 });
+for (let tries = 0; !src.ready && tries < 3; tries++) {
+  await sleep(10_000);
+  src = await persist({ workflowId: done.workflowId, imageIndex: 0 });
+}
+
+// 3. Use it as the source of the next generation.
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
+try {
+  await submit(next);
+} catch (err) {
+  if (err instanceof WorkflowSubmitError && err.snapshot.errorCode === 'source-scan-pending') {
+    // `src.ready` was still false: the scan has not finished, and the host refused
+    // before reserving anything. Persist again later, then submit `next` again.
+  } else {
+    throw err;
   }
 }
 ```

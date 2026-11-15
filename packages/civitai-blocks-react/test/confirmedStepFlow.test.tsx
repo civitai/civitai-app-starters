@@ -38,6 +38,7 @@ import {
   MOCK_STEP_NOT_CONFIRMED_ERROR,
   MOCK_STEP_TRAINING_TYPE_ERROR,
   MOCK_STEP_QUOTE_GONE_ERROR,
+  disallowedAccountError,
   type MockHostOptions,
 } from '../src/internal/mockHost.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
@@ -1330,5 +1331,40 @@ describe('readMockHostUrlOptions — ?confirmedStep', () => {
       uninstall();
       resetTransport();
     }
+  });
+});
+
+describe('confirmed step — a disallowed pick', () => {
+  let uninstall: (() => void) | undefined;
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = undefined;
+    resetTransport();
+  });
+
+  // The host resolves the currencies before it claims the quote
+  // (civitai/civitai#8985): the run is refused with the submit's message and the
+  // quote survives. Kills: a mock that runs it, or that spends the quote first.
+  it('is refused with the host message, BEFORE the quote is spent', async () => {
+    const m = install();
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await ready();
+    const { quoted } = await quote(result, { ...BODY, accountType: 'yellow' });
+
+    m.host.setScenario({ disallowedAccountTypes: ['yellow'] });
+    const r = await settle(() => result.current.run.runConfirmedStep(quoted));
+    expect(r.value).toBeUndefined();
+    expect((r.error as RunConfirmedStepError).message).toBe(disallowedAccountError('yellow'));
+
+    // Not spent: once the pool is allowed again the same quote runs.
+    m.host.setScenario({ disallowedAccountTypes: [] });
+    const ran = await settle(() => result.current.run.runConfirmedStep(quoted));
+    expect(ran.error).toBeUndefined();
+    expect(ran.value!.status).toBe('pending');
   });
 });

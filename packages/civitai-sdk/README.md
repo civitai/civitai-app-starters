@@ -792,9 +792,9 @@ submitted. `app.workflows` has no call for that confirmation step.
 |---|---|
 | `estimate(body)` | Prices the body. `estimatedCost(snapshot)` is the price in whole Buzz, or `null` when there is none |
 | `submit(body, { idempotencyKey })` | Runs it, spending the viewer's Buzz |
-| `get(workflowId)` | The workflow as it stands now |
-| `watch(workflowId)` | An async iterator: the workflow now, then each time it changes, until a final status |
-| `wait(workflowId)` | The last value of `watch` — the final snapshot, whichever status it is |
+| `get(workflowId)` | The workflow as it stands now. A read the host could not serve (rate-limited) comes back as `{ workflowId, status: 'processing', throttled: true }`: check `throttled` before rendering it |
+| `watch(workflowId)` | An async iterator: the workflow now, then each time it changes, until a final status. A `throttled: true` reply is not an update: it is never yielded and does not end the watch, which reads again |
+| `wait(workflowId)` | The last value of `watch` — the final snapshot, whichever status it is (never a throttled reply) |
 | `cancel(workflowId)` | Stops it on the orchestrator and resolves the workflow as it now stands |
 | `list({ cursor?, limit? })` | A page of the workflows this app ran for this viewer, as `{ workflows, cursor }` |
 
