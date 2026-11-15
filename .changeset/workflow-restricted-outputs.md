@@ -11,7 +11,7 @@
   - `{ restricted: true, reason }` (`BlockWorkflowRestrictedOutput`): no url and no rating. Show a locked state and do not try to fetch it; the host withholds it. The reasons:
     - `'pool'`: the Buzz that paid does not include mature content for this viewer, and the output is above PG-13.
     - `'ceiling'`: the output is above your app's maturity ceiling, above a cap the host put on the request, or blocked as mature content.
-    - `'unrated'`: no rating will ever arrive (a video engine the orchestrator does not rate, a training sample, a 3D model with no rating source), and one could restrict it. It is terminal, and it does not set `ratingPending`.
+    - `'unrated'`: no rating will ever arrive (a training sample, a 3D model on a finished step with no rating source), and one could restrict it. It is terminal, and it does not set `ratingPending`. A video from an engine the orchestrator does not rate is **delivered** with its url while unrated, as on Civitai, because its provider moderates it; a rating that does arrive still meets the ceiling.
     - `reason` is an open union; treat an unknown value like `'ceiling'`.
   - `{ pending: true }` (`BlockWorkflowPendingOutput`): not rated yet, and its rating could still restrict it. There is no url and no `nsfwLevel` until the rating lands.
   - `{ blocked: true }` (`BlockWorkflowBlockedOutput`): blocked by moderation. It keeps its slot, has no url, and never becomes available.

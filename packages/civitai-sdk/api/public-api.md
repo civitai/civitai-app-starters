@@ -2548,9 +2548,11 @@ export interface BlockWorkflowSnapshot {
      *   - `'ceiling'` — the output is above your app's maturity ceiling (an SFW
      *     app on an SFW host), above a cap the host put on the request, or blocked
      *     as mature content;
-     *   - `'unrated'` — no rating will ever arrive for it (a video engine the
-     *     orchestrator does not rate, a training sample, a 3D model with no rating
-     *     source) and one could restrict it. Terminal: it never becomes available.
+     *   - `'unrated'` — no rating will ever arrive for it (a training sample, a 3D
+     *     model on a finished step with no rating source) and one could restrict it.
+     *     Terminal: it never becomes available. (A video from an engine the
+     *     orchestrator does not rate is DELIVERED with its url while unrated, as on
+     *     Civitai — its provider moderates it.)
      * - `{ pending: true }` — not rated yet; no url and no `nsfwLevel`. See
      *   {@link ratingPending}.
      * - `{ blocked: true }` — blocked by moderation; no url, keeps its slot, never

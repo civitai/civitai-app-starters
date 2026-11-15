@@ -650,8 +650,8 @@ export interface MockGenerationScenario {
    */
   blockedOutputs?: readonly number[];
   /**
-   * Positions of a succeeded snapshot that will NEVER be rated (a video engine the
-   * orchestrator does not rate, a training sample, a 3D model with no rating source),
+   * Positions of a succeeded snapshot that will NEVER be rated (a training sample, a
+   * 3D model on a finished step with no rating source),
    * on a host whose rating could restrict them: reported as
    * `{ restricted: true, reason: 'unrated' }` — terminal, no url, no `ratingPending`,
    * refused like any restricted position.

@@ -664,9 +664,10 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
   not try to fetch one.** `'pool'` means the paying Buzz does not include mature
   content for this viewer and the output is above PG-13. `'ceiling'` means the
   output is above your app's ceiling, or above a cap the host put on the request.
-  `'unrated'` means no rating will ever arrive for it (a video engine the
-  orchestrator does not rate, a training sample, a 3D model with no rating source)
-  and one could restrict it; it never becomes available. Treat an unknown `reason`
+  `'unrated'` means no rating will ever arrive for it (a training sample, a 3D
+  model on a finished step with no rating source) and one could restrict it; it
+  never becomes available. A video from an engine the orchestrator does not rate is
+  delivered with its url while unrated, as on Civitai. Treat an unknown `reason`
   like `'ceiling'`.
 - **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
   `AppWorkflow.images` or `model3dOutputs`. Those lists are convenience views,
