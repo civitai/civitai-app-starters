@@ -2319,6 +2319,14 @@ export interface BlockWorkflowSnapshot {
    *    scanned — wait for it to finish before using it`. Estimate and submit
    *    alike, before anything is reserved. Retry the same body once the
    *    upload's scan verdict is `'scanned'`.
+   *  - `'prompt-policy-refused'` — the site's prompt check refused the prompt,
+   *    on any generation kind. SUBMIT, before anything is reserved: nothing is
+   *    charged. `error` is the refusal reasons (`Your prompt was flagged: …`);
+   *    show it to the viewer and stop. Do not resubmit the same prompt or retry
+   *    it on another model — it is refused again.
+   *  - `'prompt-check-unavailable'` — the prompt check could not run. SUBMIT,
+   *    before anything is reserved: nothing is submitted or charged. Retry no
+   *    sooner than 30 seconds later, at most 3 times.
    *  - `'inline-node-refused'` — an inline `customComfy` graph uses a node the
    *    host does not run inline: one that reads or writes a file path, or a
    *    loader whose input comes from another node, is an object, is a URL the
@@ -2940,6 +2948,16 @@ export type KnownBlockWorkflowErrorCode =
    * `asyncScan`, wait for it before submitting).
    */
   | 'source-scan-pending'
+  /**
+   * The site's prompt check refused the prompt. Show `error` and stop; the same
+   * prompt is refused again on any model. Nothing was charged.
+   */
+  | 'prompt-policy-refused'
+  /**
+   * The prompt check could not run; nothing was submitted or charged. Retry no
+   * sooner than 30 seconds later, at most 3 times.
+   */
+  | 'prompt-check-unavailable'
   /**
    * An inline `customComfy` graph uses a node the host does not run inline: one
    * that reads or writes a file path, or a loader whose input is not a literal

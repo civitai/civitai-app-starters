@@ -163,6 +163,8 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'step_quote_unavailable'
   | 'step_quote_unpriced'
   | 'source-scan-pending'
+  | 'prompt-policy-refused'
+  | 'prompt-check-unavailable'
   | 'inline-node-refused'
   | 'not-api-format'
   | 'model-filenames'

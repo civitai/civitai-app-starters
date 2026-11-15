@@ -94,6 +94,9 @@ export function isRunTrainingErrorCode(error: string): error is BlockRunTraining
  *    `.message` is the server's reason (e.g. `daily Buzz cap reached: …`) and
  *    `.snapshot` the refusal it arrived in. Retrying needs a new estimate and
  *    usually a later time; buying Buzz does not lift these caps.
+ *    A refused SAMPLE PROMPT arrives the same way, with
+ *    `.snapshot.errorCode === 'prompt-policy-refused'` (show `.message` and
+ *    change the prompts) or `'prompt-check-unavailable'` (retry later).
  *  - `.signInRequired` — no session. Route into `useRequestSignIn()`.
  *  - `.trainingDataNotUploaded` (`code: 'training data not uploaded here'`) —
  *    the quote names an image THIS host did not upload for this block. The host
