@@ -192,9 +192,10 @@ interface BlockInitPayload {
 unrated) or `{ restricted: true, reason }`. A restricted entry has **no url**:
 show a locked state and do not try to fetch it. `reason: 'pool'` means the Buzz
 that paid does not include mature content for this viewer and the output is above
-PG-13. `'ceiling'` means it is above your app's maturity ceiling, or above a cap
-the host put on the request. A restricted output is not in `imageUrls` (nor
-`AppWorkflow.images`), so those lists can be shorter than `outputs` and are
+PG-13. `'ceiling'` means it is above the viewer's own browsing level, capped by
+your app's maturity ceiling, or above a cap the host put on the request. A
+restricted output is not in `imageUrls` (nor `AppWorkflow.images`), so those
+lists can be shorter than `outputs` and are
 **not for indexing**: `imageIndexes` (publish, post) and `imageIndex` (persist)
 are **positions in `outputs`**, which never move when a rating lands late, and
 naming a restricted position is refused with `output N is restricted`. Two more

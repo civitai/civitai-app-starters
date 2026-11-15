@@ -623,8 +623,9 @@ Nothing is charged.
 
 A finished snapshot can hold an output the host will **not** hand your app. This
 happens in two cases. The Buzz that paid for the generation does not include mature
-content for this viewer, or the output is above your app's maturity ceiling (an SFW
-app on an SFW host). Such an output is **restricted**: the host withholds its url.
+content for this viewer, or the output is above the viewer's own browsing level,
+capped by your app's maturity ceiling (an SFW app on an SFW host caps every viewer at
+PG-13). Such an output is **restricted**: the host withholds its url.
 
 `snapshot.outputs` lists every available output in order, restricted ones **in
 position**. Render your result grid from it:
@@ -664,7 +665,8 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
 - `{ restricted: true, reason }`: **show a locked state; there is no url, and do
   not try to fetch one.** `'pool'` means the paying Buzz does not include mature
   content for this viewer and the output is above PG-13. `'ceiling'` means the
-  output is above your app's ceiling, or above a cap the host put on the request.
+  output is above the viewer's own browsing level, capped by your app's maturity
+  ceiling, or above a cap the host put on the request.
   `'unrated'` means no rating will ever arrive for it (a training sample, a 3D
   model on a finished step with no rating source) and one could restrict it; it
   never becomes available. A video from an engine the orchestrator does not rate is

@@ -2544,9 +2544,10 @@ export interface BlockWorkflowSnapshot {
      *   fetch it**: the entry carries no url, and the host withholds it. `reason`:
      *   - `'pool'` — the Buzz that paid for this generation does not include
      *     mature content for this viewer, and the output is above PG-13;
-     *   - `'ceiling'` — the output is above your app's maturity ceiling (an SFW
-     *     app on an SFW host), above a cap the host put on the request, or blocked
-     *     as mature content;
+     *   - `'ceiling'` — the output is above the viewer's own browsing level, capped
+     *     by your app's maturity ceiling (an SFW app on an SFW host caps every
+     *     viewer at PG-13), above a cap the host put on the request, or blocked as
+     *     mature content;
      *   - `'unrated'` — no rating will ever arrive for it (a training sample, a 3D
      *     model on a finished step with no rating source) and one could restrict it.
      *     Terminal: it never becomes available. (A video from an engine the
@@ -3243,8 +3244,9 @@ export type KnownBlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
  *
  * - `'pool'` — the Buzz that paid does not include mature content for this
  *   viewer, and the output is above PG-13.
- * - `'ceiling'` — the output is above the app's maturity ceiling, above a cap the
- *   host put on the request, or blocked as mature content.
+ * - `'ceiling'` — the output is above the viewer's own browsing level, capped by
+ *   the app's maturity ceiling, above a cap the host put on the request, or
+ *   blocked as mature content.
  * - `'unrated'` — no rating will ever arrive for the output and one could restrict
  *   it, so the host fails closed. Terminal; does not set `ratingPending`.
  */
@@ -3266,8 +3268,9 @@ export interface BlockWorkflowAvailableOutput {
 }
 
 /**
- * An output NOT RATED YET whose rating could still restrict it (your app's ceiling is
- * below the top rating, the workflow refused mature content, or the host capped it).
+ * An output NOT RATED YET whose rating could still restrict it (the viewer's level,
+ * capped by your app's maturity ceiling, is below the top rating, the workflow refused
+ * mature content, or the host capped it).
  * There is no url until the rating lands. The orchestrator can mark a workflow
  * succeeded seconds before it rates the last output, so the snapshot carries
  * {@link BlockWorkflowSnapshot.ratingPending}: poll again — `@civitai/blocks-react`'s

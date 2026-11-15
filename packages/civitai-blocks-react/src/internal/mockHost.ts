@@ -585,7 +585,8 @@ export interface MockGenerationScenario {
    * output is `{ url }` — the mock rates nothing, so no `nsfwLevel`.
    *
    * `{ 1: 'pool' }` is the case of a viewer whose Buzz does not cover mature
-   * content; `{ 0: 'ceiling' }` an SFW app's output above its ceiling.
+   * content; `{ 0: 'ceiling' }` an output above the viewer's own browsing level
+   * (capped by the app's maturity ceiling).
    *
    * Positions are the index space of `PUBLISH_GENERATION_OUTPUTS` /
    * `CREATE_POST_FROM_APP` `imageIndexes` and `PERSIST_GENERATION_SOURCE`'s
