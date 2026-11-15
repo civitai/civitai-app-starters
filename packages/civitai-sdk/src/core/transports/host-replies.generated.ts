@@ -44,6 +44,7 @@ export const HOST_REPLIES: Readonly<Record<string, HostReply>> = {
   "OPEN_IMAGE_UPLOAD": {"reply":"IMAGE_UPLOAD_RESULT","framing":"legacy","keys":["selected"]},
   "OPEN_MEDIA_UPLOAD": {"reply":"MEDIA_UPLOAD_RESULT","framing":"legacy","keys":["selected"]},
   "OPEN_RESOURCE_PICKER": {"reply":"RESOURCE_PICKER_RESULT","framing":"legacy","keys":["selected","selectedResources"]},
+  "PERSIST_GENERATION_SOURCE": {"reply":"GENERATION_SOURCE_PERSISTED","framing":"legacy","keys":["result"]},
   "POLL_WORKFLOW": {"reply":"WORKFLOW_STATUS","framing":"legacy","keys":["snapshot"]},
   "PREPARE_TRAINING_DATASET": {"reply":"TRAINING_DATASET_RESULT","framing":"legacy","keys":[]},
   "PUBLISH_GENERATION_OUTPUTS": {"reply":"PUBLISH_RESULT","framing":"legacy","keys":["result"]},

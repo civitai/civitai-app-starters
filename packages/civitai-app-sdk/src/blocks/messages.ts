@@ -15,6 +15,7 @@ import type {
   BlockResourcePickerType,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockPersistedGenerationSource,
   BlockImagePickerSource,
   BlockPickedImageInfo,
   BlockMediaKind,
@@ -299,81 +300,6 @@ export interface BlockInitPayload {
 }
 
 // ============================================================
-// Shared storage (App Blocks SHARED datastore, W?-Phase 2)
-// ============================================================
-
-/**
- * The freeform value carried by one SHARED-storage entry. Unlike the per-user
- * `APP_STORAGE_*` KV (arbitrary JSON), the SHARED store is a structured,
- * append-only, community-votable list — every entry is a `{ title, body? }`
- * record contributed by one viewer and vote-counted across all viewers. `title`
- * is required; `body` is optional long-form.
- */
-export interface SharedStorageValue {
-  title: string;
-  body?: string;
-  /**
-   * Optional, opaque, app-owned structured payload stored alongside the
-   * moderated `title`/`body`. Mirrors civitai's merged shared-storage `data`
-   * jsonb (`appendValueInput.data`). UNMODERATED — the content-safety belt runs
-   * on `title`/`body` only, so apps MUST keep ALL user-visible TEXT in
-   * `title`/`body` and place ONLY opaque app structure here (e.g. a serialized
-   * generator spec / settings blob). Counts toward the per-value byte cap + the
-   * per-app quota. Omit when the entry carries no structured payload.
-   */
-  data?: unknown;
-}
-
-/**
- * Retry metadata on a RATE-LIMITED shared-storage refusal. The host adds it
- * beside `error` on the six write replies (`SHARED_APPEND_RESULT`,
- * `SHARED_UPDATE_RESULT`, `SHARED_VOTE_RESULT`, `SHARED_UNVOTE_RESULT`,
- * `SHARED_WITHDRAW_RESULT`, `SHARED_REPORT_RESULT`) when the server refused the
- * write because a per-(viewer, app) budget is empty, so a block can render the
- * wait instead of parsing it out of the prose `error`.
- *
- * Its PRESENCE marks the refusal as rate-limited; every other refusal omits it.
- * ADDITIVE + OPTIONAL: a host that predates it never sends it, so a block must
- * treat "absent" as "not known to be rate-limited", never as "retry now".
- *
- * Same shape as the platform's tRPC `error.data.rateLimit` and the REST 429
- * body's `rateLimit` (which also comes with a `Retry-After` header).
- */
-export interface SharedStorageRateLimit {
-  /** Whole seconds until a retry can succeed. An integer, at least 1. */
-  retryAfterSeconds: number;
-  /** ISO-8601 instant at which a retry can succeed. */
-  retryAt: string;
-}
-
-/**
- * One SHARED-storage entry as it appears on the wire in `SHARED_LIST_RESULT`.
- * `createdAt`/`updatedAt` are ISO-8601 strings; the block-side hook rehydrates
- * them to `Date` (mirrors `APP_STORAGE_LIST_RESULT`'s `updatedAt`). `count` is
- * the current vote total; `authorUserId` is the contributing viewer.
- */
-export interface SharedStorageItemWire {
-  key: string;
-  authorUserId: number;
-  value: SharedStorageValue;
-  count: number;
-  /** ISO-8601; consumers rehydrate to Date. */
-  createdAt: string;
-  /** ISO-8601; consumers rehydrate to Date. */
-  updatedAt: string;
-  /**
-   * Whether the REQUESTING viewer has an active up-vote on this entry. Lets a
-   * block hydrate its vote-button state on load instead of guessing (fixes the
-   * "double-click to unvote" bug). ADDITIVE + OPTIONAL: a host that predates
-   * this field omits it — the block-side hook defaults a missing value to
-   * `false`, so a new block on an old host degrades to today's behavior. An
-   * anonymous viewer is always `false` (no per-viewer vote row). Resolved
-   * server-side per viewer; never client-trusted.
-   */
-  viewerVoted?: boolean;
-}
-
-// ============================================================
 // Parent → block
 // ============================================================
 
@@ -638,8 +564,7 @@ export type ParentToBlockMessage =
       // Reply to GET_BUZZ_BALANCE. On success `balance` carries the viewer's
       // per-pool balance ({ blue, green, yellow }); on host-side failure (or an
       // anonymous viewer / missing scope) `error` is set and `balance` is
-      // absent. Mirrors the `APP_STORAGE_GET_RESULT` value-or-error convention:
-      // consumers treat a non-empty `error` as the failure signal.
+      // absent. Consumers treat a non-empty `error` as the failure signal.
       type: 'BUZZ_BALANCE_RESULT';
       payload: {
         requestId: string;
@@ -754,6 +679,19 @@ export type ParentToBlockMessage =
       // signal (mirrors APP_WORKFLOWS_RESULT).
       type: 'PUBLISH_RESULT';
       payload: { requestId: string; result?: { imageIds: number[] }; error?: string };
+    }
+  | {
+      // Reply to PERSIST_GENERATION_SOURCE. On success `result` is the app's
+      // own output saved as a PRIVATE, scanned generation source
+      // ({@link BlockPersistedGenerationSource}: `url`/`width`/`height`, the
+      // `imageId`, and `ready`). `ready: false` means the scan had not finished
+      // within the host's wait (about 30 s); a generation using the source is
+      // refused with `source-scan-pending` until it does. On failure `error` is
+      // a FREE-TEXT string (a host refusal, such as an iframe/slot host that
+      // does not serve this message, or a forwarded server message) and
+      // `result` is absent.
+      type: 'GENERATION_SOURCE_PERSISTED';
+      payload: { requestId: string; result?: BlockPersistedGenerationSource; error?: string };
     }
   | {
       // Reply to CREATE_POST_FROM_APP. On success `result` carries the created
@@ -1071,228 +1009,6 @@ export type ParentToBlockMessage =
       payload: { requestId: string; ok?: boolean; error?: string };
     }
   | {
-      // Reply to APP_STORAGE_GET. `value` is `null` when the key isn't
-      // set OR when the viewer is anon. `error` is set on host-side
-      // failure; consumers always treat a non-empty `error` as the
-      // promise-reject signal.
-      type: 'APP_STORAGE_GET_RESULT';
-      payload: { requestId: string; value: unknown; error?: string };
-    }
-  | {
-      // Reply to APP_STORAGE_SET. A non-empty `error` is the
-      // reject signal, and any of three BYTE/ROW ceilings can raise
-      // it: the per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or
-      // either per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
-      // `APP_STORAGE_MAX_ROWS`). They are not the only thing that
-      // can — the host's zod key cap does too, see below. Do not
-      // assume a rejection means the VALUE was too big; the row
-      // ceiling is the one a block usually reaches first, and it has
-      // nothing to do with the size of the value being written.
-      //
-      // 🔴 `error` IS A HOST-AUTHORED MESSAGE, NOT A CODE. The host's
-      // router throws a `TRPCError` carrying BOTH a
-      // `code: 'PAYLOAD_TOO_LARGE'` and a per-site `message`, and the
-      // bridge's `storageErrorMessage()` forwards **`err.message`** —
-      // never the code. So `"PAYLOAD_TOO_LARGE"` is a value this field
-      // CANNOT hold, and a block that branches on it takes the wrong
-      // branch every time. (`createMockHost` emitted exactly that
-      // string for three releases, which is how the mistake survived
-      // every local run; civitai/civitai-app-starters#343.)
-      //
-      // The CEILING strings are enumerated, measured and
-      // single-sourced in `blocks/appStorageErrors.ts` — the five
-      // `PAYLOAD_TOO_LARGE` sites plus the bridge's `'storage request
-      // failed'` fallback. Branch with `classifyAppStorageError(err)`
-      // from `@civitai/app-sdk/blocks` rather than spelling one here;
-      // it is the same module the mock and the starter harnesses draw
-      // their rejections from, so `dev:mock` now exercises the branch
-      // production takes.
-      //
-      // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD, AND
-      // NOTHING HERE LISTS THE REST. The bridge's catch arms are
-      // BLANKET, so every other rejection the host raises —
-      // authorization, approval, the feature-flag kill switch, plus
-      // tRPC's own zod input-validation messages, which never reach a
-      // handler at all — rides this same field. ALL of them classify
-      // `null`. That rule needs no enumeration and survives the host
-      // rewording a message; `invalid block token` (an expired token
-      // mid-session), `block instance revoked` and `Apps are not
-      // enabled` are ILLUSTRATIONS, not a bound. Two earlier drafts
-      // tried to list the set and both came up short — see the header
-      // of `appStorageErrors.ts` for why the third does not try.
-      //
-      // 🔴 ONE ZOD BOUND IS A CEILING NOTHING LOCAL ENFORCES: the
-      // host caps `key` at 200 characters
-      // (`z.string().min(1).max(200)` on the `.input()` schema), and
-      // neither `useAppStorage` nor `createMockHost` caps it. A key
-      // derived from a URL or a model name therefore saves under
-      // `dev:mock` and fails forever live, classified `null` — and a
-      // RELOAD does not fix it. See "Ceilings outside this set" in
-      // `appStorageErrors.ts`.
-      //
-      // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
-      // localized, not written for an end user, free to move in any
-      // host deploy. Log it, classify it, show copy your app owns —
-      // and keep a generic arm for `null`. 🔴 Do NOT write "try
-      // again" in that arm: `null` is mostly expired or revoked
-      // tokens, and retrying an expired token never succeeds.
-      //
-      // `sizeBytes` is the byte size the row landed at, so the block
-      // can update its own quota estimate without another round-trip
-      // to `getQuota`.
-      type: 'APP_STORAGE_SET_RESULT';
-      payload: { requestId: string; ok?: boolean; error?: string; sizeBytes?: number };
-    }
-  | {
-      // Reply to APP_STORAGE_DELETE. `deleted: false` indicates the
-      // key wasn't present (still treated as success); explicit so
-      // callers can distinguish "I cleared it" from "it was already
-      // gone."
-      type: 'APP_STORAGE_DELETE_RESULT';
-      payload: { requestId: string; ok?: boolean; deleted?: boolean; error?: string };
-    }
-  | {
-      // Reply to APP_STORAGE_LIST. `keys` carries the key + a
-      // last-write timestamp (ISO string on the wire; the hook
-      // rehydrates to Date). `nextCursor` is omitted when the page is
-      // partial.
-      type: 'APP_STORAGE_LIST_RESULT';
-      payload: {
-        requestId: string;
-        keys: Array<{ key: string; updatedAt: string }>;
-        nextCursor?: string;
-        error?: string;
-      };
-    }
-  | {
-      type: 'APP_STORAGE_QUOTA_RESULT';
-      payload: {
-        requestId: string;
-        usedBytes: number;
-        rowCount: number;
-        limitBytes: number;
-        limitRows: number;
-        error?: string;
-      };
-    }
-  | {
-      // Reply to SHARED_LIST. `items` are newest-first; `createdAt`/`updatedAt`
-      // are ISO strings on the wire (the hook rehydrates to Date). `nextCursor`
-      // is omitted on the final page. `error` on host-side failure — consumers
-      // treat a non-empty `error` as the promise-reject signal (mirrors
-      // `APP_STORAGE_LIST_RESULT`).
-      type: 'SHARED_LIST_RESULT';
-      payload: {
-        requestId: string;
-        items: SharedStorageItemWire[];
-        nextCursor?: string;
-        error?: string;
-      };
-    }
-  | {
-      // Reply to SHARED_GET_COUNT. `count` is the entry's current vote total
-      // (0 when the key isn't present).
-      type: 'SHARED_GET_COUNT_RESULT';
-      payload: { requestId: string; count: number; error?: string };
-    }
-  | {
-      // Reply to SHARED_GET_COUNTS. `counts` maps each requested key to its
-      // vote total (absent keys resolve to 0).
-      type: 'SHARED_GET_COUNTS_RESULT';
-      payload: { requestId: string; counts: Record<string, number>; error?: string };
-    }
-  | {
-      // Reply to SHARED_APPEND. `key` is the id the host minted for the new
-      // entry. `error` on validation/host failure.
-      //
-      // `rateLimit` rides beside `error` on a RATE-LIMITED refusal only (see
-      // `SharedStorageRateLimit`); the same holds for the five write replies
-      // below (UPDATE, VOTE, UNVOTE, WITHDRAW, REPORT).
-      type: 'SHARED_APPEND_RESULT';
-      payload: {
-        requestId: string;
-        key: string;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
-      // Reply to SHARED_VOTE. `count` is the entry's vote total AFTER applying
-      // the (idempotent) vote from this viewer.
-      type: 'SHARED_VOTE_RESULT';
-      payload: {
-        requestId: string;
-        count: number;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
-      // Reply to SHARED_UNVOTE. `count` is the entry's vote total AFTER
-      // removing this viewer's vote (idempotent when they hadn't voted).
-      type: 'SHARED_UNVOTE_RESULT';
-      payload: {
-        requestId: string;
-        count: number;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
-      // Reply to SHARED_WITHDRAW. `deleted: false` means the viewer's entry
-      // wasn't present (still treated as success — idempotent withdraw).
-      type: 'SHARED_WITHDRAW_RESULT';
-      payload: {
-        requestId: string;
-        ok?: boolean;
-        deleted?: boolean;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
-      // Reply to SHARED_UPDATE. `ok: true` when the author's entry was updated
-      // in place (key/votes/reports preserved). `error` on failure — `NOT_FOUND`
-      // (missing/hidden), `FORBIDDEN` (viewer isn't the author), or a
-      // belt/size/serialization rejection. Consumers treat a PRESENT `error`
-      // (or `ok: false`) as the promise-reject signal — presence, not
-      // truthiness, so an `error: ''` cannot read as success (mirrors
-      // `SHARED_WITHDRAW_RESULT`; see the union's header note).
-      type: 'SHARED_UPDATE_RESULT';
-      payload: {
-        requestId: string;
-        ok?: boolean;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
-      // Reply to SHARED_GET (single-row fetch-by-key). On success `item` is the
-      // same wire shape as one `SHARED_LIST_RESULT` item (incl. `count` +
-      // `viewerVoted`), or `null` when the key is missing / hidden (so a `?g=`
-      // deep-link to a withdrawn or moderated row resolves cleanly to "not
-      // found" rather than leaking it). `error` on host-side failure — consumers
-      // treat a non-empty `error` as the promise-reject signal.
-      type: 'SHARED_GET_RESULT';
-      payload: { requestId: string; item: SharedStorageItemWire | null; error?: string };
-    }
-  | {
-      // Reply to SHARED_REPORT. `ok: true` when the report was filed for mod
-      // review. `error` on host-side failure — NOT_FOUND (missing key), a
-      // trust/scope rejection, or rate-limit. Consumers treat a PRESENT
-      // `error` (or `ok: false`) as the reject signal — presence, not
-      // truthiness, so an `error: ''` cannot read as success (mirrors
-      // `SHARED_WITHDRAW_RESULT`). Filing a report does NOT hide the row — a
-      // moderator decides.
-      type: 'SHARED_REPORT_RESULT';
-      payload: {
-        requestId: string;
-        ok?: boolean;
-        error?: string;
-        rateLimit?: SharedStorageRateLimit;
-      };
-    }
-  | {
       // Reply to SAVE_IMAGE (host-mediated download bridge). `ok: true` once the
       // host has triggered the browser download in its unsandboxed top frame.
       // `error` on host-side failure — a URL whose origin isn't on the civitai
@@ -1545,6 +1261,21 @@ export type BlockToParentMessage =
       // outputs. `title` is an optional advisory label (host MAY ignore it).
       type: 'PUBLISH_GENERATION_OUTPUTS';
       payload: { requestId: string; workflowId: string; imageIndexes?: number[]; title?: string };
+    }
+  | {
+      // Ask the host to save ONE output of one of the calling app's OWN
+      // workflows as a PRIVATE, scanned generation source, so the next
+      // generation can use it as an input. Like PUBLISH_GENERATION_OUTPUTS the
+      // block sends `workflowId` + `imageIndex` (an index into the workflow's
+      // `images` as seen via QUERY_APP_WORKFLOWS), NEVER a url: the host
+      // resolves the output server-side from the ownership-verified workflow.
+      // Unlike it, the image is private to the viewer, is not on the app's
+      // shared grid, and there is NO confirm dialog. The host waits up to about
+      // 30 s for the scan and replies with `GENERATION_SOURCE_PERSISTED`
+      // (`result.ready: false` when the scan is still pending). Page hosts only:
+      // an iframe/slot host replies with an `error`.
+      type: 'PERSIST_GENERATION_SOURCE';
+      payload: { requestId: string; workflowId: string; imageIndex: number };
     }
   | {
       // Ask the host to create a REAL, PUBLISHED Post on the VIEWER'S profile
@@ -1985,97 +1716,6 @@ export type BlockToParentMessage =
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };
     }
-  // Civitai Apps KV datastore (W4-v0). Storage calls go through the host —
-  // the block never sees the apps DB credentials. Keys are NAMESPACED per
-  // (block instance, user); the byte and row BUDGETS are enforced per (app,
-  // user), so every instance of one app shares one budget per viewer.
-  // `value` is freeform JSON. Ceilings: `APP_STORAGE_MAX_VALUE_BYTES` per
-  // value, `APP_STORAGE_MAX_BYTES` + `APP_STORAGE_MAX_ROWS` per (app, viewer)
-  // — see `./appStorageLimits.ts`, which is the only place they are written
-  // down and carries their provenance.
-  | {
-      type: 'APP_STORAGE_GET';
-      payload: { requestId: string; key: string };
-    }
-  | {
-      type: 'APP_STORAGE_SET';
-      payload: { requestId: string; key: string; value: unknown };
-    }
-  | {
-      type: 'APP_STORAGE_DELETE';
-      payload: { requestId: string; key: string };
-    }
-  | {
-      type: 'APP_STORAGE_LIST';
-      payload: { requestId: string; prefix?: string; limit?: number; cursor?: string };
-    }
-  | {
-      type: 'APP_STORAGE_QUOTA';
-      payload: { requestId: string };
-    }
-  // Civitai Apps SHARED datastore (W?-Phase 2). Unlike APP_STORAGE (per block
-  // instance + viewer, arbitrary JSON), the SHARED store is APP-scoped, append-
-  // only, and community-votable: any viewer appends a `{ title, body? }` entry
-  // and any viewer votes it up/down. Calls go through the host — the block never
-  // sees the datastore credentials, and the host injects the viewer identity +
-  // block token (the block sends NO token).
-  | {
-      type: 'SHARED_LIST';
-      payload: { requestId: string; prefix?: string; limit?: number; cursor?: string };
-    }
-  | {
-      type: 'SHARED_GET_COUNT';
-      payload: { requestId: string; key: string };
-    }
-  | {
-      type: 'SHARED_GET_COUNTS';
-      payload: { requestId: string; keys: string[] };
-    }
-  | {
-      type: 'SHARED_APPEND';
-      payload: { requestId: string; value: SharedStorageValue };
-    }
-  | {
-      type: 'SHARED_VOTE';
-      payload: { requestId: string; key: string };
-    }
-  | {
-      type: 'SHARED_UNVOTE';
-      payload: { requestId: string; key: string };
-    }
-  | {
-      type: 'SHARED_WITHDRAW';
-      payload: { requestId: string; key: string };
-    }
-  // Author-scoped in-place update of a SHARED entry the viewer contributed.
-  // The host re-derives ownership from the injected viewer identity (the block
-  // sends NO token) and rejects a non-author with FORBIDDEN / a missing (or
-  // hidden) key with NOT_FOUND. `title`/`body` go through the same content
-  // belt as SHARED_APPEND; `data` is opaque. The `key` and vote/report totals
-  // are preserved — only the contributed `value` changes.
-  | {
-      type: 'SHARED_UPDATE';
-      payload: { requestId: string; key: string; value: SharedStorageValue };
-    }
-  // Fetch ONE shared entry by key — the single-row companion to SHARED_LIST's
-  // paged read, so a `?g=<key>` deep-link to an item past the first page
-  // resolves. Host reads via `apps.shared.get`, replying with
-  // `SHARED_GET_RESULT` (the full item incl. `count`/`viewerVoted`, or `null`
-  // for a missing/hidden row). Respects the SAME per-viewer visibility gate as
-  // `list` — a hidden/withdrawn row is never leaked. The block sends NO token.
-  | {
-      type: 'SHARED_GET';
-      payload: { requestId: string; key: string };
-    }
-  // Report a posted shared entry for moderator review (post-write abuse
-  // reporting on a shared board). Host reads via `apps.shared.report`, replying
-  // with `SHARED_REPORT_RESULT`. Trust-gated + rate-limited server-side (same
-  // write-scope trust boundary as SHARED_APPEND). `reason` is optional free
-  // text (bounded server-side). The block sends NO token.
-  | {
-      type: 'SHARED_REPORT';
-      payload: { requestId: string; key: string; reason?: string };
-    }
   // Ask the host to DOWNLOAD an image the block already displays — the host
   // fetches the blob in its UNSANDBOXED top frame and triggers the browser
   // "Save As" (a sandboxed opaque-origin block lacks `allow-downloads`, so it
@@ -2294,6 +1934,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'GET_RESOURCE_FILE',
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
+  'PERSIST_GENERATION_SOURCE',
   'CREATE_POST_FROM_APP',
   'RUN_TRAINING',
   'RUN_CONFIRMED_STEP',
@@ -2310,21 +1951,6 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'REQUEST_SIGN_IN',
   'REQUEST_CONSENT',
   'TRACK_EVENT',
-  'APP_STORAGE_GET',
-  'APP_STORAGE_SET',
-  'APP_STORAGE_DELETE',
-  'APP_STORAGE_LIST',
-  'APP_STORAGE_QUOTA',
-  'SHARED_LIST',
-  'SHARED_GET_COUNT',
-  'SHARED_GET_COUNTS',
-  'SHARED_APPEND',
-  'SHARED_VOTE',
-  'SHARED_UNVOTE',
-  'SHARED_WITHDRAW',
-  'SHARED_UPDATE',
-  'SHARED_GET',
-  'SHARED_REPORT',
   'SAVE_IMAGE',
   'SET_COLLECTION_FOLLOW',
   'SET_ENTITY_REACTION',

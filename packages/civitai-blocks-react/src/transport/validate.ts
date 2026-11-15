@@ -58,7 +58,6 @@ import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
   ParentToBlockMessageType,
-  SharedStorageRateLimit,
   Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
@@ -330,8 +329,132 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   if (s.stepQuote !== undefined && !isValidStepQuote(s.stepQuote)) return false;
   if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
   if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
+  // 🔴 `eta` (and each step's `queue` / `progress` / `startedAt` /
+  // `completedAt`, and the `throttled` marker) is DELIBERATELY NOT CHECKED HERE. These are estimates,
+  // re-sent on every poll; rejecting the snapshot over one would drop the
+  // status and outputs with it and stall `watch` until its timeout. A malformed
+  // one is instead removed by `projectInboundPayload` →
+  // {@link projectWorkflowSnapshot}, so none this predicate let through reaches
+  // block code unchecked.
   return true;
 }
+
+/** A finite number in [0, 1] — the `progress` fraction. */
+const isProgressFraction = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+
+/** A whole number ≥ 0 — a queue position. */
+const isQueueCount = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+const isStringOrNull = (v: unknown): boolean => v === null || typeof v === 'string';
+
+/**
+ * Shape check for `BlockWorkflowSnapshot.eta`. Times are any string (not
+ * parsed: they are estimates for display, and a host formatting change must
+ * not drop them) and `support` is any string (an open union).
+ */
+function isValidWorkflowEta(e: unknown): boolean {
+  if (e === null) return true;
+  if (!isObject(e)) return false;
+  if (typeof e.stepName !== 'string') return false;
+  if (e.queuedAhead !== null && !isQueueCount(e.queuedAhead)) return false;
+  if (!isStringOrNull(e.startsAt) || !isStringOrNull(e.completesAt)) return false;
+  if (e.progress !== null && !isProgressFraction(e.progress)) return false;
+  return isStringOrNull(e.support);
+}
+
+/** Shape check for `BlockWorkflowStepSnapshot.queue`; same leniency as {@link isValidWorkflowEta}. */
+function isValidWorkflowStepQueue(q: unknown): boolean {
+  if (q === null) return true;
+  if (!isObject(q)) return false;
+  if (q.precedingJobs !== null && !isQueueCount(q.precedingJobs)) return false;
+  if (!isStringOrNull(q.estimatedStartAt) || !isStringOrNull(q.estimatedCompleteAt)) return false;
+  return typeof q.support === 'string';
+}
+
+/** The optional per-step ETA fields and their checks. Absent passes; `undefined` is never checked. */
+const STEP_ETA_FIELDS: ReadonlyArray<readonly [string, (v: unknown) => boolean]> = [
+  ['queue', isValidWorkflowStepQueue],
+  ['progress', (v) => v === null || isProgressFraction(v)],
+  ['startedAt', isStringOrNull],
+  ['completedAt', isStringOrNull],
+];
+
+/** `obj` without the keys in `drop`; `obj` itself when there are none. */
+function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly string[]): T {
+  if (drop.length === 0) return obj;
+  const copy: Record<string, unknown> = { ...obj };
+  for (const k of drop) delete copy[k];
+  return copy as T;
+}
+
+/**
+ * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
+ * `throttled` that is not `true` at the top level, and `queue`, `progress`,
+ * `startedAt` and `completedAt` on each entry of `steps` — and everything else
+ * as sent. The unit removed is the
+ * whole field: an `eta` with one bad member goes entirely, because a partial
+ * object would not have the published shape.
+ *
+ * Applied by {@link projectInboundPayload} to every reply that carries a
+ * snapshot, AFTER {@link isValidWorkflowSnapshot} (which does not look at these
+ * fields) accepted it. Identity when nothing is removed. A value that is not an
+ * object, or `steps` that is not an array, is returned as is: the validator
+ * decides those.
+ */
+export function projectWorkflowSnapshot(s: unknown): unknown {
+  if (!isObject(s)) return s;
+  let out: Record<string, unknown> = s;
+  if (Array.isArray(s.steps)) {
+    let changed = false;
+    const steps = s.steps.map((step: unknown) => {
+      if (!isObject(step)) return step;
+      const drop = STEP_ETA_FIELDS.filter(
+        ([key, ok]) => step[key] !== undefined && !ok(step[key]),
+      ).map(([key]) => key);
+      if (drop.length === 0) return step;
+      changed = true;
+      return withoutKeys(step, drop);
+    });
+    if (changed) out = { ...out, steps };
+  }
+  if (s.eta !== undefined && !isValidWorkflowEta(s.eta)) out = withoutKeys(out, ['eta']);
+  // The throttled-poll marker is the literal `true` or nothing: any other value
+  // is removed, so it can never be read as the marker (and `watch` never drops a
+  // real snapshot over it).
+  if (s.throttled !== undefined && s.throttled !== true) out = withoutKeys(out, ['throttled']);
+  return out;
+}
+
+/** `payload` with its `snapshot` projected by {@link projectWorkflowSnapshot}. */
+function projectSnapshotReply(payload: unknown): unknown {
+  if (!isObject(payload) || payload.snapshot === undefined) return payload;
+  const snapshot = projectWorkflowSnapshot(payload.snapshot);
+  return snapshot === payload.snapshot ? payload : { ...payload, snapshot };
+}
+
+/** `ESTIMATE_BATCH_RESULT` with each of its `snapshots` projected. */
+function projectEstimateBatchReply(payload: unknown): unknown {
+  if (!isObject(payload) || !Array.isArray(payload.snapshots)) return payload;
+  let changed = false;
+  const snapshots = payload.snapshots.map((cell: unknown) => {
+    const projected = projectWorkflowSnapshot(cell);
+    if (projected !== cell) changed = true;
+    return projected;
+  });
+  return changed ? { ...payload, snapshots } : payload;
+}
+
+/** The inbound types whose payload carries one `snapshot`. */
+const SNAPSHOT_REPLY_TYPES = new Set<string>([
+  'ESTIMATE_RESULT',
+  'WORKFLOW_SUBMITTED',
+  'WORKFLOW_STATUS',
+  'WORKFLOW_CANCELED',
+  'TRAINING_RESULT',
+  'CONFIRMED_STEP_RESULT',
+]);
 
 /**
  * Shape check for `stepQuote` — the viewer-confirmable quote a pass-through
@@ -627,8 +750,7 @@ const isFiniteNumber = (v: unknown): v is number =>
 /**
  * Reply to a block-initiated `GET_BUZZ_BALANCE`. A well-formed reply carries
  * EITHER a `balance` ({ blue, green, yellow } — each a finite number) OR an
- * `error` string; one with neither is malformed and dropped. Mirrors the
- * `APP_STORAGE_GET_RESULT` value-or-error convention.
+ * `error` string; one with neither is malformed and dropped.
  */
 export function isValidBuzzBalanceResult(
   p: unknown,
@@ -835,30 +957,12 @@ export function isValidImageScanResolved(
 }
 
 /**
- * Reply to a block-initiated `SHARED_UPDATE`. A well-formed reply carries a
- * boolean `ok`, OR an `error` string on its own (set on `NOT_FOUND` /
- * `FORBIDDEN` / a belt/size rejection). Follows the uniform `{ ok, error }`
- * reply contract in this module's header — the block's hook treats
- * `!ok || error !== undefined` as the reject signal.
- */
-export function isValidSharedUpdateResult(
-  p: unknown,
-): p is { ok?: boolean; error?: string; requestId?: string } {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `ok`
-  if (typeof p.ok !== 'boolean') return false;
-  return true;
-}
-
-/**
  * A value the block-side hooks will rehydrate to a `Date`: EITHER a `Date`
  * instance OR an ISO-8601 string `new Date()` parses to a finite timestamp.
  *
  * The buzz self-read bridges need this both-ways tolerance because the host
  * forwards the RAW tRPC `result` over a structured-clone `postMessage` (it does
- * NOT `.toISOString()`-map it the way the `SHARED_LIST` bridge does), so
+ * NOT `.toISOString()`-map it the way the removed `SHARED_LIST` bridge did), so
  * `cursor` + each transaction's `date` arrive as a `Date` INSTANCE today. A
  * string-only guard would DROP every real reply → the hook would hang.
  */
@@ -1510,197 +1614,14 @@ export function isValidConfirmedStepResult(p: unknown): boolean {
 }
 
 // ============================================================
-// App-storage (per-viewer KV) reply validators
+// Save-image reply validator
 // ============================================================
-//
-// Kept in lockstep with the host's `APP_STORAGE_*_RESULT` builders in
-// civitai/civitai (`PageBlockHost.tsx` / `IframeHost.tsx`) and the SDK's
-// `ParentToBlockMessage` union. Each guard asserts exactly the fields
-// `useAppStorage` dereferences. NOTE (verified against the live host): every
-// storage error path ALSO carries a zeroed/null success field (e.g.
-// `APP_STORAGE_GET` sends `value:null` with its `error`, `QUOTA` sends the four
-// numbers as `0`), so the guards SHORT-CIRCUIT on a present `error` — the hook
-// throws on it before reading the success fields, so a zeroed error reply must
-// not be dropped as "malformed".
-
-/**
- * Reply to `APP_STORAGE_GET`. `value` is arbitrary JSON (incl. `null` for an
- * unset key / anon viewer), so there is nothing to type-check on it — the guard
- * only asserts the envelope: an object, a string `error` when present, and that
- * the reply resolves to SOMETHING (a `value` field OR an `error`).
- */
-export function isValidAppStorageGetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  // `value` may be any JSON value including `null`; a reply carrying neither a
-  // `value` key nor an `error` is malformed (would silently resolve to `null`).
-  if (!('value' in p) && p.error === undefined) return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_SET`. `ok` required on the success path; `sizeBytes`
- * present only on success. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidAppStorageSetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `sizeBytes`
-  if (typeof p.ok !== 'boolean') return false;
-  if (p.sizeBytes !== undefined && !isFiniteNumber(p.sizeBytes)) return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_DELETE`. `ok` + `deleted` are required on the success
- * path. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidAppStorageDeleteResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `deleted`
-  if (typeof p.ok !== 'boolean') return false;
-  if (typeof p.deleted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_LIST`. On success `keys` is an array of
- * `{ key, updatedAt }` (the hook rehydrates `updatedAt` via `new Date`, so it
- * must be date-like); the error path sends `keys: []` with an `error`.
- */
-export function isValidAppStorageListResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `keys`
-  if (!Array.isArray(p.keys)) return false;
-  for (const k of p.keys) {
-    if (!isObject(k)) return false;
-    if (!isNonEmptyString(k.key)) return false;
-    if (!isDateLike(k.updatedAt)) return false;
-  }
-  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
-  return true;
-}
-
-/** Reply to `APP_STORAGE_QUOTA`. The four counters are finite numbers (error path zeroes them + adds `error`). */
-export function isValidAppStorageQuotaResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading the counters
-  if (!isFiniteNumber(p.usedBytes)) return false;
-  if (!isFiniteNumber(p.rowCount)) return false;
-  if (!isFiniteNumber(p.limitBytes)) return false;
-  if (!isFiniteNumber(p.limitRows)) return false;
-  return true;
-}
-
-// ============================================================
-// Shared (cross-user, votable) storage reply validators
-// ============================================================
-//
-// Kept in lockstep with the host's `SHARED_*_RESULT` builders + `apps.shared.*`
-// server return types. Same SHORT-CIRCUIT-on-`error` convention as the
-// app-storage guards (the SHARED error path is `{ requestId, error }` — no
-// success field — but short-circuiting is still correct and keeps the guards
-// uniform). Closes the silent-corrupt-return hole: without these,
-// `getCount/getCounts/append/vote/unvote`/`list` returned a missing field as
-// `undefined` typed `number`/`string` with no throw, no timeout.
-//
-// The optional `rateLimit` on the six write replies is NOT checked by any
-// predicate here, so it can never drop a reply; the hook parses it (see
-// `parseSharedStorageRateLimit` below the validators).
-
-/** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
-function isValidSharedValue(v: unknown): boolean {
-  if (!isObject(v)) return false;
-  if (typeof v.title !== 'string') return false;
-  if (v.body !== undefined && typeof v.body !== 'string') return false;
-  // `data` is opaque + unmoderated — any JSON value (incl. absent) is legal.
-  return true;
-}
-
-/**
- * Reply to `SHARED_LIST`. On success `items` is an array the hook maps over,
- * dereferencing `key`/`authorUserId`/`value`/`count`/`createdAt`/`updatedAt`
- * (the last two ISO strings the hook rehydrates via `new Date`). Error path is
- * `{ error }` (the hook throws before touching `items`).
- */
-export function isValidSharedListResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `items`
-  if (!Array.isArray(p.items)) return false;
-  for (const it of p.items) {
-    if (!isObject(it)) return false;
-    if (!isNonEmptyString(it.key)) return false;
-    if (!isFiniteNumber(it.authorUserId)) return false;
-    if (!isValidSharedValue(it.value)) return false;
-    if (!isFiniteNumber(it.count)) return false;
-    if (!isDateLike(it.createdAt)) return false;
-    if (!isDateLike(it.updatedAt)) return false;
-    // ADDITIVE + OPTIONAL: `viewerVoted` is present on a new host, absent on an
-    // old one (the hook defaults it to false). Only a WRONG type is a drop.
-    if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
-  }
-  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
-  return true;
-}
-
-/** The wire item shape shared by `SHARED_LIST_RESULT` items + `SHARED_GET_RESULT`. */
-function isValidSharedItemWire(it: unknown): boolean {
-  if (!isObject(it)) return false;
-  if (!isNonEmptyString(it.key)) return false;
-  if (!isFiniteNumber(it.authorUserId)) return false;
-  if (!isValidSharedValue(it.value)) return false;
-  if (!isFiniteNumber(it.count)) return false;
-  if (!isDateLike(it.createdAt)) return false;
-  if (!isDateLike(it.updatedAt)) return false;
-  if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Reply to `SHARED_GET` (single-row fetch-by-key). On success `item` is either
- * the wire item shape (same as one `SHARED_LIST_RESULT` item) OR `null` (a
- * missing/hidden key — a legitimate "not found", NOT an error). Error path is
- * `{ error }` (the hook throws before reading `item`).
- */
-export function isValidSharedGetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `item`
-  // `null` is a valid, non-error result (key not found / hidden).
-  if (p.item === null) return true;
-  return isValidSharedItemWire(p.item);
-}
-
-/**
- * Reply to `SHARED_REPORT`. On success `ok` is a boolean; the error path is
- * `{ error }`, with or without `ok: false`. Uniform `{ ok, error }` contract
- * (module header) — the SDK hook rejects on `!ok || error !== undefined`.
- */
-export function isValidSharedReportResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `ok`
-  if (typeof p.ok !== 'boolean') return false;
-  return true;
-}
 
 /**
  * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
  * `error` is a free-text host-side failure (disallowed origin / withheld image
  * / disallowed `bytes` type / over-size / fetch failure / `busy`). Uniform `{ ok, error }` contract (module
- * header) — same shape as `isValidSharedReportResult`.
+ * header).
  */
 export function isValidSaveImageResult(p: unknown): boolean {
   if (!isObject(p)) return false;
@@ -1709,85 +1630,6 @@ export function isValidSaveImageResult(p: unknown): boolean {
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;
   return true;
-}
-
-/**
- * Reply to `SHARED_GET_COUNT` / `SHARED_VOTE` / `SHARED_UNVOTE` — all three
- * carry an identical `{ count, error? }` shape. On success `count` is the
- * finite vote total the hook returns directly.
- */
-export function isValidSharedCountResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `count`
-  if (!isFiniteNumber(p.count)) return false;
-  return true;
-}
-
-/** Reply to `SHARED_GET_COUNTS`. `counts` maps each key to a finite vote total. */
-export function isValidSharedCountsResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `counts`
-  if (!isObject(p.counts)) return false;
-  for (const v of Object.values(p.counts)) {
-    if (!isFiniteNumber(v)) return false;
-  }
-  return true;
-}
-
-/** Reply to `SHARED_APPEND`. On success `key` is the host-minted (non-empty) entry id. */
-export function isValidSharedAppendResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `key`
-  if (!isNonEmptyString(p.key)) return false;
-  return true;
-}
-
-/**
- * Reply to `SHARED_WITHDRAW`. On success `ok` + `deleted` are booleans; the
- * error path is `{ error }`. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidSharedWithdrawResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `deleted`
-  if (typeof p.ok !== 'boolean') return false;
-  if (typeof p.deleted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Validate the `rateLimit` a host put on a shared-storage refusal. Returns a
- * copy holding ONLY the two known fields, or `undefined` when `value` is
- * missing or malformed.
- *
- * Kept in lockstep with the platform's own parser for the same metadata
- * (`parseRateLimitMeta` in civitai's `src/shared/utils/rate-limit-meta.ts`):
- * `retryAfterSeconds` must be an integer of at least 1, and `retryAt` a string
- * `Date.parse` can read. Anything else — a wrong type, a negative or fractional
- * number, a missing field, a non-object — is malformed.
- *
- * 🔴 NOT A VALIDATOR, deliberately. None of the `isValidShared*Result`
- * predicates look at `rateLimit`, so a malformed one can never DROP a reply:
- * dropping it would hang the block's request to its timeout over an optional
- * hint. The reply is delivered unchanged, and `useSharedStorage` calls this
- * parser: a malformed value is ignored and the plain refusal error is thrown.
- */
-export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLimit | undefined {
-  if (!isObject(value)) return undefined;
-  const { retryAfterSeconds, retryAt } = value;
-  if (typeof retryAfterSeconds !== 'number' || !Number.isInteger(retryAfterSeconds)) {
-    return undefined;
-  }
-  if (retryAfterSeconds < 1) return undefined;
-  if (typeof retryAt !== 'string' || Number.isNaN(Date.parse(retryAt))) return undefined;
-  return { retryAfterSeconds, retryAt };
 }
 
 // ============================================================
@@ -2062,6 +1904,59 @@ function projectMediaUploadBatchResults(payload: unknown): unknown {
 }
 
 /**
+ * Reply to `PERSIST_GENERATION_SOURCE`: `{ requestId, result }` or
+ * `{ requestId, error }`.
+ *
+ * 🔴 ONLY THE CORRELATION IS CHECKED HERE, ON PURPOSE. A reply this predicate
+ * rejects is DROPPED, and a dropped reply leaves `persist()` waiting out its
+ * whole timeout over a reply the host already sent. So any object whose
+ * `requestId` has the wire shape (`isWireRequestIdShape`) is let through, and
+ * {@link projectInboundPayload} ({@link projectGenerationSourcePersisted})
+ * answers a malformed one as an `error` — the same precedent as a malformed
+ * `MEDIA_UPLOAD_BATCH_RESULT` entry. No reply this lets through reaches block
+ * code with an unchecked `result`.
+ */
+export function isValidGenerationSourcePersistedResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  return isWireRequestIdShape(p.requestId);
+}
+
+/**
+ * The error a malformed `GENERATION_SOURCE_PERSISTED` reply is answered with:
+ * one whose `error` is not a string, or that carries no `error` and no
+ * well-formed `result`.
+ */
+export const GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR =
+  'the host sent a malformed reply to PERSIST_GENERATION_SOURCE';
+
+/**
+ * A well-formed `GENERATION_SOURCE_PERSISTED.result`: a non-empty `url`,
+ * positive whole `width` / `height` / `imageId`, and a boolean `ready`.
+ */
+function isValidPersistedGenerationSource(r: unknown): boolean {
+  if (!isObject(r)) return false;
+  if (!isNonEmptyString(r.url)) return false;
+  if (!isPositiveInteger(r.width) || !isPositiveInteger(r.height)) return false;
+  if (!isPositiveInteger(r.imageId)) return false;
+  return typeof r.ready === 'boolean';
+}
+
+/**
+ * A `GENERATION_SOURCE_PERSISTED` payload with a malformed reply replaced by
+ * `{ requestId, error }` ({@link GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR}),
+ * so `persist()` rejects instead of resolving with fields nobody checked or
+ * hanging to its timeout. Identity for a reply with a string `error` (the hook
+ * throws on it before reading `result`) and for one with a well-formed
+ * `result`. Nothing of a malformed `result` crosses.
+ */
+function projectGenerationSourcePersisted(payload: unknown): unknown {
+  if (!isObject(payload)) return payload;
+  if (typeof payload.error === 'string') return payload;
+  if (payload.error === undefined && isValidPersistedGenerationSource(payload.result)) return payload;
+  return { requestId: payload.requestId, error: GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR };
+}
+
+/**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
  * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
@@ -2088,15 +1983,23 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: two types are projected today. `IMAGES_RESULT`
- * (the hidden-entry allowlist) and `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
- * entry becomes that item's error, {@link projectMediaUploadBatchResults}).
+ * 🔴 SCOPE, STATED HONESTLY: four groups are projected today. `IMAGES_RESULT`
+ * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
+ * `GENERATION_SOURCE_PERSISTED` (a malformed reply becomes an error,
+ * {@link projectGenerationSourcePersisted}), and every reply carrying a
+ * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
+ * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
+ * ({@link projectWorkflowSnapshot}).
  * Every other type is returned by identity — this is not a general sanitizer and
  * must not be read as one. Add a case here (and say so in the type's validator
  * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
+  if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
+  if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
+  if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
   if (type !== 'IMAGES_RESULT') return payload;
   if (!isObject(payload)) return payload;
   const result = payload.result;
@@ -2182,6 +2085,8 @@ export function payloadValidatorFor(
       return isValidCancelAppWorkflowResult;
     case 'PUBLISH_RESULT':
       return isValidPublishResult;
+    case 'GENERATION_SOURCE_PERSISTED':
+      return isValidGenerationSourcePersistedResult;
     case 'IMAGES_RESULT':
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
@@ -2208,34 +2113,6 @@ export function payloadValidatorFor(
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':
       return isValidImageScanResolved;
-    case 'SHARED_UPDATE_RESULT':
-      return isValidSharedUpdateResult;
-    case 'APP_STORAGE_GET_RESULT':
-      return isValidAppStorageGetResult;
-    case 'APP_STORAGE_SET_RESULT':
-      return isValidAppStorageSetResult;
-    case 'APP_STORAGE_DELETE_RESULT':
-      return isValidAppStorageDeleteResult;
-    case 'APP_STORAGE_LIST_RESULT':
-      return isValidAppStorageListResult;
-    case 'APP_STORAGE_QUOTA_RESULT':
-      return isValidAppStorageQuotaResult;
-    case 'SHARED_LIST_RESULT':
-      return isValidSharedListResult;
-    case 'SHARED_GET_COUNT_RESULT':
-    case 'SHARED_VOTE_RESULT':
-    case 'SHARED_UNVOTE_RESULT':
-      return isValidSharedCountResult;
-    case 'SHARED_GET_COUNTS_RESULT':
-      return isValidSharedCountsResult;
-    case 'SHARED_APPEND_RESULT':
-      return isValidSharedAppendResult;
-    case 'SHARED_WITHDRAW_RESULT':
-      return isValidSharedWithdrawResult;
-    case 'SHARED_GET_RESULT':
-      return isValidSharedGetResult;
-    case 'SHARED_REPORT_RESULT':
-      return isValidSharedReportResult;
     case 'SAVE_IMAGE_RESULT':
       return isValidSaveImageResult;
     case 'CHECKPOINT_PICKER_RESULT':

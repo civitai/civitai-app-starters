@@ -382,6 +382,38 @@ describe('root barrel / subpath relationship (#377)', () => {
     expect(surface.get('./blocks')!.size).toBe(229);
   });
 
+  it('🔴 keeps EXACTLY the seven deprecated legacy-store constants on `./blocks` until app-sdk 1.0.0', async () => {
+    // Published `@civitai/blocks-react` <= 0.80.x VALUE-imports all seven from
+    // `@civitai/app-sdk/blocks` in `dist/internal/mockHost.js`, at module load,
+    // and declares the peer range `>=0.57.0 <1.0.0`, which admits this release.
+    // Drop one and `@civitai/blocks-react/testing` throws
+    // `SyntaxError: ... does not provide an export named ...` for anyone who
+    // upgrades app-sdk before blocks-react, so none of their test files load
+    // (the #344 failure). See `src/blocks/legacyStoreCompat.ts`. Remove them
+    // only in app-sdk 1.0.0, which every such blocks-react peer range excludes.
+    // Asserted on both the type surface and the RUNTIME module, because the
+    // consumer needs values: an `export type` re-export would pass the first.
+    const why =
+      'published @civitai/blocks-react <=0.80.x /testing imports these from @civitai/app-sdk/blocks ' +
+      'at load, and its peer range >=0.57.0 <1.0.0 admits this app-sdk: keep exactly these seven ' +
+      'exported until app-sdk 1.0.0 (see src/blocks/legacyStoreCompat.ts)';
+    const LEGACY_STORE_COMPAT = [
+      'APP_STORAGE_ERROR_REQUEST_FAILED',
+      'APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
+      'APP_STORAGE_ERROR_USER_ROW_LIMIT',
+      'APP_STORAGE_ERROR_VALUE_TOO_LARGE',
+      'APP_STORAGE_MAX_BYTES',
+      'APP_STORAGE_MAX_ROWS',
+      'APP_STORAGE_MAX_VALUE_BYTES',
+    ];
+    const onBlocks = sorted([...surface.get('./blocks')!].filter((n) => n.startsWith('APP_STORAGE_')));
+    expect(onBlocks, why).toEqual(LEGACY_STORE_COMPAT);
+
+    const runtime = (await import('../src/blocks/index.js')) as Record<string, unknown>;
+    const missingAtRuntime = LEGACY_STORE_COMPAT.filter((n) => runtime[n] === undefined);
+    expect(missingAtRuntime, why).toEqual([]);
+  });
+
   it('gives every published subpath a reason recorded next to the README that documents it', () => {
     // The ledger's reason is for maintainers; the README row is for consumers.
     // Both must exist, or "documented" is a claim nobody checks.

@@ -383,6 +383,13 @@ when their generation, panel or post is not there) shows nothing of its own, so 
 A failed call with a `render` also keeps its "didn't work" note. A chat
 reopened from storage groups the same as it did live.
 
+The table below is a guide to the properties most pages set, **not the whole list**. The element's
+full set of properties is `CivitaiChat`'s `static properties` (in
+[`src/components/civitai-chat.ts`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-components-chat/src/components/civitai-chat.ts),
+and the `CivitaiChat` class in the published types), and the types name what each one takes.
+`commands`, `awaitingApproval`, `subagents`, `runner`, `remoteRunner`, `panelLinkBase` and
+`dockPanels`, for example, are there and not in the table.
+
 | Property | What it does |
 |---|---|
 | `app` | The signed-in `AppClient`; the chat starts when it is set. |

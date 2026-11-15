@@ -1,13 +1,11 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   isValidAppWorkflowsResult,
   isValidCancelAppWorkflowResult,
-  isValidAppStorageDeleteResult,
-  isValidAppStorageGetResult,
-  isValidAppStorageListResult,
-  isValidAppStorageQuotaResult,
-  isValidAppStorageSetResult,
   isValidBlockInitPayload,
   isValidBuzzBalanceResult,
   isValidConsentUnavailable,
@@ -19,16 +17,8 @@ import {
   isValidMediaUploadBatchResult,
   isValidMediaUploadResult,
   isValidResourcePickerResult,
-  isValidSharedAppendResult,
-  isValidSharedCountResult,
   isValidCollectionFollowResult,
   isValidCreatePostResult,
-  isValidSharedCountsResult,
-  isValidSharedGetResult,
-  isValidSharedListResult,
-  isValidSharedReportResult,
-  isValidSharedUpdateResult,
-  isValidSharedWithdrawResult,
   isValidSaveImageResult,
   isValidRouteChanged,
   isValidThemeChange,
@@ -40,6 +30,7 @@ import {
   isValidWorkflowSnapshot,
   payloadValidatorFor,
   projectInboundPayload,
+  projectWorkflowSnapshot,
 } from '../src/transport/validate.js';
 
 const validInit = {
@@ -638,268 +629,6 @@ describe('isValidImageUploadResult', () => {
   });
 });
 
-describe('isValidSharedUpdateResult', () => {
-  it('accepts an ok reply (with or without an error)', () => {
-    expect(isValidSharedUpdateResult({ requestId: 'r', ok: true })).toBe(true);
-    expect(isValidSharedUpdateResult({ ok: true })).toBe(true);
-    expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'FORBIDDEN' })).toBe(true);
-    expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
-  });
-  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
-    expect(isValidSharedUpdateResult({ requestId: 'r1', error: 'boom' })).toBe(true);
-  });
-  // The early-accept keys on PRESENCE, so an EMPTY error string is accepted too
-  // — deliberately. Tightening it to require a non-empty string would put
-  // `{ requestId, error: '' }` back on the drop-and-hang path this contract
-  // closes. Catching `error: ''` is the consuming HOOK's job (it throws on a
-  // PRESENT error); this asserts the validator does not take that job back.
-  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
-    expect(isValidSharedUpdateResult({ requestId: 'r1', error: '' })).toBe(true);
-    expect(isValidSharedUpdateResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
-  });
-  it('still requires a boolean ok when there is NO error', () => {
-    expect(isValidSharedUpdateResult({ requestId: 'r1' })).toBe(false);
-  });
-  it('rejects a malformed reply', () => {
-    expect(isValidSharedUpdateResult(null)).toBe(false);
-    expect(isValidSharedUpdateResult({})).toBe(false); // missing ok
-    expect(isValidSharedUpdateResult({ ok: 'yes' })).toBe(false); // ok not boolean
-    expect(isValidSharedUpdateResult({ ok: true, error: 5 })).toBe(false); // error not string
-    expect(isValidSharedUpdateResult({ ok: true, requestId: 5 })).toBe(false); // requestId not string
-  });
-});
-
-// ============================================================
-// App-storage reply validators
-// ============================================================
-
-describe('isValidAppStorageGetResult', () => {
-  it('accepts any value incl. null (unset key / anon)', () => {
-    expect(isValidAppStorageGetResult({ requestId: 'r', value: { any: 'json' } })).toBe(true);
-    expect(isValidAppStorageGetResult({ requestId: 'r', value: null })).toBe(true);
-    expect(isValidAppStorageGetResult({ requestId: 'r', value: 42 })).toBe(true);
-  });
-  it('accepts an error reply (host sends value:null + error)', () => {
-    expect(isValidAppStorageGetResult({ requestId: 'r', value: null, error: 'NOT_FOUND' })).toBe(true);
-  });
-  it.each([
-    ['neither value nor error', { requestId: 'r' }],
-    ['error not a string', { requestId: 'r', value: null, error: 5 }],
-    ['requestId not a string', { requestId: 5, value: 1 }],
-    ['null payload', null],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidAppStorageGetResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidAppStorageSetResult', () => {
-  it('accepts ok:true with sizeBytes', () => {
-    expect(isValidAppStorageSetResult({ requestId: 'r', ok: true, sizeBytes: 23 })).toBe(true);
-  });
-  // A REAL host message, not the TRPC code the mock used to invent (#343). The
-  // validator takes any string, so the fixture may as well teach the truth.
-  it('accepts ok:false with error (no sizeBytes)', () => {
-    expect(
-      isValidAppStorageSetResult({
-        requestId: 'r',
-        ok: false,
-        error: 'per-user row limit exceeded',
-      }),
-    ).toBe(true);
-  });
-  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
-    expect(isValidAppStorageSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
-  });
-  // Presence, not truthiness — and the success-field checks are SKIPPED, so a
-  // garbage `sizeBytes` rides along. The hook is what rejects it. See the
-  // matching note on `isValidSharedUpdateResult`.
-  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
-    expect(isValidAppStorageSetResult({ requestId: 'r1', error: '' })).toBe(true);
-    expect(isValidAppStorageSetResult({ requestId: 'r1', ok: true, error: '', sizeBytes: 'huge' })).toBe(true);
-  });
-  it.each([
-    ['missing ok', { requestId: 'r' }],
-    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
-    ['sizeBytes not a number', { requestId: 'r', ok: true, sizeBytes: '23' }],
-    ['sizeBytes NaN', { requestId: 'r', ok: true, sizeBytes: Number.NaN }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidAppStorageSetResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidAppStorageDeleteResult', () => {
-  it('accepts ok + deleted booleans (both success and error paths)', () => {
-    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
-    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
-    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: false, deleted: false, error: 'X' })).toBe(true);
-  });
-  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
-    expect(isValidAppStorageDeleteResult({ requestId: 'r1', error: 'boom' })).toBe(true);
-  });
-  // Presence, not truthiness — `deleted` is NOT checked on the early-accept
-  // path. The hook is what rejects it.
-  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
-    expect(isValidAppStorageDeleteResult({ requestId: 'r1', error: '' })).toBe(true);
-    expect(isValidAppStorageDeleteResult({ requestId: 'r1', ok: true, error: '', deleted: 'yes' })).toBe(true);
-  });
-  it.each([
-    ['missing ok', { requestId: 'r', deleted: true }],
-    ['missing deleted', { requestId: 'r', ok: true }],
-    ['deleted not boolean', { requestId: 'r', ok: true, deleted: 'yes' }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidAppStorageDeleteResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidAppStorageListResult', () => {
-  const iso = '2026-05-27T10:11:12.000Z';
-  it('accepts keys with ISO updatedAt + cursor', () => {
-    expect(
-      isValidAppStorageListResult({ requestId: 'r', keys: [{ key: 'k', updatedAt: iso }], nextCursor: 'Zm9v' }),
-    ).toBe(true);
-  });
-  it('accepts an empty keys array', () => {
-    expect(isValidAppStorageListResult({ requestId: 'r', keys: [] })).toBe(true);
-  });
-  it('accepts a Date-instance updatedAt (structured-clone tolerance)', () => {
-    expect(isValidAppStorageListResult({ requestId: 'r', keys: [{ key: 'k', updatedAt: new Date() }] })).toBe(true);
-  });
-  it('accepts an error reply (host sends keys:[] + error)', () => {
-    expect(isValidAppStorageListResult({ requestId: 'r', keys: [], error: 'BOOM' })).toBe(true);
-  });
-  it.each([
-    ['keys not an array', { requestId: 'r', keys: 'nope' }],
-    ['key entry missing key', { requestId: 'r', keys: [{ updatedAt: iso }] }],
-    ['key entry updatedAt not date-like', { requestId: 'r', keys: [{ key: 'k', updatedAt: 'never' }] }],
-    ['nextCursor not a string', { requestId: 'r', keys: [], nextCursor: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidAppStorageListResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidAppStorageQuotaResult', () => {
-  it('accepts the four numeric counters', () => {
-    expect(
-      isValidAppStorageQuotaResult({ requestId: 'r', usedBytes: 1, rowCount: 2, limitBytes: 3, limitRows: 4 }),
-    ).toBe(true);
-  });
-  it('accepts an error reply (host zeroes the counters + adds error)', () => {
-    expect(
-      isValidAppStorageQuotaResult({ requestId: 'r', usedBytes: 0, rowCount: 0, limitBytes: 0, limitRows: 0, error: 'X' }),
-    ).toBe(true);
-  });
-  it.each([
-    ['usedBytes missing', { requestId: 'r', rowCount: 2, limitBytes: 3, limitRows: 4 }],
-    ['rowCount not a number', { requestId: 'r', usedBytes: 1, rowCount: '2', limitBytes: 3, limitRows: 4 }],
-    ['limitBytes NaN', { requestId: 'r', usedBytes: 1, rowCount: 2, limitBytes: Number.NaN, limitRows: 4 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidAppStorageQuotaResult(payload)).toBe(false);
-  });
-});
-
-// ============================================================
-// Shared-storage reply validators
-// ============================================================
-
-describe('isValidSharedListResult', () => {
-  const item = {
-    key: 'req:1',
-    authorUserId: 7,
-    value: { title: 'Dark mode', body: 'please' },
-    count: 3,
-    createdAt: '2026-05-01T00:00:00.000Z',
-    updatedAt: '2026-05-02T00:00:00.000Z',
-  };
-  it('accepts a well-formed list', () => {
-    expect(isValidSharedListResult({ requestId: 'r', items: [item], nextCursor: 'bmV4dA==' })).toBe(true);
-  });
-  it('accepts an empty list', () => {
-    expect(isValidSharedListResult({ requestId: 'r', items: [] })).toBe(true);
-  });
-  it('accepts a value with only a title (body/data optional)', () => {
-    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, value: { title: 't' } }] })).toBe(true);
-  });
-  it('accepts an item WITH viewerVoted (additive) and one WITHOUT it (absent-safe)', () => {
-    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, viewerVoted: true }] })).toBe(true);
-    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, viewerVoted: false }] })).toBe(true);
-    // Absent is fine — an old host omits it (the hook defaults false).
-    expect(isValidSharedListResult({ requestId: 'r', items: [item] })).toBe(true);
-  });
-  it('accepts an error reply', () => {
-    expect(isValidSharedListResult({ requestId: 'r', items: [], error: 'SHARED_UNAVAILABLE' })).toBe(true);
-  });
-  it.each([
-    ['items not an array', { requestId: 'r', items: 'x' }],
-    ['item missing key', { requestId: 'r', items: [{ ...item, key: undefined }] }],
-    ['item authorUserId not a number', { requestId: 'r', items: [{ ...item, authorUserId: '7' }] }],
-    ['item value missing title', { requestId: 'r', items: [{ ...item, value: { body: 'x' } }] }],
-    ['item value not an object', { requestId: 'r', items: [{ ...item, value: 5 }] }],
-    ['item count not a number', { requestId: 'r', items: [{ ...item, count: '3' }] }],
-    ['item createdAt not date-like', { requestId: 'r', items: [{ ...item, createdAt: 'never' }] }],
-    ['item viewerVoted not a boolean', { requestId: 'r', items: [{ ...item, viewerVoted: 'yes' }] }],
-    ['nextCursor not a string', { requestId: 'r', items: [], nextCursor: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedListResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedGetResult (SHARED_GET)', () => {
-  const item = {
-    key: 'req:1',
-    authorUserId: 7,
-    value: { title: 'Dark mode', body: 'please' },
-    count: 3,
-    createdAt: '2026-05-01T00:00:00.000Z',
-    updatedAt: '2026-05-02T00:00:00.000Z',
-    viewerVoted: true,
-  };
-  it('accepts a found item', () => {
-    expect(isValidSharedGetResult({ requestId: 'r', item })).toBe(true);
-  });
-  it('accepts a null item (missing/hidden — a valid non-error result)', () => {
-    expect(isValidSharedGetResult({ requestId: 'r', item: null })).toBe(true);
-  });
-  it('accepts an item without viewerVoted (absent-safe)', () => {
-    const { viewerVoted: _drop, ...rest } = item;
-    expect(isValidSharedGetResult({ requestId: 'r', item: rest })).toBe(true);
-  });
-  it('accepts an error reply', () => {
-    expect(isValidSharedGetResult({ requestId: 'r', item: null, error: 'SHARED_UNAVAILABLE' })).toBe(true);
-  });
-  it.each([
-    ['item missing (undefined), no error', { requestId: 'r' }],
-    ['item missing key', { requestId: 'r', item: { ...item, key: undefined } }],
-    ['item count not a number', { requestId: 'r', item: { ...item, count: '3' } }],
-    ['item value missing title', { requestId: 'r', item: { ...item, value: { body: 'x' } } }],
-    ['item viewerVoted not boolean', { requestId: 'r', item: { ...item, viewerVoted: 1 } }],
-    ['error not a string', { requestId: 'r', item: null, error: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedGetResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedReportResult (SHARED_REPORT)', () => {
-  it('accepts ok true/false', () => {
-    expect(isValidSharedReportResult({ requestId: 'r', ok: true })).toBe(true);
-    expect(isValidSharedReportResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
-  });
-  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
-    expect(isValidSharedReportResult({ requestId: 'r1', error: 'boom' })).toBe(true);
-  });
-  // Presence, not truthiness. The hook is what rejects an empty error string.
-  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
-    expect(isValidSharedReportResult({ requestId: 'r1', error: '' })).toBe(true);
-    expect(isValidSharedReportResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
-  });
-  it.each([
-    ['ok missing', { requestId: 'r' }],
-    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
-    ['error not a string', { requestId: 'r', ok: false, error: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedReportResult(payload)).toBe(false);
-  });
-});
-
 describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
   it('accepts ok true/false', () => {
     expect(isValidSaveImageResult({ requestId: 'r', ok: true })).toBe(true);
@@ -919,75 +648,6 @@ describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
     ['error not a string', { requestId: 'r', ok: false, error: {} }],
   ])('rejects %s', (_, payload) => {
     expect(isValidSaveImageResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedCountResult (GET_COUNT / VOTE / UNVOTE)', () => {
-  it('accepts a finite count', () => {
-    expect(isValidSharedCountResult({ requestId: 'r', count: 42 })).toBe(true);
-    expect(isValidSharedCountResult({ requestId: 'r', count: 0 })).toBe(true);
-  });
-  it('accepts an error reply', () => {
-    expect(isValidSharedCountResult({ requestId: 'r', error: 'NOT_FOUND' })).toBe(true);
-  });
-  it.each([
-    ['count missing, no error', { requestId: 'r' }],
-    ['count not a number', { requestId: 'r', count: '5' }],
-    ['count NaN', { requestId: 'r', count: Number.NaN }],
-    ['error not a string', { requestId: 'r', error: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedCountResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedCountsResult', () => {
-  it('accepts a map of key → finite count', () => {
-    expect(isValidSharedCountsResult({ requestId: 'r', counts: { a: 1, b: 0, c: 5 } })).toBe(true);
-    expect(isValidSharedCountsResult({ requestId: 'r', counts: {} })).toBe(true);
-  });
-  it('accepts an error reply', () => {
-    expect(isValidSharedCountsResult({ requestId: 'r', error: 'X' })).toBe(true);
-  });
-  it.each([
-    ['counts missing, no error', { requestId: 'r' }],
-    ['counts not an object', { requestId: 'r', counts: 5 }],
-    ['a count value not a number', { requestId: 'r', counts: { a: '1' } }],
-    ['a count value NaN', { requestId: 'r', counts: { a: Number.NaN } }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedCountsResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedAppendResult', () => {
-  it('accepts a minted key', () => {
-    expect(isValidSharedAppendResult({ requestId: 'r', key: 'shared_9' })).toBe(true);
-  });
-  it('accepts an error reply (key may be empty alongside error)', () => {
-    expect(isValidSharedAppendResult({ requestId: 'r', key: '', error: 'INVALID_VALUE' })).toBe(true);
-  });
-  it.each([
-    ['key missing, no error', { requestId: 'r' }],
-    ['key empty, no error', { requestId: 'r', key: '' }],
-    ['key not a string', { requestId: 'r', key: 5 }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedAppendResult(payload)).toBe(false);
-  });
-});
-
-describe('isValidSharedWithdrawResult', () => {
-  it('accepts ok + deleted booleans', () => {
-    expect(isValidSharedWithdrawResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
-    expect(isValidSharedWithdrawResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
-  });
-  it('accepts an error reply', () => {
-    expect(isValidSharedWithdrawResult({ requestId: 'r', error: 'SHARED_UNAVAILABLE' })).toBe(true);
-  });
-  it.each([
-    ['ok missing, no error', { requestId: 'r', deleted: true }],
-    ['deleted missing, no error', { requestId: 'r', ok: true }],
-    ['deleted not boolean', { requestId: 'r', ok: true, deleted: 'yes' }],
-  ])('rejects %s', (_, payload) => {
-    expect(isValidSharedWithdrawResult(payload)).toBe(false);
   });
 });
 
@@ -1739,10 +1399,10 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('RESOURCE_FILE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('GENERATION_SOURCE_PERSISTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
-    expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
     // 🔴 Identity, not `toBeTypeOf`. This reply settles an ACCOUNT WRITE, so a
     // mis-wired validator would resolve a follow toggle against a shape checked
     // under a different contract. (Omission itself is now a build error.)
@@ -1754,22 +1414,7 @@ describe('payloadValidatorFor', () => {
     // well-formed reply RESOLVES, a malformed one is DROPPED).
     expect(payloadValidatorFor('CREATE_POST_RESULT')).toBe(isValidCreatePostResult);
     expect(payloadValidatorFor('ESTIMATE_BATCH_RESULT')).toBe(isValidEstimateBatchResult);
-    // The 15 reply types added in the storage/shared PR (previously `default: null`).
     for (const t of [
-      'APP_STORAGE_GET_RESULT',
-      'APP_STORAGE_SET_RESULT',
-      'APP_STORAGE_DELETE_RESULT',
-      'APP_STORAGE_LIST_RESULT',
-      'APP_STORAGE_QUOTA_RESULT',
-      'SHARED_LIST_RESULT',
-      'SHARED_GET_COUNT_RESULT',
-      'SHARED_GET_COUNTS_RESULT',
-      'SHARED_APPEND_RESULT',
-      'SHARED_VOTE_RESULT',
-      'SHARED_UNVOTE_RESULT',
-      'SHARED_WITHDRAW_RESULT',
-      'SHARED_GET_RESULT',
-      'SHARED_REPORT_RESULT',
       'SAVE_IMAGE_RESULT',
       'CHECKPOINT_PICKER_RESULT',
       'RESOURCE_PICKER_RESULT',
@@ -1981,5 +1626,306 @@ describe('isValidCollectionFollowResult', () => {
 
   it('rejects a non-object result', () => {
     expect(isValidCollectionFollowResult({ requestId: 'r', result: 'ok' })).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Queue position, ETA and progress (`eta`, and a step's `queue` / `progress` /
+// `startedAt` / `completedAt`). The contract is shared with the civitai host.
+//
+// 🔴 A MALFORMED ONE IS STRIPPED, NOT FATAL. `isValidWorkflowSnapshot` does not
+// look at these fields; `projectInboundPayload` removes a malformed one and
+// delivers the rest, so a bad estimate never drops status and outputs (and
+// stalls `watch`). Every expectation below is written out literally.
+// ──────────────────────────────────────────────────────────────────────────
+describe('workflow snapshot queue/ETA fields', () => {
+  const QUEUED = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'pending',
+        queue: {
+          precedingJobs: 3,
+          estimatedStartAt: '2026-11-14T12:00:20.000Z',
+          estimatedCompleteAt: '2026-11-14T12:00:45.000Z',
+          support: 'available',
+        },
+        progress: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    },
+  };
+  const PROCESSING = {
+    workflowId: 'wf_p',
+    status: 'processing',
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'processing',
+        queue: null,
+        progress: 0.42,
+        startedAt: '2026-11-14T12:00:21.000Z',
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: 0.42,
+      support: null,
+    },
+  };
+  const reply = (snapshot: unknown) => ({ requestId: 'r1', snapshot });
+  const deliver = (snapshot: unknown) => {
+    const payload = reply(snapshot);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    return (projectInboundPayload('WORKFLOW_STATUS', payload) as { snapshot: unknown }).snapshot;
+  };
+
+  it('passes a well-formed QUEUED snapshot through unchanged, by identity', () => {
+    const payload = reply(QUEUED);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta).toEqual({
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(out.snapshot.steps[0]!.queue?.precedingJobs).toBe(3);
+  });
+
+  it('passes a well-formed PROCESSING snapshot through unchanged, by identity', () => {
+    const payload = reply(PROCESSING);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.startedAt).toBe('2026-11-14T12:00:21.000Z');
+  });
+
+  it('passes an old-host snapshot with none of the fields', () => {
+    const old = { workflowId: 'w', status: 'processing', steps: [{ name: 'draw', $type: 'imageGen', status: 'processing' }] };
+    expect(isValidWorkflowSnapshot(old)).toBe(true);
+    const payload = reply(old);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect(projectWorkflowSnapshot(old)).toBe(old);
+  });
+
+  // 🔴 ABSENT MEANS NULL. The host omits a field with nothing to report rather
+  // than sending null, so a NON-terminal snapshot can lack `eta` and every step
+  // field (nothing queued or running, or a poll the host did not read). It must
+  // cross untouched, with the keys still absent.
+  it.each([
+    ['a queued step with only its queue (host encoding)', {
+      workflowId: 'w', status: 'pending',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'pending', queue: QUEUED.steps[0]!.queue }],
+      eta: QUEUED.eta,
+    }],
+    ['a running step with no progress, queue or completedAt', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'train', $type: 'training', status: 'processing', startedAt: '2026-11-14T12:00:21Z' }],
+      eta: { ...PROCESSING.eta, stepName: 'train', progress: null },
+    }],
+    ['no eta and no step fields at all', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'processing' }],
+    }],
+    ['the rate-limited placeholder', { workflowId: 'w', status: 'processing' }],
+  ])('passes a non-terminal snapshot with the eta fields absent: %s', (_, snapshot) => {
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    // By identity: nothing was added, so an absent key stays absent.
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  it.each([
+    ['eta: null (terminal)', { ...PROCESSING, status: 'succeeded', eta: null }],
+    ['eta absent (terminal, host encoding)', { workflowId: 'w', status: 'succeeded' }],
+    ['progress 0 and 1, the inclusive bounds', { ...PROCESSING, eta: { ...PROCESSING.eta, progress: 1 }, steps: [{ ...PROCESSING.steps[0]!, progress: 0 }] }],
+    ['precedingJobs / queuedAhead 0', { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: 0 }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, precedingJobs: 0 } }] }],
+    ['a support value the SDK does not know yet', { ...QUEUED, eta: { ...QUEUED.eta, support: 'someFutureValue' }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, support: '' } }] }],
+    // Timestamps are not parsed: any string is kept.
+    ['timestamps that are not ISO dates', { ...QUEUED, eta: { ...QUEUED.eta, startsAt: 'soon', completesAt: '' }, steps: [{ ...QUEUED.steps[0]!, startedAt: 'x', completedAt: 'y' }] }],
+    ['every field null', { ...QUEUED, eta: { stepName: '', queuedAhead: null, startsAt: null, completesAt: null, progress: null, support: null }, steps: [{ ...QUEUED.steps[0]!, queue: { precedingJobs: null, estimatedStartAt: null, estimatedCompleteAt: null, support: 'unsupported' } }] }],
+  ])('keeps the lenient case: %s', (_, snapshot) => {
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  // The whole known FIELD is removed; nothing else moves. `status`, `imageUrls`
+  // and the rest of the step survive.
+  const queuedWithoutEta = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: QUEUED.steps,
+  };
+  it.each([
+    ['eta.progress 1.5', { progress: 1.5 }],
+    ['eta.progress a string', { progress: '0.5' }],
+    ['eta.progress -0.1', { progress: -0.1 }],
+    ['eta.progress NaN', { progress: Number.NaN }],
+    ['eta.queuedAhead -1', { queuedAhead: -1 }],
+    ['eta.queuedAhead 2.5', { queuedAhead: 2.5 }],
+    ['eta.support a number', { support: 7 }],
+    ['eta.startsAt a number', { startsAt: 1_700_000_000_000 }],
+    ['eta.stepName missing', { stepName: undefined }],
+  ])('strips a malformed eta (%s) and keeps the rest', (_, patch) => {
+    const eta: Record<string, unknown> = { ...QUEUED.eta, ...patch };
+    if ('stepName' in patch) delete eta.stepName;
+    const out = deliver({ ...QUEUED, eta });
+    expect(out).toStrictEqual(queuedWithoutEta);
+  });
+
+  it.each([
+    ['a string', 'soon'],
+    ['an array', []],
+    ['a number', 3],
+  ])('strips an eta that is %s', (_, eta) => {
+    expect(deliver({ ...QUEUED, eta })).toStrictEqual(queuedWithoutEta);
+  });
+
+  const queuedStep = QUEUED.steps[0]!;
+  it.each([
+    ['queue.precedingJobs -1', { queue: { ...queuedStep.queue, precedingJobs: -1 } }, 'queue'],
+    ['queue.precedingJobs 2.5', { queue: { ...queuedStep.queue, precedingJobs: 2.5 } }, 'queue'],
+    ['queue.support a number', { queue: { ...queuedStep.queue, support: 1 } }, 'queue'],
+    ['queue.estimatedStartAt missing', { queue: { precedingJobs: 3, estimatedCompleteAt: null, support: 'available' } }, 'queue'],
+    ['queue a string', { queue: '3 ahead' }, 'queue'],
+    ['progress 1.5', { progress: 1.5 }, 'progress'],
+    ['progress a string', { progress: '42%' }, 'progress'],
+    ['startedAt a number', { startedAt: 5 }, 'startedAt'],
+    ['completedAt an object', { completedAt: {} }, 'completedAt'],
+  ])('strips a malformed step %s and keeps the rest', (_, patch, removed) => {
+    const out = deliver({ ...QUEUED, steps: [{ ...queuedStep, ...patch }] });
+    const expectedStep: Record<string, unknown> = { ...queuedStep };
+    delete expectedStep[removed];
+    expect(out).toStrictEqual({ ...QUEUED, steps: [expectedStep] });
+    expect(Object.keys((out as typeof QUEUED).steps[0]!)).not.toContain(removed);
+  });
+
+  it('strips per step: a bad second step does not touch the first or the eta', () => {
+    const second = { name: 'upscale', $type: 'imageUpscaler', status: 'pending', progress: 7 };
+    const out = deliver({ ...QUEUED, steps: [queuedStep, second] });
+    expect(out).toStrictEqual({
+      ...QUEUED,
+      steps: [queuedStep, { name: 'upscale', $type: 'imageUpscaler', status: 'pending' }],
+    });
+  });
+
+  it('still REJECTS a malformed field it always rejected, eta or no eta', () => {
+    expect(isValidWorkflowSnapshot({ ...QUEUED, steps: [{ ...queuedStep, status: 'queued' }] })).toBe(false);
+    expect(isValidWorkflowSnapshot({ ...QUEUED, imageUrls: 'x' })).toBe(false);
+  });
+
+  // 🔴 The SEAM: the projection is wired for every reply that carries a
+  // snapshot. A type missing from this list would deliver a malformed eta raw.
+  it.each([
+    'ESTIMATE_RESULT',
+    'WORKFLOW_SUBMITTED',
+    'WORKFLOW_STATUS',
+    'WORKFLOW_CANCELED',
+    'TRAINING_RESULT',
+    'CONFIRMED_STEP_RESULT',
+  ])('projects the snapshot of %s', (type) => {
+    const out = projectInboundPayload(type, reply({ ...QUEUED, eta: { ...QUEUED.eta, progress: 2 } }));
+    expect(out).toStrictEqual(reply(queuedWithoutEta));
+  });
+
+  it('projects each cell of ESTIMATE_BATCH_RESULT', () => {
+    const aggregate = { total: 0, pricedCells: 0, cellCount: 2 };
+    const bad = { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: -3 } };
+    const payload = { requestId: 'r', snapshots: [PROCESSING, bad], aggregate };
+    expect(isValidEstimateBatchResult(payload)).toBe(true);
+    expect(projectInboundPayload('ESTIMATE_BATCH_RESULT', payload)).toStrictEqual({
+      requestId: 'r',
+      snapshots: [PROCESSING, queuedWithoutEta],
+      aggregate,
+    });
+  });
+
+  // The throttled-poll marker (civitai/civitai#8980): a poll the host could not
+  // serve. Only the literal `true` is the marker; anything else is removed so it
+  // can never be mistaken for one, and the reply is delivered as a plain snapshot.
+  it('passes the throttled marker through, by identity', () => {
+    const placeholder = { workflowId: 'w', status: 'processing', throttled: true };
+    expect(isValidWorkflowSnapshot(placeholder)).toBe(true);
+    expect(deliver(placeholder)).toBe(placeholder);
+  });
+
+  it.each([
+    ['false', false],
+    ['a string', 'yes'],
+    ['1', 1],
+    ['null', null],
+  ])('strips a throttled value that is not true: %s', (_, throttled) => {
+    expect(deliver({ workflowId: 'w', status: 'processing', throttled })).toStrictEqual({
+      workflowId: 'w',
+      status: 'processing',
+    });
+  });
+
+  it('leaves every other type alone', () => {
+    const payload = reply({ ...QUEUED, eta: 'bad' });
+    expect(projectInboundPayload('PUBLISH_RESULT', payload)).toBe(payload);
+  });
+});
+
+// The host's own contract fixtures: a copy of the two whole-snapshot
+// expectations (`toStrictEqual`) pinned in civitai/civitai#8980's
+// `src/server/services/blocks/__tests__/workflow.service.test.ts`. Empty
+// fields are OMITTED there, as the host sends them.
+describe('host-workflow-snapshot.eta.json contract fixture', () => {
+  const path = join(__dirname, 'fixtures/host-workflow-snapshot.eta.json');
+
+  it('exists', () => {
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it.each(['queued', 'processing'])('the %s snapshot validates and crosses unchanged', (key) => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const snapshot = fixture[key];
+    expect(snapshot).toBeDefined();
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    const payload = { requestId: 'r', snapshot };
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect((snapshot as { eta?: unknown }).eta).not.toBeUndefined();
+  });
+
+  it('is the host copy: its ids, step names and values', () => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(fixture.queued!.workflowId).toBe('wf_contract_queued');
+    expect(fixture.queued!.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: '2026-11-14T12:00:07Z',
+      completesAt: '2026-11-14T12:01:13Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(fixture.processing!.workflowId).toBe('wf_contract_processing');
+    expect(fixture.processing!.steps).toEqual([
+      { name: 'clip', $type: 'videoGen', status: 'processing', progress: 0.42, startedAt: '2026-11-14T12:00:21Z' },
+    ]);
   });
 });

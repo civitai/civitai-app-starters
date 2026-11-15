@@ -6,7 +6,7 @@
 [![SvelteKit](https://img.shields.io/badge/SvelteKit-2-ff3e00.svg)](https://kit.svelte.dev)
 [![@civitai/app-sdk](https://img.shields.io/npm/v/@civitai/app-sdk.svg?label=%40civitai%2Fapp-sdk)](https://www.npmjs.com/package/@civitai/app-sdk)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters%2Ftree%2Fmain%2Fstarters%2Fsveltekit-app&env=CIVITAI_CLIENT_ID,CIVITAI_CLIENT_SECRET,SESSION_SECRET,APP_URL&envDescription=Civitai+OAuth+App+credentials+%2B+a+32-byte+session+secret&envLink=https%3A%2F%2Fdeveloper.civitai.com%2Fdocs%2Foauth&project-name=civitai-sveltekit-app&repository-name=civitai-sveltekit-app)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters%2Ftree%2Fmain%2Fstarters%2Fsveltekit-app&env=CIVITAI_CLIENT_ID,CIVITAI_CLIENT_SECRET,SESSION_SECRET,APP_URL&envDescription=Civitai+OAuth+App+credentials+%2B+a+32-byte+session+secret&envLink=https%3A%2F%2Fdeveloper.civitai.com%2Fsite%2Foauth%2Fregister-app&project-name=civitai-sveltekit-app&repository-name=civitai-sveltekit-app)
 [![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters&base=starters%2Fsveltekit-app)
 
 Minimal SvelteKit 2 starter for building [Civitai](https://civitai.com) apps. Includes OAuth login, encrypted-cookie sessions, Buzz balance (read via `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none — and hidden entirely when `BuzzRead` was not granted), cost preview, and a single image generation flow.
@@ -39,6 +39,12 @@ Generate `SESSION_SECRET` with:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+`CIVITAI_AUTH_URL` (optional, default `https://auth.civitai.com`) is the auth hub
+the OAuth endpoints (authorize, token, revoke) are called on. It is separate from
+`CIVITAI_BASE_URL`, the main site, which the OAuth calls never use. Leave it
+unset in production; set both when you develop against a local Civitai and its
+auth hub (`.env.example` has the details).
 
 ## What's in the demo
 

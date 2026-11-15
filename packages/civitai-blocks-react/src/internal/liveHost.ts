@@ -46,8 +46,8 @@
  * --- BEGIN DERIVED ---
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
- * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 54, of which 16 REFUSE (enumerated under SCOPE below)
+ * tRPC procedures ....... 14 = blocks.* (14)
+ * switch case labels .... 40, of which 17 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -61,28 +61,12 @@
  * DISCOVERY ONLY: the server re-validates + prices every id at estimate/submit;
  * nothing the dev clicks here is trusted or spends Buzz. See the picker handlers.
  *
- * APP-STORAGE KV (Phase 4): the live host SERVES the five `APP_STORAGE_*` calls
- * by forwarding to the block-token `apps.storage.{get,set,delete,list,getQuota}`
- * tRPC procedures (publicProcedure + verifyBlockToken, FLAT `{ blockToken, … }`
- * input). Reads need the `apps:storage:read` scope, writes `apps:storage:write`
- * — the dev token already carries whatever the local manifest declared, and the
- * server enforces. Real KV — keys namespaced per (block_instance, user), byte
- * and row budgets enforced per (app, user) — with the REAL ceilings, so a
- * write this host accepts is one production would accept.
- *
  * SET_USER_CHECKPOINT (Phase 4): answered as the production host for the slot
  * would. On a PAGE context (the default; dev-token mints page tokens) it is
  * refused locally with the page host's own reply — `ok: false` and the same
  * error text — and no backend call, because the page host makes none. On a
  * model-slot context it is FORWARDED to the block-token
  * `blocks.updateUserSettings` mutation, never fabricated.
- *
- * SHARED STORAGE (#386): the live host SERVES all TEN `SHARED_*` bridges —
- * `apps.shared.{list,get,getCount,getCounts,append,update,vote,unvote,withdraw,
- * report}` — on the same block-token convention as APP_STORAGE. `SHARED_GET`
- * and `SHARED_REPORT` were the last two missing; until #386 they fell through
- * the switch's `default: return` with no reply at all, so `useSharedStorage()`
- * hung to the 30s protocol timeout in dev:live for code that worked in dev:mock.
  *
  * TRACK_EVENT: recorded only in production, so the live host forwards nothing
  * and replies nothing (production replies nothing either). What it does is
@@ -125,6 +109,10 @@
  *     publishing against the mock host — `createMockHost` or `Harness` from
  *     `@civitai/blocks-react/testing`, with the `publishImageIds` /
  *     `publishError` options. Replies with a refusal.
+ *   • PERSIST_GENERATION_SOURCE — saving an output as a private, scanned source
+ *     requires the same signed-in session; test it against the mock host, with
+ *     the `persistedGenerationSource` / `persistGenerationSourceError` options.
+ *     Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • GET_RESOURCE_FILE — the same session-authed resolve plus in-tab
@@ -157,7 +145,6 @@ import {
   type BlockNavigateScope,
   type BlockWorkflowSnapshot,
   type ColorDomain,
-  type SharedStorageRateLimit,
   type Theme,
   type ViewerInfo,
   type WorkflowBody,
@@ -173,7 +160,6 @@ import {
 import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
-import { parseSharedStorageRateLimit } from '../transport/validate.js';
 import { createTrackEventChecker } from './trackEventCheck.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
@@ -419,7 +405,7 @@ interface TrpcCallResult {
  * The raw result of one tRPC call BEFORE any per-procedure unwrap: the parsed
  * response envelope (or `undefined` on a thrown fetch / empty body), or an error
  * string. {@link callTrpcMutation} (workflow path) and {@link callTrpcData}
- * (storage / checkpoint path) both build on this, so the fetch / parse / status
+ * (data / checkpoint path) both build on this, so the fetch / parse / status
  * / error logic lives in exactly one place.
  */
 interface RawTrpcResult {
@@ -428,16 +414,11 @@ interface RawTrpcResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
-  /**
-   * The validated `error.data.rateLimit` of a rate-limited refusal, when the
-   * server sent one (today only the `apps.shared.*` write procedures do).
-   */
-  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
  * The result of one generic tRPC DATA call: the UNWRAPPED data object the
- * procedure returned (the storage / settings procs return plain records, not a
+ * procedure returned (the data / settings procs return plain records, not a
  * `{ snapshot }` wrapper), or an error string. Mirrors {@link TrpcCallResult}'s
  * `transient` semantics.
  */
@@ -446,8 +427,6 @@ interface TrpcDataResult {
   error?: string;
   /** True when `error` is a transport/infra blip worth retrying. */
   transient?: boolean;
-  /** See {@link RawTrpcResult.rateLimit}. */
-  rateLimit?: SharedStorageRateLimit;
 }
 
 /**
@@ -458,8 +437,7 @@ interface TrpcDataResult {
  * the exact blip the round-5 dogfood hit. Anything ≥ 500, plus 408 (timeout)
  * and 429 (rate-limit), is also transient.
  *
- * Only {@link pollWithRetry} reads `transient`; a shared-storage 429 is a
- * write-budget refusal whose wait is minutes, so it must never be retried.
+ * Only {@link pollWithRetry} reads `transient`.
  */
 function isTransientHttpStatus(status: number): boolean {
   return status >= 500 || status === 408 || status === 429 || status === 401;
@@ -474,52 +452,6 @@ function isTransientHttpStatus(status: number): boolean {
  * block's own poll loop tries again.
  */
 const POLL_RETRY_BACKOFF_MS = [250, 500, 1000] as const;
-
-/**
- * Map ONE raw `apps.shared.*` row → the `SharedStorageItemWire` shape the
- * protocol puts on `SHARED_LIST_RESULT.items` and `SHARED_GET_RESULT.item`.
- *
- * ONE mapper, not one per case: the two reads return the same row and the
- * fields are lenient-by-default (a missing `authorUserId`/`count` becomes `0`,
- * dates are ISO-normalized whether the transport handed back a `Date` or a
- * string). A second open-coded copy is how the two reads drift.
- *
- * `viewerVoted` is forwarded ONLY when the server actually sent a boolean —
- * the field is OPTIONAL and additive, and the block-side hook defaults a
- * missing value to `false`. Omitting it when the server omits it keeps a host
- * that predates the field indistinguishable from today's behaviour; forwarding
- * it when the server sends it is what lets a `?g=<key>` deep-link hydrate its
- * vote button instead of guessing.
- */
-function sharedItemWireFrom(raw: unknown): {
-  key: string;
-  authorUserId: number;
-  value: unknown;
-  count: number;
-  createdAt: string;
-  updatedAt: string;
-  viewerVoted?: boolean;
-} {
-  const e = raw as {
-    key?: unknown;
-    authorUserId?: unknown;
-    value?: unknown;
-    count?: unknown;
-    createdAt?: unknown;
-    updatedAt?: unknown;
-    viewerVoted?: unknown;
-  };
-  const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : String(d));
-  return {
-    key: String(e.key),
-    authorUserId: typeof e.authorUserId === 'number' ? e.authorUserId : 0,
-    value: e.value,
-    count: typeof e.count === 'number' ? e.count : 0,
-    createdAt: iso(e.createdAt),
-    updatedAt: iso(e.updatedAt),
-    ...(typeof e.viewerVoted === 'boolean' ? { viewerVoted: e.viewerVoted } : {}),
-  };
-}
 
 /**
  * Create a LIVE host that forwards the App-Block postMessage protocol to the
@@ -644,12 +576,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       }
       if (!res.ok) {
         const msg = extractTrpcError(parsed) ?? `${procedure} failed: HTTP ${res.status}`;
-        const rateLimit = parseSharedStorageRateLimit(extractTrpcErrorData(parsed)?.rateLimit);
-        return {
-          error: msg,
-          transient: isTransientHttpStatus(res.status),
-          ...(rateLimit ? { rateLimit } : {}),
-        };
+        return { error: msg, transient: isTransientHttpStatus(res.status) };
       }
       return { parsed };
     } catch (err) {
@@ -679,11 +606,10 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   }
 
   /**
-   * Call a tRPC DATA procedure (storage / settings) and unwrap the plain data
-   * object it returns (via {@link extractData}). Queries
-   * (`apps.storage.{get,list,getQuota}`) and mutations
-   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`) alike — the
-   * wire form is the same POST (see {@link rawTrpcCall}).
+   * Call a tRPC DATA procedure (buzz / settings / reads) and unwrap the plain
+   * data object it returns (via {@link extractData}). Queries and mutations
+   * (`blocks.updateUserSettings`) alike — the wire form is the same POST (see
+   * {@link rawTrpcCall}).
    */
   async function callTrpcData(
     procedure: string,
@@ -691,11 +617,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   ): Promise<TrpcDataResult> {
     const raw = await rawTrpcCall(procedure, input);
     if (raw.error !== undefined) {
-      return {
-        error: raw.error,
-        transient: raw.transient,
-        ...(raw.rateLimit ? { rateLimit: raw.rateLimit } : {}),
-      };
+      return { error: raw.error, transient: raw.transient };
     }
     const data = extractData(raw.parsed);
     if (data === undefined) {
@@ -1039,17 +961,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             baseModelGroup?: string;
             currentVersionId?: number;
             resourceType?: 'Checkpoint' | 'LORA';
-            key?: string;
-            keys?: string[];
-            value?: unknown;
-            prefix?: string;
-            limit?: number;
-            cursor?: string;
             versionId?: number | null;
             params?: Record<string, unknown>;
             modelVersionId?: number;
-            /** SHARED_REPORT — optional free-text reason (bounded server-side). */
-            reason?: string;
           };
         };
 
@@ -1212,10 +1126,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 payload: {
                   requestId,
                   // keeps the workflowId so the block maps it back to the right card.
+                  // A transient failure is a poll the host could not serve, so it
+                  // carries `throttled: true` as production's
+                  // `pollFailureSnapshot` does, and `watch` does not treat it
+                  // as an update.
                   snapshot: {
                     workflowId,
                     status: transient ? ('processing' as const) : ('failed' as const),
                     error: r.error ?? 'poll failed',
+                    ...(transient ? { throttled: true as const } : {}),
                   },
                 },
               });
@@ -1272,8 +1191,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // in the request body, never the URL). It returns a plain
             // `{ blue, green, yellow }` object, so unwrap it with `callTrpcData`
             // (NOT `callTrpcMutation`, which expects a `{ snapshot }` wrapper).
-            // Mirrors the `APP_STORAGE_SET` value-or-error convention. Drop a
-            // request with no `requestId` — the block correlates the reply by it,
+            // Drop a request with no `requestId` — the block correlates the reply by it,
             // so a reply without one is unroutable.
             if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
@@ -1662,6 +1580,41 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'PERSIST_GENERATION_SOURCE': {
+            // UNSUPPORTED in live, for the same reason as PUBLISH_GENERATION_OUTPUTS
+            // directly above: on civitai.com the page host resolves the workflow's
+            // output, saves it and waits for its scan through the viewer's
+            // signed-in session, which the local harness does not have.
+            //
+            // FREE TEXT, like the publish refusal. `usePersistGenerationSource`
+            // rejects with it as the message. Test it against the mock host —
+            // `createMockHost` or `Harness` from `@civitai/blocks-react/testing`,
+            // with the `persistedGenerationSource` / `persistGenerationSourceError`
+            // options.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce(
+              'persist-generation-source',
+              'PERSIST_GENERATION_SOURCE is not supported in dev:live (it requires the ' +
+                "viewer's signed-in civitai.com session, which the local harness does not have). " +
+                'Replying with a refusal. Test it against the mock host — createMockHost or ' +
+                'Harness from @civitai/blocks-react/testing, with the persistedGenerationSource / ' +
+                'persistGenerationSourceError options.',
+            );
+            dispatchToBlock({
+              type: 'GENERATION_SOURCE_PERSISTED',
+              payload: {
+                requestId,
+                error:
+                  'persisting a generation source is not supported in dev:live — it requires ' +
+                  "the viewer's signed-in civitai.com session, which the local harness does " +
+                  'not have; test it against the mock host — createMockHost or Harness from ' +
+                  '@civitai/blocks-react/testing, with the persistedGenerationSource / ' +
+                  'persistGenerationSourceError options',
+              },
+            });
+            return;
+          }
+
           case 'GET_IMAGES_BY_IDS': {
             // Per-viewer gated image read via the token-bound `blocks.getImagesByIds`
             // MUTATION (POST). The host applies the requesting viewer's
@@ -1905,464 +1858,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 type: 'USER_CHECKPOINT_SET',
                 payload: r.error
                   ? { requestId: requestId ?? '', ok: false, error: r.error }
-                  : { requestId: requestId ?? '', ok: true },
-              });
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_GET': {
-            // Query apps.storage.get {blockToken, key} (sent as POST). The server enforces
-            // the apps:storage:read scope; the dev token carries it iff the local
-            // manifest declared it.
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'APP_STORAGE_GET_RESULT',
-                    payload: { requestId: requestId ?? '', value: null, error: r.error },
-                  });
-                  return;
-                }
-                const value = (r.data as { value?: unknown })?.value ?? null;
-                dispatchToBlock({
-                  type: 'APP_STORAGE_GET_RESULT',
-                  payload: { requestId: requestId ?? '', value },
-                });
-              },
-            );
-            return;
-          }
-
-          case 'APP_STORAGE_SET': {
-            // Mutation apps.storage.set {blockToken, key, value} (POST). The
-            // server enforces apps:storage:write + the per-value cap and both
-            // per-(app, viewer) budgets — no simulation here, so nothing to
-            // keep in sync.
-            const key = typed.payload?.key ?? '';
-            const value = typed.payload?.value;
-            void callTrpcData(
-              'apps.storage.set',
-              { blockToken: rawToken, key, value },
-            ).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'APP_STORAGE_SET_RESULT',
-                  payload: { requestId: requestId ?? '', ok: false, error: r.error },
-                });
-                return;
-              }
-              const sizeBytes = (r.data as { sizeBytes?: unknown })?.sizeBytes;
-              dispatchToBlock({
-                type: 'APP_STORAGE_SET_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  ok: true,
-                  ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
-                },
-              });
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_DELETE': {
-            // Mutation apps.storage.delete {blockToken, key} (POST).
-            const key = typed.payload?.key ?? '';
-            void callTrpcData(
-              'apps.storage.delete',
-              { blockToken: rawToken, key },
-            ).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'APP_STORAGE_DELETE_RESULT',
-                  payload: {
-                    requestId: requestId ?? '',
-                    ok: false,
-                    deleted: false,
-                    error: r.error,
-                  },
-                });
-                return;
-              }
-              dispatchToBlock({
-                type: 'APP_STORAGE_DELETE_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  ok: true,
-                  deleted: Boolean((r.data as { deleted?: unknown })?.deleted),
-                },
-              });
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_LIST': {
-            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (sent as POST).
-            // Clamp the limit to the server's [1,200] bound (default 50); only
-            // include prefix/cursor when they're strings so JSON.stringify drops
-            // the undefined keys (the server input is `.optional()`).
-            const rawLimit = typed.payload?.limit;
-            const limit =
-              typeof rawLimit === 'number'
-                ? Math.min(Math.max(Math.floor(rawLimit), 1), 200)
-                : 50;
-            const prefix = typed.payload?.prefix;
-            const cursor = typed.payload?.cursor;
-            const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
-            if (typeof prefix === 'string') listInput.prefix = prefix;
-            if (typeof cursor === 'string') listInput.cursor = cursor;
-            void callTrpcData('apps.storage.list', listInput).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'APP_STORAGE_LIST_RESULT',
-                  payload: { requestId: requestId ?? '', keys: [], error: r.error },
-                });
-                return;
-              }
-              const rawKeys = (r.data as { keys?: unknown })?.keys;
-              const keys = (Array.isArray(rawKeys) ? rawKeys : []).map((k) => {
-                const entry = k as { key?: unknown; updatedAt?: unknown };
-                return {
-                  key: String(entry.key),
-                  updatedAt:
-                    entry.updatedAt instanceof Date
-                      ? entry.updatedAt.toISOString()
-                      : String(entry.updatedAt),
-                };
-              });
-              const nextCursor = (r.data as { nextCursor?: unknown })?.nextCursor;
-              dispatchToBlock({
-                type: 'APP_STORAGE_LIST_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  keys,
-                  ...(typeof nextCursor === 'string' && nextCursor.length > 0
-                    ? { nextCursor }
-                    : {}),
-                },
-              });
-            });
-            return;
-          }
-
-          case 'APP_STORAGE_QUOTA': {
-            // Query apps.storage.getQuota {blockToken} (sent as POST).
-            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'APP_STORAGE_QUOTA_RESULT',
-                    payload: {
-                      requestId: requestId ?? '',
-                      usedBytes: 0,
-                      rowCount: 0,
-                      limitBytes: 0,
-                      limitRows: 0,
-                      error: r.error,
-                    },
-                  });
-                  return;
-                }
-                const d = r.data as {
-                  usedBytes?: unknown;
-                  rowCount?: unknown;
-                  limitBytes?: unknown;
-                  limitRows?: unknown;
-                };
-                const num = (v: unknown) => (typeof v === 'number' ? v : 0);
-                dispatchToBlock({
-                  type: 'APP_STORAGE_QUOTA_RESULT',
-                  payload: {
-                    requestId: requestId ?? '',
-                    usedBytes: num(d?.usedBytes),
-                    rowCount: num(d?.rowCount),
-                    limitBytes: num(d?.limitBytes),
-                    limitRows: num(d?.limitRows),
-                  },
-                });
-              },
-            );
-            return;
-          }
-
-          // ---- SHARED (cross-user, votable) storage ----
-          // FORWARD the eight `SHARED_*` bridges to the block-token
-          // `apps.shared.{list,getCount,getCounts,append,update,vote,unvote,
-          // withdraw}` procedures (reads GET, mutations POST — FLAT
-          // `{ blockToken, … }` input, same convention as apps.storage.*). Reads
-          // need the `apps:storage:shared:read` scope, writes
-          // `apps:storage:shared:write`; the dev token carries whatever the local
-          // manifest declared and the server enforces. Without these,
-          // `useSharedStorage()` hung to its 30s timeout in dev:live.
-          case 'SHARED_LIST': {
-            const rawLimit = typed.payload?.limit;
-            const limit =
-              typeof rawLimit === 'number'
-                ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
-                : 50;
-            const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
-            if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
-            if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
-            void callTrpcData('apps.shared.list', listInput).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'SHARED_LIST_RESULT',
-                  payload: { requestId: requestId ?? '', items: [], error: r.error },
-                });
-                return;
-              }
-              const rawItems = (r.data as { items?: unknown })?.items;
-              const items = (Array.isArray(rawItems) ? rawItems : []).map(sharedItemWireFrom);
-              const nextCursor = (r.data as { nextCursor?: unknown })?.nextCursor;
-              dispatchToBlock({
-                type: 'SHARED_LIST_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  items,
-                  ...(typeof nextCursor === 'string' && nextCursor.length > 0
-                    ? { nextCursor }
-                    : {}),
-                },
-              });
-            });
-            return;
-          }
-
-          case 'SHARED_GET_COUNT': {
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'SHARED_GET_COUNT_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
-                  });
-                  return;
-                }
-                const count = (r.data as { count?: unknown })?.count;
-                dispatchToBlock({
-                  type: 'SHARED_GET_COUNT_RESULT',
-                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
-                });
-              },
-            );
-            return;
-          }
-
-          case 'SHARED_GET_COUNTS': {
-            const keys = Array.isArray(typed.payload?.keys) ? typed.payload.keys : [];
-            void callTrpcData(
-              'apps.shared.getCounts',
-              { blockToken: rawToken, keys },
-            ).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'SHARED_GET_COUNTS_RESULT',
-                  payload: { requestId: requestId ?? '', counts: {}, error: r.error },
-                });
-                return;
-              }
-              const counts = (r.data as { counts?: unknown })?.counts;
-              dispatchToBlock({
-                type: 'SHARED_GET_COUNTS_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  counts: (counts && typeof counts === 'object' ? counts : {}) as Record<
-                    string,
-                    number
-                  >,
-                },
-              });
-            });
-            return;
-          }
-
-          case 'SHARED_GET': {
-            // SERVED, not refused (#386): this is the single-row companion to
-            // SHARED_LIST's paged read and forwards to the SAME block-token
-            // procedure family the other eight `SHARED_*` bridges already use.
-            // Nothing about it needs host chrome or a session — so refusing it
-            // would be a limitation this host does not actually have.
-            //
-            // Before this case existed the message fell through `default:
-            // return` with NO reply, so `useSharedStorage().get(key)` sat for
-            // the full 30s protocol timeout and then threw a generic
-            // RequestTimeoutError — while the identical call resolved under
-            // dev:mock.
-            //
-            // `item: null` on a miss (never an error): the protocol makes a
-            // missing / hidden / withdrawn row resolve cleanly to "not found"
-            // so a `?g=` deep-link to a moderated row cannot distinguish it
-            // from an absent one. Only a HOST-SIDE failure sets `error`.
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'SHARED_GET_RESULT',
-                  payload: { requestId: requestId ?? '', item: null, error: r.error },
-                });
-                return;
-              }
-              // ENVELOPE-LENIENT. The sibling reads are not consistent about
-              // this — `getCount` returns `{ count }` and `list` returns
-              // `{ items }`, but `withdraw` returns the bare `{ deleted }` —
-              // and an envelope guess that is wrong would turn every hit into
-              // a silent `null`, i.e. "the row does not exist" for a row that
-              // does. So accept `{ item: <row> }` OR the bare row, identified
-              // by carrying a `key`. Anything else is a genuine miss.
-              const data = r.data as { item?: unknown; key?: unknown } | null | undefined;
-              const envelope = data?.item;
-              const rawItem =
-                envelope && typeof envelope === 'object'
-                  ? envelope
-                  : data && typeof data.key === 'string'
-                    ? data
-                    : null;
-              dispatchToBlock({
-                type: 'SHARED_GET_RESULT',
-                payload: {
-                  requestId: requestId ?? '',
-                  item: rawItem ? sharedItemWireFrom(rawItem) : null,
-                },
-              });
-            });
-            return;
-          }
-
-          case 'SHARED_APPEND': {
-            const value = typed.payload?.value;
-            void callTrpcData(
-              'apps.shared.append',
-              { blockToken: rawToken, value },
-            ).then((r) => {
-              if (r.error) {
-                dispatchToBlock({
-                  type: 'SHARED_APPEND_RESULT',
-                  payload: { requestId: requestId ?? '', key: '', ...sharedRefusal(r) },
-                });
-                return;
-              }
-              const key = (r.data as { key?: unknown })?.key;
-              dispatchToBlock({
-                type: 'SHARED_APPEND_RESULT',
-                payload: { requestId: requestId ?? '', key: String(key ?? '') },
-              });
-            });
-            return;
-          }
-
-          case 'SHARED_UPDATE': {
-            const key = typed.payload?.key ?? '';
-            const value = typed.payload?.value;
-            void callTrpcData(
-              'apps.shared.update',
-              { blockToken: rawToken, key, value },
-            ).then((r) => {
-              dispatchToBlock({
-                type: 'SHARED_UPDATE_RESULT',
-                payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
-                  : { requestId: requestId ?? '', ok: true },
-              });
-            });
-            return;
-          }
-
-          case 'SHARED_VOTE': {
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'SHARED_VOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
-                  });
-                  return;
-                }
-                const count = (r.data as { count?: unknown })?.count;
-                dispatchToBlock({
-                  type: 'SHARED_VOTE_RESULT',
-                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
-                });
-              },
-            );
-            return;
-          }
-
-          case 'SHARED_UNVOTE': {
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'SHARED_UNVOTE_RESULT',
-                    payload: { requestId: requestId ?? '', count: 0, ...sharedRefusal(r) },
-                  });
-                  return;
-                }
-                const count = (r.data as { count?: unknown })?.count;
-                dispatchToBlock({
-                  type: 'SHARED_UNVOTE_RESULT',
-                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
-                });
-              },
-            );
-            return;
-          }
-
-          case 'SHARED_WITHDRAW': {
-            const key = typed.payload?.key ?? '';
-            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }).then(
-              (r) => {
-                if (r.error) {
-                  dispatchToBlock({
-                    type: 'SHARED_WITHDRAW_RESULT',
-                    payload: {
-                      requestId: requestId ?? '',
-                      ok: false,
-                      deleted: false,
-                      ...sharedRefusal(r),
-                    },
-                  });
-                  return;
-                }
-                dispatchToBlock({
-                  type: 'SHARED_WITHDRAW_RESULT',
-                  payload: {
-                    requestId: requestId ?? '',
-                    ok: true,
-                    deleted: Boolean((r.data as { deleted?: unknown })?.deleted),
-                  },
-                });
-              },
-            );
-            return;
-          }
-
-          case 'SHARED_REPORT': {
-            // SERVED, not refused (#386): same block-token procedure family as
-            // the other `SHARED_*` bridges — the trust gate and the rate limit
-            // are SERVER-side, so forwarding here exercises the real bounds
-            // rather than a local imitation of them. Nothing needs host chrome.
-            //
-            // Before this case existed the message fell through `default:
-            // return` with NO reply, so `useSharedStorage().report(key, reason)`
-            // sat for the full 30s protocol timeout.
-            //
-            // `reason` is OPTIONAL free text — forwarded only when the block
-            // actually sent a string, so an omitted reason stays omitted rather
-            // than becoming `''` (the server bounds it either way).
-            const key = typed.payload?.key ?? '';
-            const reportInput: Record<string, unknown> = { blockToken: rawToken, key };
-            if (typeof typed.payload?.reason === 'string') {
-              reportInput.reason = typed.payload.reason;
-            }
-            void callTrpcData('apps.shared.report', reportInput).then((r) => {
-              dispatchToBlock({
-                type: 'SHARED_REPORT_RESULT',
-                payload: r.error
-                  ? { requestId: requestId ?? '', ok: false, ...sharedRefusal(r) }
                   : { requestId: requestId ?? '', ok: true },
               });
             });
@@ -2829,17 +2324,6 @@ function extractTrpcError(parsed: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
-/**
- * The `data` object of a tRPC error response (`{ error: { json: { data } } }`
- * or `{ error: { data } }`), or undefined. The platform's error formatter puts
- * machine-readable refusal fields here — `rateLimit` on a rate-limited
- * shared-storage write — which {@link extractTrpcError} alone dropped.
- */
-function extractTrpcErrorData(parsed: unknown): Record<string, unknown> | undefined {
-  const data = trpcErrorShape(parsed)?.data;
-  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : undefined;
-}
-
 /** The unwrapped tRPC error shape (superjson `{ json }` or plain), or undefined. */
 function trpcErrorShape(parsed: unknown): Record<string, unknown> | undefined {
   if (typeof parsed !== 'object' || parsed === null) return undefined;
@@ -2849,13 +2333,4 @@ function trpcErrorShape(parsed: unknown): Record<string, unknown> | undefined {
     'json' in error ? (error as { json?: unknown }).json : (error as Record<string, unknown>);
   if (typeof inner !== 'object' || inner === null) return undefined;
   return inner as Record<string, unknown>;
-}
-
-/**
- * The error fields of a shared-storage WRITE reply — `error`, plus `rateLimit`
- * only when the refusal carried it. The dev-host twin of the production host's
- * `sharedStorageErrorReply`, so the six write bridges build the refusal one way.
- */
-function sharedRefusal(r: TrpcDataResult): { error: string; rateLimit?: SharedStorageRateLimit } {
-  return { error: r.error ?? '', ...(r.rateLimit ? { rateLimit: r.rateLimit } : {}) };
 }

@@ -772,6 +772,111 @@ describe('AppClient.workflows — watch and wait', () => {
   });
 });
 
+// A poll the host could not serve (rate-limited) answers
+// `{ workflowId, status: 'processing', throttled: true }` (civitai/civitai#8980).
+// It is not an update: never yielded, never resolved as the result of `wait`,
+// and it does not end the watch.
+describe('AppClient.workflows — throttled poll replies', () => {
+  const THROTTLED = { workflowId: WORKFLOW_ID, status: 'processing', throttled: true };
+  const ETA = {
+    stepName: 'gen',
+    queuedAhead: null,
+    startsAt: null,
+    completesAt: null,
+    progress: 0.42,
+    support: null,
+  };
+
+  it('real → throttled → real: only the two real snapshots are yielded, eta intact', async () => {
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: snapshot('processing', { eta: ETA }) }),
+      () => json(200, { snapshot: THROTTLED }),
+      () => json(200, { snapshot: snapshot('succeeded', { imageUrls: ['https://example.test/1.png'] }) }),
+    ]);
+
+    const seen: BlockWorkflowSnapshot[] = [];
+    for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s);
+
+    expect(calls).toHaveLength(3);
+    expect(seen).toEqual([
+      { workflowId: WORKFLOW_ID, status: 'processing', eta: ETA },
+      { workflowId: WORKFLOW_ID, status: 'succeeded', imageUrls: ['https://example.test/1.png'] },
+    ]);
+  });
+
+  it('a throttled FIRST reply is not yielded, and the watch keeps reading', async () => {
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: THROTTLED }),
+      () => json(200, { snapshot: snapshot('processing', { eta: ETA }) }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+
+    const seen: BlockWorkflowSnapshot[] = [];
+    for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s);
+
+    expect(calls).toHaveLength(3);
+    expect(seen.map((s) => [s.status, s.eta?.progress ?? null])).toEqual([
+      ['processing', 0.42],
+      ['succeeded', null],
+    ]);
+  });
+
+  it('the latest snapshot stays the previous REAL one: the same real snapshot after a throttle is not re-yielded', async () => {
+    const real = snapshot('processing', { eta: ETA });
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: real }),
+      () => json(200, { snapshot: THROTTLED }),
+      () => json(200, { snapshot: real }),
+      () => json(200, { snapshot: snapshot('succeeded') }),
+    ]);
+
+    const seen: BlockWorkflowSnapshot[] = [];
+    for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 0 })) seen.push(s);
+
+    expect(calls).toHaveLength(4);
+    expect(seen.map((s) => s.status)).toEqual(['processing', 'succeeded']);
+    expect(seen.some((s) => 'throttled' in s)).toBe(false);
+  });
+
+  it('`wait` is not ended by throttled replies and resolves with the final real snapshot', async () => {
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: THROTTLED }),
+      () => json(200, { snapshot: THROTTLED }),
+      () => json(200, { snapshot: snapshot('succeeded', { cost: { total: 12 } }) }),
+    ]);
+
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual({
+      workflowId: WORKFLOW_ID,
+      status: 'succeeded',
+      cost: { total: 12 },
+    });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('only throttled replies before an abort: nothing is yielded, and `wait` rejects with the abort reason', async () => {
+    vi.useFakeTimers();
+    const { workflows, calls } = await client(Array.from({ length: 50 }, () => () => json(200, { snapshot: THROTTLED })));
+    const controller = new AbortController();
+    const reason = new Error('navigated away');
+    const seen: BlockWorkflowSnapshot[] = [];
+
+    const settled = (async () => {
+      for await (const s of workflows.watch(WORKFLOW_ID, { intervalMs: 100, signal: controller.signal })) seen.push(s);
+    })().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(350);
+    controller.abort(reason);
+
+    expect(await settled).toBe(reason);
+    expect(calls.length).toBeGreaterThan(1);
+    expect(seen).toEqual([]);
+  });
+
+  it('`get` returns a throttled reply as is, so a caller polling by hand can see the flag', async () => {
+    const { workflows } = await client([() => json(200, { snapshot: THROTTLED })]);
+    await expect(workflows.get(WORKFLOW_ID)).resolves.toEqual(THROTTLED);
+  });
+});
+
 describe('AppClient.workflows — which token reaches it', () => {
   const blockToken = { raw: 'jwt', scopes: ['ai:write:budgeted'], expiresAt: new Date(0), kind: 'block' as const };
 

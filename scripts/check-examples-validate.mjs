@@ -14,7 +14,7 @@
  * ===============
  * Nothing in CI ever validated, built or typechecked the examples. All six
  * failed `civitai app validate` (no committed lockfile; two also had an
- * unjustified sensitive scope), and `kv-storage` called `useAppStorage()` with
+ * unjustified sensitive scope), and one (since deleted) called `useAppStorage()` with
  * no storage scope declared — so every save would have been refused in
  * production while working against the local harness. Each defect was in a file
  * this repo owns, and each was visible to the CLI the docs tell people to run.
@@ -52,8 +52,8 @@ const REPO_ROOT = join(HERE, '..');
 const EXAMPLES_DIR = join(REPO_ROOT, 'starters', 'examples');
 const CLI = process.env.CIVITAI_BIN || 'civitai';
 
-/** Eleven examples exist. A drop means one left the scan; lower this in the same commit. */
-const MIN_EXAMPLES = 11;
+/** Nine examples exist. A drop means one left the scan; lower this in the same commit. */
+const MIN_EXAMPLES = 9;
 
 /**
  * Warnings that are known, understood and NOT a defect in the example.

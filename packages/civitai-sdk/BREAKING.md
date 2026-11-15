@@ -24,6 +24,7 @@ messages have no destination yet.
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
 | `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
+| `PERSIST_GENERATION_SOURCE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows it (the host reply ledger lists it): `request('PERSIST_GENERATION_SOURCE', { workflowId, imageIndex })` resolves with the source itself (`{ url, width, height, imageId, ready }`, unwrapped from `result`) on a full-page app host |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
 | `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `GET_RESOURCE_FILE` | — | Not carried as a typed wrapper. `BlockTransport.request()` knows all three (the host reply ledger lists them): `request('GET_RESOURCE_FILE', { modelVersionId, fileId? })` resolves with `{ file }` on a full-page app host |
 | `TRACK_EVENT` | `app.host.track(eventName, properties)` | **Carried**, same wire as `useBlockAnalytics().track`. 🔴 Only events and properties DECLARED under the manifest's `analytics.events` are recorded — see below |
@@ -66,8 +67,7 @@ first.
 🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that date. A request to any of
 these eleven routes that passes the block-token and scope checks is answered **`410`** with
 `{ error: 'legacy_store_removed', message, docs }`, so every `app.sharedStorage` call rejects with an
-`ApiError` whose `status` is `410`. The bridge path (`useSharedStorage`) is refused too, with a message that
-starts `legacy_store_removed:`. Move the app to the document store:
+`ApiError` whose `status` is `410`. Move the app to the document store:
 https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this section
 describes the routes as they behaved before the removal.
 
@@ -101,97 +101,9 @@ not a stylistic one, and assuming otherwise produces a bug that type-checks:
 4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
    refuses everything. See *Who may read, and who may write* below.
 
-### Porting off the bridge: `useSharedStorage` → `app.sharedStorage`
+### The bridge hook is gone
 
-`@civitai/blocks-react`'s `useSharedStorage` hook is what the fleet uses today, and it is **the left column of
-the table at the top of this document, not a rival client of the right one.** It sends `SHARED_LIST`,
-`SHARED_GET`, … over `postMessage` and never touches `/api/v1`; the host receives those messages and calls
-tRPC `apps.shared.*` on the block's behalf. Its own doc says the block *"never sees the datastore credentials
-and never sends its block token (the host injects both)"*.
-
-`app.sharedStorage` is the other side of that migration: the transport becomes a direct `fetch` of
-`/api/v1/blocks/shared-storage/*`, from the block's opaque origin, instead of a message to the host.
-
-**The credential and the CORS declaration are already handled — for both, by code that exists.** `initialize()`
-wires the host session into the client, `createHttp` puts `Authorization: Bearer <token>` on every request and
-retries once on a `401` with a freshly fetched token, and the token still comes **from the host** over the
-bridge (`REQUEST_TOKEN`) — the host continues to mint and rotate it. Scopes are unchanged between the two
-transports (see above). So there is no token plumbing, no CORS work and no manifest change to do.
-
-⚠ **The CORS mechanism differs by trust tier, though neither tier costs you any work.** An unverified block runs
-without `allow-same-origin`, so it fetches from an **opaque origin** and the five routes' `allowOpaqueOrigin`
-opt-in makes the server answer `ACAO: null`. An `internal`- or `verified`-tier block **does** get
-`allow-same-origin`, so it fetches from its **real origin**, where that arm does not apply — it clears CORS via
-the server's origin allowlist instead, which the platform populates itself from the publish-request approval
-rather than anything an author configures.
-
-The work that actually remains is four items, and it is all at the call sites:
-
-1. **Narrow `value` from `unknown`** at every read site — see below.
-2. **Move vote / counter / report logic into your app.** Those methods are not in this client at all; the
-   platform routes still exist. See the deliberate-omission note above.
-3. **Handle refusals as HTTP.** An `ApiError` carrying a `status`, where the bridge surfaced a rejected
-   message — and the anon-write case is a `403` from the scope binding rather than anything the handler said.
-   Read `message ?? error`; see *Error body* below.
-   🔴 **But not every failure is an `ApiError`.** A request the browser blocks — a CORS rejection, a DNS or
-   network failure — never reaches the response layer, so it surfaces as a **fetch `TypeError` with no
-   `status` and no body**. A `catch` that assumes `ApiError` will read `undefined` for the status and report the
-   wrong thing. The bridge had no such failure mode; this transport does. Branch on
-   `error instanceof ApiError` first and treat the rest as transport failure.
-4. **Audit every `limit` you pass** — the normalisation rules changed; see below.
-
-⚠ **This paragraph has had three framings; two claims are retracted.** Recorded so the ground is not re-walked,
-and scoped deliberately — each retraction covers only the words quoted, nothing adjacent:
-**(a)** *"a second client for these same routes"* — **false**: the hook is the bridge/tRPC path and never
-calls `/api/v1`, so the two are different transports, not two clients of one surface.
-**(b)** *"budget for the token/CORS work"* — **false**: both the credential and the CORS declaration are already
-handled, so that advice sent the reader's effort at finished infrastructure while demoting the real work.
-🔴 The *transport* change is NOT retracted — this document still asserts it, above. The list above is what is
-measured; nothing beyond it is claimed.
-
-| | `useSharedStorage` (bridge) | `app.sharedStorage` (HTTP) |
-|---|---|---|
-| Transport | `postMessage` → host → tRPC `apps.shared.*` | direct `fetch` of `/api/v1/blocks/shared-storage/*` |
-| Credential | host-injected | the SDK sends the host-minted token for you |
-| Methods | 10, including `vote`/`unvote`/`count`/`report` | 5, key/value only |
-| A listed row's `value` | `SharedAppendValue` — the typed write shape | `unknown` |
-| `update` resolves | `void` | `{ ok: true }` |
-| `list({ limit })`, out of range / non-integer / non-finite | **normalised**: clamped to 1…100, floored, or defaulted to 50 | **rejected — `400`** on all three |
-
-🔴 **`limit` is the one that bites silently, and it is three changes, not one.** The bridge HOST normalised;
-the REST route VALIDATES and refuses. Measured against the platform's own schema
-(`z.coerce.number().int().min(1).max(100)`), each of these used to succeed and now `400`s:
-
-- **Out of range** — `200` was clamped to 100, `0` was raised to 1. Both now reject.
-- **Non-integer** — `2.5` was floored to 2. Now rejects.
-- **Non-finite or not a number** — `NaN`, `Infinity`, `"abc"` and `""` all fell back to **50**. All now reject.
-  🔴 **This is the one to grep for**: `Number(searchParams.get('n'))` on a missing param is `NaN`, which used
-  to mean "just give me the default" and is now a failed request.
-
-⚠ The `400` body is `{ error: 'Invalid query', details }`, and the SDK reads `error` first — so
-`ApiError.message` is just **"Invalid query"**, naming neither the field nor the reason. The pointer is not
-missing, only moved: **`ApiError.body.details`** carries zod's flattened field errors. Look there, not at
-`.message`, when a read 400s.
-
-Pass a value in range, or omit it and take the server's default. This client deliberately does **not** re-clamp:
-the bounds are the server's, a second copy here is the thing that drifts, and a guard in this package enforces
-that the module carries no numeric literal at all.
-
-🔴 **The `value: unknown` is deliberate, and it is the wire-honest reading.** A row you list was written by some
-OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact about
-stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing checked,
-and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
-
-Consequence: **a port is not an import swap** — but the cost is call-site work, not infrastructure. Narrow
-`value`, move the vote/counter/report logic into your app, branch on `ApiError.status`, and check every `limit`.
-
-| Method | Path | Scope |
-|---|---|---|
-| `GET` | `/list` | `…shared:read` |
-| `GET` | `/item` | `…shared:read` |
-| `GET` | `/counts` | `…shared:read` |
-| `GET` | `/top` | `…shared:read` |
-| `POST` | `/append` · `/update` · `/vote` · `/unvote` · `/withdraw` · `/report` · `/increment` | `…shared:write` |
+`@civitai/blocks-react` removed `useSharedStorage` and `useAppStorage`; use the document store, `app.storage.collection(name)`.
 
 ### Who may read, and who may write
 
@@ -240,8 +152,7 @@ error string, which on this surface can name the app's schema and the offending 
 
 🔴 **Removed on 2026-11-10**, with the shared store. A request to any of these five routes that passes the
 block-token and scope checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
-and the bridge path (`useAppStorage`) is refused the same way as `useSharedStorage`. Move the app to the
-document store: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
+Move the app to the document store: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 
 Five routes under `/api/v1/blocks/app-storage/` — `get`, `set`, `delete`, `list`, `quota` (civitai#5085).
 Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps them as `AppClient.storage`.
@@ -250,7 +161,7 @@ Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps 
 Gate on `viewer` rather than reading an empty result as "nothing stored". Whether 403 is the intended policy
 per operation is open as civitai#5089.
 
-`updatedAt` is still revived to a `Date` by the client, as `useAppStorage` did, so consumers need no change.
+`updatedAt` is still revived to a `Date` by the client, as the removed bridge hook did.
 
 The client's own contract — block-token-only, every-failure-rejects, `nextCursor`, and the wire-vs-stored
 distinction between `set`'s `sizeBytes` and `getQuota`'s `usedBytes` — is in **README.md § App storage** and
@@ -359,7 +270,7 @@ which is what the old "not carried" line was reaching for, but a model-slot bloc
 | Host failures | free-text `error` on each reply | `BridgeError` with a `code` |
 | Request deadlines | per-message client timeouts | none; pass an `AbortSignal` |
 | A refused grant | rejected | resolves `false` |
-| React hooks | 37 | none — plain functions; bind them in your framework |
+| React hooks | every hook `@civitai/blocks-react`'s `src/index.ts` exports | none — plain functions; bind them in your framework |
 
 ## Waiting on the host
 
@@ -404,7 +315,7 @@ For a block to use the API at all, civitai has to:
 
    ⚠ Still true, and still the cheaper route for most apps: the block JWT is **not** limited to
    `/api/v1/blocks/*` by any route or claim check — it works wherever a handler is wrapped. Today that is
-   most `/api/v1/blocks/*` routes plus `/api/v1/models/{id}` — the 35 routes wrapped in `withBlockScope`.
+   most `/api/v1/blocks/*` routes plus `/api/v1/models/{id}` — the routes wrapped in `withBlockScope` (search civitai's `src/pages/api/v1` for it; a count here would fall behind).
    🔴 **Not `/api/v1/me`**, which is an `AuthedEndpoint`; blocks use `/api/v1/blocks/me`. And four `blocks/*`
    routes (`dev-token`, `submissions`, `submit-version`, `withdraw`) are not wrapped either. Widening what the existing block token is accepted on reaches most destinations without
    OAuth at all. The question that decides between the two is whether a block must act **without an open host

@@ -52,6 +52,7 @@ export type { UseHostOrigin } from './hooks/useHostOrigin.js';
 export {
   DEFAULT_WATCH_WAIT_SECONDS,
   useBuzzWorkflow,
+  WorkflowCancelNotIssuedError,
   WorkflowEstimateError,
   WorkflowSubmitError,
 } from './hooks/useBuzzWorkflow.js';
@@ -125,6 +126,8 @@ export { useAppWorkflows } from './hooks/useAppWorkflows.js';
 export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
 export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
 export type { UsePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
+export { usePersistGenerationSource } from './hooks/usePersistGenerationSource.js';
+export type { UsePersistGenerationSource } from './hooks/usePersistGenerationSource.js';
 export { useGatedImages } from './hooks/useGatedImages.js';
 export type { UseGatedImages } from './hooks/useGatedImages.js';
 export { useSaveImage } from './hooks/useSaveImage.js';
@@ -207,6 +210,8 @@ export type {
   BlockResourceFileEntryFormat,
   BlockResourceFileErrorCode,
   BlockResourceFileMeta,
+  BlockPersistGenerationSourceRequest,
+  BlockPersistedGenerationSource,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
@@ -308,17 +313,3 @@ export type {
   UseNestedDocument,
   UseNestedDocumentOptions,
 } from './hooks/useNestedDocument.js';
-export { useAppStorage } from './hooks/useAppStorage.js';
-export type {
-  AppStorageKeyEntry,
-  AppStorageListResult,
-  AppStorageQuota,
-  UseAppStorage,
-} from './hooks/useAppStorage.js';
-export { useSharedStorage, SharedStorageRateLimitError } from './hooks/useSharedStorage.js';
-export type {
-  SharedAppendValue,
-  SharedListItem,
-  SharedListResult,
-  UseSharedStorage,
-} from './hooks/useSharedStorage.js';

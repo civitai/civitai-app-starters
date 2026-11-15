@@ -58,7 +58,6 @@ const HOOKS = join(SRC, 'hooks');
  * either public or internal.
  */
 const HOOK_FILES = [
-  'useAppStorage',
   'useAppWorkflows',
   'useBatchEstimate',
   'useBlockAnalytics',
@@ -91,6 +90,7 @@ const HOOK_FILES = [
   'useImageUpload',
   'useMediaUpload',
   'useNestedDocument',
+  'usePersistGenerationSource',
   'usePublishGenerationOutputs',
   'useReactions',
   'useRequestConsent',
@@ -101,7 +101,6 @@ const HOOK_FILES = [
   'useRunConfirmedStep',
   'useRunTraining',
   'useSaveImage',
-  'useSharedStorage',
   'useTip',
   'useTipAllowance',
   'useTransportConnection',

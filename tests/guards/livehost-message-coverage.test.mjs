@@ -134,8 +134,10 @@ test('CONTROL — the extractors find a real, non-trivial set (not a vacuous zer
   // Floors, not exact counts: the protocol grows. A regex that stops matching
   // drops to 0 and trips these long before it can make a coverage claim vacuous.
   assert.ok(proto.length >= 40, `protocol extractor found ${proto.length} types — expected >= 40`);
-  assert.ok(live.length >= 40, `liveHost extractor found ${live.length} cases — expected >= 40`);
-  assert.ok(mock.length >= 35, `mockHost extractor found ${mock.length} cases — expected >= 35`);
+  // 35, not 40: the fifteen legacy-store cases (APP_STORAGE_* / SHARED_*) were removed.
+  assert.ok(live.length >= 35, `liveHost extractor found ${live.length} cases — expected >= 35`);
+  // 30, not 35: the fifteen legacy-store cases were removed from both hosts.
+  assert.ok(mock.length >= 30, `mockHost extractor found ${mock.length} cases — expected >= 30`);
   // And the anchors the regexes depend on are really present.
   assert.ok(proto.includes('SUBMIT_WORKFLOW'), 'protocol list is missing a known member');
   assert.ok(live.includes('SUBMIT_WORKFLOW'), 'liveHost cases are missing a known member');
@@ -175,7 +177,7 @@ test('every block→parent message type is handled or explicitly refused in live
       `30 s protocol timeout, then throws a generic RequestTimeoutError — while the SAME code\n` +
       `works under dev:mock. That is #386.\n\n` +
       `        Fix it one of two ways, both of which satisfy this guard:\n` +
-      `          • SERVE it — forward to the real procedure (see the SHARED_* block).\n` +
+      `          • SERVE it — forward to the real procedure (see the GET_BUZZ_BALANCE case).\n` +
       `          • REFUSE it — \`logOnce\` + an honest reply on the type's own *_RESULT channel\n` +
       `            (see SET_COLLECTION_FOLLOW / CREATE_POST_FROM_APP / GET_WILDCARD_PACK).\n` +
       `        Only add it to NO_REPLY_EXPECTED if the protocol declares NO reply for it.`,

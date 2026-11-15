@@ -332,6 +332,40 @@ export type BlockNavigateScope = 'app' | 'site';
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
 
 /**
+ * What a block sends in `PERSIST_GENERATION_SOURCE`: ONE output of one of the
+ * calling app's OWN workflows, named by `workflowId` and `imageIndex` (an index
+ * into that workflow's `images`, as seen via `QUERY_APP_WORKFLOWS` /
+ * `useAppWorkflows()`). Never a url: the host resolves the output server-side
+ * from the ownership-verified workflow.
+ */
+export interface BlockPersistGenerationSourceRequest {
+  workflowId: string;
+  imageIndex: number;
+}
+
+/**
+ * What the host returns from `PERSIST_GENERATION_SOURCE`
+ * (`GENERATION_SOURCE_PERSISTED.result`): the app's own output, saved as a
+ * PRIVATE, scanned generation source.
+ *
+ * `url` / `width` / `height` are a {@link BlockGenerationSourceImageInfo}, so
+ * the value (or that subset of it) goes straight into a `sourceImages` entry,
+ * or anywhere else a generation source is accepted.
+ *
+ * - The image is private to the viewer and is NOT on the app's shared grid.
+ *   The host shows no confirm.
+ * - `imageId` is the persisted `Image` row id.
+ * - `ready` says whether the scan finished. The host waits up to about 30 s for
+ *   it. `ready: false` means the scan is still running: a generation that uses
+ *   the source is refused with the `source-scan-pending` error code until it
+ *   finishes, so retry that generation later.
+ */
+export interface BlockPersistedGenerationSource extends BlockGenerationSourceImageInfo {
+  imageId: number;
+  ready: boolean;
+}
+
+/**
  * One image an `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` uploaded — an
  * element of {@link BlockTrainingDataUploadResult.images}. Mirrors the host's
  * `TrainingDataUpload` in civitai/civitai's
@@ -1022,9 +1056,8 @@ export type WorkflowBodyTextToImage = {
   /**
    * Optional shared-storage key of the published content this generation runs on
    * behalf of. The server resolves it to the content's author for attribution
-   * (see the G5 civitai PR). Opaque string — the block passes back the `key` it
-   * got from `useSharedStorage()` for the content being generated against; omit
-   * when not applicable.
+   * (see the G5 civitai PR). Opaque string — the block passes back the `key` of
+   * the shared entry the generation runs against; omit when not applicable.
    */
   sharedContentKey?: string;
   /**
@@ -1403,6 +1436,27 @@ export type WorkflowBodyStep = {
    * package would drift against it silently.
    */
   params: Record<string, unknown>;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * Top-level, NOT inside `params` — a pool is not a step parameter, and the
+   * step's own `.strict()` param schema would refuse it there. A host predating
+   * this field refuses it as an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 /**
@@ -1567,6 +1621,28 @@ export type WorkflowBodyPassThroughStep = {
    * (`quoteId` itself is excluded from that comparison).
    */
   quoteId?: string;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * Never forwarded into {@link input}. On a CONFIRMED run it is part of the
+   * body the quote is bound to: submit with the pool you estimated with, or the
+   * run is refused as a changed body. A host predating this field refuses it as
+   * an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 // ============================================================
@@ -1799,6 +1875,28 @@ export type WorkflowBodyWorkflow = {
    * place to put a prompt or a seed that several steps share.
    */
   arguments?: Record<string, unknown>;
+  /**
+   * Optional Buzz pool to try FIRST for this job. The host puts it at the front of
+   * the pools this app may spend and keeps the others as fallback, so a job the
+   * picked pool cannot cover alone still runs (an SFW app may spend `blue` and
+   * `green`; a mature app `blue` and `yellow`). Omit it for the host's default
+   * order, blue first.
+   *
+   * A pick outside the app's allowed pools is REFUSED, with an error naming the
+   * pool, on the estimate and the submit alike, before anything is priced or
+   * reserved. Estimate with the same pick you submit with: the estimate prices
+   * that order.
+   *
+   * 🔴 It does NOT guarantee an unrestricted output. When the picked pool runs
+   * out the fallback pays, and a fallback to `blue` can still leave a mature
+   * output restricted.
+   *
+   * ONE pick for the whole workflow, not per step: the orchestrator takes a
+   * single list of pools per workflow, so a step cannot name its own (a step
+   * carrying `accountType` is refused). A host predating this field refuses it
+   * as an unknown key.
+   */
+  accountType?: BuzzAccountType;
 };
 
 // ============================================================
@@ -2213,9 +2311,10 @@ export interface BlockWorkflowSnapshot {
    * error, errorCode }` with NO `cost`. A host that predates these codes
    * resolves the estimate instead, priced at the step's declared estimate, so
    * there a registered-step estimate may not be a quote.
-   *  - `'source-scan-pending'` — a `kind: 'step'` or `kind: 'workflow'` input,
-   *    or an inline `customComfy` graph, names an image the viewer uploaded
-   *    whose scan has not finished. `error` reads `that image is still being
+   *  - `'source-scan-pending'` — a `kind: 'textToImage'` source image, a
+   *    `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy`
+   *    graph, names an image the viewer uploaded (or a source kept with
+   *    `PERSIST_GENERATION_SOURCE`) whose scan has not finished. `error` reads `that image is still being
    *    scanned — wait for it to finish before using it`. Estimate and submit
    *    alike, before anything is reserved. Retry the same body once the
    *    upload's scan verdict is `'scanned'`.
@@ -2531,6 +2630,73 @@ export interface BlockWorkflowSnapshot {
    * an estimate (which creates no workflow) and on a host that predates it.
    */
   steps?: BlockWorkflowStepSnapshot[];
+  /**
+   * Where the run is right now: a summary of the ONE step that is queued or
+   * running, for a progress bar or an "N ahead, starts ~HH:MM" line. The host
+   * reads it off ALL of the workflow's orchestrator steps, so a single-step kind
+   * (`textToImage`, `step`, `customComfy`, `training`) has one too, not only a
+   * `kind: 'workflow'` run. It picks the first step with a queue position, else
+   * the first `processing` step. See {@link BlockWorkflowEta} for each field.
+   *
+   * - **An object** while the workflow is not terminal and a step is queued or
+   *   running.
+   * - **ABSENT OR `null` — READ THEM THE SAME.** The host OMITS the field when
+   *   it has nothing to report rather than sending `null`. That covers:
+   *   - a terminal workflow (`succeeded`, `failed`, `expired`, `canceled`);
+   *   - a workflow with no step queued or running;
+   *   - a host that predates the field;
+   *   - a rate-limited poll the host could not serve. That reply carries
+   *     {@link BlockWorkflowSnapshot.throttled}, and `watch` drops it rather
+   *     than passing it to `onUpdate`, so an app on `watch` never sees its
+   *     missing `eta`.
+   *
+   * 🔴 THE QUEUE POSITION DOES NOT MOVE ON ITS OWN BETWEEN STATUS CHANGES. A held
+   * poll (`watch`) returns early when the workflow's status, a step's progress or
+   * a job event changes, NOT when the queue ahead of a waiting step drains. So
+   * while a step is queued, `queuedAhead` and its estimates refresh at most once
+   * per held poll (about every 15 s). Once the step runs, `progress` moves
+   * promptly.
+   *
+   * Every value in it is an ESTIMATE from the orchestrator's scheduler. Do not
+   * gate on it; `status` is still the only thing that says the run is done.
+   *
+   * ```tsx
+   * await watch(workflowId, {
+   *   onUpdate: (s) => {
+   *     const eta = s.eta;
+   *     if (!eta) return; // absent: keep the last line (watch resolves when terminal)
+   *     if (eta.progress !== null) return setBar(eta.progress); // running
+   *     const at = eta.startsAt ? new Date(eta.startsAt) : null;
+   *     setLine(
+   *       `${eta.queuedAhead ?? '?'} ahead` +
+   *         (at ? `, starts ~${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''),
+   *     );
+   *   },
+   * });
+   * ```
+   *
+   * 🔴 A MALFORMED VALUE IS DROPPED, NOT FATAL. `@civitai/blocks-react` removes
+   * an `eta` that does not have this shape (and likewise a malformed `queue`,
+   * `progress`, `startedAt` or `completedAt` on a step) and delivers the rest of
+   * the snapshot, so a bad estimate never costs an app its status or outputs.
+   */
+  eta?: BlockWorkflowEta | null;
+  /**
+   * A poll the host could not serve; NOT A REAL UPDATE. The host answers a poll
+   * it refused (rate-limited) with `{ workflowId, status: 'processing',
+   * throttled: true }` without reading the workflow, so its `status` is a
+   * placeholder and everything else is missing. A real snapshot never carries
+   * the field.
+   *
+   * `useBuzzWorkflow().watch` already handles it: it does not pass such a reply
+   * to `onUpdate`, keeps the previous real snapshot as its result, and polls
+   * again. `poll()` returns it as is (so check the flag) but does not replace
+   * the hook's `result` with it. On a cancel it means the cancel was NOT
+   * issued: `cancel()` rejects with `WorkflowCancelNotIssuedError`, and the
+   * caller retries. Absent on a host that predates the marker,
+   * whose throttled reply is `{ workflowId, status: 'processing' }`.
+   */
+  throttled?: true;
 }
 
 /** One entry of {@link BlockWorkflowSnapshot.steps}. */
@@ -2553,6 +2719,104 @@ export interface BlockWorkflowStepSnapshot {
   output?: unknown;
   /** Why this step failed. Diagnostic text; do not render it verbatim. */
   error?: string;
+  /**
+   * The step's place in the orchestrator's queue. PRESENT ONLY WHILE THE STEP
+   * IS QUEUED (waiting for a worker). Absent (read it as `null`) once the step
+   * has started, once it or the workflow is terminal, and on a host that
+   * predates the field. Its position refreshes at most once per held poll —
+   * see {@link BlockWorkflowSnapshot.eta}. See {@link BlockWorkflowStepQueue}.
+   */
+  queue?: BlockWorkflowStepQueue | null;
+  /**
+   * How much of this step is done, as a FRACTION from `0` to `1` (not a
+   * percentage). Absent or `null` (the same thing) when the orchestrator
+   * reports none, once the step or the workflow is terminal, on a host that
+   * predates the field, and for every step type whose orchestrator value is not
+   * a fraction of the whole step. The host reports it only for image and video
+   * generation (`textToImage`, `imageGen`, `videoGen`); multi-phase types such
+   * as training restart at 0 in each phase, so they get none.
+   */
+  progress?: number | null;
+  /**
+   * When the step started running, as an ISO-8601 string. Absent or `null`
+   * (the same thing) until it has started, and on a host that predates the
+   * field.
+   */
+  startedAt?: string | null;
+  /**
+   * When the step finished, as an ISO-8601 string. Absent or `null` (the same
+   * thing) until it is terminal, and on a host that predates the field.
+   */
+  completedAt?: string | null;
+}
+
+/**
+ * The values the host sends today in {@link BlockWorkflowStepQueue.support}
+ * and {@link BlockWorkflowEta.support}: whether the orchestrator can estimate
+ * this step's queue at all.
+ *
+ *  - `'available'` — there is capacity for the step and the estimates are the
+ *    scheduler's own.
+ *  - `'unavailable'` — NO CAPACITY RIGHT NOW: no worker that can run the step
+ *    is available, so the step waits until one is. The estimates, when given,
+ *    are least reliable here.
+ *  - `'unsupported'` — the orchestrator does not estimate queues for this kind
+ *    of step; the position and times are `null`.
+ *
+ * 🔴 AN UNKNOWN VALUE IS POSSIBLE: the field is typed as these plus any string,
+ * and the SDK's inbound validator accepts any string. Treat an unrecognised
+ * value like `'unsupported'`.
+ */
+export type KnownBlockWorkflowQueueSupport = 'unsupported' | 'unavailable' | 'available';
+
+/**
+ * One step's place in the orchestrator's queue — {@link
+ * BlockWorkflowStepSnapshot.queue}, present only while the step is queued.
+ *
+ * Every time is an ISO-8601 string and an ESTIMATE, and any of them may be
+ * `null` when the orchestrator has none.
+ */
+export interface BlockWorkflowStepQueue {
+  /** How many jobs are ahead of this step in the queue (a whole number ≥ 0), or `null` when unknown. */
+  precedingJobs: number | null;
+  /** When the step is expected to start running. An estimate. */
+  estimatedStartAt: string | null;
+  /** When the step is expected to finish. An estimate. */
+  estimatedCompleteAt: string | null;
+  /** Whether these estimates exist at all — see {@link KnownBlockWorkflowQueueSupport}. */
+  support: KnownBlockWorkflowQueueSupport | (string & {});
+}
+
+/**
+ * {@link BlockWorkflowSnapshot.eta}: a summary of the step that is queued or
+ * running now (the first queued step, else the first running step).
+ *
+ * WHILE QUEUED, `queuedAhead`, `startsAt`, `completesAt` and `support` come
+ * from the step's queue and `progress` is `null`. WHILE RUNNING, those four
+ * are `null` and `progress` moves. Every time is an ISO-8601 string and an
+ * ESTIMATE. All six keys are always present when the object is.
+ */
+export interface BlockWorkflowEta {
+  /** The {@link BlockWorkflowStepSnapshot.name} of the step this summarises. */
+  stepName: string;
+  /** How many jobs are ahead of that step in the queue (a whole number ≥ 0), or `null` when unknown. */
+  queuedAhead: number | null;
+  /** When the step is expected to start. An estimate; `null` once it is running or when unknown. */
+  startsAt: string | null;
+  /** When the step is expected to finish. An estimate; `null` once it is running or when unknown. */
+  completesAt: string | null;
+  /**
+   * How much of the step is done, as a FRACTION from `0` to `1`. `null` while
+   * it is queued, when the orchestrator reports none, and for step types other
+   * than image and video generation (see
+   * {@link BlockWorkflowStepSnapshot.progress}).
+   */
+  progress: number | null;
+  /**
+   * The step's {@link BlockWorkflowStepQueue.support}, or `null` when the host
+   * has none. `'unavailable'` means no capacity right now.
+   */
+  support: KnownBlockWorkflowQueueSupport | (string & {}) | null;
 }
 
 /**
@@ -3607,7 +3871,7 @@ export type BlockManifest = BlockManifestV1;
  * DATE WIRE CAVEAT: `date` is documented as ISO-8601 to match the SDK's
  * wire convention, BUT the host currently forwards the raw tRPC `result` over a
  * structured-clone `postMessage` (it does NOT `.toISOString()`-map it the way
- * the `SHARED_LIST` bridge does), so at runtime `date` arrives as a `Date`
+ * the removed `SHARED_LIST` bridge did), so at runtime `date` arrives as a `Date`
  * INSTANCE. The block-side guard + `useBuzzTransactions` hook tolerate BOTH a
  * `Date` and an ISO string (rehydrating to `Date`), so either representation
  * round-trips correctly. See `civitai-blocks-react`'s `isValidBuzzTransactionsResult`.

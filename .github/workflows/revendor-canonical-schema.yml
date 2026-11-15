@@ -328,3 +328,50 @@ jobs:
 
             No changeset: the contract is not published (it is outside the
             package's `files` and read only by the package's own tests).
+
+  # File a report when either re-vendor job fails, and close it when a later run is
+  # green. Modelled on civitai/cli's `revendor-canonical-schema.yml` `signal` job, and
+  # it calls civitai/cli's reusable `failure-issue.yml` directly (pinned to a commit
+  # sha; both repos are public), which owns WHEN to open, edit, comment or close.
+  # To take a later fix to that mechanism, bump the sha.
+  #
+  # Why it exists: a red scheduled run notifies almost nobody (only whoever last
+  # edited the `cron` line, through their own Actions setting). This workflow was
+  # red on 10 of its 20 runs up to 2026-11-14 — by design, when a canonical change
+  # needs a hand-written type first and the in-job validation refuses to open a PR —
+  # and nothing told anyone.
+  #
+  # `always()` so a red job still reports; a cancelled job is not filed as a defect.
+  signal:
+    needs: [revendor, revendor-storage-contract]
+    if: always() && needs.revendor.result != 'cancelled' && needs.revendor-storage-contract.result != 'cancelled'
+    uses: civitai/cli/.github/workflows/failure-issue.yml@50b6355fa092d5b0efb888dbabf8692fcd2004bd # v0.1.140
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[revendor-canonical-schema-bot]"
+      failing: ${{ needs.revendor.result != 'success' || needs.revendor-storage-contract.result != 'success' }}
+      # A change of state (which job is red) posts the one notifying comment.
+      state: "schema=${{ needs.revendor.result }},contract=${{ needs.revendor-storage-contract.result }}"
+      title: "[revendor-canonical-schema-bot] a scheduled re-vendor job failed (schema: ${{ needs.revendor.result }}, storage contract: ${{ needs.revendor-storage-contract.result }})"
+      body: |
+        The scheduled `Re-vendor canonical schema` workflow failed, so a server-side change was **not**
+        mirrored into this repo automatically.
+
+        | Job | Result |
+        |---|---|
+        | `revendor` (manifest schema, `packages/civitai-app-sdk/schemas/app-block/v1.json`) | `${{ needs.revendor.result }}` |
+        | `revendor-storage-contract` (`packages/civitai-sdk/schemas/app-block/storage-contract.v1.json`) | `${{ needs.revendor-storage-contract.result }}` |
+
+        **The usual cause, and the fix.** The re-vendored bytes failed the in-job validation (typecheck +
+        tests), so no PR was opened. For the schema, that is by design when the canonical adds a field that
+        needs a hand-written type: add it to `BlockManifestV1` in
+        `packages/civitai-app-sdk/src/blocks/types.ts` (type the field FIRST, ahead of the bytes) in a PR of
+        your own, merge it, and the next scheduled run re-vendors. For the contract, `createFakeStorage` needs
+        the code change first. Reproduce locally with `./scripts/revendor-canonical-schema.sh` or
+        `./scripts/revendor-storage-contract.sh`; the run log names the failing step.
+
+        **Closing condition:** this issue closes itself on the first later run in which both jobs are green
+        (checked by this `signal` job in that run). Nothing else closes it; closing it by hand while the job is
+        still red only means the next failing run opens a new one.

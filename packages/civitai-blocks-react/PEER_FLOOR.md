@@ -338,8 +338,10 @@ says.
 ### 🔴 Since #344 one gate does see part of it
 
 `tests/guards/blocks-react-peer-floor.test.mjs` fails when the range admits an
-app-sdk version measured NOT to export the App Storage constants, and when the
-derivation stops being recorded in this file. Read its KNOWN LIMITS before
+app-sdk version below a ledger entry for a symbol `src/` imports, and when the
+derivation stops being recorded in this file. (Its #344 App Storage regression
+test was deleted with `useAppStorage` and the mock's storage backend: nothing in
+`src/` imports those constants any more.) Read its KNOWN LIMITS before
 relying on it: CI checks out at `fetch-depth: 1` and the guard job has no
 registry access, so it is offline and tree-local — it re-asserts a measurement
 taken by hand, it does not take one. The recipe below is still the only way to

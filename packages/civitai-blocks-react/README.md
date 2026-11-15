@@ -105,8 +105,8 @@ import '@civitai/app-sdk/safe-storage';
 
 Full rules + the `installSafeStorage()` / `createMemoryStorage()` API:
 [`@civitai/app-sdk` README → Web storage in a block](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk#web-storage-in-a-block-civitaiapp-sdksafe-storage).
-Remember the fallback is session-scoped — use [`useAppStorage()`](#useappstorage)
-for anything durable.
+Remember the fallback is session-scoped — use the document store
+([`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) in `@civitai/sdk`) for anything durable.
 
 ## The hooks
 
@@ -322,8 +322,9 @@ const { publisherSettings, userSettings } = useBlockSettings();
 
 ### `useBuzzWorkflow()`
 
-The generation flow: `estimate` → `submit` → `poll`, host-mediated. Returns
-`{ estimate, submit, poll, status, result, error }`.
+The generation flow: `estimate` → `submit` → `poll` (or `watch`), host-mediated.
+Returns `{ estimate, submit, poll, watch, cancel, status, result, error }` — the
+`UseBuzzWorkflow` interface in `src/hooks/useBuzzWorkflow.ts` is the authority.
 
 ```tsx
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
@@ -613,10 +614,111 @@ Nothing is charged.
 
 | `errorCode` | Means | `error` | Retry the same body? |
 |---|---|---|---|
-| `'source-scan-pending'` | a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit |
+| `'source-scan-pending'` | a `kind: 'textToImage'` source image (`sourceImages` / `sourceImage`), a `kind: 'step'` or `kind: 'workflow'` input, or an inline `customComfy` graph, names an image the viewer uploaded whose scan has not finished, or a source [`usePersistGenerationSource()`](#usepersistgenerationsource) returned with `ready: false` | `that image is still being scanned — wait for it to finish before using it` | yes, once the scan has finished. With `useImageUpload({ asyncScan: true })`, wait until `scanStatus()` resolves `{ status: 'scanned' }` before you estimate or submit; for a persisted source, call `persist()` again with the same `workflowId` and `imageIndex` until it answers `ready: true` |
 | `'inline-node-refused'` | an inline `customComfy` graph uses a node the host does not run inline: one that reads or writes a file path, or a loader whose input comes from another node, is an object, is a URL the host does not fetch, or names a local file. `checkComfyGraph` does not detect this | starts with `inline workflow uses nodes the host does not run inline: ` and names each node, e.g. `node 4 (LoadImage) names a local file in image; upload the media and pass its URL` | no — remove a node that reads or writes a file path; give loader inputs as literal values, and bring media in as Civitai uploads (pass the upload's `url`) |
 | `'not-api-format'` | an inline `customComfy` graph is not ComfyUI API format (`checkComfyGraph` reports the same code) | starts with `inline workflow is not a ComfyUI API-format graph` | no — export the graph with "Export (API)" and keep only `class_type` and `inputs` on each node |
 | `'model-filenames'` | an inline `customComfy` graph's loader names a model by filename instead of an AIR (`checkComfyGraph` reports the same code) | starts with `inline workflow loads models by filename, which the worker cannot load: ` | no — reference each model by its AIR (`urn:air:…`) and declare it in `resources` |
+
+#### Queue position, ETA and progress
+
+A snapshot from `watch()` / `poll()` carries where the run is right now, for a
+progress bar or an "N ahead, starts ~HH:MM" line:
+
+- **`snapshot.eta`** summarises the step that is queued or running now:
+  `{ stepName, queuedAhead, startsAt, completesAt, progress, support }`. The
+  host reads it off all of the workflow's orchestrator steps, so every kind has
+  one, not only `kind: 'workflow'`. It picks the first step with a queue
+  position, else the first running step. While that step is queued,
+  `queuedAhead` counts the jobs ahead of it and `startsAt` / `completesAt` are
+  estimates. While it runs, those two are `null` and `progress` moves.
+- **On each entry of `snapshot.steps`** (a `kind: 'workflow'` run): `queue`
+  (`{ precedingJobs, estimatedStartAt, estimatedCompleteAt, support }`, present
+  only while that step is queued), `progress`, `startedAt` and `completedAt`.
+
+**Absent and `null` mean the same thing.** The host omits a field it has
+nothing to report rather than sending `null`. A terminal snapshot has no `eta`,
+and neither does a workflow with nothing queued or running. A host that predates
+these fields sends none of them.
+
+**A throttled poll is not an update, and `watch` already skips it.** When the
+host cannot serve a poll (it is rate-limited), it answers
+`{ workflowId, status: 'processing', throttled: true }` without reading the
+workflow. `watch` does not pass that reply to `onUpdate` and keeps the previous
+real snapshot (its `eta`, `steps` and `cost`) as `result`. It then polls again,
+so an app's progress bar does not blank on a refused poll. `poll()` returns
+such a reply as is, so check `snapshot.throttled`, but it does not replace
+`result` either. `cancel()` rejects on such a reply with
+`WorkflowCancelNotIssuedError`, since the cancel was not issued (see the cancel
+note below). The `dev:live` host marks its own transient poll-failure reply the
+same way. A host that predates the marker sends the same reply without
+`throttled`, and that one still reaches `onUpdate`.
+
+🔴 **The queue position does not move on its own between status changes.** A
+held poll (`watch`) returns early when the workflow's status, a step's progress
+or a job event changes. It does not return when the queue ahead of a waiting
+step drains. So while a step is queued, `queuedAhead` and its estimates refresh
+at most once per held poll, about every 15 s. Once the step runs, `progress`
+updates promptly.
+
+`progress` is a **fraction from 0 to 1**, not a percentage. The host reports it
+only for image and video generation steps (`textToImage`, `imageGen`,
+`videoGen`). Other types, training among them, report a value that restarts
+each phase, so they get none. Every time is an ISO-8601 string and an
+**estimate**. `support: 'unavailable'` means there is no capacity for the step
+right now; treat a value you do not recognise like `'unsupported'` (no
+estimate). `status` is still the only thing that says the run is done.
+
+```tsx
+import type { BlockWorkflowEta } from '@civitai/app-sdk/blocks';
+import { useState } from 'react';
+
+function RunStatus({ workflowId }: { workflowId: string }) {
+  const { watch } = useBuzzWorkflow();
+  const [eta, setEta] = useState<BlockWorkflowEta | null>(null);
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    void watch(workflowId, {
+      signal: ctl.signal,
+      onUpdate: (s) => setEta(s.eta ?? null), // throttled polls never arrive here
+    }).then(
+      () => setEta(null), // terminal
+      () => {}, // a watch error is shown elsewhere
+    );
+    return () => ctl.abort();
+  }, [watch, workflowId]);
+
+  if (!eta) return null;
+  if (eta.progress !== null) {
+    return <progress max={1} value={eta.progress} />;
+  }
+  const at = eta.startsAt
+    ? new Date(eta.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  return (
+    <span>
+      {eta.queuedAhead ?? '?'} ahead{at ? `, starts ~${at}` : ''}
+    </span>
+  );
+}
+```
+
+🔴 **A malformed value is dropped, not fatal.** The transport removes an `eta`
+that does not have this shape (and likewise a malformed `queue`, `progress`,
+`startedAt` or `completedAt` on a step) and delivers the rest of the snapshot,
+so a bad estimate never costs you the status or the outputs.
+
+**Mock host:** the polls before `pollsUntilDone` report these fields, encoded
+as the host does (an empty field is omitted, not `null`). The first half of
+them are queued (`status: 'pending'`, `queuedAhead` falling) and the rest
+running (`status: 'processing'`, `progress` rising for an image or video
+generation step). The terminal poll has no `eta`. `throttledPolls: [n, …]`
+answers those `POLL_WORKFLOW` requests (1-based) as throttled replies. `stepName` is the host's own step name for each kind: `block-step` for
+`kind: 'step'` and `kind: 'training'`, `block-custom-comfy` for `customComfy`,
+and each step's `name` for `kind: 'workflow'`. A `textToImage` step is named by
+the orchestrator, which the mock cannot know, so it uses `$0`. With the default
+`pollsUntilDone: 2` the one non-terminal poll is a running one. Pass
+`pollsUntilDone: 5` to see two of each.
 
 #### Several steps as one workflow: `kind: 'workflow'`
 
@@ -748,7 +850,9 @@ showImages(done.imageUrls ?? []);
 **The result**
 
 `snapshot.steps` lists every step in order, as `{ name, $type, status,
-imageUrls?, output?, error? }`. Read it from `poll()`, `watch()` and
+imageUrls?, output?, error?, queue?, progress?, startedAt?, completedAt? }` (the
+last four: [Queue position, ETA and progress](#queue-position-eta-and-progress)).
+Read it from `poll()`, `watch()` and
 `cancel()`; do not rely on it being on the `submit()` reply. The steps a
 `repeat` step generates follow it, named `<repeat name>.<n>`. The top-level
 fields keep their meaning: `status` and `cost` are the whole workflow's, and
@@ -818,6 +922,14 @@ as `cost.total`.
 > stops spending Buzz. Before that, cancel was client-side only (stop polling). If
 > your installed version predates 0.5.0, do the client-side half and add the
 > `cancel(...)` call after upgrading.
+>
+> 🔴 **A throttled cancel was not issued.** If the host cannot serve the cancel
+> (it answers `throttled: true`), `cancel()` REJECTS with
+> `WorkflowCancelNotIssuedError` (`code: 'cancel-not-issued'`, plus
+> `workflowId` and the reply as `snapshot`). The workflow is still running and
+> still spending, so retry the cancel after a short wait. The hook's `result`,
+> `status` and `error` are left as they were. Any other reply resolves as
+> before, with `status` becoming `'done'`.
 
 ### `useBatchEstimate()`
 
@@ -1171,8 +1283,14 @@ if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
 ```
 
 > Per-account Buzz: `useBuzzWorkflow().submit(body)` also takes an optional
-> `body.accountType` (`'blue' | 'green' | 'yellow'`) — a *preference* for which
-> pool funds the generation; the host clamps it server-side.
+> `body.accountType` (`'blue' | 'green' | 'yellow'`) — the pool tried *first*,
+> with the app's other allowed pools as fallback. It rides top-level on a
+> `textToImage` body, on both `kind: 'step'` arms and once per `kind: 'workflow'`
+> body (under `params` on a `customComfy` recipe). A pool the app may not spend
+> is refused on the estimate and the submit. A pick does not guarantee an
+> unrestricted output: a fallback to `blue` can still restrict a mature one.
+> On a step or workflow body, send it only once the host accepts it
+> (civitai/civitai#8985): an older host refuses the whole body.
 
 ### `useViewer()`
 
@@ -1280,7 +1398,7 @@ On failure `error` is a `ResourceFileError` whose `code` is one of a closed set:
 
 🔴 **Full-page app hosts only — not the model-page slot, not `dev:live`.** The
 model-page slot does not answer it (the request times out), and `dev:live`
-replies `parse-failed`. Develop against `dev:mock`: `createMockHost` takes a
+replies `parse-failed`. Develop against the mock host (`npm run dev:harness`): `createMockHost` takes a
 `resourceFile` (the canned reply) and a `resourceFileError` (force a code);
 `setScenario({ resourceFileError: undefined })` clears the forced error.
 
@@ -1892,261 +2010,95 @@ async function onCancel(id: string) {
 }
 ```
 
-### `useAppStorage()`
+### `usePersistGenerationSource()`
 
-KV datastore, host-mediated. Keys are **namespaced** per (block instance,
-viewer); the byte and row **budgets** are enforced per (**app**, viewer), so
-every instance of one app shares one budget for that viewer.
+Turn one of the app's **own** finished outputs into a **private, scanned
+generation source**, to feed into the next generation (an img2img chain, a
+"refine this one" button). Returns `{ persist, isPending, error }`.
+
+`persist({ workflowId, imageIndex })` names the output the way
+`usePublishGenerationOutputs()` does — a workflow from this app's own subqueue
+and an index into its `images` (as `useAppWorkflows()` shows them), never a url —
+and resolves with `{ url, width, height, imageId, ready }`. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, usable as a `sourceImages`
+entry wherever a generation source is accepted.
+
+- **Private, no confirm.** The image is stored for the viewer with no post and
+  is **not** on the app's shared grid; `useGatedImages()` and a
+  `useCreatePostFromApp()` `published` source do not accept it. No dialog opens.
+  Use `usePublishGenerationOutputs()` to put an output on the grid.
+- **Same gates as publishing.** It needs `ai:write:budgeted`, a signed-in viewer
+  who is the token's subject, and a FINISHED workflow from this app's own
+  subqueue. An `imageIndex` out of range, or an output that is not available, is
+  refused.
+- **Size.** The output is re-stored on Civitai, downscaled to fit 2048 px if it
+  is larger. An output under 64 px is refused.
+- **Scanned.** The host waits up to about 30 s for the scan (the whole request,
+  fetch and store included, runs under one server deadline, so `persist()` waits
+  up to 120 s). `ready: true` means a generation accepts `url` now. **`ready:
+  false`** means the scan has not finished: a generation that uses the source —
+  a `textToImage` `sourceImages` entry included — is refused with the
+  `source-scan-pending` error code. An output the scan blocks, or holds for
+  review, is answered with an error.
+- **Idempotent.** One image per (viewer, app, `workflowId`, `imageIndex`):
+  calling `persist()` again with the same pair returns the same image, without
+  storing another, with its current `ready`. That is how to wait for a pending
+  scan.
+- **Where it works.** The full-page app host only. It rejects with the host's
+  error on the model-page slot (iframe) host, in review mode, before the block is
+  ready, and on App Assistant dev-tunnel previews (they have no workflow record
+  for the app). The host allows 60 per hour per viewer.
+- `dev:live` refuses it (it needs the viewer's signed-in session). Test it
+  against the mock host: `createMockHost` / `Harness` from
+  `@civitai/blocks-react/testing`, with `persistedGenerationSource` (the canned
+  reply, `ready: true` by default; pass one with `ready: false` to simulate a
+  pending scan) and `persistGenerationSourceError`. The mock does not enforce
+  `source-scan-pending`.
 
 ```tsx
-import {
-  APP_STORAGE_MAX_VALUE_BYTES, // largest single value, in wire bytes
-  APP_STORAGE_MAX_BYTES,       // total stored bytes per (app, viewer)
-  APP_STORAGE_MAX_ROWS,        // total rows per (app, viewer)
-} from '@civitai/app-sdk/blocks';
+import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
 
-const storage = useAppStorage();
-await storage.set('key', { any: 'json' });   // rejects over ANY of the three — and on a >200-char key
-const v = await storage.get<MyShape>('key'); // null if unset / anon
-await storage.delete('key');                  // idempotent
-const { keys } = await storage.list({ prefix: 'note-' });
-const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
-```
+declare const modelId: number, modelVersionId: number;
+declare function sleep(ms: number): Promise<void>;
+const { submit, watch } = useBuzzWorkflow();
+const { persist, isPending } = usePersistGenerationSource();
 
-🔴 **For the byte/row budget, `getQuota()` is the authority for those two
-numbers and the constants are a snapshot.** All three above are compiled-in
-figures **as of the version of `@civitai/app-sdk` you installed** — which is the
-same frozen-number failure mode this page used to demonstrate, just with one
-copy instead of nine. The host can move any of them without your lockfile
-changing. So:
+// 1. Generate, and wait for the workflow to FINISH — persist() refuses one that has not.
+const first = await submit({ kind: 'textToImage', modelId, modelVersionId, params: { prompt: 'a red fox' } });
+const done = await watch(first.workflowId);
+if (done.status !== 'succeeded') throw new Error('the first generation did not succeed');
 
-- **Render `getQuota()`'s reply**, never a constant, anywhere a viewer sees a
-  number or a code path decides whether a write will fit.
-- **Reach for the constants only where no quota reply is available** — a
-  build-time sanity check, a test fixture, a rough design-time estimate — and
-  treat the answer as "roughly, at install time".
-- **Re-check after any SDK bump**, and expect movement: the per-viewer clamp
-  was sized against a measured distribution and the host says to expect a
-  re-measure. `appStorageLimits.ts` in `@civitai/app-sdk` carries the
-  provenance and a one-liner that re-derives the current values from the host.
-
-Never hard-code a figure of your own: the docs here used to quote the app-wide
-umbrella instead of the per-viewer clamp and were **25x** out on bytes and
-**1000x** out on rows.
-
-🔴 **That authority stops at the budget, and so does the list above.**
-`getQuota()` answers `{ usedBytes, rowCount, limitBytes, limitRows }` and
-nothing more, so it reports neither of the other two ceilings: the host's
-**200-character cap on `key`**, nor `APP_STORAGE_MAX_VALUE_BYTES`, which is a
-per-**write** cap rather than part of the per-(app, viewer) budget. A write that
-fits the quota reply is still refused if its key is too long or its value is
-over the per-value cap — and for the key, nothing local catches it
-([#370](https://github.com/civitai/civitai-app-starters/issues/370), detailed
-below). Cap or hash long keys in your block.
-
-🔴 **The ROW ceiling is usually the binding one, and a byte-based "x of y used"
-readout will not see it coming.** A block caching one modest record per item a
-viewer touches exhausts `limitRows` while still holding a small fraction of
-`limitBytes`. Show rows too.
-
-`createMockHost()` defaults to these same ceilings and enforces the per-value
-cap, the byte budget and — since it was added — the **row** budget on write, so
-a row-limit overrun now fails under `dev:mock` where it previously passed and
-failed only in production. Pass `storage: { quotaBytes, limitRows }` to
-simulate something smaller.
-
-⚠️ The mock is **not** gate-for-gate identical to the host. Five known
-divergences:
-
-- the byte gate refusing a shrinking overwrite that the host admits
-  ([#345](https://github.com/civitai/civitai-app-starters/issues/345));
-- 🔴 the byte gate counting **wire** bytes where the host counts **stored**
-  bytes — `octet_length(value::jsonb::text)`, larger for every container: ~1.5x
-  for a long array of small integers, and measured up to 44.4x for a
-  numeric-heavy one (an array of `1e308`)
-  ([#347](https://github.com/civitai/civitai-app-starters/issues/347));
-- nothing models the **app-wide** umbrella, so `app quota exceeded` and `app row
-  limit exceeded` cannot be produced here at all
-  ([#368](https://github.com/civitai/civitai-app-starters/issues/368));
-- lowering `valueCapBytes` moves the **gate** but not the **message**, which
-  keeps naming the host's real cap
-  ([#369](https://github.com/civitai/civitai-app-starters/issues/369));
-- 🔴 no key-length cap: the host refuses a `key` over **200 characters**
-  zod-side, and neither the mock nor `useAppStorage` does
-  ([#370](https://github.com/civitai/civitai-app-starters/issues/370)).
-
-Passing under `dev:mock` is evidence, not proof — and note that the second, the
-third and the fifth are **permissive**: each lets a write pass locally that
-production will reject. (#347 under-counts the bytes; #368 models no app-wide
-ceiling at all, so a write the host would refuse with `app quota exceeded`
-succeeds here; #370 admits an over-length key the host refuses outright.)
-Size your fixtures against `getQuota()`, not against what the mock accepted.
-
-🔴 **A rejection carries a host-authored MESSAGE, not a code.** There is no
-`PAYLOAD_TOO_LARGE` on the wire — that is the TRPC *code*, and the host's
-bridge forwards `err.message`. Six **ceiling** strings are measured and
-single-sourced in the app-sdk's `blocks/appStorageErrors.ts` — one per
-`PAYLOAD_TOO_LARGE` site in the host's router, plus the bridge's `storage
-request failed` fallback — and `createMockHost` draws its rejections from that
-same module, so for the ceilings the mock HAS it answers the message production
-would send, and `classifyAppStorageError(err)` picks the same branch in both.
-
-🔴 **Those six are not every string a block can receive — and nothing here
-enumerates the rest.** The bridge catches every rejection out of
-`apps.storage.*` with a *blanket* `catch` and puts its message on the same
-`error` field, so the host's authorization, approval and feature-flag prose —
-**plus tRPC's own zod input-validation messages, which never reach a handler at
-all** — travel the identical path. **Every one of them classifies `null`.**
-
-🔴 **One of those zod bounds is a ceiling a real block hits with no local
-warning: `key` is capped at 200 characters** (`z.string().min(1).max(200)` on
-the host's `get`/`set`/`delete` input schema; `list` also caps `prefix` at 200
-and `cursor` at 400). Neither `useAppStorage` nor `createMockHost` caps the key
-— both forward it verbatim and the mock has no length gate
-([#370](https://github.com/civitai/civitai-app-starters/issues/370)) — so a key
-built from a URL or a model name can save fine under `dev:mock` and fail
-forever in production, classified `null`. **The reload the `null` arm below
-recommends does not fix it.** Cap or hash long keys in your block.
-
-That is the whole rule, and it is stated structurally on purpose: the SDK owns
-a chosen slice of the ceiling vocabulary, not the host's error surface, so the
-honest claim is "**these six** classify, everything else is `null`" — which
-needs no list and stays true when the host adds or rewords a message. Note it
-is deliberately *not* "every ceiling classifies": the zod key cap above is a
-ceiling that lands on `null` like everything else. Two earlier drafts of this
-section tried instead to enumerate the non-ceiling strings, and **both lists
-were short**; see the header of `blocks/appStorageErrors.ts` for what they
-missed and why no third list replaced them. `invalid block token` (an expired
-token mid-session) and `block instance revoked` are *illustrations* of what
-lands on `null`, never a bound on it. The practical consequence: `null` is a
-busy bucket, so see the `default` arm note below before writing copy for it.
-
-⚠️ **The mock reaches four of the six.** It models no app-wide umbrella
-([#368](https://github.com/civitai/civitai-app-starters/issues/368)), so
-`app quota exceeded` and `app row limit exceeded` are production-only: a block
-must still handle them, and no local run will ever exercise that branch. The
-other four are covered — the three ceilings, plus `storage request failed` via
-`storage: { failNext }`.
-
-Branch on the classifier's **reason**, never on the string. The reason is this
-SDK's and cannot move; the message is the host's and can. (That is also why the
-SDK exports `classifyAppStorageError` and the reason type, but deliberately does
-*not* export the array of messages: `MESSAGES.includes(err.message)` is equality
-against a snapshot, and the per-value message is a template over a cap the host
-is free to change.)
-
-```ts
-import { classifyAppStorageError } from '@civitai/app-sdk/blocks';
-
-let status = 'Saved.';
-try {
-  await storage.set(key, note);
-} catch (err) {
-  console.warn('[my-block] save failed:', err);  // log the host's words
-  switch (classifyAppStorageError(err)) {        // never render them
-    case 'value-too-large':
-      status = 'That note is too long to save. Try shortening it.';
-      break;
-    case 'user-row-limit':
-      status = 'You have no note slots left. Delete one to make room.';
-      break;
-    case 'request-failed':
-      // The bridge's fallback — a transport fault. Genuinely retryable.
-      status = 'Could not save that note. Please try again.';
-      break;
-    default:
-      // `null`: an unknown ceiling, or (more often) an expired/revoked token.
-      status =
-        'Could not save that note. Try reloading the page — if that does not ' +
-        'help, storage may be unavailable for this app right now.';
-  }
+// 2. Persist output 0 as a private source. Same (workflowId, imageIndex) ⇒ same
+//    image, so calling again is how to wait for a pending scan.
+let src: BlockPersistedGenerationSource = await persist({ workflowId: done.workflowId, imageIndex: 0 });
+for (let tries = 0; !src.ready && tries < 3; tries++) {
+  await sleep(10_000);
+  src = await persist({ workflowId: done.workflowId, imageIndex: 0 });
 }
-```
 
-🔴 **Keep the `default` arm, and do not put "please try again" in it.**
-`classifyAppStorageError` answers `null` both for a ceiling message this SDK
-version does not know (the host can reword one in any deploy) *and* for the
-whole authorization family listed above — an expired block token, a revoked
-instance, an unapproved block, a missing storage scope. Retrying fixes none of
-the second group, so the generic arm should offer a **reload** (which re-mints
-the token, and covers a transport blip too) and concede that storage may be
-unavailable. Split `'request-failed'` out if you want honest retry copy: that
-reason really is the transport one.
-
-The mock emitted the *code* until
-[#343](https://github.com/civitai/civitai-app-starters/issues/343), which is
-how a block's error branch could pass every local run and never fire in
-production.
-
-### `useSharedStorage()`
-
-App-scoped, append-only, community-votable SHARED datastore (every viewer sees
-the same list). Sibling of `useAppStorage`; anonymous viewers get the read path
-and a hard reject on mutations.
-
-```tsx
-const shared = useSharedStorage();
-const { key } = await shared.append({ title: 'Add dark mode', body: 'please' });
-const { items } = await shared.list({ limit: 20 });   // newest-first
-const count = await shared.vote(key);                 // idempotent up-vote
-await shared.unvote(key);
-await shared.withdraw(key);                            // remove my own entry
-```
-
-#### Shared-storage write limits
-
-Every write is budgeted per **(viewer, app)** on the server. One viewer
-exhausting their budget in your app costs them nothing in another app, and
-re-minting the block token does not reset it.
-
-| Writes | Budget |
-|---|---|
-| `append` + `update` (one shared budget) | a **burst of 10**, refilling **1 every 6 minutes**, and a **daily bucket of 50**, refilling continuously (one every ~29 minutes). A write needs a token from both. |
-| — writes the server **refused** (moderation block, the 50-entry cap, quota, not found, …) | also charged to a **rejection bucket of 10**, refilling **1 every 30 minutes**. No `append`/`update` is accepted while it is empty. Concurrent refused writes can drive it into debt, down to −10, which has to refill first. |
-| `vote` + `unvote` | 30 a minute, shared |
-| `withdraw` | 30 a minute |
-| `report` | 20 a day |
-
-Only writes that **land** spend the `append`/`update` budget: a write that fails
-without landing gets its token back. The few failures the platform marks as its
-own fault are refunded without a rejection charge too.
-
-A write refused for budget arrives with retry metadata, and the hook rejects with
-**`SharedStorageRateLimitError`**. It extends the plain `Error` every other
-refusal is thrown as, so existing `catch` code keeps working, and `.message` is
-still the server's text (`Too many submissions — retry in 312s`, or `votes`,
-`withdrawals`, `reports`). Branch on the class to render the wait instead of
-parsing the message:
-
-```tsx
-import { SharedStorageRateLimitError, useSharedStorage } from '@civitai/blocks-react';
-
-const shared = useSharedStorage();
+// 3. Use it as the source of the next generation.
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
 try {
-  await shared.append({ title: 'Add dark mode' });
+  await submit(next);
 } catch (err) {
-  if (err instanceof SharedStorageRateLimitError) {
-    // err.retryAt: ISO-8601 instant a retry can succeed; err.retryAfterSeconds: whole seconds, ≥ 1.
-    const at = new Date(err.retryAt).toLocaleTimeString();
-    showNotice(`You're posting fast. Try again at ${at}.`);
+  if (err instanceof WorkflowSubmitError && err.snapshot.errorCode === 'source-scan-pending') {
+    // `src.ready` was still false: the scan has not finished, and the host refused
+    // before reserving anything. Persist again later, then submit `next` again.
   } else {
     throw err;
   }
 }
 ```
 
-- **Don't retry before `retryAt`.** A refused retry gets nothing, and once the
-  budget is empty every attempt is refused until it refills.
-- **Absent metadata is not "retry now".** A host that predates it, or a refusal
-  that is not a rate limit, throws the plain `Error`. The hook also ignores a
-  malformed `rateLimit` and throws the plain `Error`, rather than hand you
-  something you would render.
-- On the wire the refusal reply is `{ requestId, error, rateLimit?: { retryAfterSeconds, retryAt } }`
-  (type `SharedStorageRateLimit` in `@civitai/app-sdk/blocks`) on the six write
-  replies.
-- `createMockHost({ shared: { rateLimitNext: 1, rateLimit: { retryAfterSeconds: 312 } } })`
-  refuses the next write this way, so you can test the branch locally
-  (`setScenario({ shared: { rateLimitNext } })` arms it mid-session).
+### Removed: `useAppStorage()` and `useSharedStorage()`
+
+Both hooks are removed: civitai.com refuses the legacy stores since 2026-11-10; use the document store, [`app.storage.collection(name)`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#document-storage) in `@civitai/sdk` ([moving an app](https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores)).
 
 ### `useCheckpointPicker()`
 
@@ -2202,7 +2154,7 @@ full-page app (`app.page`) is bound to no model, so the host has nowhere to writ
 the override: it answers every `persist()`, including `persist(null)`, with
 `ok: false`, and the promise rejects with `page blocks cannot persist a
 checkpoint override (no model binding)`. A page app keeps the checkpoint `open()`
-returned in its own state (or in `useAppStorage()`).
+returned in its own state (or in the document store).
 
 Both dev hosts (`createMockHost` / `Harness` and `dev:live`) refuse it the same
 way, and both default to a page context. Pass a complete `ModelSlotContext` as
@@ -3632,7 +3584,7 @@ export function App() {
 | `Select` | controlled dropdown (`value: string`, `onChange`, `options: {value,label,disabled}[]` **or** `<option>` children, `placeholder`). Native `<select>`, `role="combobox"`. Same label/description/error wiring. |
 | `Collapse` | controlled disclosure (`open` + `onOpenChange`, `title`, `disabled`) for the "advanced params reveal". `aria-expanded` + `aria-controls`; content region `role="region"`, `hidden` when closed. |
 | `SegmentedControl` | controlled view/tab switcher (`value` + `onChange`, `data: {value,label,disabled}[]`, `fullWidth`, `size`). `role="tablist"` of `role="tab"` buttons; ArrowLeft/ArrowRight rove selection. |
-| `ReportButton` | two-step control that files a shared-board row for platform moderator review via `useSharedStorage().report()`. `noun` + `onReport` (+ `reported` for server truth). 🔴 Its visible copy is deliberately **not** overridable — see the component's JSDoc. |
+| `ReportButton` | two-step control that files a shared-board row for platform moderator review through the caller's `onReport`. `noun` + `onReport` (+ `reported` for server truth). 🔴 Its visible copy is deliberately **not** overridable — see the component's JSDoc. |
 | `FollowButton` | follow/unfollow a collection over the host bridge. `collectionId` + `followed` (+ `onChange`, `collectionName`). Flips optimistically, then adopts the **host's echo**; reverts on failure. 🔴 It exists because three outcomes are easy to get wrong: `declined` reverts **silently** (the viewer dismissed the host's confirm — nothing was written), `sign-in-required` routes into `REQUEST_SIGN_IN` rather than an error line, and every other rejection reverts with a `role="alert"` note. |
 | `TipButton` | two-step Buzz tip via `useTip()`. `toUserId` + `amount` + `noun` (+ `entityType`/`entityId`, `tipped`, `remaining`, `disabledReason`, `onTipped`). 🔴 **The confirm is the component's, not host chrome** — `useTip` posts directly with the block token, so a one-press money spend is reachable without it. It mints **one idempotency key per logical tip and reuses it on retry**, so a retry after a *lost* response cannot become a second transfer. Pass `remaining` from ONE `useTipAllowance()` held by the view — it deliberately does not fetch, or a screen of cards becomes N HTTP reads. |
 | `ResourceCard` | a picked generation resource (`BlockResourceInfo`) as a grid tile (`variant="card"`) or a compact line (`variant="row"`). `interactive` is an explicit discriminant that requires `onSelect` (+ `selected`/`disabled`); `thumbnailUrl` is optional because **`BlockResourceInfo` carries no image field**, and a missing *or failed* image falls back to a frozen "No preview" frame. `actions` is the trailing flow slot on both variants; `overlay` is the decorative corner badge over the thumbnail and is **`card`-only — a type error on a `row`**. Both render as siblings of the hit area, never inside it. The name fallback, type label, placeholder copy, selected mark and accessible-name order are frozen, not props. |
@@ -3829,8 +3781,8 @@ what went stale in [#334](https://github.com/civitai/civitai-app-starters/issues
 | Export | What it is |
 |---|---|
 | `resetTransport` | Drops the cached singleton transport. Call it in `beforeEach` so each test starts clean. |
-| `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
-| `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
+| `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
+| `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
 | `Harness` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
 | `fakeResourceSource` | Canned results for `<WorkflowPicker>` (from `/ui`) or `<civitai-resource-picker>`: `fakeResourceSource({ mine, any })` filters by owner, type and query, echoes the owner it applied, and records each search on `.calls`. The mock host has no catalog, so pass it as the picker's `source`. **No network.** |
 | `installPopoverShim` | Stands in for the HTML popover API, which neither `jsdom` nor `happy-dom` implements at any version. Needed only if your own code calls `showPopover`/`hidePopover`/`togglePopover` or queries `:popover-open` — `@civitai/components`' own elements do not. Returns a `PopoverShimHandle`; inert (`installed: false`) in a real browser. **Read [Testing overlay elements](#testing-overlay-elements) first: it does not make trigger clicks work.** |
@@ -3862,9 +3814,6 @@ MockHostOptions
 MockHostScenarioPatch
 MockMediaUploads
 MockReactionSeed
-MockSharedScenario
-MockSharedSeed
-MockStorageScenario
 MockWorkflowQuoteFailure
 MockWorkflowStepInfo
 PopoverShimHandle
@@ -4118,33 +4067,27 @@ is not done here.
 
 ## Examples
 
-Runnable, minimal blocks — one per feature, each with its own README:
-
-- [`hello-world`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/hello-world) — `useBlockContext`, lifecycle, `data-theme` (#60)
-- [`settings`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/settings) — manifest settings + `SettingsForm`
-- [`buzz-workflow`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/buzz-workflow) — `useBuzzWorkflow` (#59, #8/#9/#10, #19)
-- [`kv-storage`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/kv-storage) — `useAppStorage`
-- [`scopes-api`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/scopes-api) — scopes + REST + `useBlockToken`
-- [`buzz-purchase`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/buzz-purchase) — `useBuzzPurchase`
+Runnable, minimal blocks — one per feature, each with its own README. The
+[`starters/examples/` index](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples#readme)
+is the list, with the hooks each one uses; it is not copied here, so it cannot
+fall behind.
 
 ## Version compatibility
 
-| `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
-|---|---|---|
-| `0.78.x` | `^0.79.0` | `useResourceFile()` (`GET_RESOURCE_FILE`). Its types (`BlockResourceFile` and friends) come from the SDK's `0.79.0`; the hook imports no SDK value, so the declared peer floor is unchanged. |
-| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
-| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
-| `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
-| `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
-| `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
-| `0.26.x` | `^0.22.0` | `useViewer()` (`GET_VIEWER`) |
-| `0.25.x` | `^0.21.0` | `useBuzzTransactions`, `useBuzzAccounts`, `useDailyCompensation`, `useWildcardPack` |
-| `0.5.0` | `^0.7.0` | `useBuzzWorkflow().cancel()` (real server-side cancel, gotcha #51) |
-| `0.4.x` | `^0.6.0` | `useAppStorage`, `SettingsForm` (`/ui`) |
-| `0.3.x` | `^0.5.0` | earlier hook set |
+The pairing lives in two sources, not in a table here (a hand-kept table stopped
+at `0.78.x` and fell behind):
 
-Always keep `@civitai/app-sdk` at or above the paired minor — the React package
-peer-depends on the SDK's message/type contract.
+- this package's `package.json` `peerDependencies["@civitai/app-sdk"]` is the
+  range a release installs against;
+- [`CHANGELOG.md`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/CHANGELOG.md)
+  names, per release, the hooks it adds and any `@civitai/app-sdk` release it
+  needs (a new hook's types often come from a newer SDK than the declared floor);
+- [`PEER_FLOOR.md`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/PEER_FLOOR.md)
+  explains why that floor is deliberately wide.
+
+A pairing below what a hook needs fails at `tsc` with `Cannot find name '…'`, not
+at install. Keep `@civitai/app-sdk` at or above the release the changelog names —
+the React package peer-depends on the SDK's message/type contract.
 
 ## License
 

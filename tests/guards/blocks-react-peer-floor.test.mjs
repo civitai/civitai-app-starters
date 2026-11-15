@@ -83,26 +83,6 @@ const PEER_FLOOR_DOC = 'packages/civitai-blocks-react/PEER_FLOOR.md';
 const COMMENT_KEY_BYTE_CAP = 500;
 
 /**
- * The last PUBLISHED `@civitai/app-sdk` that predates the App Storage
- * constants, measured against the real tarball (see the header). The floor
- * must not admit it.
- *
- * 🔴 This is the ONLY hand-entered version in this file, and it is a fact
- * about npm, not a preference: 0.46.0 was `npm view @civitai/app-sdk version`
- * when #344 was fixed, and `import { APP_STORAGE_MAX_BYTES } from
- * '@civitai/app-sdk/blocks'` throws against it. Raise it only alongside a
- * fresh measurement of the same shape.
- */
-const LAST_RELEASE_WITHOUT_APP_STORAGE_CONSTANTS = '0.46.0';
-
-/** Value symbols whose absence below the floor is the #344 defect. */
-const APP_STORAGE_CONSTANTS = [
-  'APP_STORAGE_MAX_VALUE_BYTES',
-  'APP_STORAGE_MAX_BYTES',
-  'APP_STORAGE_MAX_ROWS',
-];
-
-/**
  * THE LEDGER. For each VALUE symbol `@civitai/blocks-react` imports from the
  * peer: the lowest PUBLISHED `@civitai/app-sdk` from which that symbol is
  * exported CONTINUOUSLY through the latest published version.
@@ -145,47 +125,9 @@ const APP_STORAGE_CONSTANTS = [
  * here is worse than no ledger, because it reads as a measurement.
  */
 const PEER_VALUE_SYMBOL_SINCE = {
-  // MEASURED 2026-09-21 against the PUBLISHED 0.49.0 tarball — `npm i
-  // @civitai/app-sdk@0.49.0 --prefer-online` into an empty dir, then
-  // `import * as b from '@civitai/app-sdk/blocks'` and test `s in b`. Same
-  // instrument as the sweep above, one version rather than all 47. All four
-  // PRESENT. The release published at 2026-09-21T15:33:32Z (#371).
-  //
-  // 🔴 The run is EXACTLY 0.49.0-and-up, which is the contiguity rule this
-  // ledger states, established from BOTH sides rather than assumed:
-  //   - 0.48.0 exports NONE of the four (29 symbols on `./blocks`), so the run
-  //     cannot start lower and the floor is EXACT, not merely sufficient;
-  //   - 0.49.0 exports ALL four (34 symbols) and WAS the newest published
-  //     version on 2026-09-21, so the run was unbroken to the top as of that
-  //     reading. "Newest" is not a property of a tarball and goes stale on the
-  //     next publish; the per-version readings above do not.
-  // Controls, run before these numbers were believed:
-  //   - POSITIVE: the 29 → 34 export-count delta across the two tarballs is the
-  //     probe moving. A reading identical on both versions would be
-  //     indistinguishable from a probe wired to one tarball twice.
-  //   - NEGATIVE: an impossible symbol (`NO_SUCH_SYMBOL_ff3a9c`) read ABSENT on
-  //     both — the probe can say "no", so PRESENT is not its only answer.
-  //   - CROSS-CHECK: the published `@civitai/blocks-react@0.56.0` tarball
-  //     declares `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and
-  //     `npm install --dry-run --prefer-online @civitai/blocks-react@0.56.0`
-  //     resolves `@civitai/app-sdk 0.49.0`. The consumer-facing contract and
-  //     this ledger agree.
-  //
-  // History, because the number looked the same before it was true: these four
-  // were PREDICTIONS while #366 was in flight — 0.49.0 did not exist, so they
-  // could not be read off a tarball like every other entry here. The
-  // release-ordering risk (another app-sdk minor publishing first, taking
-  // 0.49.0, and pushing these symbols to 0.50.0) was held by
-  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` + the `PREDICTED ENTRY` test, which
-  // re-derived the number from the tree on every run rather than trusting it.
-  // It did not materialise, and the rows above are now ordinary measured ones.
-  APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
-  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
-  APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
-  APP_STORAGE_ERROR_VALUE_TOO_LARGE: '0.49.0',
-  APP_STORAGE_MAX_BYTES: '0.47.0',
-  APP_STORAGE_MAX_ROWS: '0.47.0',
-  APP_STORAGE_MAX_VALUE_BYTES: '0.47.0',
+  // The seven App Storage entries (APP_STORAGE_MAX_* at 0.47.0,
+  // APP_STORAGE_ERROR_* at 0.49.0) were removed with `useAppStorage` and
+  // `createMockHost`'s storage backend: nothing in src/ imports them now.
   BLOCK_SCOPES: '0.6.0',
   BrowsingLevel: '0.13.0',
   OTHER_MESSAGE_TYPE_LABEL: '0.45.0',
@@ -859,43 +801,6 @@ test('CONTROL — the next-version arithmetic resolves a bump set and can move i
 // The guards.
 // ---------------------------------------------------------------------------
 
-test('REGRESSION (#344) — the peer floor excludes the last app-sdk release without the App Storage constants', () => {
-  const { peerDependencies } = readJson(BLOCKS_REACT_PKG);
-  const range = peerDependencies['@civitai/app-sdk'];
-  const broken = LAST_RELEASE_WITHOUT_APP_STORAGE_CONSTANTS;
-
-  // Only meaningful while the package still imports the symbols. If it stops,
-  // this stops being a rule — and must be deleted, not left passing vacuously.
-  const importedHere = new Set(
-    walkSources(join(REPO_ROOT, BLOCKS_REACT_SRC)).flatMap((f) =>
-      valueImportsOf(readFileSync(f, 'utf8')).map((i) => i.symbol),
-    ),
-  );
-  const stillImported = APP_STORAGE_CONSTANTS.filter((n) => importedHere.has(n));
-  assert.ok(
-    stillImported.length > 0,
-    `no file under ${BLOCKS_REACT_SRC} value-imports any of ${APP_STORAGE_CONSTANTS.join(', ')}\n` +
-      `any more. This guard is now vacuous — delete it rather than let it pass.`,
-  );
-
-  assert.equal(
-    admits(range, broken),
-    false,
-    `@civitai/blocks-react value-imports ${stillImported.join(', ')} from '@civitai/app-sdk/blocks',\n` +
-      `but its declared peer range "${range}" still admits @civitai/app-sdk@${broken}, which does\n` +
-      `not export ${stillImported[0]}. A consumer on that combination installs with NO warning and\n` +
-      `then dies at module evaluation:\n\n` +
-      `    SyntaxError: The requested module '@civitai/app-sdk/blocks'\n` +
-      `      does not provide an export named '${stillImported[0]}'\n\n` +
-      `Blast radius is the './testing' subpath — src/testing.tsx reaches internal/mockHost.ts —\n` +
-      `so the main entry still boots and every dev harness and downstream test suite dies.\n` +
-      `Raise the floor to the app-sdk version the PENDING changesets publish; derive it with\n` +
-      `\`pnpm exec changeset status --verbose\`, and record the derivation in\n` +
-      `${PEER_FLOOR_DOC}. \`changeset version\` will NOT do this for you:\n` +
-      `onlyUpdatePeerDependentsWhenOutOfRange only rewrites a range the computed version FAILS.`,
-  );
-});
-
 test('INVARIANT GUARD (green before #344) — every value symbol imported from the peer is a value export of the peer', () => {
   // Labelled an INVARIANT GUARD deliberately: it was already green before the
   // #344 fix, because the in-tree peer does export the constants. It pins the
@@ -917,9 +822,6 @@ test('INVARIANT GUARD (green before #344) — every value symbol imported from t
   // Positive control on the sweep itself: a zero from `missing` is worthless if
   // `checked` is also zero.
   assert.ok(checked > 0, 'no value imports from @civitai/app-sdk/blocks were seen at all');
-  for (const name of APP_STORAGE_CONSTANTS) {
-    assert.ok(exported.has(name), `${BLOCKS_INDEX} does not re-export ${name} as a VALUE`);
-  }
   assert.deepEqual(missing, [], `value-imported but not value-exported by ${BLOCKS_INDEX}`);
 });
 
@@ -1242,8 +1144,6 @@ test('the package records how the floor was derived', () => {
   for (const needle of [
     'changeset status',
     'onlyUpdatePeerDependentsWhenOutOfRange',
-    LAST_RELEASE_WITHOUT_APP_STORAGE_CONSTANTS,
-    'APP_STORAGE_MAX_BYTES',
   ]) {
     assert.ok(
       prose.includes(needle),

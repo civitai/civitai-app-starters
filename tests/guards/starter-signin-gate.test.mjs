@@ -460,8 +460,8 @@ function harnessFiles() {
  *     is then written on `v`, which no pattern here looks at. MEASURED both
  *     ways: in a {@link REFERENCE_APPS} file the rename is still caught,
  *     because those must CALL `isSignedIn(viewer)` by name; in any other
- *     in-scope file (`kv-storage/src/App.tsx` renamed to `v` and gated on
- *     `v === null`) the suite stays green. The import check applies
+ *     in-scope file (measured on the since-deleted `kv-storage/src/App.tsx`,
+ *     renamed to `v` and gated on `v === null`) the suite stays green. The import check applies
  *     everywhere; the open-coding check does not survive a rename.
  *   - A viewer that reaches a component under any other parameter name
  *     (`user`, `me`, `props.v`).
@@ -792,7 +792,7 @@ test('COVERAGE FLOOR — rule B reaches both reference apps', () => {
     `rule B's scope is down to ${found.length} file(s) — it used to reach three. ` +
       `Scope found:\n  ${found.join('\n  ')}`,
   );
-  for (const required of [...REFERENCE_APPS, 'starters/examples/kv-storage/src/App.tsx']) {
+  for (const required of [...REFERENCE_APPS, 'starters/examples/page-app/src/App.tsx']) {
     assert.ok(
       found.includes(required),
       `rule B's scope does not include ${required} — the two files a new block author ` +

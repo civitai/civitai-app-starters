@@ -2,7 +2,7 @@
  * The IDEMPOTENCY-KEY FORMAT the host enforces on every money POST — **the only
  * site in this repository that spells this rule**.
  *
- * Sibling of `./appStorageLimits.ts`, for the same reason: the rule lives in the
+ * The rule lives in the
  * host, the SDK cannot change it, and a hand-copied regex at each call site is
  * how the copies come to agree with each other and disagree with the host.
  *
