@@ -704,6 +704,34 @@ as locked, and no position moves. In the mock host,
 position 1 of a succeeded snapshot, and publish / post / persist naming position
 1 reply `output 1 is restricted`, so you can exercise both locally.
 
+#### Unlocking a restricted output: `useOutputUnlock()`
+
+`unlockOutput(workflowId, position)` asks the host to unlock the output at that
+position of a workflow your app ran. The host reads the live workflow, decides what
+it may offer, and draws its own dialog; your app supplies only the position, never
+a price. It resolves with a `BlockOutputUnlockResult` once the viewer is done:
+
+```tsx
+const { unlockOutput } = useOutputUnlock();
+const result = await unlockOutput(snapshot.workflowId, 1);
+if (result.outcome === 'unlocked') setSnapshot(result.snapshot!); // outputs[1] has its url
+```
+
+- **`reason: 'pool'`** (the Buzz that paid does not cover mature content): the viewer
+  can unlock it with yellow Buzz at the price the host shows, the same unlock as on
+  civitai.com. Your app's author share applies, and the spend counts toward the
+  viewer's daily Buzz limit for your app (`'refused'` when it is reached).
+- **`'ceiling'` / `'unrated'`**: never charged. When the site your app runs on is
+  what keeps it out, the host offers civitai.red (`'linked-out'`); when the viewer's
+  own settings hide it, `'unavailable'` with a message.
+- `'not-restricted'` (it already had a url; a retry lands here), `'not-released'`
+  (still above the viewer's level after the unlock; nothing extra charged) and
+  `'dismissed'` complete the set. Treat an unknown outcome like `'unavailable'`.
+
+The reply waits for the viewer, so it uses the human-interaction timeout. In the mock
+host a `'pool'` position unlocks (or `generation: { outputUnlock: 'dismiss' }`), a
+`'ceiling'` / `'unrated'` one answers `'linked-out'`.
+
 #### Queue position, ETA and progress
 
 A snapshot from `watch()` / `poll()` carries where the run is right now, for a

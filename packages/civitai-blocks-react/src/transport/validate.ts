@@ -823,6 +823,34 @@ export function isValidEstimateBatchResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * Reply to `REQUEST_OUTPUT_UNLOCK`: EITHER an `error` string (the host's generic reply
+ * to a request it could not route) OR a `result` whose `outcome` is a string. A
+ * `result.snapshot`, when present, must be a valid workflow snapshot (it is then
+ * projected like every other snapshot reply, see {@link projectInboundPayload}), and
+ * a `result.message` a string. `outcome` is checked as a string, not against today's
+ * members: a newer host may report one this package does not know.
+ */
+export function isValidOutputUnlockResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) return typeof p.error === 'string' && p.result === undefined;
+  const r = p.result;
+  if (!isObject(r) || typeof r.outcome !== 'string') return false;
+  if (r.message !== undefined && typeof r.message !== 'string') return false;
+  if (r.snapshot !== undefined && !isValidWorkflowSnapshot(r.snapshot)) return false;
+  return true;
+}
+
+/** `OUTPUT_UNLOCK_RESULT` with its `result.snapshot` projected. Identity when unchanged. */
+function projectOutputUnlockReply(payload: unknown): unknown {
+  if (!isObject(payload) || !isObject(payload.result)) return payload;
+  const result = payload.result;
+  if (result.snapshot === undefined) return payload;
+  const snapshot = projectWorkflowSnapshot(result.snapshot);
+  return snapshot === result.snapshot ? payload : { ...payload, result: { ...result, snapshot } };
+}
+
 export function isValidBuzzPurchaseResult(
   p: unknown,
 ): p is { purchased: boolean; newBalance?: number; requestId?: string } {
@@ -2088,6 +2116,7 @@ export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
   if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
   if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
+  if (type === 'OUTPUT_UNLOCK_RESULT') return projectOutputUnlockReply(payload);
   if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
   if (type === 'APP_WORKFLOWS_RESULT' || type === 'CANCEL_APP_WORKFLOW_RESULT') {
     return projectAppWorkflowsReply(type, payload);
@@ -2157,6 +2186,8 @@ export function payloadValidatorFor(
       return isValidEstimateBatchResult;
     case 'BUZZ_PURCHASE_RESULT':
       return isValidBuzzPurchaseResult;
+    case 'OUTPUT_UNLOCK_RESULT':
+      return isValidOutputUnlockResult;
     case 'BUZZ_BALANCE_RESULT':
       return isValidBuzzBalanceResult;
     case 'VIEWER_RESULT':

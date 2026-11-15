@@ -1185,6 +1185,24 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'REQUEST_OUTPUT_UNLOCK': {
+            // The unlock is bound to the viewer's signed-in civitai.com session
+            // (the host's own dialog is the consent), which a dev token cannot
+            // present. Answer honestly instead of fabricating an unlock.
+            dispatchToBlock({
+              type: 'OUTPUT_UNLOCK_RESULT',
+              payload: {
+                requestId: requestId ?? '',
+                result: {
+                  outcome: 'unavailable',
+                  message:
+                    'Unlocking an output needs the civitai.com host; it is not available in live dev.',
+                },
+              },
+            });
+            return;
+          }
+
           case 'GET_BUZZ_BALANCE': {
             // Read the viewer's per-pool Buzz balance via the token-bound
             // `blocks.getMyBuzzBalance` tRPC MUTATION (POST — the block JWT rides

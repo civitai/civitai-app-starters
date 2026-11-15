@@ -60,6 +60,7 @@ import {
   type AppWorkflow,
   type BlockModel3dOutput,
   type BlockWorkflowOutput,
+  type BlockOutputUnlockResult,
   type BlockPublishedModel,
   type BlockRunConfirmedStepHostError,
   type BlockTrainedEpoch,
@@ -625,6 +626,16 @@ export interface MockGenerationScenario {
    * refused like any restricted position.
    */
   neverRatedOutputs?: readonly number[];
+  /**
+   * What the viewer does in the host's unlock dialog for `REQUEST_OUTPUT_UNLOCK`
+   * (`useOutputUnlock`) on a position restricted for `'pool'`: `'unlock'` (default)
+   * pays, so the position is reported `{ url }` from then on and the reply carries
+   * the re-read snapshot; `'dismiss'` closes the dialog. A `'ceiling'` or `'unrated'`
+   * position is never charged: the mock answers `'linked-out'`, the viewer following
+   * the host's link to civitai.red. A position that is not restricted answers
+   * `'not-restricted'`, and a workflow this mock did not run `'unavailable'`.
+   */
+  outputUnlock?: 'unlock' | 'dismiss';
 }
 
 /** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
@@ -4323,6 +4334,41 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               type: 'WORKFLOW_CANCELED',
               payload: { requestId, snapshot: { workflowId, status: 'canceled' } },
             });
+            return;
+          }
+
+          case 'REQUEST_OUTPUT_UNLOCK': {
+            if (!isRoutableRequestId(requestId)) return;
+            const workflowId = typed.payload?.workflowId;
+            const position = typed.payload?.position;
+            const reply = (result: BlockOutputUnlockResult) =>
+              dispatchToBlock({ type: 'OUTPUT_UNLOCK_RESULT', payload: { requestId, result } });
+            const wf = typeof workflowId === 'string' ? workflows.get(workflowId) : undefined;
+            if (!wf || typeof workflowId !== 'string' || typeof position !== 'number') {
+              // The host refuses a workflow the viewer or the app does not own.
+              reply({ outcome: 'unavailable', message: 'workflow does not belong to this viewer' });
+              return;
+            }
+            const scenario = outputScenarioOf(workflowId);
+            const reason = scenario.neverRatedOutputs?.includes(position)
+              ? 'unrated'
+              : scenario.restrictedOutputs?.[position];
+            if (!reason) {
+              reply({ outcome: 'not-restricted' });
+              return;
+            }
+            if (reason !== 'pool') {
+              reply({ outcome: 'linked-out' });
+              return;
+            }
+            if ((gen.outputUnlock ?? 'unlock') === 'dismiss') {
+              reply({ outcome: 'dismissed' });
+              return;
+            }
+            // Paid: the position is unrestricted from now on, on every later read.
+            const { [position]: _unlocked, ...stillRestricted } = scenario.restrictedOutputs ?? {};
+            wf.outputScenario = { ...scenario, restrictedOutputs: stillRestricted };
+            reply({ outcome: 'unlocked', snapshot: succeededSnapshot(workflowId, { peek: true }) });
             return;
           }
 
