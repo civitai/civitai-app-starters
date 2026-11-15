@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { usePersistGenerationSource } from '../src/hooks/usePersistGenerationSource.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { getTransport } from '../src/transport/singleton.js';
@@ -70,6 +71,47 @@ describe('createMockHost — restricted outputs', () => {
     expect(snap.status).toBe('succeeded');
     return snap;
   }
+
+  it('post: an omitted imageIndexes waits while an output is pending; strings match the host', async () => {
+    const host = createMockHost({
+      consentGranted: true,
+      pollsUntilDone: 1,
+      generation: { images: IMAGES, pendingOutputs: { 0: 1_000 }, blockedOutputs: [1] },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => ({
+      flow: useBuzzWorkflow(),
+      post: useCreatePostFromApp(),
+      src: usePersistGenerationSource(),
+    }));
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let workflowId = '';
+    await act(async () => {
+      workflowId = (await result.current.flow.submit(TEXT)).workflowId;
+      await result.current.flow.poll(workflowId);
+    });
+    const message = async (p: () => Promise<unknown>) => {
+      let out: unknown;
+      await act(async () => {
+        out = await p().then(
+          () => 'ok',
+          (e: Error) => e.message,
+        );
+      });
+      return out;
+    };
+    expect(
+      await message(() => result.current.post.createPost({ sources: [{ kind: 'workflow', workflowId }] })),
+    ).toContain('output 0 is still being rated, try again shortly');
+    expect(
+      await message(() =>
+        result.current.post.createPost({ sources: [{ kind: 'workflow', workflowId, imageIndexes: [1] }] }),
+      ),
+    ).toContain('workflow has no available outputs to post');
+    expect(await message(() => result.current.src.persist({ workflowId, imageIndex: 1 }))).toContain(
+      'that output is not available to use as a source',
+    );
+  });
 
   it('🔴 publish and persist refuse a RESTRICTED position by name; a later position still works', async () => {
     const host = createMockHost({
@@ -160,6 +202,17 @@ describe('createMockHost — restricted outputs', () => {
     expect(snap.imageUrls).toStrictEqual([IMAGES[1], IMAGES[2]]);
     expect(await publish([0])).toBe('output 0 is not available');
     expect(await publish([1])).toBe('ok');
+  });
+
+  it('neverRatedOutputs: restricted as unrated, terminal, no ratingPending, refused by name', async () => {
+    const { snap, publish } = await mountWithPublish({ images: IMAGES, neverRatedOutputs: [2] });
+    expect(snap.outputs).toStrictEqual([
+      { url: IMAGES[0] },
+      { url: IMAGES[1] },
+      { restricted: true, reason: 'unrated' },
+    ]);
+    expect(snap).not.toHaveProperty('ratingPending');
+    expect(await publish([2])).toBe('output 2 is restricted');
   });
 
   it('S4: an all-restricted publish with imageIndexes omitted is refused, as on the host', async () => {

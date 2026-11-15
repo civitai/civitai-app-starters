@@ -107,6 +107,73 @@ describe('watch — a final snapshot with a rating pending', () => {
     expect(final.outputs).toEqual([{ pending: true }, { url: IMAGES[1] }]);
   });
 
+  it('a transport failure inside the window resolves with the final snapshot, never rejects', async () => {
+    const { result, workflowId } = await setup({ 0: 1_000 });
+    let outcome: unknown;
+    let spied = false;
+    await act(async () => {
+      outcome = await result.current
+        .watch(workflowId, {
+          intervalMs: 1,
+          waitSeconds: 0,
+          onUpdate: () => {
+            // From the first final snapshot on, every read fails.
+            if (spied) return;
+            spied = true;
+            vi.spyOn(getTransport(), 'sendRequest').mockRejectedValue(new Error('mock: blip'));
+          },
+        })
+        .catch((e: Error) => e);
+    });
+    expect(outcome).not.toBeInstanceOf(Error);
+    const final = outcome as BlockWorkflowSnapshot;
+    expect(final.status).toBe('succeeded');
+    expect(final.ratingPending).toBe(true);
+    expect(result.current.status).toBe('done');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('an abort inside the window resolves with the final snapshot and sets the status to done', async () => {
+    const { result, workflowId } = await setup({ 0: 1_000 });
+    const controller = new AbortController();
+    let final!: BlockWorkflowSnapshot;
+    await act(async () => {
+      final = await result.current.watch(workflowId, {
+        intervalMs: 1,
+        waitSeconds: 0,
+        signal: controller.signal,
+        onUpdate: () => controller.abort(),
+      });
+    });
+    expect(final.ratingPending).toBe(true);
+    expect(polls()).toBe(1);
+    expect(result.current.status).toBe('done');
+  });
+
+  it("the window also ends at the caller's timeoutMs, whichever comes first", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { result, workflowId } = await setup({ 0: 1_000 });
+    const start = Date.now();
+    let reads = 0;
+    let final!: BlockWorkflowSnapshot;
+    await act(async () => {
+      final = await result.current.watch(workflowId, {
+        intervalMs: 1,
+        waitSeconds: 0,
+        timeoutMs: 70_000,
+        onUpdate: () => {
+          reads += 1;
+          vi.setSystemTime(start + reads * 50_000);
+        },
+      });
+    });
+    // The deadline (+70 s) closes the window before two minutes: read 1 at +50 s is
+    // inside it, read 2 at +100 s is past it.
+    expect(polls()).toBe(2);
+    expect(final.ratingPending).toBe(true);
+    expect(result.current.status).toBe('done');
+  });
+
   it('nothing pending: resolves at the first final snapshot, as before', async () => {
     const { result, workflowId } = await setup({});
     await act(async () => {

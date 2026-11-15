@@ -921,6 +921,46 @@ describe('AppClient.workflows — a final snapshot with a rating pending', () =>
     expect(calls).toHaveLength(4);
   });
 
+  it('a failed read inside the window ends the watch on the last snapshot, never rejects', async () => {
+    const { workflows, calls } = await client([
+      () => json(200, { snapshot: HELD }),
+      // A non-transient failure: outside the window this would reject.
+      () => json(400, { error: 'bad request' }),
+    ]);
+    await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(HELD);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('an abort inside the window ends the watch on the last snapshot, never rejects', async () => {
+    const controller = new AbortController();
+    const { workflows } = await client([
+      () => {
+        queueMicrotask(() => controller.abort(new Error('stop')));
+        return json(200, { snapshot: HELD });
+      },
+      () => json(200, { snapshot: HELD }),
+      () => json(200, { snapshot: HELD }),
+    ]);
+    await expect(
+      workflows.wait(WORKFLOW_ID, { intervalMs: 50, signal: controller.signal })
+    ).resolves.toEqual(HELD);
+  });
+
+  it('CONTROL: an abort before any final snapshot still rejects with its reason', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop');
+    const { workflows } = await client([
+      () => {
+        queueMicrotask(() => controller.abort(reason));
+        return json(200, { snapshot: snapshot('processing') });
+      },
+      () => json(200, { snapshot: snapshot('processing') }),
+    ]);
+    await expect(
+      workflows.wait(WORKFLOW_ID, { intervalMs: 50, signal: controller.signal })
+    ).rejects.toBe(reason);
+  });
+
   it('a final snapshot with nothing pending ends the watch at once', async () => {
     const { workflows, calls } = await client([() => json(200, { snapshot: RATED })]);
     await expect(workflows.wait(WORKFLOW_ID, { intervalMs: 0 })).resolves.toEqual(RATED);

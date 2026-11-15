@@ -79,6 +79,7 @@ describe('outputs on a workflow snapshot', () => {
     for (const s of [
       snapshot(),
       snapshot({ outputs: [CEILING, { restricted: true, reason: 'a-future-reason' }] }),
+      snapshot({ outputs: [{ restricted: true, reason: 'unrated' }] }),
       snapshot({ outputs: [{ url: 'https://img.test/g.png', nsfwLevel: 'g' }] }),
       snapshot({ outputs: [] }),
     ]) {
