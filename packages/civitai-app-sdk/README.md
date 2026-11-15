@@ -117,6 +117,41 @@ forces the per-app tag filter off the block token, so a block only ever sees the
 queue it produced. Mirrors civitai/civitai PR #3164; the `@civitai/blocks-react`
 `useAppWorkflows()` hook wraps both.
 
+`PERSIST_GENERATION_SOURCE` → `GENERATION_SOURCE_PERSISTED` saves ONE of those
+outputs as a **private, scanned generation source** for the next generation.
+The request is `{ requestId, workflowId, imageIndex }` (an index into the
+workflow's `images`; never a url) and the reply carries `result`, a
+`BlockPersistedGenerationSource` (`{ url, width, height, imageId, ready }`), or a
+free-text `error`. The image is private to the viewer and not on the app's
+shared grid, and there is no confirm dialog. The host waits up to about thirty
+seconds for the scan; `ready: false` means it is still pending, and a generation using the
+source is refused with `source-scan-pending` until it finishes. `url` / `width` /
+`height` are a `BlockGenerationSourceImageInfo`, so they go into a
+`sourceImages` entry (a `textToImage` source image is refused with
+`source-scan-pending` too). It is idempotent per (viewer, app, `workflowId`,
+`imageIndex`): asking again returns the same image with its current `ready`.
+Full-page app hosts only: the iframe/slot host, review mode, a block that is not
+ready yet and App Assistant dev-tunnel previews all reply with an `error`. The
+`@civitai/blocks-react` `usePersistGenerationSource()` hook wraps it; its README
+section lists the size and rate limits:
+
+```ts
+import type { BlockPersistedGenerationSource, WorkflowBody } from '@civitai/app-sdk/blocks';
+
+declare const src: BlockPersistedGenerationSource; // from persist({ workflowId, imageIndex: 0 })
+declare const modelId: number, modelVersionId: number;
+
+const next: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: 'the same fox, in snow' },
+  sourceImages: [{ url: src.url, width: src.width, height: src.height }],
+};
+// If `src.ready` was false, submitting `next` can fail with errorCode
+// 'source-scan-pending' (nothing is reserved); retry it later.
+```
+
 `isMessage(data, 'BLOCK_INIT')` is a **discriminator-only** narrowing helper — it
 checks `data.type`, NOT the payload shape. Anything crossing the iframe trust
 boundary must be payload-validated at the boundary (the React transport does this
@@ -283,6 +318,18 @@ const body: WorkflowBody = {
   maxBuzz: 10,
 };
 ```
+
+**Choosing the Buzz pool.** Both step arms, and a `kind: 'workflow'` body (once for the whole
+workflow, never per step), take an optional `accountType` (`'blue' | 'green' | 'yellow'`), as a
+`textToImage` body does. The host tries that pool first and keeps the app's other allowed pools
+as fallback — an SFW app may spend `blue` and `green`, a mature app `blue` and `yellow`. A pool
+outside that set is refused on the estimate and the submit alike; omit the field for the
+default order, blue first. A pick does **not** guarantee an unrestricted output: when the picked
+pool runs out the fallback pays, and a fallback to `blue` can still leave a mature output
+restricted. On a confirmed step, `accountType` is part of the quoted body — submit with the pool
+you estimated with. **Release order: host first** — civitai/civitai must accept the field
+(civitai/civitai#8985) before an app sends it, because a host that predates it refuses the whole
+body as an unknown key. Leaving it out works on every host.
 
 **Above the per-call budget: a confirmed step.** A pass-through job the per-call budget refuses
 can still run when the **viewer confirms its exact price** in Civitai's own dialog

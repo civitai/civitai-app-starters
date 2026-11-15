@@ -2247,6 +2247,59 @@ function projectMediaUploadBatchResults(payload: unknown): unknown {
 }
 
 /**
+ * Reply to `PERSIST_GENERATION_SOURCE`: `{ requestId, result }` or
+ * `{ requestId, error }`.
+ *
+ * 🔴 ONLY THE CORRELATION IS CHECKED HERE, ON PURPOSE. A reply this predicate
+ * rejects is DROPPED, and a dropped reply leaves `persist()` waiting out its
+ * whole timeout over a reply the host already sent. So any object whose
+ * `requestId` has the wire shape (`isWireRequestIdShape`) is let through, and
+ * {@link projectInboundPayload} ({@link projectGenerationSourcePersisted})
+ * answers a malformed one as an `error` — the same precedent as a malformed
+ * `MEDIA_UPLOAD_BATCH_RESULT` entry. No reply this lets through reaches block
+ * code with an unchecked `result`.
+ */
+export function isValidGenerationSourcePersistedResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  return isWireRequestIdShape(p.requestId);
+}
+
+/**
+ * The error a malformed `GENERATION_SOURCE_PERSISTED` reply is answered with:
+ * one whose `error` is not a string, or that carries no `error` and no
+ * well-formed `result`.
+ */
+export const GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR =
+  'the host sent a malformed reply to PERSIST_GENERATION_SOURCE';
+
+/**
+ * A well-formed `GENERATION_SOURCE_PERSISTED.result`: a non-empty `url`,
+ * positive whole `width` / `height` / `imageId`, and a boolean `ready`.
+ */
+function isValidPersistedGenerationSource(r: unknown): boolean {
+  if (!isObject(r)) return false;
+  if (!isNonEmptyString(r.url)) return false;
+  if (!isPositiveInteger(r.width) || !isPositiveInteger(r.height)) return false;
+  if (!isPositiveInteger(r.imageId)) return false;
+  return typeof r.ready === 'boolean';
+}
+
+/**
+ * A `GENERATION_SOURCE_PERSISTED` payload with a malformed reply replaced by
+ * `{ requestId, error }` ({@link GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR}),
+ * so `persist()` rejects instead of resolving with fields nobody checked or
+ * hanging to its timeout. Identity for a reply with a string `error` (the hook
+ * throws on it before reading `result`) and for one with a well-formed
+ * `result`. Nothing of a malformed `result` crosses.
+ */
+function projectGenerationSourcePersisted(payload: unknown): unknown {
+  if (!isObject(payload)) return payload;
+  if (typeof payload.error === 'string') return payload;
+  if (payload.error === undefined && isValidPersistedGenerationSource(payload.result)) return payload;
+  return { requestId: payload.requestId, error: GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR };
+}
+
+/**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
  * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
@@ -2273,18 +2326,21 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: three groups are projected today. `IMAGES_RESULT`
+ * 🔴 SCOPE, STATED HONESTLY: four groups are projected today. `IMAGES_RESULT`
  * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
- * entry becomes that item's error, {@link projectMediaUploadBatchResults}), and
- * every reply carrying a workflow snapshot — the six in
- * {@link SNAPSHOT_REPLY_TYPES} plus each cell of `ESTIMATE_BATCH_RESULT` — whose
- * malformed queue/ETA fields are removed ({@link projectWorkflowSnapshot}).
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
+ * `GENERATION_SOURCE_PERSISTED` (a malformed reply becomes an error,
+ * {@link projectGenerationSourcePersisted}), and every reply carrying a
+ * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
+ * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
+ * ({@link projectWorkflowSnapshot}).
  * Every other type is returned by identity — this is not a general sanitizer and
  * must not be read as one. Add a case here (and say so in the type's validator
  * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
+  if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
   if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
   if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
   if (type === 'APP_WORKFLOWS_RESULT' || type === 'CANCEL_APP_WORKFLOW_RESULT') {
@@ -2375,6 +2431,8 @@ export function payloadValidatorFor(
       return isValidCancelAppWorkflowResult;
     case 'PUBLISH_RESULT':
       return isValidPublishResult;
+    case 'GENERATION_SOURCE_PERSISTED':
+      return isValidGenerationSourcePersistedResult;
     case 'IMAGES_RESULT':
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':

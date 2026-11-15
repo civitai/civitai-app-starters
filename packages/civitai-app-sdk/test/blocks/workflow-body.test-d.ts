@@ -41,6 +41,7 @@ import { expectTypeOf } from 'vitest';
 
 import type {
   BlockSourceImage,
+  BuzzAccountType,
   BlockTrainingDatasetItem,
   InlineComfyNode,
   WorkflowBody,
@@ -348,19 +349,19 @@ const stepBody: WorkflowBody = {
 };
 expectTypeOf(stepBody).toMatchTypeOf<WorkflowBody>();
 
-// --- the REGISTRY arm mirrors `blockStepBodySchema` EXACTLY: three fields ---
+// --- the REGISTRY arm mirrors `blockStepBodySchema` EXACTLY: four fields ---
 // The host schema is `.strict()`, so a fourth field here would be rejected at
 // the wire rather than dropped. Pinning the key set is what makes this a mirror
 // rather than a lookalike. (Keyed off `StepRegistry`, not `Step` — `keyof` a
 // union is the INTERSECTION of its members' keys, which would silently narrow
 // to `'kind' | 'step'` and read as a passing assertion about nothing.)
-expectTypeOf<keyof StepRegistry>().toEqualTypeOf<'kind' | 'step' | 'params'>();
+expectTypeOf<keyof StepRegistry>().toEqualTypeOf<'kind' | 'step' | 'params' | 'accountType'>();
 expectTypeOf<StepRegistry['step']>().toEqualTypeOf<string>();
 expectTypeOf<StepRegistry['params']>().toEqualTypeOf<Record<string, unknown>>();
 
-// Notably there is NO top-level `accountType` on this arm — unlike the
-// `textToImage` member. The host schema does not accept one.
-expectTypeOf<StepRegistry>().not.toHaveProperty('accountType');
+// `accountType` is TOP-LEVEL on this arm, as on `textToImage` — never inside
+// `params`, which the step's own `.strict()` schema bounds.
+expectTypeOf<StepRegistry['accountType']>().toEqualTypeOf<BuzzAccountType | undefined>();
 expectTypeOf<StepRegistry>().not.toHaveProperty('recipe');
 
 // --- PASS-THROUGH arm: a body naming an orchestrator $type is a valid
@@ -388,8 +389,9 @@ expectTypeOf(passThroughNested).toMatchTypeOf<WorkflowBody>();
 // the optional-undefined arm discriminator (the host spells it `z.undefined()`),
 // and the wire body omits it entirely. `quoteId` is the host's optional
 // confirmed-submit key (civitai/civitai#5786), absent on every other body.
+// `accountType` is the optional Buzz pool tried first.
 expectTypeOf<keyof StepPassThrough>().toEqualTypeOf<
-  'kind' | 'step' | '$type' | 'input' | 'maxBuzz' | 'quoteId'
+  'kind' | 'step' | '$type' | 'input' | 'maxBuzz' | 'quoteId' | 'accountType'
 >();
 expectTypeOf<StepPassThrough['$type']>().toEqualTypeOf<string>();
 expectTypeOf<StepPassThrough['input']>().toEqualTypeOf<Record<string, unknown>>();
@@ -403,7 +405,6 @@ expectTypeOf<StepPassThrough['step']>().toEqualTypeOf<undefined>();
 // rejected by BOTH arms rather than resolved to a winner.
 expectTypeOf<StepPassThrough>().not.toHaveProperty('params');
 expectTypeOf<StepPassThrough>().not.toHaveProperty('recipe');
-expectTypeOf<StepPassThrough>().not.toHaveProperty('accountType');
 expectTypeOf<StepRegistry>().not.toHaveProperty('$type');
 expectTypeOf<StepRegistry>().not.toHaveProperty('input');
 expectTypeOf<StepRegistry>().not.toHaveProperty('maxBuzz');

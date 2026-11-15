@@ -110,8 +110,12 @@ export function mediaUploadBatchDefaultTimeoutMs(itemCount: number, totalBytes: 
  * needs more than {@link DEFAULT_REQUEST_TIMEOUT_MS}.
  *
  * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
- * preflight plus the real submit plus a prompt audit), and
- * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`.
+ * preflight plus the real submit plus a prompt audit),
+ * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`, and
+ * `PERSIST_GENERATION_SOURCE` in `hooks/usePersistGenerationSource.ts` (the host
+ * fetches the output, stores it and waits up to ~30 s for its scan, polled every
+ * 1.5 s, all under one server deadline, so it can answer after ~32 s plus
+ * network; civitai/civitai#8987).
  *
  * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so every
  * caller shares the number instead of re-typing it.
@@ -251,6 +255,10 @@ const REQUEST_TIMEOUT_CLASS = {
   // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
   // under a 110 s deadline, which the 30 s default would cut short.
   GET_RESOURCE_FILE: 'protocol',
+  // No confirm, so `'protocol'` — but sent under `WORKFLOW_REQUEST_TIMEOUT_MS`
+  // (120 s): the host fetches, stores and then waits up to ~30 s for the scan
+  // under one server deadline, which the 30 s default would cut short.
+  PERSIST_GENERATION_SOURCE: 'protocol',
   QUERY_APP_WORKFLOWS: 'protocol',
   REQUEST_TOKEN: 'protocol',
   // The host fetches the blob and triggers the browser's own download; it replies

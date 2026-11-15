@@ -119,9 +119,9 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
         'either is a breaking change.',
     },
     reason:
-      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 237 ' +
+      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 239 ' +
       'symbols of Civitai-Apps contract that an OAuth app never touches. Disjoint audiences. ' +
-      'The 237 is asserted below, not merely quoted — it said 119 against a real 125 until ' +
+      'The 239 is asserted below, not merely quoted — it said 119 against a real 125 until ' +
       '2026-10-04.',
   },
   './safe-storage': {
@@ -379,7 +379,7 @@ describe('root barrel / subpath relationship (#377)', () => {
     // When this goes red the fix is not to change the number here alone: update
     // BOTH prose sites in the same commit, and say in the changeset whether the
     // additions are a `minor` (they are, for a published subpath).
-    expect(surface.get('./blocks')!.size).toBe(237);
+    expect(surface.get('./blocks')!.size).toBe(239);
   });
 
   it('gives every published subpath a reason recorded next to the README that documents it', () => {

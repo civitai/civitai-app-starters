@@ -54,6 +54,7 @@ import {
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
   type BlockGenerationSourceImageInfo,
+  type BlockPersistedGenerationSource,
   type BlockImageScanResult,
   type BuzzAccountType,
   type BlockBuzzTransaction,
@@ -153,15 +154,15 @@ import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
 /**
- * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
- * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
- * `params.accountType`; a `step` body (EITHER arm) and a `customComfy` INLINE
- * body have NO account preference at all — the host's `blockStepBodySchema`,
- * `blockPassThroughStepBodySchema` and `blockInlineComfyBodySchema` are all
- * `.strict()` with no `accountType` anywhere, so there is no field to read and
- * `undefined` (let the host pick) is the accurate answer rather than a fallback.
- * That is why `case 'step'` needs no second narrow on the arm, unlike
- * `customComfy`: both step arms give the same answer.
+ * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody}, a
+ * `step` body (EITHER arm) and a `workflow` body it's the top-level
+ * `accountType` (once per workflow, never per step); on a `customComfy` RECIPE
+ * body it lives under `params.accountType`; a `customComfy` INLINE body and a
+ * `training` body have NO account preference at all — the host's
+ * `blockInlineComfyBodySchema` and `blockTrainingBodySchema` are `.strict()`
+ * with no `accountType`, so `undefined` (let the host pick) is the accurate
+ * answer rather than a fallback. `case 'step'` needs no second narrow on the
+ * arm, unlike `customComfy`: both step arms carry the field in the same place.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
@@ -187,14 +188,14 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     case 'customComfy':
       return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
-      return undefined;
-    // A training body names no pool either: the host's `blockTrainingBodySchema`
-    // is `.strict()` with no `accountType`.
+      return body.accountType;
+    // A training body names no pool: the host's `blockTrainingBodySchema` is
+    // `.strict()` with no `accountType`.
     case 'training':
       return undefined;
-    // Nor does a multi-step body: the kind has no `accountType` field.
+    // One pick for the whole multi-step workflow, on the body.
     case 'workflow':
-      return undefined;
+      return body.accountType;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
       // fail to compile, right here, rather than defaulting somewhere.
@@ -1419,6 +1420,25 @@ export interface MockHostOptions {
    */
   publishError?: boolean | string | Error;
   /**
+   * The private, scanned generation source returned from
+   * `PERSIST_GENERATION_SOURCE` (what `usePersistGenerationSource().persist()`
+   * resolves with), whatever `workflowId` / `imageIndex` the block names.
+   * Absent → {@link DEFAULT_PERSISTED_GENERATION_SOURCE}, with `ready: true`.
+   * Pass one with `ready: false` to simulate a scan that is still pending (the
+   * real host then refuses a generation using it with `source-scan-pending`;
+   * this mock does not enforce that). Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  persistedGenerationSource?: BlockPersistedGenerationSource;
+  /**
+   * Force `PERSIST_GENERATION_SOURCE` to reply with the FREE-TEXT `error`
+   * variant instead of a source — exercises a rejected `persist()`. `true` → a
+   * default message; a string → that message; an `Error` → its `.message`.
+   * Absent → the persist succeeds. Live-tunable via {@link MockHost.setScenario},
+   * where `false` or `undefined` clears it.
+   */
+  persistGenerationSourceError?: boolean | string | Error;
+  /**
    * The per-viewer gated projection returned from `GET_IMAGES_BY_IDS` (what
    * `useGatedImages().getImages()` resolves with). Each entry is a
    * {@link BlockGatedImage} — `visible` (moderated projection incl. url) or
@@ -1818,6 +1838,7 @@ export interface MockHostOptions {
   postableImageIds?: number[];
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
+   * (on any body that carries one — see `preferredAccountType`)
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
    * block picks a pool the app's maturity policy disallows; the mock mirrors
@@ -2024,6 +2045,8 @@ export type MockHostScenarioPatch = Pick<
   | 'appWorkflowsError'
   | 'publishImageIds'
   | 'publishError'
+  | 'persistedGenerationSource'
+  | 'persistGenerationSourceError'
   | 'gatedImages'
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
@@ -2515,6 +2538,34 @@ const DEFAULT_CREATE_POST_RESULT: BlockCreatePostResult = {
   imageIds: [9101, 9102],
 };
 
+/**
+ * Default source reported on `PERSIST_GENERATION_SOURCE` when
+ * {@link MockHostOptions.persistedGenerationSource} is omitted: a scanned
+ * (`ready: true`) Civitai-hosted image. Its `url` differs from
+ * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}'s so a block that confuses an
+ * uploaded source with a persisted output can tell them apart.
+ */
+const DEFAULT_PERSISTED_GENERATION_SOURCE: BlockPersistedGenerationSource = {
+  url: 'https://image.civitai.com/mock/original=true/dev-persisted-generation-source.jpeg',
+  width: 1024,
+  height: 1024,
+  imageId: 9201,
+  ready: true,
+};
+
+/** Default message for a simulated persist failure ({@link MockHostOptions.persistGenerationSourceError}). */
+const DEFAULT_PERSIST_GENERATION_SOURCE_ERROR = 'persisting the generation source failed';
+
+/** Normalize a {@link MockHostOptions.persistGenerationSourceError} value to an error string (or `undefined`). */
+function normalizePersistGenerationSourceError(
+  e: boolean | string | Error | undefined,
+): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+  return e.message || DEFAULT_PERSIST_GENERATION_SOURCE_ERROR;
+}
+
 /** Normalize a {@link MockHostOptions.publishError} value to an error string (or `undefined`). */
 function normalizePublishError(e: boolean | string | Error | undefined): string | undefined {
   if (e === undefined || e === false) return undefined;
@@ -2927,6 +2978,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Publish-outputs bridge data + forced free-text-error knob.
   let publishImageIds: number[] = options.publishImageIds ?? DEFAULT_PUBLISH_IMAGE_IDS;
   let publishError: string | undefined = normalizePublishError(options.publishError);
+  // Persist-generation-source bridge data + forced free-text-error knob.
+  let persistedGenerationSource: BlockPersistedGenerationSource =
+    options.persistedGenerationSource ?? DEFAULT_PERSISTED_GENERATION_SOURCE;
+  let persistGenerationSourceError: string | undefined = normalizePersistGenerationSourceError(
+    options.persistGenerationSourceError,
+  );
   // Gated-image read bridge data + forced free-text-error knob.
   let gatedImages: BlockGatedImage[] = options.gatedImages ?? DEFAULT_GATED_IMAGES;
   let gatedImagesError: string | undefined = normalizeGatedImagesError(options.gatedImagesError);
@@ -3494,7 +3551,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           status: 'succeeded' as const,
           cost: { total: cost },
           ...workflowStepsView(workflowId, body, () => 'succeeded'),
-          spentAccountType: primaryFunder(buzzBalance),
+          // Pick-aware, like the single-step stamp below (same approximation).
+          spentAccountType: preferredAccountType(body) ?? primaryFunder(buzzBalance),
         };
       }
       // 3D labels: a pass-through step only (see `generation.model3dOutputs`).
@@ -3719,6 +3777,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
           if (!consentGranted) {
             return { workflowId: 'failed', status: 'failed', error: MOCK_SPEND_SCOPE_ERROR };
+          }
+          // Disallowed-account path, as on SUBMIT_WORKFLOW: the real host refuses a
+          // picked pool outside the app's maturity policy on EVERY estimate too
+          // (civitai/civitai#8985), before pricing, and the page host catches that
+          // BAD_REQUEST into `failureSnapshot(err)`. Same message as the submit.
+          const estimatePick = preferredAccountType(body);
+          if (estimatePick && disallowedAccounts.has(estimatePick)) {
+            return { workflowId: 'failed', status: 'failed', error: disallowedAccountError(estimatePick) };
           }
           // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
           // kind-agnostic rule above, because the real arm is not a priced
@@ -4944,6 +5010,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (isTrainingStepTypeName(b.$type)) {
               return reply({ error: MOCK_STEP_TRAINING_TYPE_ERROR });
             }
+            // A disallowed pick is refused BEFORE the quote is claimed, so the quote
+            // is kept — the host resolves the currencies ahead of its replay claim
+            // (civitai/civitai#8985). Same message as the submit.
+            const confirmedPick = preferredAccountType(b as unknown as WorkflowBody);
+            if (confirmedPick && disallowedAccounts.has(confirmedPick)) {
+              return reply({ error: disallowedAccountError(confirmedPick) });
+            }
             quote.spent = true;
             // The body is hashed AFTER the claim, so a body the server cannot bind
             // (non-plain-JSON input) and a body that differs both consume the quote.
@@ -4993,6 +5066,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
               payload: { requestId, result: { imageIds: [...publishImageIds] } },
+            });
+            return;
+          }
+
+          case 'PERSIST_GENERATION_SOURCE': {
+            // Save one of the app's OWN outputs as a private, scanned generation
+            // source. No confirm, like the real page host. Drop a request with
+            // no requestId (unroutable). A forced error replies with the
+            // FREE-TEXT error variant; otherwise the canned source, for any
+            // workflowId / imageIndex.
+            if (!isRoutableRequestId(requestId)) return;
+            if (persistGenerationSourceError !== undefined) {
+              dispatchToBlock({
+                type: 'GENERATION_SOURCE_PERSISTED',
+                payload: { requestId, error: persistGenerationSourceError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'GENERATION_SOURCE_PERSISTED',
+              payload: { requestId, result: { ...persistedGenerationSource } },
             });
             return;
           }
@@ -6063,6 +6157,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       appWorkflowsError = normalizeAppWorkflowsError(patch.appWorkflowsError);
     if (patch.publishImageIds !== undefined) publishImageIds = patch.publishImageIds;
     if (patch.publishError !== undefined) publishError = normalizePublishError(patch.publishError);
+    if (patch.persistedGenerationSource !== undefined) {
+      persistedGenerationSource = patch.persistedGenerationSource;
+    }
+    // Key PRESENCE, so `{ persistGenerationSourceError: undefined }` clears it.
+    if ('persistGenerationSourceError' in patch) {
+      persistGenerationSourceError = normalizePersistGenerationSourceError(
+        patch.persistGenerationSourceError,
+      );
+    }
     if (patch.gatedImages !== undefined) gatedImages = patch.gatedImages;
     if (patch.gatedImagesError !== undefined)
       gatedImagesError = normalizeGatedImagesError(patch.gatedImagesError);

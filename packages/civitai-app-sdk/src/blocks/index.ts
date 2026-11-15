@@ -261,6 +261,8 @@ export type {
   BlockSourceImage,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockPersistGenerationSourceRequest,
+  BlockPersistedGenerationSource,
   BlockImagePickerSource,
   BlockPickedImageInfo,
   BlockMediaKind,
