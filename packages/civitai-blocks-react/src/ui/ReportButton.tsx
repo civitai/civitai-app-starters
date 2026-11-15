@@ -14,11 +14,11 @@ const NOTE_STYLE = {
 
 /**
  * The post-write abuse seam for a shared board: a two-step control that files a
- * row for PLATFORM moderator review via `useSharedStorage().report()`.
+ * row for PLATFORM moderator review through the caller's `onReport`.
  *
  * 🔴 REPORTING IS ESCALATION, NOT REMOVAL, and this component exists so that
- * fact is stated identically in every block. `report()` files the row and its
- * own contract says filing does NOT hide it — a moderator decides. An app owner
+ * fact is stated identically in every block. Filing a report does NOT hide the
+ * row — a moderator decides. An app owner
  * has no server-side hide to offer instead either: `update` and `withdraw` are
  * author-scoped, so they reject for anyone but the row's author.
  *
@@ -34,7 +34,7 @@ const NOTE_STYLE = {
  * already produced.
  *
  * The caller decides WHO sees it. Render it only for a viewer who is signed in
- * and does not own the row: `report` rejects for an anonymous viewer, and an
+ * and does not own the row: a report needs a signed-in viewer, and an
  * author has a real Remove. Offering it otherwise is offering an error.
  *
  * @example
@@ -46,7 +46,7 @@ const NOTE_STYLE = {
  *     key={item.key}
  *     noun="generator"
  *     reported={myReports.has(item.key)}
- *     onReport={() => shared.report(item.key)}
+ *     onReport={() => reportRow(item.key)}
  *     data-testid={`gen-${item.key}-report`}
  *   />
  * )}
@@ -73,14 +73,13 @@ export interface ReportButtonProps {
    * This viewer has ALREADY reported this row. Renders the settled state
    * directly and skips the handshake.
    *
-   * 🔴 THE SHARED STORE CANNOT TELL YOU THIS. `SharedListItem` carries
-   * `viewerVoted` and has no report equivalent, so unlike a vote there is no
-   * server field to read — the only source is your own app's per-viewer
-   * storage, recorded when `onReport` resolves. Supply it if you keep that
-   * record: without it the settled state is local-only, so any remount (a
-   * `list()` refresh, a tab switch, virtualized scroll) resets the control to
-   * "Report" and the same viewer can file the same row again. `report()` is NOT
-   * documented idempotent the way `vote` is, so that is a duplicate report
+   * 🔴 NO SERVER FIELD TELLS YOU THIS. A shared-store row (`SharedItem` in
+   * `@civitai/sdk`) carries `viewerVoted` and has no report equivalent, so the
+   * only source is your own app's per-viewer storage, recorded when `onReport`
+   * resolves. Supply it if you keep that record: without it the settled state is
+   * local-only, so any remount (a list refresh, a tab switch, virtualized
+   * scroll) resets the control to "Report" and the same viewer can file the same
+   * row again. Unless your report path is idempotent, that is a duplicate report
    * rather than a no-op.
    *
    * Flipping this to `true` settles the control silently — no focus move — which

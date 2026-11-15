@@ -95,19 +95,14 @@ import manifestSchema from '@civitai/app-sdk/schemas/app-block/v1.json' with { t
 
 A block runs in a sandboxed iframe. The host (civitai.com) and the block speak
 over `window.postMessage({ type, payload }, targetOrigin)`, discriminated by
-`type`. The full union is exported:
+`type`. Both unions are exported from `@civitai/app-sdk/blocks`, and their
+source is the list — it is not copied here, so it cannot fall behind:
 
-- **parent → block**: `BLOCK_INIT`, `TOKEN_REFRESH`, `TOKEN_REFRESH_RESPONSE`,
-  `ESTIMATE_RESULT`, `ESTIMATE_BATCH_RESULT`, `WORKFLOW_SUBMITTED`, `WORKFLOW_STATUS`,
-  `BUZZ_PURCHASE_RESULT`, `CHECKPOINT_PICKER_RESULT`, `USER_CHECKPOINT_SET`,
-  `APP_STORAGE_*_RESULT`, `SUSPEND`, `RESUME`, `THEME_CHANGE`, `ROUTE_CHANGED`,
-  `CONSENT_UNAVAILABLE` (`ParentToBlockMessage`).
-- **block → parent**: `BLOCK_READY`, `BLOCK_ERROR`, `REQUEST_TOKEN`,
-  `RESIZE_IFRAME`, `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `ESTIMATE_WORKFLOW_BATCH`, `POLL_WORKFLOW`,
-  `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW`, `OPEN_BUZZ_PURCHASE`,
-  `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`, `NAVIGATE`, `TRACK_EVENT`,
-  `APP_STORAGE_*` (`BlockToParentMessage`).
+- **parent → block**: `ParentToBlockMessage` (`ParentToBlockMessageType` is its
+  `type` union), in
+  [`src/blocks/messages.ts`](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-app-sdk/src/blocks/messages.ts).
+- **block → parent**: `BlockToParentMessage` (`BlockToParentMessageType`), in the
+  same file; `BLOCK_TO_PARENT_MESSAGE_TYPES` is the same set as a runtime array.
 
 The app generator **subqueue** pair — `QUERY_APP_WORKFLOWS` →
 `APP_WORKFLOWS_RESULT` and `CANCEL_APP_WORKFLOW` → `CANCEL_APP_WORKFLOW_RESULT` —
@@ -548,8 +543,8 @@ round-trip probe shows they're unusable. Rules:
   not propagated.
 - The fallback is **session-scoped** — nothing survives a reload. That's the
   honest semantic at an opaque origin. Treat storage as a cache; use the
-  platform's app-storage messages (`useAppStorage` in `@civitai/blocks-react`)
-  for anything durable.
+  document store (`app.storage.collection(name)` in `@civitai/sdk`) for anything
+  durable.
 
 Most apps need to do nothing. Two cases where you reach for it explicitly:
 

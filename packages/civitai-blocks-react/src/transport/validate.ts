@@ -58,7 +58,6 @@ import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
   ParentToBlockMessageType,
-  SharedStorageRateLimit,
   Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
@@ -751,8 +750,7 @@ const isFiniteNumber = (v: unknown): v is number =>
 /**
  * Reply to a block-initiated `GET_BUZZ_BALANCE`. A well-formed reply carries
  * EITHER a `balance` ({ blue, green, yellow } — each a finite number) OR an
- * `error` string; one with neither is malformed and dropped. Mirrors the
- * `APP_STORAGE_GET_RESULT` value-or-error convention.
+ * `error` string; one with neither is malformed and dropped.
  */
 export function isValidBuzzBalanceResult(
   p: unknown,
@@ -959,30 +957,12 @@ export function isValidImageScanResolved(
 }
 
 /**
- * Reply to a block-initiated `SHARED_UPDATE`. A well-formed reply carries a
- * boolean `ok`, OR an `error` string on its own (set on `NOT_FOUND` /
- * `FORBIDDEN` / a belt/size rejection). Follows the uniform `{ ok, error }`
- * reply contract in this module's header — the block's hook treats
- * `!ok || error !== undefined` as the reject signal.
- */
-export function isValidSharedUpdateResult(
-  p: unknown,
-): p is { ok?: boolean; error?: string; requestId?: string } {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `ok`
-  if (typeof p.ok !== 'boolean') return false;
-  return true;
-}
-
-/**
  * A value the block-side hooks will rehydrate to a `Date`: EITHER a `Date`
  * instance OR an ISO-8601 string `new Date()` parses to a finite timestamp.
  *
  * The buzz self-read bridges need this both-ways tolerance because the host
  * forwards the RAW tRPC `result` over a structured-clone `postMessage` (it does
- * NOT `.toISOString()`-map it the way the `SHARED_LIST` bridge does), so
+ * NOT `.toISOString()`-map it the way the removed `SHARED_LIST` bridge did), so
  * `cursor` + each transaction's `date` arrive as a `Date` INSTANCE today. A
  * string-only guard would DROP every real reply → the hook would hang.
  */
@@ -1634,197 +1614,14 @@ export function isValidConfirmedStepResult(p: unknown): boolean {
 }
 
 // ============================================================
-// App-storage (per-viewer KV) reply validators
+// Save-image reply validator
 // ============================================================
-//
-// Kept in lockstep with the host's `APP_STORAGE_*_RESULT` builders in
-// civitai/civitai (`PageBlockHost.tsx` / `IframeHost.tsx`) and the SDK's
-// `ParentToBlockMessage` union. Each guard asserts exactly the fields
-// `useAppStorage` dereferences. NOTE (verified against the live host): every
-// storage error path ALSO carries a zeroed/null success field (e.g.
-// `APP_STORAGE_GET` sends `value:null` with its `error`, `QUOTA` sends the four
-// numbers as `0`), so the guards SHORT-CIRCUIT on a present `error` — the hook
-// throws on it before reading the success fields, so a zeroed error reply must
-// not be dropped as "malformed".
-
-/**
- * Reply to `APP_STORAGE_GET`. `value` is arbitrary JSON (incl. `null` for an
- * unset key / anon viewer), so there is nothing to type-check on it — the guard
- * only asserts the envelope: an object, a string `error` when present, and that
- * the reply resolves to SOMETHING (a `value` field OR an `error`).
- */
-export function isValidAppStorageGetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  // `value` may be any JSON value including `null`; a reply carrying neither a
-  // `value` key nor an `error` is malformed (would silently resolve to `null`).
-  if (!('value' in p) && p.error === undefined) return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_SET`. `ok` required on the success path; `sizeBytes`
- * present only on success. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidAppStorageSetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `sizeBytes`
-  if (typeof p.ok !== 'boolean') return false;
-  if (p.sizeBytes !== undefined && !isFiniteNumber(p.sizeBytes)) return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_DELETE`. `ok` + `deleted` are required on the success
- * path. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidAppStorageDeleteResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `deleted`
-  if (typeof p.ok !== 'boolean') return false;
-  if (typeof p.deleted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Reply to `APP_STORAGE_LIST`. On success `keys` is an array of
- * `{ key, updatedAt }` (the hook rehydrates `updatedAt` via `new Date`, so it
- * must be date-like); the error path sends `keys: []` with an `error`.
- */
-export function isValidAppStorageListResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `keys`
-  if (!Array.isArray(p.keys)) return false;
-  for (const k of p.keys) {
-    if (!isObject(k)) return false;
-    if (!isNonEmptyString(k.key)) return false;
-    if (!isDateLike(k.updatedAt)) return false;
-  }
-  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
-  return true;
-}
-
-/** Reply to `APP_STORAGE_QUOTA`. The four counters are finite numbers (error path zeroes them + adds `error`). */
-export function isValidAppStorageQuotaResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading the counters
-  if (!isFiniteNumber(p.usedBytes)) return false;
-  if (!isFiniteNumber(p.rowCount)) return false;
-  if (!isFiniteNumber(p.limitBytes)) return false;
-  if (!isFiniteNumber(p.limitRows)) return false;
-  return true;
-}
-
-// ============================================================
-// Shared (cross-user, votable) storage reply validators
-// ============================================================
-//
-// Kept in lockstep with the host's `SHARED_*_RESULT` builders + `apps.shared.*`
-// server return types. Same SHORT-CIRCUIT-on-`error` convention as the
-// app-storage guards (the SHARED error path is `{ requestId, error }` — no
-// success field — but short-circuiting is still correct and keeps the guards
-// uniform). Closes the silent-corrupt-return hole: without these,
-// `getCount/getCounts/append/vote/unvote`/`list` returned a missing field as
-// `undefined` typed `number`/`string` with no throw, no timeout.
-//
-// The optional `rateLimit` on the six write replies is NOT checked by any
-// predicate here, so it can never drop a reply; the hook parses it (see
-// `parseSharedStorageRateLimit` below the validators).
-
-/** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
-function isValidSharedValue(v: unknown): boolean {
-  if (!isObject(v)) return false;
-  if (typeof v.title !== 'string') return false;
-  if (v.body !== undefined && typeof v.body !== 'string') return false;
-  // `data` is opaque + unmoderated — any JSON value (incl. absent) is legal.
-  return true;
-}
-
-/**
- * Reply to `SHARED_LIST`. On success `items` is an array the hook maps over,
- * dereferencing `key`/`authorUserId`/`value`/`count`/`createdAt`/`updatedAt`
- * (the last two ISO strings the hook rehydrates via `new Date`). Error path is
- * `{ error }` (the hook throws before touching `items`).
- */
-export function isValidSharedListResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `items`
-  if (!Array.isArray(p.items)) return false;
-  for (const it of p.items) {
-    if (!isObject(it)) return false;
-    if (!isNonEmptyString(it.key)) return false;
-    if (!isFiniteNumber(it.authorUserId)) return false;
-    if (!isValidSharedValue(it.value)) return false;
-    if (!isFiniteNumber(it.count)) return false;
-    if (!isDateLike(it.createdAt)) return false;
-    if (!isDateLike(it.updatedAt)) return false;
-    // ADDITIVE + OPTIONAL: `viewerVoted` is present on a new host, absent on an
-    // old one (the hook defaults it to false). Only a WRONG type is a drop.
-    if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
-  }
-  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
-  return true;
-}
-
-/** The wire item shape shared by `SHARED_LIST_RESULT` items + `SHARED_GET_RESULT`. */
-function isValidSharedItemWire(it: unknown): boolean {
-  if (!isObject(it)) return false;
-  if (!isNonEmptyString(it.key)) return false;
-  if (!isFiniteNumber(it.authorUserId)) return false;
-  if (!isValidSharedValue(it.value)) return false;
-  if (!isFiniteNumber(it.count)) return false;
-  if (!isDateLike(it.createdAt)) return false;
-  if (!isDateLike(it.updatedAt)) return false;
-  if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Reply to `SHARED_GET` (single-row fetch-by-key). On success `item` is either
- * the wire item shape (same as one `SHARED_LIST_RESULT` item) OR `null` (a
- * missing/hidden key — a legitimate "not found", NOT an error). Error path is
- * `{ error }` (the hook throws before reading `item`).
- */
-export function isValidSharedGetResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `item`
-  // `null` is a valid, non-error result (key not found / hidden).
-  if (p.item === null) return true;
-  return isValidSharedItemWire(p.item);
-}
-
-/**
- * Reply to `SHARED_REPORT`. On success `ok` is a boolean; the error path is
- * `{ error }`, with or without `ok: false`. Uniform `{ ok, error }` contract
- * (module header) — the SDK hook rejects on `!ok || error !== undefined`.
- */
-export function isValidSharedReportResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `ok`
-  if (typeof p.ok !== 'boolean') return false;
-  return true;
-}
 
 /**
  * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
  * `error` is a free-text host-side failure (disallowed origin / withheld image
  * / disallowed `bytes` type / over-size / fetch failure / `busy`). Uniform `{ ok, error }` contract (module
- * header) — same shape as `isValidSharedReportResult`.
+ * header).
  */
 export function isValidSaveImageResult(p: unknown): boolean {
   if (!isObject(p)) return false;
@@ -1833,85 +1630,6 @@ export function isValidSaveImageResult(p: unknown): boolean {
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;
   return true;
-}
-
-/**
- * Reply to `SHARED_GET_COUNT` / `SHARED_VOTE` / `SHARED_UNVOTE` — all three
- * carry an identical `{ count, error? }` shape. On success `count` is the
- * finite vote total the hook returns directly.
- */
-export function isValidSharedCountResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `count`
-  if (!isFiniteNumber(p.count)) return false;
-  return true;
-}
-
-/** Reply to `SHARED_GET_COUNTS`. `counts` maps each key to a finite vote total. */
-export function isValidSharedCountsResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `counts`
-  if (!isObject(p.counts)) return false;
-  for (const v of Object.values(p.counts)) {
-    if (!isFiniteNumber(v)) return false;
-  }
-  return true;
-}
-
-/** Reply to `SHARED_APPEND`. On success `key` is the host-minted (non-empty) entry id. */
-export function isValidSharedAppendResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `key`
-  if (!isNonEmptyString(p.key)) return false;
-  return true;
-}
-
-/**
- * Reply to `SHARED_WITHDRAW`. On success `ok` + `deleted` are booleans; the
- * error path is `{ error }`. Uniform `{ ok, error }` contract (module header).
- */
-export function isValidSharedWithdrawResult(p: unknown): boolean {
-  if (!isObject(p)) return false;
-  if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
-  if (p.error !== undefined) return true; // hook throws before reading `deleted`
-  if (typeof p.ok !== 'boolean') return false;
-  if (typeof p.deleted !== 'boolean') return false;
-  return true;
-}
-
-/**
- * Validate the `rateLimit` a host put on a shared-storage refusal. Returns a
- * copy holding ONLY the two known fields, or `undefined` when `value` is
- * missing or malformed.
- *
- * Kept in lockstep with the platform's own parser for the same metadata
- * (`parseRateLimitMeta` in civitai's `src/shared/utils/rate-limit-meta.ts`):
- * `retryAfterSeconds` must be an integer of at least 1, and `retryAt` a string
- * `Date.parse` can read. Anything else — a wrong type, a negative or fractional
- * number, a missing field, a non-object — is malformed.
- *
- * 🔴 NOT A VALIDATOR, deliberately. None of the `isValidShared*Result`
- * predicates look at `rateLimit`, so a malformed one can never DROP a reply:
- * dropping it would hang the block's request to its timeout over an optional
- * hint. The reply is delivered unchanged, and `useSharedStorage` calls this
- * parser: a malformed value is ignored and the plain refusal error is thrown.
- */
-export function parseSharedStorageRateLimit(value: unknown): SharedStorageRateLimit | undefined {
-  if (!isObject(value)) return undefined;
-  const { retryAfterSeconds, retryAt } = value;
-  if (typeof retryAfterSeconds !== 'number' || !Number.isInteger(retryAfterSeconds)) {
-    return undefined;
-  }
-  if (retryAfterSeconds < 1) return undefined;
-  if (typeof retryAt !== 'string' || Number.isNaN(Date.parse(retryAt))) return undefined;
-  return { retryAfterSeconds, retryAt };
 }
 
 // ============================================================
@@ -2395,34 +2113,6 @@ export function payloadValidatorFor(
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':
       return isValidImageScanResolved;
-    case 'SHARED_UPDATE_RESULT':
-      return isValidSharedUpdateResult;
-    case 'APP_STORAGE_GET_RESULT':
-      return isValidAppStorageGetResult;
-    case 'APP_STORAGE_SET_RESULT':
-      return isValidAppStorageSetResult;
-    case 'APP_STORAGE_DELETE_RESULT':
-      return isValidAppStorageDeleteResult;
-    case 'APP_STORAGE_LIST_RESULT':
-      return isValidAppStorageListResult;
-    case 'APP_STORAGE_QUOTA_RESULT':
-      return isValidAppStorageQuotaResult;
-    case 'SHARED_LIST_RESULT':
-      return isValidSharedListResult;
-    case 'SHARED_GET_COUNT_RESULT':
-    case 'SHARED_VOTE_RESULT':
-    case 'SHARED_UNVOTE_RESULT':
-      return isValidSharedCountResult;
-    case 'SHARED_GET_COUNTS_RESULT':
-      return isValidSharedCountsResult;
-    case 'SHARED_APPEND_RESULT':
-      return isValidSharedAppendResult;
-    case 'SHARED_WITHDRAW_RESULT':
-      return isValidSharedWithdrawResult;
-    case 'SHARED_GET_RESULT':
-      return isValidSharedGetResult;
-    case 'SHARED_REPORT_RESULT':
-      return isValidSharedReportResult;
     case 'SAVE_IMAGE_RESULT':
       return isValidSaveImageResult;
     case 'CHECKPOINT_PICKER_RESULT':

@@ -141,7 +141,7 @@ describe('check-starter-pins', () => {
     // reaches them: every example pin gets its own OK line.
     const r = await run();
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /OK {3}@civitai\/app-sdk \^0\.31\.0 admits published 0\.31\.0 {2}\(starters\/examples\/kv-storage\/package\.json\)/);
+    assert.match(r.stdout, /OK {3}@civitai\/app-sdk \^0\.31\.0 admits published 0\.31\.0 {2}\(starters\/examples\/monetize\/package\.json\)/);
     assert.doesNotMatch(r.out, /workspace:/);
   });
 

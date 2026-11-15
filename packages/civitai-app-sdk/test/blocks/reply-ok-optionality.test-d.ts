@@ -1,6 +1,6 @@
 /**
- * Compile-time pin for the OPTIONALITY of `ok` (and its success-only sibling
- * `deleted`) on the seven `{ ok, error }` host→block reply payloads.
+ * Compile-time pin for the OPTIONALITY of `ok` on the two `{ ok, error }`
+ * host→block reply payloads.
  *
  * This is a TYPE test: compiled by `tsc -p tsconfig.typecheck.json` (the
  * `test:types` script, run by `pnpm test`, run by the required `SDK` CI job).
@@ -28,12 +28,10 @@
  * being told a lie about the wire. Widening the declarations was PR #273; this
  * file is what stops a "tidy-up" from quietly undoing it.
  *
- * ## What it pins, for each of the seven
+ * ## What it pins, for each of the two
  *
  *  - `ok` is OPTIONAL — an error-only literal `{ requestId, error }` is
  *    assignable, and `'ok'` is a member of the payload's optional-key set;
- *  - `deleted` is OPTIONAL on the two that carry it (`APP_STORAGE_DELETE_RESULT`,
- *    `SHARED_WITHDRAW_RESULT`);
  *  - the payload's FULL shape, exactly — `toEqualTypeOf` is invariant, so this
  *    also catches a field silently going missing or gaining one;
  *  - 🔴 optional is NOT `any`: `ok` is `boolean | undefined` (a wrong-typed
@@ -56,7 +54,6 @@ import { expectTypeOf } from 'vitest';
 import type {
   ParentToBlockMessage,
   ParentToBlockMessageType,
-  SharedStorageRateLimit,
 } from '../../src/blocks/messages.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,166 +117,7 @@ const userCheckpointSetNoId: UserCheckpointSet = { error: 'boom' };
 void userCheckpointSetNoId;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. APP_STORAGE_SET_RESULT
-// ─────────────────────────────────────────────────────────────────────────────
-
-type AppStorageSetResult = ReplyPayload<'APP_STORAGE_SET_RESULT'>;
-
-expectTypeOf<AppStorageSetResult>().not.toBeNever();
-expectTypeOf<'ok'>().toExtend<OptionalKeys<AppStorageSetResult>>();
-expectTypeOf<AppStorageSetResult>().toEqualTypeOf<{
-  requestId: string;
-  ok?: boolean;
-  error?: string;
-  sizeBytes?: number;
-}>();
-
-const appStorageSetError: AppStorageSetResult = { requestId: 'r', error: 'boom' };
-void appStorageSetError;
-
-expectTypeOf<AppStorageSetResult['ok']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<AppStorageSetResult['ok']>().not.toBeAny();
-expectTypeOf<AppStorageSetResult['error']>().toEqualTypeOf<string | undefined>();
-
-// @ts-expect-error — wrong-typed `ok` is still a compile error.
-const appStorageSetBadOk: AppStorageSetResult = { requestId: 'r', ok: 'yes' };
-void appStorageSetBadOk;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. APP_STORAGE_DELETE_RESULT — also carries the success-only `deleted`
-// ─────────────────────────────────────────────────────────────────────────────
-
-type AppStorageDeleteResult = ReplyPayload<'APP_STORAGE_DELETE_RESULT'>;
-
-expectTypeOf<AppStorageDeleteResult>().not.toBeNever();
-expectTypeOf<'ok'>().toExtend<OptionalKeys<AppStorageDeleteResult>>();
-// 🔴 `deleted` is read only AFTER the hook has thrown on a present `error`, so
-// the host is not obliged to send it on the error path either.
-expectTypeOf<'deleted'>().toExtend<OptionalKeys<AppStorageDeleteResult>>();
-expectTypeOf<AppStorageDeleteResult>().toEqualTypeOf<{
-  requestId: string;
-  ok?: boolean;
-  deleted?: boolean;
-  error?: string;
-}>();
-
-// Neither `ok` NOR `deleted` — the shape `validate.ts` early-accepts.
-const appStorageDeleteError: AppStorageDeleteResult = { requestId: 'r', error: 'boom' };
-void appStorageDeleteError;
-
-expectTypeOf<AppStorageDeleteResult['ok']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<AppStorageDeleteResult['deleted']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<AppStorageDeleteResult['deleted']>().not.toBeAny();
-expectTypeOf<AppStorageDeleteResult['error']>().toEqualTypeOf<string | undefined>();
-
-// @ts-expect-error — wrong-typed `ok` is still a compile error.
-const appStorageDeleteBadOk: AppStorageDeleteResult = { requestId: 'r', ok: 'yes' };
-void appStorageDeleteBadOk;
-
-// @ts-expect-error — and so is a wrong-typed `deleted`.
-const appStorageDeleteBadDeleted: AppStorageDeleteResult = { requestId: 'r', deleted: 'no' };
-void appStorageDeleteBadDeleted;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. SHARED_WITHDRAW_RESULT — also carries the success-only `deleted`
-// ─────────────────────────────────────────────────────────────────────────────
-
-type SharedWithdrawResult = ReplyPayload<'SHARED_WITHDRAW_RESULT'>;
-
-expectTypeOf<SharedWithdrawResult>().not.toBeNever();
-expectTypeOf<'ok'>().toExtend<OptionalKeys<SharedWithdrawResult>>();
-expectTypeOf<'deleted'>().toExtend<OptionalKeys<SharedWithdrawResult>>();
-expectTypeOf<SharedWithdrawResult>().toEqualTypeOf<{
-  requestId: string;
-  ok?: boolean;
-  deleted?: boolean;
-  error?: string;
-  rateLimit?: SharedStorageRateLimit;
-}>();
-
-const sharedWithdrawError: SharedWithdrawResult = { requestId: 'r', error: 'boom' };
-void sharedWithdrawError;
-
-expectTypeOf<SharedWithdrawResult['ok']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<SharedWithdrawResult['deleted']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<SharedWithdrawResult['deleted']>().not.toBeAny();
-expectTypeOf<SharedWithdrawResult['error']>().toEqualTypeOf<string | undefined>();
-
-// @ts-expect-error — wrong-typed `ok` is still a compile error.
-const sharedWithdrawBadOk: SharedWithdrawResult = { requestId: 'r', ok: 'yes' };
-void sharedWithdrawBadOk;
-
-// @ts-expect-error — and so is a wrong-typed `deleted`.
-const sharedWithdrawBadDeleted: SharedWithdrawResult = { requestId: 'r', deleted: 'no' };
-void sharedWithdrawBadDeleted;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. SHARED_UPDATE_RESULT
-// ─────────────────────────────────────────────────────────────────────────────
-
-type SharedUpdateResult = ReplyPayload<'SHARED_UPDATE_RESULT'>;
-
-expectTypeOf<SharedUpdateResult>().not.toBeNever();
-expectTypeOf<'ok'>().toExtend<OptionalKeys<SharedUpdateResult>>();
-expectTypeOf<SharedUpdateResult>().toEqualTypeOf<{
-  requestId: string;
-  ok?: boolean;
-  error?: string;
-  rateLimit?: SharedStorageRateLimit;
-}>();
-
-const sharedUpdateError: SharedUpdateResult = { requestId: 'r', error: 'boom' };
-void sharedUpdateError;
-
-expectTypeOf<SharedUpdateResult['ok']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<SharedUpdateResult['ok']>().not.toBeAny();
-expectTypeOf<SharedUpdateResult['error']>().toEqualTypeOf<string | undefined>();
-
-// @ts-expect-error — wrong-typed `ok` is still a compile error.
-const sharedUpdateBadOk: SharedUpdateResult = { requestId: 'r', ok: 'yes' };
-void sharedUpdateBadOk;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. SHARED_REPORT_RESULT
-// ─────────────────────────────────────────────────────────────────────────────
-
-type SharedReportResult = ReplyPayload<'SHARED_REPORT_RESULT'>;
-
-expectTypeOf<SharedReportResult>().not.toBeNever();
-expectTypeOf<'ok'>().toExtend<OptionalKeys<SharedReportResult>>();
-expectTypeOf<SharedReportResult>().toEqualTypeOf<{
-  requestId: string;
-  ok?: boolean;
-  error?: string;
-  rateLimit?: SharedStorageRateLimit;
-}>();
-
-// `rateLimit` (#597) is OPTIONAL on every shared write reply and has the
-// exported shape — a host that predates it omits it, so it can never be required.
-expectTypeOf<SharedStorageRateLimit>().toEqualTypeOf<{
-  retryAfterSeconds: number;
-  retryAt: string;
-}>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedReportResult>>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedUpdateResult>>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<SharedWithdrawResult>>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_APPEND_RESULT'>>>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_VOTE_RESULT'>>>();
-expectTypeOf<'rateLimit'>().toExtend<OptionalKeys<ReplyPayload<'SHARED_UNVOTE_RESULT'>>>();
-
-const sharedReportError: SharedReportResult = { requestId: 'r', error: 'boom' };
-void sharedReportError;
-
-expectTypeOf<SharedReportResult['ok']>().toEqualTypeOf<boolean | undefined>();
-expectTypeOf<SharedReportResult['ok']>().not.toBeAny();
-expectTypeOf<SharedReportResult['error']>().toEqualTypeOf<string | undefined>();
-
-// @ts-expect-error — wrong-typed `ok` is still a compile error.
-const sharedReportBadOk: SharedReportResult = { requestId: 'r', ok: 'yes' };
-void sharedReportBadOk;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. SAVE_IMAGE_RESULT
+// 2. SAVE_IMAGE_RESULT
 // ─────────────────────────────────────────────────────────────────────────────
 
 type SaveImageResult = ReplyPayload<'SAVE_IMAGE_RESULT'>;
@@ -304,11 +142,11 @@ const saveImageBadOk: SaveImageResult = { requestId: 'r', ok: 'yes' };
 void saveImageBadOk;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LEDGER — the SET of `{ ok, error }` replies is exactly these seven
+// LEDGER — the SET of `{ ok, error }` replies is exactly these two
 //
 // Every assertion above is scoped to one type, so together they can only cover
 // the types someone remembered to list. This derives the set from the union
-// itself and pins it, so an EIGHTH `{ ok, error }` reply cannot land unpinned,
+// itself and pins it, so a THIRD `{ ok, error }` reply cannot land unpinned,
 // and a member cannot silently lose its `ok` field.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -317,23 +155,16 @@ type OkBearingReplyType = {
 }[ParentToBlockMessageType];
 
 expectTypeOf<OkBearingReplyType>().toEqualTypeOf<
-  | 'USER_CHECKPOINT_SET'
-  | 'APP_STORAGE_SET_RESULT'
-  | 'APP_STORAGE_DELETE_RESULT'
-  | 'SHARED_WITHDRAW_RESULT'
-  | 'SHARED_UPDATE_RESULT'
-  | 'SHARED_REPORT_RESULT'
-  | 'SAVE_IMAGE_RESULT'
+  'USER_CHECKPOINT_SET' | 'SAVE_IMAGE_RESULT'
 >();
 
-// …and exactly two of them carry the success-only `deleted`.
+// …and none of them carries a success-only `deleted` (the two that did were
+// legacy-store replies, removed with that store).
 type DeletedBearingReplyType = {
   [T in ParentToBlockMessageType]: 'deleted' extends keyof ReplyPayload<T> ? T : never;
 }[ParentToBlockMessageType];
 
-expectTypeOf<DeletedBearingReplyType>().toEqualTypeOf<
-  'APP_STORAGE_DELETE_RESULT' | 'SHARED_WITHDRAW_RESULT'
->();
+expectTypeOf<DeletedBearingReplyType>().toBeNever();
 
 // 🔴 `ok` is optional on ALL of them, asserted over the derived set rather than
 // the hand-written list — so a new `{ ok, error }` reply that declares
