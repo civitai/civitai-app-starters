@@ -399,9 +399,9 @@ function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly s
  * against today's members, for the open-union reason given at
  * {@link isValidWorkflowSnapshot}.
  *
- * 🔴 A restricted entry that carries a `url` is MALFORMED and replaced whole (see
- * {@link MALFORMED_OUTPUT_PLACEHOLDER}), so a url the host meant to withhold never
- * reaches block code under a "restricted" label.
+ * 🔴 A restricted entry that carries a `url` is MALFORMED and removed whole, so a
+ * url the host meant to withhold never reaches block code under a "restricted"
+ * label.
  */
 function isValidWorkflowOutput(o: unknown): boolean {
   if (!isObject(o)) return false;
@@ -414,40 +414,23 @@ function isValidWorkflowOutput(o: unknown): boolean {
 }
 
 /**
- * What a malformed `outputs` entry is REPLACED with: a restricted entry, so the slot
- * keeps its position (indexes are positions in `outputs` and must never shift) and
- * block code shows a locked tile and fetches nothing. `'ceiling'` because the docs
- * already tell a block to treat an unknown reason like it.
- */
-export const MALFORMED_OUTPUT_PLACEHOLDER = Object.freeze({
-  restricted: true as const,
-  reason: 'ceiling' as const,
-});
-
-/**
- * `obj` with its `outputs` projected: each malformed entry REPLACED IN PLACE by
- * {@link MALFORMED_OUTPUT_PLACEHOLDER} (never removed — that would move every later
- * position), or the whole field removed when it is not an array. `obj` itself when
- * nothing changes.
+ * `obj` with its `outputs` projected: each malformed entry removed, or the whole
+ * field removed when it is not an array. `obj` itself when nothing is removed.
  */
 function withValidOutputs<T extends Record<string, unknown>>(obj: T): T {
   const outputs = obj.outputs;
   if (outputs === undefined) return obj;
   if (!Array.isArray(outputs)) return withoutKeys(obj, ['outputs']);
   if (outputs.every(isValidWorkflowOutput)) return obj;
-  return {
-    ...obj,
-    outputs: outputs.map((o) => (isValidWorkflowOutput(o) ? o : { ...MALFORMED_OUTPUT_PLACEHOLDER })),
-  };
+  return { ...obj, outputs: outputs.filter(isValidWorkflowOutput) };
 }
 
 /**
  * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
  * `throttled` that is not `true` at the top level, and `queue`, `progress`,
  * `startedAt` and `completedAt` on each entry of `steps` — and each malformed
- * entry of `outputs` replaced in place by a restricted placeholder, at the top
- * level and on each step (see {@link withValidOutputs}), and everything else as
- * sent. The unit removed is the
+ * entry of `outputs` removed, at the top level and on each step (see
+ * {@link isValidWorkflowOutput}), and everything else as sent. The unit removed is the
  * whole field: an `eta` with one bad member goes entirely, because a partial
  * object would not have the published shape.
  *

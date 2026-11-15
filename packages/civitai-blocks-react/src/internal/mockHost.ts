@@ -619,11 +619,6 @@ export interface MockGenerationScenario {
    *
    * `{ 1: 'pool' }` is the case of a viewer whose Buzz does not cover mature
    * content; `{ 0: 'ceiling' }` an SFW app's output above its ceiling.
-   *
-   * Positions are the index space of `PUBLISH_GENERATION_OUTPUTS` /
-   * `CREATE_POST_FROM_APP` `imageIndexes` and `PERSIST_GENERATION_SOURCE`'s
-   * `imageIndex`: naming a restricted position of a workflow this mock ran is
-   * refused with the host's `output N is restricted`.
    * Snapshot-only: for the app-queue read put `outputs` (and the matching
    * `images`) on the rows you pass as {@link MockHostOptions.appWorkflows}.
    * Live-tunable via `setScenario({ generation: { restrictedOutputs } })`.
@@ -3377,23 +3372,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     };
 
     /**
-     * The host's refusal for naming a RESTRICTED output position
-     * ({@link MockGenerationScenario.restrictedOutputs}) of a workflow this mock ran —
-     * publish, post and persist alike — or `undefined`. Indexes are positions in
-     * `outputs`, so a restricted one is refused, never swapped for another output.
-     */
-    const restrictedIndexRefusal = (
-      workflowId: unknown,
-      indexes: readonly unknown[] | undefined,
-    ): string | undefined => {
-      if (typeof workflowId !== 'string' || !workflows.has(workflowId)) return undefined;
-      const hit = (indexes ?? []).find(
-        (i): i is number => typeof i === 'number' && gen.restrictedOutputs?.[i] !== undefined,
-      );
-      return hit === undefined ? undefined : `output ${hit} is restricted`;
-    };
-
-    /**
      * `urls` (the outputs from `start` on) as the host reports them: every one in
      * `outputs`, a restricted one ({@link MockGenerationScenario.restrictedOutputs})
      * as `{ restricted, reason }` and left out of `imageUrls`.
@@ -4905,19 +4883,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               }
               adopted.push(...ids);
             }
-            // `workflow` sources: a NAMED restricted position is refused, as on the host.
-            for (const source of sources as Array<{
-              kind?: unknown;
-              workflowId?: unknown;
-              imageIndexes?: unknown;
-            }>) {
-              if (source?.kind !== 'workflow' || !Array.isArray(source.imageIndexes)) continue;
-              const refusal = restrictedIndexRefusal(source.workflowId, source.imageIndexes);
-              if (refusal !== undefined) {
-                dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
-                return;
-              }
-            }
             // Posted: the adopted images now have a `postId`, so never again.
             for (const id of adopted) postableImageIds.delete(id);
             dispatchToBlock({
@@ -5097,14 +5062,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
-            const publishRefusal = restrictedIndexRefusal(
-              typed.payload?.workflowId,
-              typed.payload?.imageIndexes,
-            );
-            if (publishRefusal !== undefined) {
-              dispatchToBlock({ type: 'PUBLISH_RESULT', payload: { requestId, error: publishRefusal } });
-              return;
-            }
             for (const id of publishImageIds) postableImageIds.add(id);
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
@@ -5124,17 +5081,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               dispatchToBlock({
                 type: 'GENERATION_SOURCE_PERSISTED',
                 payload: { requestId, error: persistGenerationSourceError },
-              });
-              return;
-            }
-            const persistPayload = typed.payload as { workflowId?: unknown; imageIndex?: unknown } | undefined;
-            const persistRefusal = restrictedIndexRefusal(persistPayload?.workflowId, [
-              persistPayload?.imageIndex,
-            ]);
-            if (persistRefusal !== undefined) {
-              dispatchToBlock({
-                type: 'GENERATION_SOURCE_PERSISTED',
-                payload: { requestId, error: persistRefusal },
               });
               return;
             }
