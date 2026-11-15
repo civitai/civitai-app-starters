@@ -73,14 +73,13 @@ export interface ReportButtonProps {
    * This viewer has ALREADY reported this row. Renders the settled state
    * directly and skips the handshake.
    *
-   * 🔴 THE SHARED STORE CANNOT TELL YOU THIS. `SharedListItem` carries
-   * `viewerVoted` and has no report equivalent, so unlike a vote there is no
-   * server field to read — the only source is your own app's per-viewer
-   * storage, recorded when `onReport` resolves. Supply it if you keep that
-   * record: without it the settled state is local-only, so any remount (a
-   * `list()` refresh, a tab switch, virtualized scroll) resets the control to
-   * "Report" and the same viewer can file the same row again. `report()` is NOT
-   * documented idempotent the way `vote` is, so that is a duplicate report
+   * 🔴 NO SERVER FIELD TELLS YOU THIS. A shared-store row (`SharedItem` in
+   * `@civitai/sdk`) carries `viewerVoted` and has no report equivalent, so the
+   * only source is your own app's per-viewer storage, recorded when `onReport`
+   * resolves. Supply it if you keep that record: without it the settled state is
+   * local-only, so any remount (a list refresh, a tab switch, virtualized
+   * scroll) resets the control to "Report" and the same viewer can file the same
+   * row again. Unless your report path is idempotent, that is a duplicate report
    * rather than a no-op.
    *
    * Flipping this to `true` settles the control silently — no focus move — which
