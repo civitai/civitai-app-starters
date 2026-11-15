@@ -17,6 +17,14 @@ const HELD_READ_SECONDS = 15;
  */
 const READ_INTERVAL_MS = 1_500;
 
+/**
+ * How long `watch` keeps reading AFTER a final status while the snapshot carries
+ * `ratingPending: true`: the host holds an output not rated yet, and the orchestrator
+ * rates the last output seconds after it marks the workflow final, with no event to wait
+ * on. Then the watch ends on the last snapshot, outputs still pending.
+ */
+export const RATING_PENDING_WATCH_WINDOW_MS = 2 * 60_000;
+
 /** Waits between consecutive failed reads while watching; a success resets it. */
 const RETRY_BACKOFF_MS = [250, 1_000, 4_000];
 
@@ -250,6 +258,11 @@ export interface WorkflowsClient {
    *
    * There is no timeout of its own: stop it with `signal` (it then rejects with
    * the abort reason, whatever it has yielded) or by breaking out of the loop.
+   *
+   * A final snapshot with `ratingPending: true` (an output the host holds until it is
+   * rated) does not end the watch at once: it keeps reading at the usual pacing for up
+   * to two minutes ({@link RATING_PENDING_WATCH_WINDOW_MS}), yielding each change, and
+   * ends when the flag clears or the window runs out (outputs still pending).
    */
   watch(
     workflowId: string,
@@ -307,6 +320,8 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
     let seen: string | undefined;
     let failures = 0;
     let held = false;
+    // Set at the first final snapshot that still has an output being rated.
+    let ratingDeadline: number | undefined;
     for (;;) {
       let snapshot: BlockWorkflowSnapshot;
       try {
@@ -335,7 +350,14 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
         seen = text;
         yield snapshot;
       }
-      if (FINAL.has(snapshot.status)) return;
+      if (FINAL.has(snapshot.status)) {
+        // 🔴 A final status is not the last word while a rating is pending: read again
+        // at the usual pacing for up to RATING_PENDING_WATCH_WINDOW_MS, yielding only
+        // real changes, and end on the last snapshot when the window runs out.
+        if (snapshot.ratingPending !== true) return;
+        ratingDeadline ??= Date.now() + RATING_PENDING_WATCH_WINDOW_MS;
+        if (Date.now() + intervalMs >= ratingDeadline) return;
+      }
       // 🔴 Always paced, even though the read was held. The host answers a read
       // it sheds at once, with a snapshot that is not final, precisely so the
       // watcher keeps going — without this gap that reply would be re-requested

@@ -630,7 +630,29 @@ export interface MockGenerationScenario {
    * Default: unset (nothing restricted).
    */
   restrictedOutputs?: Readonly<Record<number, 'pool' | 'ceiling'>>;
+  /**
+   * Hold outputs of a succeeded snapshot as NOT RATED YET, the way the host holds an
+   * unrated output whose rating could still restrict it: position → how many
+   * succeeded reads (polls) it stays `{ pending: true }`, with no url, before it is
+   * reported as `{ url }`. While any is held the snapshot (and its step) carries
+   * `ratingPending: true`, so `watch` keeps polling. Publish / post / persist naming a
+   * held position reply `output N is still being rated, try again shortly`.
+   * `{ 0: 2 }` holds output 0 for the first two reads after success.
+   */
+  pendingOutputs?: Readonly<Record<number, number>>;
+  /**
+   * Positions of a succeeded snapshot reported as BLOCKED by moderation:
+   * `{ blocked: true }`, no url, never available, and the slot is kept. Publish /
+   * post / persist naming one reply `output N is not available`.
+   */
+  blockedOutputs?: readonly number[];
 }
+
+/** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
+type MockOutputScenario = Pick<
+  MockGenerationScenario,
+  'restrictedOutputs' | 'pendingOutputs' | 'blockedOutputs'
+>;
 
 /**
  * The pass-through training `$type` a body names, if any. Exact match — the
@@ -3233,8 +3255,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         canceled?: boolean;
         /** Per-step prices of a `kind: 'workflow'` run, fixed at submit. */
         stepCosts?: number[];
+        /**
+         * The output scenario the workflow RAN under, fixed at submit — so a later
+         * `setScenario` does not re-restrict a finished workflow's outputs.
+         */
+        outputScenario?: MockOutputScenario;
+        /** Succeeded reads so far, for {@link MockGenerationScenario.pendingOutputs}. */
+        successReads?: number;
       }
     >();
+    /** The output-shaping knobs of the CURRENT scenario, as a workflow records them. */
+    const currentOutputScenario = (): MockOutputScenario => ({
+      ...(gen.restrictedOutputs ? { restrictedOutputs: { ...gen.restrictedOutputs } } : {}),
+      ...(gen.pendingOutputs ? { pendingOutputs: { ...gen.pendingOutputs } } : {}),
+      ...(gen.blockedOutputs ? { blockedOutputs: [...gen.blockedOutputs] } : {}),
+    });
+    const outputScenarioOf = (workflowId: string): MockOutputScenario =>
+      workflows.get(workflowId)?.outputScenario ?? currentOutputScenario();
     // Training: the blob keys this install's uploads handed out (by identity —
     // the host's per-block-instance memory), and the quotes its estimates stored
     // (id → what a run is checked against).
@@ -3339,7 +3376,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       body: MockWorkflowBody,
       statusOf: (index: number) => BlockWorkflowSnapshot['status'],
       failedError?: string,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs' | 'ratingPending'> => {
       const lastVisible = body.steps.reduce((last, s, i) => (s.suppressOutput === true ? last : i), -1);
       // Output positions run across the steps in order, as the union does.
       let position = 0;
@@ -3356,7 +3393,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   name,
                 )}`,
               ];
-        const view = outputsView(urls, position);
+        const view = outputsView(workflowId, urls, position);
         position += urls.length;
         return {
           name,
@@ -3364,6 +3401,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           status,
           ...(view.imageUrls.length > 0 ? { imageUrls: view.imageUrls } : {}),
           ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
+          ...(view.ratingPending ? { ratingPending: true as const } : {}),
           ...(status === 'failed' && failedError !== undefined ? { error: failedError } : {}),
         };
       });
@@ -3373,40 +3411,80 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         steps,
         ...(imageUrls.length > 0 ? { imageUrls } : {}),
         ...(outputs.length > 0 ? { outputs } : {}),
+        ...(outputs.some((o) => o.pending === true) ? { ratingPending: true as const } : {}),
       };
     };
 
     /**
-     * The host's refusal for naming a RESTRICTED output position
-     * ({@link MockGenerationScenario.restrictedOutputs}) of a workflow this mock ran —
-     * publish, post and persist alike — or `undefined`. Indexes are positions in
-     * `outputs`, so a restricted one is refused, never swapped for another output.
+     * The host's refusal for naming an output POSITION that is not usable — of a
+     * workflow this mock ran, under the scenario it ran under — or `undefined`.
+     * Publish, post and persist alike. Indexes are positions in `outputs`, so a
+     * restricted, held or blocked one is refused by name, never swapped for another.
+     * `indexes === undefined` is publish's "every available output": refused while one
+     * is still being rated, and when none is usable.
      */
-    const restrictedIndexRefusal = (
+    const outputIndexRefusal = (
       workflowId: unknown,
       indexes: readonly unknown[] | undefined,
     ): string | undefined => {
       if (typeof workflowId !== 'string' || !workflows.has(workflowId)) return undefined;
-      const hit = (indexes ?? []).find(
-        (i): i is number => typeof i === 'number' && gen.restrictedOutputs?.[i] !== undefined,
-      );
-      return hit === undefined ? undefined : `output ${hit} is restricted`;
+      const outputs = (succeededSnapshot(workflowId, { peek: true }).outputs ??
+        []) as BlockWorkflowOutput[];
+      const shape = (i: number) => {
+        const o = outputs[i];
+        if (!o) return 'missing';
+        if (o.restricted === true) return 'restricted';
+        if (o.pending === true) return 'pending';
+        if (o.blocked === true) return 'blocked';
+        return 'usable';
+      };
+      if (indexes === undefined) {
+        const held = outputs.findIndex((_, i) => shape(i) === 'pending');
+        if (held !== -1) return `output ${held} is still being rated, try again shortly`;
+        if (!outputs.some((_, i) => shape(i) === 'usable')) {
+          return 'workflow has no available outputs to publish';
+        }
+        return undefined;
+      }
+      for (const i of indexes) {
+        if (typeof i !== 'number') continue;
+        const kind = shape(i);
+        if (kind === 'restricted') return `output ${i} is restricted`;
+        if (kind === 'pending') return `output ${i} is still being rated, try again shortly`;
+        if (kind === 'blocked') return `output ${i} is not available`;
+      }
+      return undefined;
     };
 
     /**
-     * `urls` (the outputs from `start` on) as the host reports them: every one in
-     * `outputs`, a restricted one ({@link MockGenerationScenario.restrictedOutputs})
-     * as `{ restricted, reason }` and left out of `imageUrls`.
+     * `urls` (the outputs from `start` on) as the host reports them, under the output
+     * scenario `workflowId` ran under: every one in `outputs`; a restricted one
+     * ({@link MockGenerationScenario.restrictedOutputs}) as `{ restricted, reason }`, a
+     * held one ({@link MockGenerationScenario.pendingOutputs}) as `{ pending: true }`
+     * and a blocked one ({@link MockGenerationScenario.blockedOutputs}) as
+     * `{ blocked: true }`, each left out of `imageUrls`.
      */
     const outputsView = (
+      workflowId: string,
       urls: readonly string[],
       start = 0,
-    ): { imageUrls: string[]; outputs: BlockWorkflowOutput[] } => {
+    ): { imageUrls: string[]; outputs: BlockWorkflowOutput[]; ratingPending: boolean } => {
+      const scenario = outputScenarioOf(workflowId);
+      const reads = workflows.get(workflowId)?.successReads ?? 0;
       const outputs = urls.map((url, i): BlockWorkflowOutput => {
-        const reason = gen.restrictedOutputs?.[start + i];
-        return reason ? { restricted: true, reason } : { url };
+        const position = start + i;
+        if (scenario.blockedOutputs?.includes(position)) return { blocked: true };
+        const reason = scenario.restrictedOutputs?.[position];
+        if (reason) return { restricted: true, reason };
+        const heldFor = scenario.pendingOutputs?.[position];
+        if (heldFor !== undefined && reads <= heldFor) return { pending: true };
+        return { url };
       });
-      return { imageUrls: outputs.flatMap((o) => (o.restricted === true ? [] : [o.url])), outputs };
+      return {
+        imageUrls: outputs.flatMap((o) => (typeof o.url === 'string' ? [o.url] : [])),
+        outputs,
+        ratingPending: outputs.some((o) => o.pending === true),
+      };
     };
 
     /** A RUNNING `kind: 'workflow'` run after `polls` polls: steps finish in order. */
@@ -3414,7 +3492,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       workflowId: string,
       body: MockWorkflowBody,
       polls: number,
-    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs'> => {
+    ): Pick<BlockWorkflowSnapshot, 'steps' | 'imageUrls' | 'outputs' | 'ratingPending'> => {
       const total = body.steps.length;
       const failing = failingWorkflowStep(body);
       const done = Math.min(
@@ -3563,8 +3641,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       };
     };
 
-    const succeededSnapshot = (workflowId: string) => {
+    const succeededSnapshot = (workflowId: string, opts: { peek?: boolean } = {}) => {
       const wf = workflows.get(workflowId);
+      // Counts the reads for `pendingOutputs`; a refusal check only peeks.
+      if (wf && !opts.peek) wf.successReads = (wf.successReads ?? 0) + 1;
       const cost = wf?.cost ?? legacyCost;
       const body = wf?.body ?? ({} as WorkflowBody);
       if (body.kind === 'workflow') {
@@ -3584,6 +3664,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           : undefined;
       // Every labelled model url is also an `imageUrls` entry on the real host.
       const view = outputsView(
+        workflowId,
         model3dAll && !gen.images && !gen.image
           ? model3dAll.map((m) => m.url)
           : imagesFor(workflowId, body),
@@ -3601,6 +3682,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           ? { imageUrls: view.imageUrls }
           : {}),
         ...(view.outputs.length > 0 ? { outputs: view.outputs } : {}),
+        ...(view.ratingPending ? { ratingPending: true as const } : {}),
         // Pick-aware APPROXIMATION of the real backend's
         // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
         // LARGEST realized debit (`primaryDebitedAccountType`), and its currency
@@ -4437,6 +4519,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               cost,
               body,
               ...(body.kind === 'workflow' ? { stepCosts: workflowStepCosts(body) } : {}),
+              outputScenario: currentOutputScenario(),
             });
             dispatchToBlock({
               type: 'WORKFLOW_SUBMITTED',
@@ -4912,7 +4995,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               imageIndexes?: unknown;
             }>) {
               if (source?.kind !== 'workflow' || !Array.isArray(source.imageIndexes)) continue;
-              const refusal = restrictedIndexRefusal(source.workflowId, source.imageIndexes);
+              const refusal = outputIndexRefusal(source.workflowId, source.imageIndexes);
               if (refusal !== undefined) {
                 dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
                 return;
@@ -4994,6 +5077,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               polls: 0,
               cost: quote.total,
               body: raw as WorkflowBody,
+              outputScenario: currentOutputScenario(),
             });
             return reply({ snapshot: { workflowId, status: 'pending' } });
           }
@@ -5080,6 +5164,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               polls: 0,
               cost: quote.total,
               body: raw as WorkflowBody,
+              outputScenario: currentOutputScenario(),
             });
             return reply({ snapshot: { workflowId, status: 'pending' } });
           }
@@ -5097,7 +5182,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
-            const publishRefusal = restrictedIndexRefusal(
+            const publishRefusal = outputIndexRefusal(
               typed.payload?.workflowId,
               typed.payload?.imageIndexes,
             );
@@ -5128,7 +5213,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
             const persistPayload = typed.payload as { workflowId?: unknown; imageIndex?: unknown } | undefined;
-            const persistRefusal = restrictedIndexRefusal(persistPayload?.workflowId, [
+            const persistRefusal = outputIndexRefusal(persistPayload?.workflowId, [
               persistPayload?.imageIndex,
             ]);
             if (persistRefusal !== undefined) {

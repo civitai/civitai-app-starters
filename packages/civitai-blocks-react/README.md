@@ -643,6 +643,11 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
           <div key={i} className="locked">
             {out.reason === 'pool' ? 'Mature content is not included with this Buzz' : 'Not available here'}
           </div>
+        ) : out.pending === true ? (
+          // Not rated yet: `snapshot.ratingPending` is set and `watch` keeps polling.
+          <div key={i} className="processing">Still processing</div>
+        ) : out.blocked === true ? (
+          <div key={i} className="locked">Not available</div>
         ) : (
           <img key={i} src={out.url} alt="" />
         ),
@@ -662,6 +667,18 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
 - **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
   `AppWorkflow.images` or `model3dOutputs`. Those lists are convenience views,
   can be shorter than `outputs`, and are **not for indexing**.
+- `{ pending: true }`: **not rated yet**, and its rating could still restrict it, so
+  the host holds the url. The snapshot carries `ratingPending: true`; `watch` keeps
+  polling for up to two minutes after the final status and resolves once the rating
+  lands (or with the last snapshot, still pending). Publishing, posting or persisting
+  it is refused with `output N is still being rated, try again shortly`, and so is
+  publishing with `imageIndexes` omitted while any output is pending.
+- `{ blocked: true }`: blocked by moderation. It keeps its slot and never becomes
+  available; naming it is refused.
+- ⚠️ **Migration:** an app that built `imageIndexes` from `images` / `imageUrls`
+  positions (`images.map((_, i) => i)`) now names a different output whenever an
+  earlier one is restricted, pending or blocked. Build them from `outputs` positions,
+  or omit `imageIndexes`.
 - `steps[].outputs` follows the same rules for one step of a `kind: 'workflow'`
   run, and `useAppWorkflows()` rows carry `outputs` too.
 - 🔴 **An index is a position in `outputs`.** `imageIndexes` on
@@ -672,7 +689,7 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
   the host never picks another output. An omitted `imageIndexes` means every
   available output that is not restricted.
 
-A malformed `outputs` entry is **replaced in place** by the transport with
+A malformed `outputs` entry is **replaced in place** by this package's transport with
 `{ restricted: true, reason: 'ceiling' }`, so the reply is kept, the slot shows
 as locked, and no position moves. In the mock host,
 `generation: { restrictedOutputs: { 1: 'pool' } }` restricts the output at

@@ -119,8 +119,8 @@ queue it produced. Mirrors civitai/civitai PR #3164; the `@civitai/blocks-react`
 
 `PERSIST_GENERATION_SOURCE` → `GENERATION_SOURCE_PERSISTED` saves ONE of those
 outputs as a **private, scanned generation source** for the next generation.
-The request is `{ requestId, workflowId, imageIndex }` (an index into the
-workflow's `images`; never a url) and the reply carries `result`, a
+The request is `{ requestId, workflowId, imageIndex }` (the output's POSITION in
+the workflow's `outputs`, not an index into `images`; never a url) and the reply carries `result`, a
 `BlockPersistedGenerationSource` (`{ url, width, height, imageId, ready }`), or a
 free-text `error`. The image is private to the viewer and not on the app's
 shared grid, and there is no confirm dialog. The host waits up to about thirty
@@ -202,9 +202,16 @@ the host put on the request. A restricted output is not in `imageUrls` (nor
 `AppWorkflow.images`), so those lists can be shorter than `outputs` and are
 **not for indexing**: `imageIndexes` (publish, post) and `imageIndex` (persist)
 are **positions in `outputs`**, which never move when a rating lands late, and
-naming a restricted position is refused with `output N is restricted`. A malformed
-entry reaches you as `{ restricted: true, reason: 'ceiling' }` in its own slot.
-An older host sends no `outputs`:
+naming a restricted position is refused with `output N is restricted`. Two more
+entry shapes carry no url and keep their slot: `{ pending: true }` (not rated yet;
+the snapshot then carries `ratingPending: true`, so read it again) and
+`{ blocked: true }` (blocked by moderation). With `@civitai/blocks-react`, a
+malformed entry reaches you as `{ restricted: true, reason: 'ceiling' }` in its own
+slot (`@civitai/sdk` does not validate replies). ⚠️ **Migration:** an app that built
+`imageIndexes` from `images` positions (`images.map((_, i) => i)`) now names a
+different output whenever an earlier one is restricted, pending or blocked — build
+them from `outputs` positions, or omit `imageIndexes`. An older host sends no
+`outputs`:
 
 ```ts
 import type { BlockWorkflowOutput, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
@@ -212,9 +219,12 @@ import type { BlockWorkflowOutput, BlockWorkflowSnapshot } from '@civitai/app-sd
 function tiles(snapshot: BlockWorkflowSnapshot): Array<{ src: string } | { locked: string }> {
   const outputs: BlockWorkflowOutput[] =
     snapshot.outputs ?? (snapshot.imageUrls ?? []).map((url) => ({ url }));
-  return outputs.map((out) =>
-    out.restricted === true ? { locked: out.reason } : { src: out.url },
-  );
+  return outputs.map((out) => {
+    if (out.restricted === true) return { locked: out.reason };
+    if (out.pending === true) return { locked: 'still processing' };
+    if (out.blocked === true) return { locked: 'not available' };
+    return { src: out.url };
+  });
 }
 ```
 

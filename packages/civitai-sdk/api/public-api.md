@@ -1297,6 +1297,11 @@ export interface WorkflowsClient {
      *
      * There is no timeout of its own: stop it with `signal` (it then rejects with
      * the abort reason, whatever it has yielded) or by breaking out of the loop.
+     *
+     * A final snapshot with `ratingPending: true` (an output the host holds until it is
+     * rated) does not end the watch at once: it keeps reading at the usual pacing for up
+     * to two minutes ({@link RATING_PENDING_WATCH_WINDOW_MS}), yielding each change, and
+     * ends when the flag clears or the window runs out (outputs still pending).
      */
     watch(workflowId: string, opts?: WorkflowWatchOptions): AsyncGenerator<BlockWorkflowSnapshot, void, undefined>;
     /**
@@ -2551,12 +2556,26 @@ export interface BlockWorkflowSnapshot {
      * host never picks another output. `imageUrls` / {@link AppWorkflow.images} drop
      * restricted outputs and are NOT index spaces.
      *
+     * Two more entry shapes, each keeping its position and carrying no url:
+     * {@link BlockWorkflowPendingOutput} (`{ pending: true }`, not rated yet — see
+     * {@link ratingPending}) and {@link BlockWorkflowBlockedOutput}
+     * (`{ blocked: true }`, blocked by moderation).
+     *
      * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and when
-     * the workflow has no available output. A malformed entry is REPLACED in place
-     * by `{ restricted: true, reason: 'ceiling' }` by the SDK's inbound validator,
-     * so the reply is kept and no position moves.
+     * the workflow has no available output. In `@civitai/blocks-react`, the inbound
+     * validator REPLACES a malformed entry in place with
+     * `{ restricted: true, reason: 'ceiling' }`, so the reply is kept and no position
+     * moves (`@civitai/sdk` does not validate replies).
      */
     outputs?: BlockWorkflowOutput[];
+    /**
+     * `true` while any entry of {@link outputs} is `{ pending: true }`. The workflow
+     * can be in a final status and still gain a rating, so read it again until this is
+     * absent. `watch` in `@civitai/blocks-react` and `@civitai/sdk` keeps polling for up
+     * to two minutes after the final status while it is set, then resolves with the last
+     * snapshot, outputs still pending. 🔴 REQUIRES A HOST VERSION THAT EMITS IT.
+     */
+    ratingPending?: true;
     error?: string;
     /**
      * A stable, machine-readable companion to {@link error}, for a block to
@@ -3067,6 +3086,8 @@ export interface BlockWorkflowStepSnapshot {
      * present when every output of the step is restricted.
      */
     outputs?: BlockWorkflowOutput[];
+    /** `true` while any of this step's `outputs` is pending — see {@link BlockWorkflowSnapshot.ratingPending}. */
+    ratingPending?: true;
     /**
      * The step's raw orchestrator output, minus its blobs — the same treatment
      * and the same caveats as {@link BlockWorkflowSnapshot.stepOutputs}: its shape
@@ -3223,10 +3244,50 @@ export type KnownBlockWorkflowRestrictionReason = 'pool' | 'ceiling';
 /** An output you may load: an entry of {@link BlockWorkflowSnapshot.outputs}. */
 export interface BlockWorkflowAvailableOutput {
     url: string;
-    /** Absent while the output is not rated yet. */
+    /**
+     * Absent when the output has no rating to report: the host HOLDS an unrated output
+     * whose rating could still restrict it ({@link BlockWorkflowPendingOutput}), so an
+     * entry with a url and no rating is one nothing could restrict.
+     */
     nsfwLevel?: KnownBlockWorkflowOutputRating | (string & {});
     restricted?: never;
     reason?: never;
+    pending?: never;
+    blocked?: never;
+}
+
+/**
+ * An output NOT RATED YET whose rating could still restrict it (your app's ceiling is
+ * below the top rating, the workflow refused mature content, or the host capped it).
+ * There is no url until the rating lands. The orchestrator can mark a workflow
+ * succeeded seconds before it rates the last output, so the snapshot carries
+ * {@link BlockWorkflowSnapshot.ratingPending}: poll again — `@civitai/blocks-react`'s
+ * and `@civitai/sdk`'s `watch` do, for up to two minutes after the final status.
+ * Show a "still processing" tile; publishing, posting or persisting this position is
+ * refused with `output N is still being rated, try again shortly`.
+ */
+export interface BlockWorkflowPendingOutput {
+    pending: true;
+    url?: never;
+    nsfwLevel?: never;
+    restricted?: never;
+    reason?: never;
+    blocked?: never;
+}
+
+/**
+ * An output BLOCKED by moderation. It keeps its position (so no index moves when a
+ * block lands late) and carries no url and no rating; it never becomes available.
+ * Publishing, posting or persisting it is refused. A maturity block reads as a
+ * {@link BlockWorkflowRestrictedOutput} with `reason: 'ceiling'` instead.
+ */
+export interface BlockWorkflowBlockedOutput {
+    blocked: true;
+    url?: never;
+    nsfwLevel?: never;
+    restricted?: never;
+    reason?: never;
+    pending?: never;
 }
 
 /**
@@ -3238,6 +3299,8 @@ export interface BlockWorkflowRestrictedOutput {
     reason: KnownBlockWorkflowRestrictionReason | (string & {});
     url?: never;
     nsfwLevel?: never;
+    pending?: never;
+    blocked?: never;
 }
 
 /**
@@ -3248,11 +3311,13 @@ export interface BlockWorkflowRestrictedOutput {
  * ```ts
  * for (const out of snapshot.outputs ?? []) {
  *   if (out.restricted === true) renderLocked(out.reason);
+ *   else if (out.pending === true) renderProcessing();
+ *   else if (out.blocked === true) renderUnavailable();
  *   else renderImage(out.url);
  * }
  * ```
  */
-export type BlockWorkflowOutput = BlockWorkflowAvailableOutput | BlockWorkflowRestrictedOutput;
+export type BlockWorkflowOutput = BlockWorkflowAvailableOutput | BlockWorkflowRestrictedOutput | BlockWorkflowPendingOutput | BlockWorkflowBlockedOutput;
 
 /**
  * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
@@ -3458,6 +3523,8 @@ export interface AppWorkflow {
      * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts.
      */
     outputs?: BlockWorkflowOutput[];
+    /** Same value and rule as {@link BlockWorkflowSnapshot.ratingPending}. */
+    ratingPending?: true;
 }
 
 /**

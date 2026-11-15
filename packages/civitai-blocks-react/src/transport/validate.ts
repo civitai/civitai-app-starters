@@ -405,10 +405,16 @@ function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly s
  */
 function isValidWorkflowOutput(o: unknown): boolean {
   if (!isObject(o)) return false;
+  const markers = ['restricted', 'pending', 'blocked'].filter((k) => o[k] !== undefined);
+  if (markers.length > 1) return false;
   if (o.restricted === true) {
     return typeof o.reason === 'string' && o.url === undefined && o.nsfwLevel === undefined;
   }
-  if (o.restricted !== undefined || o.reason !== undefined) return false;
+  // `{ pending: true }` / `{ blocked: true }`: the marker and nothing a block could load.
+  if (o.pending === true || o.blocked === true) {
+    return o.url === undefined && o.nsfwLevel === undefined && o.reason === undefined;
+  }
+  if (markers.length > 0 || o.reason !== undefined) return false;
   if (!isNonEmptyString(o.url)) return false;
   return o.nsfwLevel === undefined || typeof o.nsfwLevel === 'string';
 }
@@ -430,7 +436,12 @@ export const MALFORMED_OUTPUT_PLACEHOLDER = Object.freeze({
  * position), or the whole field removed when it is not an array. `obj` itself when
  * nothing changes.
  */
-function withValidOutputs<T extends Record<string, unknown>>(obj: T): T {
+function withValidOutputs<T extends Record<string, unknown>>(input: T): T {
+  // The rating-pending marker is the literal `true` or nothing, like `throttled`.
+  const obj =
+    input.ratingPending !== undefined && input.ratingPending !== true
+      ? withoutKeys(input, ['ratingPending'])
+      : input;
   const outputs = obj.outputs;
   if (outputs === undefined) return obj;
   if (!Array.isArray(outputs)) return withoutKeys(obj, ['outputs']);

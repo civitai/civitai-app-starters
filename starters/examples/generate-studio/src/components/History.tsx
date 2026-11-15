@@ -31,7 +31,10 @@ export function History({ history }: { history: ReturnType<typeof useAppWorkflow
     setBusy(w.workflowId);
     setNote(null);
     try {
-      const imageIds = await publish({ workflowId: w.workflowId, imageIndexes: w.images.map((_, i) => i) });
+      // No `imageIndexes`: publish every available output. Indexes are positions in
+      // `w.outputs`, NOT in `w.images` (which drops restricted outputs), so building
+      // them from `images` would name the wrong output after a restricted one.
+      const imageIds = await publish({ workflowId: w.workflowId });
       setPublished((p) => ({ ...p, [w.workflowId]: imageIds }));
     } catch (err) {
       // Free-text host error (a dismissed confirm, a rate limit, a scan failure):

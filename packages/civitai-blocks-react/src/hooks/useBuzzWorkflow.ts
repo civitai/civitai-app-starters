@@ -178,6 +178,15 @@ const DEFAULT_WATCH_INTERVAL_MS = 1_500;
 /** Total `watch` budget, in ms. Generation can legitimately take minutes. */
 const DEFAULT_WATCH_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * How long `watch` keeps polling AFTER a final status while the snapshot carries
+ * `ratingPending: true` (an output not rated yet, held by the host). The orchestrator
+ * rates the last output seconds after it marks the workflow succeeded, with no event to
+ * wait on, so `watch` reads again at its usual pacing until the flag clears or this
+ * runs out, then resolves with the last snapshot (outputs still pending).
+ */
+export const RATING_PENDING_WATCH_WINDOW_MS = 2 * 60_000;
+
 /** How many CONSECUTIVE transport failures `watch` absorbs before rejecting. */
 const DEFAULT_WATCH_MAX_RETRIES = 3;
 
@@ -893,6 +902,12 @@ export interface UseBuzzWorkflow {
    * Watch a workflow to completion. Resolves with the TERMINAL snapshot; calls
    * `onUpdate` with every intermediate snapshot along the way.
    *
+   * 🔴 A TERMINAL SNAPSHOT WITH `ratingPending: true` (an output the host holds
+   * because it is not rated yet) does not end the watch at once: it keeps polling at
+   * the usual pacing for up to {@link RATING_PENDING_WATCH_WINDOW_MS} (2 minutes),
+   * calling `onUpdate` as usual, and resolves as soon as the flag clears — or, when
+   * the window runs out, with the last snapshot, its outputs still pending.
+   *
    * This is the replacement for the `useEffect` + `setTimeout` backoff every
    * block used to hand-write around {@link UseBuzzWorkflow.poll}. The app
    * consumes a promise and/or a callback; the loop lives here.
@@ -1400,6 +1415,8 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // snapshot ever arrived (see the end of the loop).
       let throttledOnly: BlockWorkflowSnapshot | null = null;
       let consecutiveFailures = 0;
+      // Set at the first FINAL snapshot that still has an output being rated.
+      let ratingDeadline: number | null = null;
 
       // 🔴 SEQUENTIAL BY CONSTRUCTION. Every iteration AWAITS its poll before
       // scheduling the next, so at most one request per watched workflow is
@@ -1453,6 +1470,16 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         options?.onUpdate?.(snapshot);
 
         if (TERMINAL_STATUSES.has(snapshot.status)) {
+          // 🔴 A FINAL STATUS IS NOT THE LAST WORD WHILE A RATING IS PENDING. Keep
+          // reading at the usual pacing for up to RATING_PENDING_WATCH_WINDOW_MS, then
+          // resolve with the last snapshot, its outputs still pending.
+          if (snapshot.ratingPending === true && !options?.signal?.aborted) {
+            ratingDeadline ??= Date.now() + RATING_PENDING_WATCH_WINDOW_MS;
+            if (Date.now() + interval < ratingDeadline) {
+              await sleep(interval, options?.signal);
+              continue;
+            }
+          }
           setStatus('done');
           return snapshot;
         }

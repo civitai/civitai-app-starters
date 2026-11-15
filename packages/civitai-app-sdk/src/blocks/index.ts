@@ -302,6 +302,8 @@ export type {
   BlockWorkflowOutput,
   BlockWorkflowAvailableOutput,
   BlockWorkflowRestrictedOutput,
+  BlockWorkflowPendingOutput,
+  BlockWorkflowBlockedOutput,
   KnownBlockWorkflowOutputRating,
   KnownBlockWorkflowRestrictionReason,
   WorkflowStatus,
