@@ -263,6 +263,8 @@ export interface WorkflowsClient {
    * rated) does not end the watch at once: it keeps reading at the usual pacing for up
    * to two minutes ({@link RATING_PENDING_WATCH_WINDOW_MS}), yielding each change, and
    * ends when the flag clears or the window runs out (outputs still pending).
+   * Inside that window the run is already over, so a failed read, too many transient
+   * errors or an abort ENDS the watch on the last snapshot yielded — it does not reject.
    */
   watch(
     workflowId: string,
@@ -320,16 +322,26 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
     let seen: string | undefined;
     let failures = 0;
     let held = false;
-    // Set at the first final snapshot that still has an output being rated.
+    // Set at the first final snapshot that still has an output being rated. From then on
+    // the run is OVER and the watch only waits for a rating: nothing inside the window —
+    // a failed read, too many transient errors, an abort — may turn it into a rejection;
+    // each ends the watch on the last snapshot yielded.
     let ratingDeadline: number | undefined;
+    const inWindow = () => ratingDeadline !== undefined;
     for (;;) {
       let snapshot: BlockWorkflowSnapshot;
       try {
         snapshot = await get(workflowId, held ? { waitSeconds, signal } : { signal });
         failures = 0;
       } catch (error) {
+        if (inWindow()) return;
         if (signal?.aborted || !isTransient(error) || failures >= RETRY_BACKOFF_MS.length) throw error;
-        await sleep(RETRY_BACKOFF_MS[failures++]!, signal);
+        try {
+          await sleep(RETRY_BACKOFF_MS[failures++]!, signal);
+        } catch (aborted) {
+          if (inWindow()) return;
+          throw aborted;
+        }
         continue;
       }
       held = true;
@@ -340,8 +352,14 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
       // not touch `seen` (so the same real snapshot after it is not re-yielded),
       // and the watch reads again after the usual gap.
       if (snapshot.throttled === true) {
+        if (inWindow() && (signal?.aborted || Date.now() + intervalMs >= ratingDeadline!)) return;
         signal?.throwIfAborted();
-        await sleep(intervalMs, signal);
+        try {
+          await sleep(intervalMs, signal);
+        } catch (aborted) {
+          if (inWindow()) return;
+          throw aborted;
+        }
         continue;
       }
       // Compared whole, so anything the host adds to a snapshot counts as progress.
@@ -356,14 +374,19 @@ export function createWorkflowsClient(http: Http): WorkflowsClient {
         // real changes, and end on the last snapshot when the window runs out.
         if (snapshot.ratingPending !== true) return;
         ratingDeadline ??= Date.now() + RATING_PENDING_WATCH_WINDOW_MS;
-        if (Date.now() + intervalMs >= ratingDeadline) return;
+        if (signal?.aborted || Date.now() + intervalMs >= ratingDeadline) return;
       }
       // 🔴 Always paced, even though the read was held. The host answers a read
       // it sheds at once, with a snapshot that is not final, precisely so the
       // watcher keeps going — without this gap that reply would be re-requested
       // in a tight loop.
       signal?.throwIfAborted();
-      await sleep(intervalMs, signal);
+      try {
+        await sleep(intervalMs, signal);
+      } catch (aborted) {
+        if (inWindow()) return;
+        throw aborted;
+      }
     }
   }
 

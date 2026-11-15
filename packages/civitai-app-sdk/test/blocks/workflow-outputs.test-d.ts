@@ -75,9 +75,9 @@ const available: BlockWorkflowOutput = { url: 'https://x/a.png', nsfwLevel: 'pg1
 const unrated: BlockWorkflowOutput = { url: 'https://x/b.png' };
 const pool: BlockWorkflowOutput = { restricted: true, reason: 'pool' };
 const ceiling: BlockWorkflowOutput = { restricted: true, reason: 'ceiling' };
-const unrated: BlockWorkflowOutput = { restricted: true, reason: 'unrated' };
+const neverRated: BlockWorkflowOutput = { restricted: true, reason: 'unrated' };
 expectTypeOf<'unrated'>().toMatchTypeOf<KnownBlockWorkflowRestrictionReason>();
-void unrated;
+void neverRated;
 // Open unions: a reason or rating added later still type-checks.
 const futureReason: BlockWorkflowOutput = { restricted: true, reason: 'region' };
 const futureRating: BlockWorkflowOutput = { url: 'https://x/c.png', nsfwLevel: 'g' };

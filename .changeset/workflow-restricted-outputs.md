@@ -4,16 +4,43 @@
 '@civitai/sdk': minor
 ---
 
-**A workflow snapshot tells you, per output, its rating or that it is restricted.** The field is optional and additive. A host that predates it sends none, and the snapshot is unchanged.
+**A workflow snapshot tells you, per output, its rating or why you cannot have it.** The field is optional and additive. A host that predates it sends none, and the snapshot is unchanged.
 
-- **`BlockWorkflowSnapshot.outputs?: BlockWorkflowOutput[]`**, also on `BlockWorkflowStepSnapshot` and `AppWorkflow`. It has one entry per available output, in order, with restricted outputs kept in position. An entry is either `{ url, nsfwLevel? }` (load it; `nsfwLevel` is `'pg' | 'pg13' | 'r' | 'x' | 'xxx'` and is absent while the output is unrated) or `{ restricted: true, reason }`. A restricted entry has **no url**. Show a locked state for it and do not try to fetch it; the host withholds it.
-- `reason: 'pool'` means the Buzz that paid does not include mature content for this viewer, and the output is above PG-13. `reason: 'ceiling'` means the output is above your app's maturity ceiling (an SFW app), or above a cap the host put on the request. Both `reason` and `nsfwLevel` are open unions, typed as the known values plus any string.
-- **A restricted output is not in `imageUrls`**, `steps[].imageUrls`, `AppWorkflow.images` or `model3dOutputs`. Those lists can now be shorter than `outputs`. Blocked and not-yet-available outputs are dropped from both, as before.
-- **An index is a position in `outputs`.** `imageIndexes` (`publishGenerationOutputs`, `createPostFromApp`) and `imageIndex` (`persistGenerationSource`) name the output at that position. A restricted output keeps its slot, so an index never moves when a rating lands late. Naming a restricted position is refused with `output N is restricted`; the host never picks another output. `imageUrls`, `steps[].imageUrls` and `AppWorkflow.images` are convenience views and are not for indexing.
-- `@civitai/app-sdk`: new types `BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`, `KnownBlockWorkflowOutputRating` and `KnownBlockWorkflowRestrictionReason` on `./blocks`. The pinned `./blocks` export count moves from 234 to 241 (with the two below). `@civitai/sdk` adds the same types on its root, from its generated copy of the workflow contract.
-- `@civitai/blocks-react`: **a malformed `outputs` entry is replaced in place, not fatal.** `isValidWorkflowSnapshot` does not check `outputs`. The transport's `projectInboundPayload` replaces each malformed entry with the placeholder `{ restricted: true, reason: 'ceiling' }`, so no position moves and the slot shows as locked. It removes the whole field only when it is not an array. This applies to every reply that carries a snapshot (top level and each step) and to `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` rows. A restricted entry that carries a `url` or a rating is malformed, so the withheld url never reaches app code.
-- **Mock host:** a succeeded snapshot now carries `outputs` as the host sends it, with every output as `{ url }` (the mock rates nothing). New option `generation.restrictedOutputs`, for example `{ 1: 'pool' }`, marks those 0-based positions as restricted. Their urls are left out of `imageUrls`, the step's `imageUrls` and `model3dOutputs`, and positions run across the steps of a `kind: 'workflow'` run. Publish, post and persist naming a restricted position of a workflow the mock ran reply `output N is restricted`, as the host does. The option can be changed live through `setScenario`.
-- **Held and blocked outputs:** two more entry shapes keep their slot and carry no url: `{ pending: true }` (`BlockWorkflowPendingOutput`) is an output not rated yet whose rating could still restrict it, and `{ blocked: true }` (`BlockWorkflowBlockedOutput`) is one blocked by moderation. `ratingPending?: true` on the snapshot, each step and `AppWorkflow` marks that an output is still held. Publishing, posting or persisting a held position is refused with `output N is still being rated, try again shortly`, and so is a publish with `imageIndexes` omitted while one is held. A blocked position is refused too.
-- **`watch` after a final status:** in `@civitai/blocks-react` (`useBuzzWorkflow().watch`) and `@civitai/sdk` (`app.workflows.watch` / `wait`), a final snapshot with `ratingPending: true` does not end the watch. It keeps polling at the usual pacing for up to two minutes, ends as soon as the flag clears, and otherwise ends on the last snapshot with outputs still pending. `onUpdate` fires as before.
-- **Mock host:** `generation.pendingOutputs` (position → succeeded reads it stays held) and `generation.blockedOutputs`. Refusals now use the output scenario the workflow ran under, and a publish with `imageIndexes` omitted when every output is restricted is refused as on the host.
+- **`BlockWorkflowSnapshot.outputs?: BlockWorkflowOutput[]`**, also on `BlockWorkflowStepSnapshot` and `AppWorkflow`. It has one entry per available output, in order. Restricted, pending and blocked outputs keep their position. Each entry is exactly one of four shapes:
+  - `{ url, nsfwLevel? }` (`BlockWorkflowAvailableOutput`): load it. `nsfwLevel` is `'pg' | 'pg13' | 'r' | 'x' | 'xxx'`. It is absent when there is no rating to report and none could restrict the output.
+  - `{ restricted: true, reason }` (`BlockWorkflowRestrictedOutput`): no url and no rating. Show a locked state and do not try to fetch it; the host withholds it. The reasons:
+    - `'pool'`: the Buzz that paid does not include mature content for this viewer, and the output is above PG-13.
+    - `'ceiling'`: the output is above your app's maturity ceiling, above a cap the host put on the request, or blocked as mature content.
+    - `'unrated'`: no rating will ever arrive (a video engine the orchestrator does not rate, a training sample, a 3D model with no rating source), and one could restrict it. It is terminal, and it does not set `ratingPending`.
+    - `reason` is an open union; treat an unknown value like `'ceiling'`.
+  - `{ pending: true }` (`BlockWorkflowPendingOutput`): not rated yet, and its rating could still restrict it. There is no url and no `nsfwLevel` until the rating lands.
+  - `{ blocked: true }` (`BlockWorkflowBlockedOutput`): blocked by moderation. It keeps its slot, has no url, and never becomes available.
+- **`ratingPending?: true`** is set on the snapshot, each step and `AppWorkflow` while any output is `{ pending: true }`.
+- **Only outputs you may load are in `imageUrls`**, `steps[].imageUrls`, `AppWorkflow.images` and `model3dOutputs`. Restricted, pending and blocked outputs are left out, so those lists can be shorter than `outputs`. Not-yet-available outputs are dropped from both, as before.
+- **An index is a position in `outputs`.** `imageIndexes` (`publishGenerationOutputs`, `createPostFromApp`) and `imageIndex` (`persistGenerationSource`) name the output at that position. An index never moves when a rating or a block lands late, and naming an unusable position is refused rather than swapped for another output:
+  - a restricted position: `output N is restricted`;
+  - a pending position: `output N is still being rated, try again shortly`;
+  - a blocked position: refused as not available.
+  - With `imageIndexes` omitted, publish and post wait while any output is pending, and refuse when none is usable. `imageUrls` and `images` are convenience views, not for indexing.
+- `@civitai/app-sdk` adds new types on `./blocks`: `BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`, `BlockWorkflowPendingOutput`, `BlockWorkflowBlockedOutput`, `KnownBlockWorkflowOutputRating` and `KnownBlockWorkflowRestrictionReason`. The pinned `./blocks` export count moves from 234 to 241. `@civitai/sdk` adds the same types on its root, from its generated copy of the workflow contract.
+- `@civitai/blocks-react`: **a malformed `outputs` entry is replaced in place, not fatal.** `isValidWorkflowSnapshot` does not check `outputs`. The transport's `projectInboundPayload` replaces each malformed entry with the placeholder `{ restricted: true, reason: 'ceiling' }`, so no position moves, and removes the whole field only when it is not an array.
+  - A restricted entry with a url, a pending or blocked entry with a url or rating, and an entry with two markers are all malformed.
+  - A `ratingPending` that is not `true` is stripped.
+  - This applies to every reply that carries a snapshot (top level and each step) and to `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` rows.
+  - `@civitai/sdk` does not validate replies.
+- **`watch` after a final status:** in `@civitai/blocks-react` (`useBuzzWorkflow().watch`) and `@civitai/sdk` (`app.workflows.watch` / `wait`), a final snapshot with `ratingPending: true` does not end the watch.
+  - It keeps polling at the usual pacing for up to two minutes, ending as soon as the flag clears. In blocks-react the window also ends at `timeoutMs`, whichever comes first.
+  - When the window runs out it ends on the last snapshot, with outputs still pending.
+  - Inside the window the run is already over. A transport failure, too many retries, a non-transient error, the deadline or an abort ends the watch on the last snapshot instead of rejecting, and the hook's status is `'done'`.
+  - `onUpdate` fires as before.
+- **Mock host:**
+  - A succeeded snapshot carries `outputs` as the host sends it, with every output as `{ url }` (the mock rates nothing).
+  - Options by 0-based position:
+    - `generation.restrictedOutputs` (`{ 1: 'pool' }`);
+    - `generation.pendingOutputs` (position → how many succeeded reads it stays held);
+    - `generation.blockedOutputs`;
+    - `generation.neverRatedOutputs` (reported as `{ restricted: true, reason: 'unrated' }`).
+  - Each such position's url is left out of `imageUrls`, the step's `imageUrls` and `model3dOutputs`. Positions run across the steps of a `kind: 'workflow'` run.
+  - Publish, post and persist naming an unusable position of a workflow the mock ran reply with the host's refusal, under the scenario the workflow ran under.
+  - Publish and post with `imageIndexes` omitted are refused while any output is pending, as on the host, and publish is also refused when none is usable.
 - ⚠️ **Migration risk for apps that indexed `images`.** An app that built `imageIndexes` from `AppWorkflow.images` or `imageUrls` positions (for example `images.map((_, i) => i)`) now names a different output whenever an earlier one is restricted, held or blocked. It is then refused, or publishes the wrong output. Build indexes from `outputs` positions, or omit `imageIndexes`. The `generate-studio` example now omits them.

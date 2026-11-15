@@ -623,7 +623,7 @@ export interface MockGenerationScenario {
    * Positions are the index space of `PUBLISH_GENERATION_OUTPUTS` /
    * `CREATE_POST_FROM_APP` `imageIndexes` and `PERSIST_GENERATION_SOURCE`'s
    * `imageIndex`: naming a restricted position of a workflow this mock ran is
-   * refused with the host's `output N is restricted`.
+   * refused with the host's `output N is restricted`, on all three.
    * Snapshot-only: for the app-queue read put `outputs` (and the matching
    * `images`) on the rows you pass as {@link MockHostOptions.appWorkflows}.
    * Live-tunable via `setScenario({ generation: { restrictedOutputs } })`.
@@ -636,22 +636,33 @@ export interface MockGenerationScenario {
    * succeeded reads (polls) it stays `{ pending: true }`, with no url, before it is
    * reported as `{ url }`. While any is held the snapshot (and its step) carries
    * `ratingPending: true`, so `watch` keeps polling. Publish / post / persist naming a
-   * held position reply `output N is still being rated, try again shortly`.
+   * held position reply `output N is still being rated, try again shortly`, and so do
+   * publish and post with `imageIndexes` omitted while one is held.
    * `{ 0: 2 }` holds output 0 for the first two reads after success.
    */
   pendingOutputs?: Readonly<Record<number, number>>;
   /**
    * Positions of a succeeded snapshot reported as BLOCKED by moderation:
-   * `{ blocked: true }`, no url, never available, and the slot is kept. Publish /
-   * post / persist naming one reply `output N is not available`.
+   * `{ blocked: true }`, no url, never available, and the slot is kept. Naming one is
+   * refused with the host's string for each surface: publish `output N is not
+   * available`, post `workflow has no available outputs to post`, persist `that
+   * output is not available to use as a source`.
    */
   blockedOutputs?: readonly number[];
+  /**
+   * Positions of a succeeded snapshot that will NEVER be rated (a video engine the
+   * orchestrator does not rate, a training sample, a 3D model with no rating source),
+   * on a host whose rating could restrict them: reported as
+   * `{ restricted: true, reason: 'unrated' }` — terminal, no url, no `ratingPending`,
+   * refused like any restricted position.
+   */
+  neverRatedOutputs?: readonly number[];
 }
 
 /** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
 type MockOutputScenario = Pick<
   MockGenerationScenario,
-  'restrictedOutputs' | 'pendingOutputs' | 'blockedOutputs'
+  'restrictedOutputs' | 'pendingOutputs' | 'blockedOutputs' | 'neverRatedOutputs'
 >;
 
 /**
@@ -3269,6 +3280,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       ...(gen.restrictedOutputs ? { restrictedOutputs: { ...gen.restrictedOutputs } } : {}),
       ...(gen.pendingOutputs ? { pendingOutputs: { ...gen.pendingOutputs } } : {}),
       ...(gen.blockedOutputs ? { blockedOutputs: [...gen.blockedOutputs] } : {}),
+      ...(gen.neverRatedOutputs ? { neverRatedOutputs: [...gen.neverRatedOutputs] } : {}),
     });
     const outputScenarioOf = (workflowId: string): MockOutputScenario =>
       workflows.get(workflowId)?.outputScenario ?? currentOutputScenario();
@@ -3424,6 +3436,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
      * is still being rated, and when none is usable.
      */
     const outputIndexRefusal = (
+      surface: 'publish' | 'post' | 'persist',
       workflowId: unknown,
       indexes: readonly unknown[] | undefined,
     ): string | undefined => {
@@ -3438,12 +3451,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         if (o.blocked === true) return 'blocked';
         return 'usable';
       };
+      // The host's strings, per surface (`blocks.router.ts` publish,
+      // `block-post.service.ts` post, `block-generation-source.service.ts` persist).
+      const noneUsable =
+        surface === 'post'
+          ? 'workflow has no available outputs to post'
+          : 'workflow has no available outputs to publish';
+      const blocked = (i: number) =>
+        surface === 'publish'
+          ? `output ${i} is not available`
+          : surface === 'post'
+            ? 'workflow has no available outputs to post'
+            : 'that output is not available to use as a source';
       if (indexes === undefined) {
+        // "Every available output" waits while one is still being rated (publish, post).
         const held = outputs.findIndex((_, i) => shape(i) === 'pending');
         if (held !== -1) return `output ${held} is still being rated, try again shortly`;
-        if (!outputs.some((_, i) => shape(i) === 'usable')) {
-          return 'workflow has no available outputs to publish';
-        }
+        if (!outputs.some((_, i) => shape(i) === 'usable')) return noneUsable;
         return undefined;
       }
       for (const i of indexes) {
@@ -3451,7 +3475,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         const kind = shape(i);
         if (kind === 'restricted') return `output ${i} is restricted`;
         if (kind === 'pending') return `output ${i} is still being rated, try again shortly`;
-        if (kind === 'blocked') return `output ${i} is not available`;
+        if (kind === 'blocked') return blocked(i);
       }
       return undefined;
     };
@@ -3474,6 +3498,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       const outputs = urls.map((url, i): BlockWorkflowOutput => {
         const position = start + i;
         if (scenario.blockedOutputs?.includes(position)) return { blocked: true };
+        if (scenario.neverRatedOutputs?.includes(position)) {
+          return { restricted: true, reason: 'unrated' };
+        }
         const reason = scenario.restrictedOutputs?.[position];
         if (reason) return { restricted: true, reason };
         const heldFor = scenario.pendingOutputs?.[position];
@@ -4994,8 +5021,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               workflowId?: unknown;
               imageIndexes?: unknown;
             }>) {
-              if (source?.kind !== 'workflow' || !Array.isArray(source.imageIndexes)) continue;
-              const refusal = outputIndexRefusal(source.workflowId, source.imageIndexes);
+              if (source?.kind !== 'workflow') continue;
+              const refusal = outputIndexRefusal(
+                'post',
+                source.workflowId,
+                Array.isArray(source.imageIndexes) ? source.imageIndexes : undefined,
+              );
               if (refusal !== undefined) {
                 dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
                 return;
@@ -5183,6 +5214,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
             const publishRefusal = outputIndexRefusal(
+              'publish',
               typed.payload?.workflowId,
               typed.payload?.imageIndexes,
             );
@@ -5213,7 +5245,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
             const persistPayload = typed.payload as { workflowId?: unknown; imageIndex?: unknown } | undefined;
-            const persistRefusal = outputIndexRefusal(persistPayload?.workflowId, [
+            const persistRefusal = outputIndexRefusal('persist', persistPayload?.workflowId, [
               persistPayload?.imageIndex,
             ]);
             if (persistRefusal !== undefined) {

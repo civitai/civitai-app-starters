@@ -658,12 +658,16 @@ function Results({ snapshot }: { snapshot: BlockWorkflowSnapshot }) {
 ```
 
 - `{ url, nsfwLevel? }`: load and show it. `nsfwLevel` is `'pg'`, `'pg13'`,
-  `'r'`, `'x'` or `'xxx'`, and is absent while the output is not rated yet.
+  `'r'`, `'x'` or `'xxx'`, and is absent when there is no rating to report and
+  none could restrict the output (an output whose rating could is `{ pending }`).
 - `{ restricted: true, reason }`: **show a locked state; there is no url, and do
   not try to fetch one.** `'pool'` means the paying Buzz does not include mature
   content for this viewer and the output is above PG-13. `'ceiling'` means the
   output is above your app's ceiling, or above a cap the host put on the request.
-  Treat an unknown `reason` like `'ceiling'`.
+  `'unrated'` means no rating will ever arrive for it (a video engine the
+  orchestrator does not rate, a training sample, a 3D model with no rating source)
+  and one could restrict it; it never becomes available. Treat an unknown `reason`
+  like `'ceiling'`.
 - **A restricted output is not in `imageUrls`**, nor in a step's `imageUrls`,
   `AppWorkflow.images` or `model3dOutputs`. Those lists are convenience views,
   can be shorter than `outputs`, and are **not for indexing**.
