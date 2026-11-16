@@ -109,6 +109,19 @@ describe('useOutputUnlock — mock host', () => {
     expect((await poll()).outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
   });
 
+  it("'insufficient': refused with the host's message, the output stays restricted", async () => {
+    const { unlock, poll } = await ran({
+      images: IMAGES,
+      restrictedOutputs: { 1: 'pool' },
+      outputUnlock: 'insufficient',
+    });
+    const result = await unlock(1);
+    expect(result.outcome).toBe('refused');
+    expect(result.message).toBe('You do not have enough yellow Buzz to unlock this output.');
+    expect(result.snapshot?.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
+    expect((await poll()).outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
+  });
+
   it('an unrestricted position and a workflow the mock did not run', async () => {
     const { unlock } = await ran({ images: IMAGES, restrictedOutputs: { 1: 'pool' } });
     expect(await unlock(0)).toStrictEqual({ outcome: 'not-restricted' });
