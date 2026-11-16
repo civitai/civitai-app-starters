@@ -3183,12 +3183,12 @@ function App() {
         id={id}
         take={take}
         // Same character, another take: replace, so Back does not step through takes.
-        onTake={(n) => navigate(`c/${id}?take=${n}`, { replace: true })}
+        onTake={(n: number) => navigate(`c/${id}?take=${n}`, { replace: true })}
       />
     );
   }
   // Opening a character pushes an entry, so Back returns to this gallery.
-  return <Gallery onOpen={(cid) => navigate(`c/${cid}`)} />;
+  return <Gallery onOpen={(cid: string) => navigate(`c/${cid}`)} />;
 }
 ```
 
@@ -3213,12 +3213,12 @@ function CopyLink() {
   return (
     <>
       {/* From the click handler, with nothing awaited first: the copy needs the click. */}
-      <Button onClick={() => void share()}>Copy link</Button>
-      {lastResult?.copied && <Text>Link copied</Text>}
+      <button onClick={() => void share()}>Copy link</button>
+      {lastResult?.copied && <span>Link copied</span>}
       {lastResult?.method === 'none' && (
-        <TextInput readOnly value={lastResult.url} onFocus={(e) => e.currentTarget.select()} />
+        <input readOnly value={lastResult.url} onFocus={(e) => e.currentTarget.select()} />
       )}
-      {error && <Text c="red">{error.message}</Text>}
+      {error && <span role="alert">{error.message}</span>}
     </>
   );
 }

@@ -57,10 +57,14 @@ expectTypeOf<RouteChangedMessage>().not.toBeNever();
 expectTypeOf<'ROUTE_CHANGED'>().toExtend<ParentToBlockMessageType>();
 
 // ============================================================
-// Payload shape — exactly one field, and NO requestId
+// Payload shape — subPath, plus the optional search/hash (HQ app_blocks_sdk_j1gc), and NO requestId
 // ============================================================
 
-expectTypeOf<RouteChangedMessage['payload']>().toEqualTypeOf<{ subPath: string }>();
+expectTypeOf<RouteChangedMessage['payload']>().toEqualTypeOf<{
+  subPath: string;
+  search?: string;
+  hash?: string;
+}>();
 
 // Spelled out as well as compared whole: `toEqualTypeOf` against the literal
 // above already rejects an added `requestId`, but this says WHICH key must not

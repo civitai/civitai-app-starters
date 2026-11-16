@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 14 = blocks.* (14)
- * switch case labels .... 40, of which 17 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 41, of which 17 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
