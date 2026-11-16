@@ -24,6 +24,9 @@ import type { GrantOptions, Scope } from '../session/index.js';
 const BASE = 'blocks/storage';
 /** The batch-get route sits at the collection position behind a `_`, which no collection name can start with. */
 const GET_MANY = '_get';
+/** Server-side publish and unpublish sit there too (civitai/civitai, behind a per-app host flag). */
+const PUBLISH = '_publish';
+const UNPUBLISH = '_unpublish';
 
 export interface DocumentCallOptions {
   signal?: AbortSignal;
@@ -132,6 +135,50 @@ export interface StorageUnmarkOp {
  */
 export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
 
+/** What {@link StorageCollection.publish} copies, and from where. */
+export interface StoragePublishRequest {
+  /**
+   * One of THIS app's PRIVATE collections: the viewer's own documents are read from it by the
+   * server. (Not an import's source app: a publish runs in this app only.)
+   */
+  from: string;
+  /** 1 to 500 keys, none twice. */
+  keys: readonly string[];
+  /**
+   * Also delete the viewer's own copies in this collection whose key no longer has a document
+   * in `from` (at most 500 per call; see {@link StoragePublishResult.pruneIncomplete}). Copies
+   * whose private documents still exist in `from` (another character's, say) are never pruned.
+   * Prune is scoped by `from`, not by where a copy came from: if several private collections
+   * feed this one, a prune from one of them deletes the copies published from the others.
+   */
+  prune?: boolean;
+}
+
+/**
+ * Why a key was not copied. `missing`: the viewer has no document at that key in `from`.
+ * `not_author`: another user's copy holds the key; it is never touched. `hidden`: the viewer's
+ * own copy was hidden by a moderator; it is never rewritten. Open-ended for a later server.
+ */
+export type StoragePublishSkipReason = 'missing' | 'not_author' | 'hidden' | (string & {});
+
+/** Every list is in key order. */
+export interface StoragePublishResult {
+  created: string[];
+  updated: string[];
+  /** Same content as the private document: not written, and it cost nothing. */
+  unchanged: string[];
+  pruned: string[];
+  skipped: { key: string; reason: StoragePublishSkipReason }[];
+  /** More copies were prunable than one call prunes: call `publish` again. */
+  pruneIncomplete: boolean;
+}
+
+export interface StorageUnpublishResult {
+  deleted: string[];
+  /** `missing`: nothing visible at that key. `not_author`: another user's copy, never touched. */
+  skipped: { key: string; reason: 'missing' | 'not_author' | (string & {}) }[];
+}
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** The document, or `null` when there is none (missing, hidden and absent read alike). */
   get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -211,6 +258,43 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
    */
   unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
+  /**
+   * Server-side PUBLISH into this SHARED collection: the server copies the viewer's own
+   * documents at `keys` from this app's PRIVATE collection `from`, authored by the viewer, in
+   * ONE transaction — every copy lands or none does. The data never travels through the app.
+   * Sends `POST …/_publish/:collection`.
+   *
+   * - A re-publish writes only new or changed documents; `unchanged` ones cost nothing.
+   * - Each copy is checked as a `put` would be (publish consent, trust, schema,
+   *   `ownedModelVersions`, moderation, the viewer's and the app's ceilings). Any refusal
+   *   refuses the whole publish; `details.key` names the document where it applies.
+   * - A private document that changes while the publish runs: `version_conflict` with
+   *   `details.reason: 'source_changed'`; a shared copy that changes: `'target_changed'`.
+   *   Publish again.
+   * - Its own budget, never the shared write budget: about 10 publishes per viewer per day.
+   *   Refused: `rate_limited` (429) with `details.bucket: 'publish'` and
+   *   {@link StorageError.retryAfter}. Every call, one that changes nothing included, also
+   *   spends one token of the private-write window (`details.bucket: 'write'` when empty).
+   * - Refused before anything is spent: no keys (`reason: 'empty_keys'`), more than 500
+   *   (`too_many_keys`) or a key twice (`duplicate_key`).
+   *
+   * A civitai.com that does not serve publish — an older release, or the app's host flag off —
+   * answers as an unknown route; this method then rejects with the LOCAL code
+   * `publish_unavailable` (status 404). Fall back to writing the copies one by one, waiting
+   * out each `rate_limited` for its `retryAfter`.
+   *
+   * @example
+   * ```ts
+   * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true });
+   * ```
+   */
+  publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
+  /**
+   * Delete the viewer's own documents at `keys` (1 to 500) from this SHARED collection in ONE
+   * transaction. Another user's document at a key is skipped as `not_author`, never touched.
+   * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
+   */
+  unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
 }
 
 export type StorageIndexType = 'string' | 'number' | 'boolean' | 'time';
@@ -351,6 +435,11 @@ export type StorageErrorCode =
   | 'local_preview_invalid_manifest'
   /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
   | 'local_preview_unavailable'
+  /**
+   * LOCAL, never sent by the server: `publish` / `unpublish` reached a civitai.com that does not
+   * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
+   */
+  | 'publish_unavailable'
   | (string & {});
 
 /**
@@ -826,6 +915,30 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           );
           return toMarkResult(reply, false, `${name}.unmark`);
         },
+
+        async publish(request, { signal } = {}) {
+          refusePublishImport(options, 'publish');
+          const { from: source, keys, prune } = request ?? ({} as StoragePublishRequest);
+          const reply = await publishCall(() =>
+            call('POST', `${BASE}/${PUBLISH}/${coll()}`, {
+              // Named rather than spread: JSON drops an undefined `prune`.
+              body: { from: source, keys: Array.isArray(keys) ? [...keys] : keys, prune },
+              signal,
+            }),
+          );
+          return toPublishResult(reply, `${name}.publish`);
+        },
+
+        async unpublish(keys, { signal } = {}) {
+          refusePublishImport(options, 'unpublish');
+          const reply = await publishCall(() =>
+            call('POST', `${BASE}/${UNPUBLISH}/${coll()}`, {
+              body: { keys: Array.isArray(keys) ? [...keys] : keys },
+              signal,
+            }),
+          );
+          return toUnpublishResult(reply, `${name}.unpublish`);
+        },
       };
     },
 
@@ -844,6 +957,74 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       return reply;
     },
   };
+}
+
+/**
+ * A publish runs in this app only: the server refuses `?from=`, so a collection opened through an
+ * import is refused before sending, with the server's code.
+ */
+function refusePublishImport(options: CollectionOptions | undefined, op: string): void {
+  if (options !== undefined && options !== null && typeof options === 'object' && Object.prototype.hasOwnProperty.call(options, 'from')) {
+    throw invalidFrom(
+      `${op} runs in this app only: it cannot reach another app's collection through an import (refused before sending)`,
+      (options as { from?: unknown }).from,
+    );
+  }
+}
+
+/**
+ * A server that does not serve publish answers as an unknown route (`404 not_found`): an older
+ * civitai.com, or the app's host flag off. Publish itself never sends `not_found` (a missing
+ * document is reported in `skipped`), so that code means exactly this.
+ */
+async function publishCall<R>(send: () => Promise<R>): Promise<R> {
+  try {
+    return await send();
+  } catch (error) {
+    if (error instanceof StorageError && error.code === 'not_found' && error.status === 404) {
+      throw new StorageError(
+        404,
+        'publish_unavailable',
+        'this civitai.com does not serve storage publish yet (an older release, or not enabled for this app)',
+        error.body,
+        error.details,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((v) => typeof v === 'string');
+
+function toSkipped<R extends string>(value: unknown, op: string): { key: string; reason: R }[] {
+  if (!Array.isArray(value) || !value.every((s) => isRecord(s) && typeof s.key === 'string' && typeof s.reason === 'string')) {
+    throw new CivitaiError(`storage ${op}: malformed \`skipped\``);
+  }
+  return value.map((s: Record<string, unknown>) => ({ key: s.key as string, reason: s.reason as R }));
+}
+
+function toPublishResult(reply: unknown, op: string): StoragePublishResult {
+  const r = isRecord(reply) ? reply : {};
+  for (const field of ['created', 'updated', 'unchanged', 'pruned'] as const) {
+    if (!isStringList(r[field])) throw new CivitaiError(`storage ${op}: reply carried no \`${field}\` list`);
+  }
+  if (typeof r.pruneIncomplete !== 'boolean') throw new CivitaiError(`storage ${op}: reply carried no \`pruneIncomplete\``);
+  return {
+    created: [...(r.created as string[])],
+    updated: [...(r.updated as string[])],
+    unchanged: [...(r.unchanged as string[])],
+    pruned: [...(r.pruned as string[])],
+    skipped: toSkipped<StoragePublishSkipReason>(r.skipped, op),
+    pruneIncomplete: r.pruneIncomplete,
+  };
+}
+
+function toUnpublishResult(reply: unknown, op: string): StorageUnpublishResult {
+  const r = isRecord(reply) ? reply : {};
+  if (!isStringList(r.deleted)) throw new CivitaiError(`storage ${op}: reply carried no \`deleted\` list`);
+  return { deleted: [...r.deleted], skipped: toSkipped(r.skipped, op) };
 }
 
 /** Refused with the code the server gives an unusable `from`, so a caller branches once. */

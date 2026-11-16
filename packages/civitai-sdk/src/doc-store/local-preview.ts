@@ -180,6 +180,8 @@ function refusingStorage(code: string, message: string): DocumentStorage {
     increment: refuse,
     mark: refuse,
     unmark: refuse,
+    publish: refuse,
+    unpublish: refuse,
   } satisfies Record<keyof StorageCollection, () => Promise<never>>;
   return {
     collection: <T extends object>() => collection as StorageCollection<T>,
