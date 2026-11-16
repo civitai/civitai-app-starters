@@ -2407,16 +2407,8 @@ if (img) {
 }
 ```
 
-**`{ purpose: 'generationSource' }`** resolves with `{ url, width, height }`, ready
-for a `sourceImages` entry. When the host keeps picked sources as private, scanned
-images (it does while Civitai requires scanned generation sources from apps), the
-answer also carries `imageId` and `ready` (`BlockUploadedGenerationSource`), with the
-meaning they have for [`usePersistGenerationSource()`](#usepersistgenerationsource):
-`ready: false` means the scan is still running, and a generation using the source is
-refused with `'source-scan-pending'` until it finishes, so retry that generation
-shortly. An image the scan refuses is an upload error. Without the two fields the
-source is unscanned and usable at once. A single `useMediaUpload()` image carries the
-same two fields under the same rule.
+**`{ purpose: 'generationSource' }`** resolves with a `BlockUploadedGenerationSource`
+(`@civitai/app-sdk/blocks`; see its docs for `imageId` and `ready`).
 
 ### `useUploadImageBytes()`
 

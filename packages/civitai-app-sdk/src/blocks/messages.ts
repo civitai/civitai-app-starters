@@ -898,9 +898,7 @@ export type ParentToBlockMessage =
       //     streams later on `IMAGE_SCAN_RESOLVED`. `status:'pending'` is the
       //     on-wire discriminant vs the moderated shape.
       //   • `'generationSource'`: a private img2img source
-      //     ({@link BlockUploadedGenerationSource} — { url, width, height }, no
-      //     nsfwLevel; plus imageId and ready when the host kept it as a private
-      //     scanned row, else unscanned and scanned by the orchestrator at gen time).
+      //     ({@link BlockUploadedGenerationSource}).
       //   • `'trainingData'` (civitai/civitai#6461): SEVERAL private training
       //     images in one reply ({@link BlockTrainingDataUploadResult} —
       //     `{ images: [{ url, air }] }`). A cancel is the bare `{ requestId }`.
@@ -1474,10 +1472,8 @@ export type BlockToParentMessage =
       //   • `'display'` — a PUBLIC image; routes through civitai's session-authed
       //     scan pipeline (SFW + no-flag gate). The host returns a MODERATED
       //     {@link BlockUploadedImageInfo} on `IMAGE_UPLOAD_RESULT`.
-      //   • `'generationSource'` — a PRIVATE img2img source. The host returns
-      //     the source shape ({@link BlockUploadedGenerationSource} — { url,
-      //     width, height }, plus imageId and ready when it kept the file as a
-      //     private scanned row).
+      //   • `'generationSource'` — a PRIVATE img2img source. The host returns a
+      //     {@link BlockUploadedGenerationSource}.
       //   • `'trainingData'` — PRIVATE training images for a `kind: 'training'`
       //     run (civitai/civitai#6461), PAGE APPS ONLY: the viewer picks up to 50
       //     in a host modal, each uploaded as a consumer blob. ONE reply carries

@@ -551,16 +551,9 @@ export interface BlockMediaUploadInfo {
   height?: number;
   /** Duration in milliseconds, for `'video'` / `'audio'` when known. Never set for `'image'`. */
   durationMs?: number;
-  /**
-   * An `'image'` the host kept as a private SCANNED `Image` row (a single
-   * upload, while its scanned-rows rule is on): the row's id. Absent otherwise.
-   * See {@link BlockUploadedGenerationSource}.
-   */
+  /** As on {@link BlockUploadedGenerationSource}, for a single `'image'` upload. */
   imageId?: number;
-  /**
-   * With `imageId`: whether that row's scan finished. `false` means a generation
-   * using `url` is refused with `source-scan-pending` until it does.
-   */
+  /** As on {@link BlockUploadedGenerationSource}. */
   ready?: boolean;
 }
 
