@@ -173,6 +173,19 @@ describe('publish', () => {
     for (let i = 0; i < 30; i++) await alice.collection('clips').put(`adhoc${i}`, { i });
   });
 
+  it('every call spends a private-write token, so a loop of publishes that change nothing hits 429', async () => {
+    const { alice } = make({ enforceRateLimits: true });
+    await alice.collection('drafts').put('l1', { l: 1 }); // write token 1
+    const clips = alice.collection('clips');
+    await clips.publish({ from: 'drafts', keys: ['l1'] }); // 2
+    for (let i = 0; i < 118; i++) {
+      expect(await clips.publish({ from: 'drafts', keys: ['l1'] })).toEqual(result({ unchanged: ['l1'] }));
+    }
+    // 120 a minute: the 121st write-window request is refused.
+    const err = await refusal(clips.publish({ from: 'drafts', keys: ['l1'] }));
+    expect([err.status, err.code, err.details?.bucket]).toEqual([429, 'rate_limited', 'write']);
+  });
+
   it('refuses a private target and a shared source', async () => {
     const { alice } = make();
     for (const [to, from] of [
