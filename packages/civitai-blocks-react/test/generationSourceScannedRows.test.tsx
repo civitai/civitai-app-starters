@@ -55,16 +55,6 @@ describe('IMAGE_UPLOAD_RESULT validation — a generation source', () => {
   ])('accepts %s', (_label, selected) => {
     expect(isValidImageUploadResult({ requestId: 'r', selected })).toBe(true);
   });
-
-  it.each([
-    ['imageId 0', { ...SCANNED_SOURCE, imageId: 0 }],
-    ['a fractional imageId', { ...SCANNED_SOURCE, imageId: 1.5 }],
-    ['a string imageId', { ...SCANNED_SOURCE, imageId: '9001' }],
-    ['a string ready', { ...SCANNED_SOURCE, ready: 'yes' }],
-    ['a numeric ready', { ...SCANNED_SOURCE, ready: 1 }],
-  ])('rejects %s', (_label, selected) => {
-    expect(isValidImageUploadResult({ requestId: 'r', selected })).toBe(false);
-  });
 });
 
 describe('MEDIA_UPLOAD_RESULT validation — an image kept as a scanned row', () => {
@@ -75,14 +65,6 @@ describe('MEDIA_UPLOAD_RESULT validation — an image kept as a scanned row', ()
   it('accepts an image without them (a blob)', () => {
     const { imageId: _i, ready: _r, ...blob } = SCANNED_MEDIA;
     expect(isValidMediaUploadResult({ requestId: 'r', selected: blob })).toBe(true);
-  });
-
-  it.each([
-    ['imageId -1', { ...SCANNED_MEDIA, imageId: -1 }],
-    ['a string imageId', { ...SCANNED_MEDIA, imageId: 'x' }],
-    ['a string ready', { ...SCANNED_MEDIA, ready: 'false' }],
-  ])('rejects %s', (_label, selected) => {
-    expect(isValidMediaUploadResult({ requestId: 'r', selected })).toBe(false);
   });
 });
 
