@@ -708,9 +708,16 @@ export function isValidThemeChange(p: unknown): p is { theme: Theme } {
  * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
  * it — see the same note on {@link isValidThemeChange}.
  */
-export function isValidRouteChanged(p: unknown): p is { subPath: string } {
+export function isValidRouteChanged(
+  p: unknown,
+): p is { subPath: string; search?: string; hash?: string } {
   if (!isObject(p)) return false;
   if (typeof p.subPath !== 'string') return false;
+  // `search` / `hash` (HQ app_blocks_sdk_j1gc) are optional — an older host sends
+  // neither — but a PRESENT non-string is a host bug, and the push is dropped
+  // rather than half-applied, by the same reasoning as `subPath` above.
+  if (p.search !== undefined && typeof p.search !== 'string') return false;
+  if (p.hash !== undefined && typeof p.hash !== 'string') return false;
   return true;
 }
 
@@ -2046,6 +2053,50 @@ function projectGenerationSourcePersisted(payload: unknown): unknown {
 }
 
 /**
+ * Reply to `SHARE_LINK`: `{ requestId, result }` or `{ requestId, error }`.
+ *
+ * 🔴 ONLY THE CORRELATION IS CHECKED HERE, for the same reason as
+ * {@link isValidGenerationSourcePersistedResult}: a dropped reply leaves `share()`
+ * waiting out the human bound (10 min) over a reply the host already sent.
+ * {@link projectInboundPayload} ({@link projectShareLinkResult}) answers a
+ * malformed one as an `error`.
+ */
+export function isValidShareLinkResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  return isWireRequestIdShape(p.requestId);
+}
+
+/** The error a malformed `SHARE_LINK_RESULT` reply is answered with. */
+export const SHARE_LINK_MALFORMED_ERROR = 'the host sent a malformed reply to SHARE_LINK';
+
+/**
+ * A well-formed `SHARE_LINK_RESULT.result`: an `http(s)` `url`, a boolean
+ * `copied`, a string `method`, and `copied: true` only with `method: 'clipboard'`
+ * (a host claiming a copy it did not make through the clipboard is not believed).
+ */
+function isValidShareLinkResultBody(r: unknown): boolean {
+  if (!isObject(r)) return false;
+  if (!isNonEmptyString(r.url) || !/^https?:\/\//.test(r.url)) return false;
+  if (typeof r.copied !== 'boolean') return false;
+  if (typeof r.method !== 'string') return false;
+  if (r.copied && r.method !== 'clipboard') return false;
+  return true;
+}
+
+/**
+ * A `SHARE_LINK_RESULT` payload with a malformed reply replaced by
+ * `{ requestId, error }` ({@link SHARE_LINK_MALFORMED_ERROR}), so `share()` rejects
+ * instead of resolving with unchecked fields or hanging. Identity for a string
+ * `error` and for a well-formed `result`.
+ */
+function projectShareLinkResult(payload: unknown): unknown {
+  if (!isObject(payload)) return payload;
+  if (typeof payload.error === 'string') return payload;
+  if (payload.error === undefined && isValidShareLinkResultBody(payload.result)) return payload;
+  return { requestId: payload.requestId, error: SHARE_LINK_MALFORMED_ERROR };
+}
+
+/**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
  * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
  * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
@@ -2072,11 +2123,12 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: four groups are projected today. `IMAGES_RESULT`
+ * 🔴 SCOPE, STATED HONESTLY: five groups are projected today. `IMAGES_RESULT`
  * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
  * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
- * `GENERATION_SOURCE_PERSISTED` (a malformed reply becomes an error,
- * {@link projectGenerationSourcePersisted}), and every reply carrying a
+ * `GENERATION_SOURCE_PERSISTED` and `SHARE_LINK_RESULT` (a malformed reply
+ * becomes an error, {@link projectGenerationSourcePersisted},
+ * {@link projectShareLinkResult}), and every reply carrying a
  * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
  * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
  * ({@link projectWorkflowSnapshot}).
@@ -2087,6 +2139,7 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
 export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
   if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
+  if (type === 'SHARE_LINK_RESULT') return projectShareLinkResult(payload);
   if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
   if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
   if (type === 'APP_WORKFLOWS_RESULT' || type === 'CANCEL_APP_WORKFLOW_RESULT') {
@@ -2179,6 +2232,8 @@ export function payloadValidatorFor(
       return isValidPublishResult;
     case 'GENERATION_SOURCE_PERSISTED':
       return isValidGenerationSourcePersistedResult;
+    case 'SHARE_LINK_RESULT':
+      return isValidShareLinkResult;
     case 'IMAGES_RESULT':
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':

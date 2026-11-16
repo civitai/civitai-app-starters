@@ -315,6 +315,40 @@ export type BlockUploadPurpose = 'display' | 'generationSource' | 'trainingData'
 export type BlockNavigateScope = 'app' | 'site';
 
 /**
+ * How the host delivered a `SHARE_LINK` URL to the viewer:
+ *  - `'clipboard'` — the host's clipboard write RESOLVED (`copied` is `true`);
+ *  - `'share'` — the native share sheet completed (phones; `copied` is `false`);
+ *  - `'none'` — nothing was delivered: the clipboard write was refused, there was no
+ *    click to act on, the share sheet was cancelled, or no API was available. Show
+ *    `url` as selectable text so the viewer can copy it by hand.
+ */
+export type BlockShareLinkMethod = 'clipboard' | 'share' | 'none';
+
+/**
+ * The view a `SHARE_LINK` links to. Every field is RELATIVE to the app: the host
+ * builds the absolute `/apps/run/<slug>/<subPath><search><hash>` URL from its own
+ * origin and slug, and refuses anything that would leave it (`..`, `//host`, a
+ * scheme). `subPath` carries no `?` or `#`; `search` is `''` or starts with `?`;
+ * `hash` is `''` or starts with `#`; each at most 2048 chars.
+ */
+export interface BlockShareLinkRequest {
+  subPath?: string;
+  search?: string;
+  hash?: string;
+}
+
+/**
+ * What the host did with a `SHARE_LINK`. 🔴 `copied` is `true` ONLY when the
+ * clipboard write resolved; `false` is a normal outcome, not an error.
+ */
+export interface BlockShareLinkResult {
+  /** The canonical absolute URL, e.g. `https://civitai.com/apps/run/<slug>/c/42?take=3`. */
+  url: string;
+  copied: boolean;
+  method: BlockShareLinkMethod;
+}
+
+/**
  * The source-image result the host returns from `OPEN_IMAGE_UPLOAD` when the
  * block requested `purpose: 'generationSource'` (`IMAGE_UPLOAD_RESULT.selected`)
  * — an UNSCANNED private img2img input. Identical to {@link BlockSourceImage}
@@ -651,6 +685,16 @@ export interface PageSlotContext {
    * app's own index. Lets a page app route internally without owning history.
    */
   subPath: string;
+  /**
+   * The query string of the host URL below the app route — `''` or starting with
+   * `?` (`'?take=3'`). The host strips its own launch-origin `from` pair and sends
+   * `''` for a value over 2048 chars. Lets an app deep-link into its own STATE, not
+   * just a route. Absent from a host that predates the field; read it through
+   * `useCivitaiLocation()` (blocks-react), which reads absent as `''`.
+   */
+  search?: string;
+  /** The fragment — `''` or starting with `#` (`'#top'`). Same source and cap as `search`. */
+  hash?: string;
   /** `null` for an anonymous viewer. */
   viewerUserId: number | null;
   /** Absent/`null` when the viewer has no handle. */

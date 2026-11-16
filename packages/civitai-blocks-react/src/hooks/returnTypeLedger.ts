@@ -64,6 +64,7 @@ import type {
   useBuzzTransactions,
   useBuzzWorkflow,
   useCheckpointPicker,
+  useCivitaiLocation,
   useCivitaiNavigate,
   useCivitaiRoute,
   useCollectionFollow,
@@ -91,6 +92,7 @@ import type {
   useRunConfirmedStep,
   useRunTraining,
   useSaveImage,
+  useShareLink,
   useTip,
   useTipAllowance,
   useUploadImageBytes,
@@ -113,6 +115,7 @@ import type {
   UseBuzzWorkflow,
   UseCheckpointPicker,
   UseCivitaiNavigate,
+  UseCivitaiLocation,
   UseCivitaiRoute,
   UseCollectionFollow,
   UseConsentUnavailable,
@@ -139,6 +142,7 @@ import type {
   UseRunConfirmedStep,
   UseRunTraining,
   UseSaveImage,
+  UseShareLink,
   UseTip,
   UseTipAllowance,
   UseUploadImageBytes,
@@ -174,6 +178,9 @@ type _useCheckpointPicker = Assert<
 >;
 type _useCivitaiNavigate = Assert<Exact<ReturnType<typeof useCivitaiNavigate>, UseCivitaiNavigate>>;
 type _useCivitaiRoute = Assert<Exact<ReturnType<typeof useCivitaiRoute>, UseCivitaiRoute>>;
+type _useCivitaiLocation = Assert<
+  Exact<ReturnType<typeof useCivitaiLocation>, UseCivitaiLocation>
+>;
 type _useCollectionFollow = Assert<
   Exact<ReturnType<typeof useCollectionFollow>, UseCollectionFollow>
 >;
@@ -229,6 +236,7 @@ type _useRunConfirmedStep = Assert<
 >;
 type _useRunTraining = Assert<Exact<ReturnType<typeof useRunTraining>, UseRunTraining>>;
 type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>>;
+type _useShareLink = Assert<Exact<ReturnType<typeof useShareLink>, UseShareLink>>;
 type _useTip = Assert<Exact<ReturnType<typeof useTip>, UseTip>>;
 type _useTipAllowance = Assert<Exact<ReturnType<typeof useTipAllowance>, UseTipAllowance>>;
 type _useUploadImageBytes = Assert<

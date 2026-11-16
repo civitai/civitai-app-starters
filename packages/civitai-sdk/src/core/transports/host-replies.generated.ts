@@ -56,6 +56,7 @@ export const HOST_REPLIES: Readonly<Record<string, HostReply>> = {
   "SET_COLLECTION_FOLLOW": {"reply":"COLLECTION_FOLLOW_RESULT","framing":"legacy","keys":["result"]},
   "SET_ENTITY_REACTION": {"reply":"ENTITY_REACTION_RESULT","framing":"legacy","keys":["result"]},
   "SET_USER_CHECKPOINT": {"reply":"USER_CHECKPOINT_SET","framing":"legacy","keys":["ok"]},
+  "SHARE_LINK": {"reply":"SHARE_LINK_RESULT","framing":"legacy","keys":["result"]},
   "SHARED_APPEND": {"reply":"SHARED_APPEND_RESULT","framing":"legacy","keys":["key"]},
   "SHARED_GET": {"reply":"SHARED_GET_RESULT","framing":"legacy","keys":["item"]},
   "SHARED_GET_COUNT": {"reply":"SHARED_GET_COUNT_RESULT","framing":"legacy","keys":["count"]},

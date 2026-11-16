@@ -205,6 +205,10 @@ const REQUEST_TIMEOUT_CLASS = {
   // open, and a viewer who then confirmed would start a CHARGED job the block
   // had already reported as failed.
   RUN_CONFIRMED_STEP: 'human',
+  // 🔴 `'human'`: on a phone the host opens the native share sheet, which replies
+  // only when the viewer picks a target or dismisses it. A copy on desktop answers
+  // at once; the bound is for the sheet.
+  SHARE_LINK: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',

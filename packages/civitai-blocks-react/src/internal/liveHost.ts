@@ -160,6 +160,11 @@ import {
 import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
+import {
+  SHARE_LINK_INVALID_ERROR,
+  appLocationFromNavigatePath,
+  buildShareLinkUrl,
+} from './deepLinks.js';
 import { createTrackEventChecker } from './trackEventCheck.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
@@ -682,6 +687,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   // `ROUTE_CHANGED { subPath: 'compare/42' }` as if it were a change — the real
   // host's effect does not fire for the value init already carried.
   let currentSubPath = '';
+  // The search and hash half of the route (HQ app_blocks_sdk_j1gc), seeded and
+  // reset with `currentSubPath`; and the slug a SHARE_LINK is built from.
+  let currentSearch = '';
+  let currentHash = '';
+  let currentSlug = 'live-dev-app';
   let initDispatched = false;
 
   function install(): () => void {
@@ -783,6 +793,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       // declaration of `currentSubPath`.
       currentSubPath =
         'subPath' in context && typeof context.subPath === 'string' ? context.subPath : '';
+      {
+        const c = context as { search?: unknown; hash?: unknown; slug?: unknown };
+        currentSearch = typeof c.search === 'string' ? c.search : '';
+        currentHash = typeof c.hash === 'string' ? c.hash : '';
+        currentSlug = typeof c.slug === 'string' && c.slug ? c.slug : 'live-dev-app';
+      }
       const initPayload: BlockInitPayload = {
         blockInstanceId: decoded.blockInstanceId ?? 'page_live',
         blockId: decoded.blockId ?? 'live-block',
@@ -824,11 +840,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
      *  - CURRENT FRAME ONLY. A `new_tab` navigation does not move THIS frame's
      *    route, so it must not emit — see the call sites.
      */
-    const reflectRoute = (subPath: string) => {
+    const reflectRoute = (subPath: string, search = '', hash = '') => {
       if (!initDispatched) return;
-      if (subPath === currentSubPath) return;
+      if (subPath === currentSubPath && search === currentSearch && hash === currentHash) return;
       currentSubPath = subPath;
-      dispatchToBlock({ type: 'ROUTE_CHANGED', payload: { subPath } });
+      currentSearch = search;
+      currentHash = hash;
+      // Search and hash ride on every push, as the page host sends them
+      // (HQ app_blocks_sdk_j1gc), so a search-only or hash-only move is a change.
+      dispatchToBlock({ type: 'ROUTE_CHANGED', payload: { subPath, search, hash } });
     };
 
     /**
@@ -853,7 +873,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     // `pushState` does NOT fire `popstate`, so our own pushes do not come back
     // through here; the change gate in `reflectRoute` makes a double-fire inert
     // regardless.
-    const onPopState = () => reflectRoute(subPathFromLocation());
+    const onPopState = () =>
+      reflectRoute(
+        subPathFromLocation(),
+        win.location.search === '?' ? '' : win.location.search,
+        win.location.hash === '#' ? '' : win.location.hash,
+      );
     win.addEventListener('popstate', onPopState);
 
     /**
@@ -1580,6 +1605,42 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'SHARE_LINK': {
+            // Mirrors the page host (HQ app_blocks_sdk_j1gc): the canonical run URL
+            // on the BACKEND origin (where the link will be opened), built from the
+            // init context's slug; a view that would leave the app is refused; the
+            // clipboard write decides `copied`. The harness is the top-level page,
+            // so the write needs no relay.
+            if (!isRoutableRequestId(requestId)) return;
+            const url = buildShareLinkUrl(baseUrl, currentSlug, typed.payload);
+            if (url === null) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_INVALID_ERROR },
+              });
+              return;
+            }
+            const reply = (copied: boolean) =>
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, result: { url, copied, method: copied ? 'clipboard' : 'none' } },
+              });
+            const clip = (win.navigator as Navigator | undefined)?.clipboard;
+            if (!clip || typeof clip.writeText !== 'function') {
+              reply(false);
+              return;
+            }
+            try {
+              clip.writeText(url).then(
+                () => reply(true),
+                () => reply(false),
+              );
+            } catch {
+              reply(false);
+            }
+            return;
+          }
+
           case 'PERSIST_GENERATION_SOURCE': {
             // UNSUPPORTED in live, for the same reason as PUBLISH_GENERATION_OUTPUTS
             // directly above: on civitai.com the page host resolves the workflow's
@@ -2051,8 +2112,26 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               if (target === 'new_tab') {
                 win.open(url, '_blank');
               } else {
-                win.history.pushState(null, '', url);
-                reflectRoute(path);
+                // Mirror the page host (HQ app_blocks_sdk_j1gc): the route is the
+                // PATH part — `?query#hash` reach the block as search and hash —
+                // a move to the view already showing adds no entry, and
+                // `replace: true` replaces the entry instead of pushing one.
+                const loc = appLocationFromNavigatePath(path);
+                if (loc === null) return;
+                if (
+                  initDispatched &&
+                  loc.subPath === currentSubPath &&
+                  loc.search === currentSearch &&
+                  loc.hash === currentHash
+                ) {
+                  return;
+                }
+                if ((payload as { replace?: unknown }).replace === true) {
+                  win.history.replaceState(null, '', url);
+                } else {
+                  win.history.pushState(null, '', url);
+                }
+                reflectRoute(loc.subPath, loc.search, loc.hash);
               }
             } catch {
               /* history/navigation may be unavailable (tests) */
@@ -2172,6 +2251,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       // its context, so neither piece of route state may survive this teardown.
       initDispatched = false;
       currentSubPath = '';
+      currentSearch = '';
+      currentHash = '';
       for (const t of timers) clearTimeout(t);
       timers.clear();
       // Close any open picker overlay (unmounts its DOM; resolves it `null`).

@@ -855,6 +855,22 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "SHARE_LINK": {
+      "request": true,
+      "reply": "SHARE_LINK_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "SUBMIT_WORKFLOW": {
       "request": true,
       "reply": "WORKFLOW_SUBMITTED",

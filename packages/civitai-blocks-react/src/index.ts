@@ -212,6 +212,9 @@ export type {
   BlockResourceFileMeta,
   BlockPersistGenerationSourceRequest,
   BlockPersistedGenerationSource,
+  BlockShareLinkMethod,
+  BlockShareLinkRequest,
+  BlockShareLinkResult,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
@@ -285,6 +288,12 @@ export type {
 // host to move, `useCivitaiRoute` is how the block learns where it now is.
 export { useCivitaiRoute } from './hooks/useCivitaiRoute.js';
 export type { UseCivitaiRoute } from './hooks/useCivitaiRoute.js';
+// The same route plus its `search` and `hash` (deep links into app state), and the
+// share link built from it (HQ app_blocks_sdk_j1gc).
+export { useCivitaiLocation } from './hooks/useCivitaiLocation.js';
+export type { UseCivitaiLocation } from './hooks/useCivitaiLocation.js';
+export { useShareLink } from './hooks/useShareLink.js';
+export type { UseShareLink } from './hooks/useShareLink.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export type { UseRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';

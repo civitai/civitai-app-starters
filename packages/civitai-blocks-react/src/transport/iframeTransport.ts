@@ -787,7 +787,7 @@ export class IframeTransport implements BlockTransport {
     // mutation case in `useCivitaiRoute.test.tsx`, which deletes this branch and
     // watches the subscriber's own assertion fail.
     if (isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(data, 'ROUTE_CHANGED')) {
-      this.applyRouteChange(data.payload.subPath);
+      this.applyRouteChange(data.payload.subPath, data.payload.search, data.payload.hash);
       return;
     }
 
@@ -940,11 +940,19 @@ export class IframeTransport implements BlockTransport {
    * The theme is not gated because it has a pre-init writer (the URL fragment)
    * and a top-level field to hold the value; this has neither.
    */
-  private applyRouteChange(subPath: string): void {
+  private applyRouteChange(subPath: string, search?: string, hash?: string): void {
     const context = this.snapshot.context;
     if (!('subPath' in context)) return;
-    if ((context as { subPath?: unknown }).subPath === subPath) return;
-    this.snapshot = { ...this.snapshot, context: { ...context, subPath } };
+    // `search` / `hash` (HQ app_blocks_sdk_j1gc) are applied only when the push
+    // CARRIES them: an older host's push moves `subPath` alone, and a field it did
+    // not send is not this package's to invent or clear.
+    const current = context as { subPath?: unknown; search?: unknown; hash?: unknown };
+    const next: Record<string, unknown> = {};
+    if (current.subPath !== subPath) next.subPath = subPath;
+    if (search !== undefined && current.search !== search) next.search = search;
+    if (hash !== undefined && current.hash !== hash) next.hash = hash;
+    if (Object.keys(next).length === 0) return;
+    this.snapshot = { ...this.snapshot, context: { ...context, ...next } as typeof context };
     this.emit();
   }
 
