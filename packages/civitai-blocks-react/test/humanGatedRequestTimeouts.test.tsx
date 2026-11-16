@@ -57,7 +57,9 @@ function buildInit(): BlockInitPayload {
       scopes: ['ai:write:budgeted'],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     },
-    context: { slotId: 's' },
+    // `search` marks a host that knows SHARE_LINK; without it `share()` refuses before
+    // sending (an old host never replies), and its driver here would measure nothing.
+    context: { slotId: 's', search: '', hash: '' } as BlockInitPayload['context'],
     settings: { publisherSettings: {}, userSettings: {} },
     viewer: { id: 7, username: 'viewer', status: 'active' },
     theme: 'light',

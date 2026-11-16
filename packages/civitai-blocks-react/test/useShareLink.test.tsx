@@ -189,6 +189,9 @@ describe('useShareLink', () => {
     ['result.copied not a boolean', { result: { url: URL_42, copied: 'yes', method: 'clipboard' } }],
     ['result.method not a string', { result: { url: URL_42, copied: false, method: 1 } }],
     ['copied:true but method is not clipboard', { result: { url: URL_42, copied: true, method: 'none' } }],
+    ['copied:false with method clipboard (the host never sends it)', { result: { url: URL_42, copied: false, method: 'clipboard' } }],
+    ['copied:true with method share', { result: { url: URL_42, copied: true, method: 'share' } }],
+    ['an unknown method', { result: { url: URL_42, copied: false, method: 'other' } }],
     ['error is not a string', { error: 42 }],
   ])('rejects (does not hang) on a malformed reply: %s', async (_label, fields) => {
     vi.useFakeTimers();
@@ -213,6 +216,45 @@ describe('useShareLink', () => {
     expect(s.err).not.toBeInstanceOf(RequestTimeoutError);
     expect((s.err as Error).message).toBe('the host sent a malformed reply to SHARE_LINK');
     warn.mockRestore();
+  });
+
+  it('survives unmount: the promise still settles with the host result, and no state is set after', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { result, unmount } = renderHook(() => useShareLink());
+    let p!: Promise<BlockShareLinkResult>;
+    act(() => {
+      p = result.current.share();
+    });
+    const requestId = lastShare(postMessageMock).payload.requestId;
+    unmount();
+    dispatch('SHARE_LINK_RESULT', { requestId, result: { url: URL_42, copied: true, method: 'clipboard' } });
+    await expect(p).resolves.toEqual({ url: URL_42, copied: true, method: 'clipboard' });
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('two concurrent shares each settle with THEIR reply; isPending holds until both', async () => {
+    const URL_7 = 'https://civitai.com/apps/run/live-characters/c/7';
+    const { result } = renderHook(() => useShareLink());
+    let a!: Promise<BlockShareLinkResult>;
+    let b!: Promise<BlockShareLinkResult>;
+    act(() => {
+      a = result.current.share({ subPath: 'c/42' });
+    });
+    const idA = lastShare(postMessageMock).payload.requestId;
+    act(() => {
+      b = result.current.share({ subPath: 'c/7' });
+    });
+    const idB = lastShare(postMessageMock).payload.requestId;
+    expect(idA).not.toBe(idB);
+
+    // Out of order: B first.
+    dispatch('SHARE_LINK_RESULT', { requestId: idB, result: { url: URL_7, copied: false, method: 'none' } });
+    await expect(b).resolves.toEqual({ url: URL_7, copied: false, method: 'none' });
+    expect(result.current.isPending).toBe(true);
+    dispatch('SHARE_LINK_RESULT', { requestId: idA, error: 'rate_limited' });
+    await expect(a).rejects.toThrow(/^rate_limited$/);
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.lastResult).toEqual({ url: URL_7, copied: false, method: 'none' });
   });
 
   it('toggles isPending while in flight', async () => {
@@ -250,5 +292,49 @@ describe('useShareLink', () => {
       await vi.advanceTimersByTimeAsync(2);
     });
     expect(caught).toBeInstanceOf(RequestTimeoutError);
+  });
+});
+
+describe('useShareLink — a host that predates SHARE_LINK', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    postMessageMock = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    // An OLD page host: the same page context, but no `search` / `hash`. Such a host sends no
+    // reply at all to an unknown request type, so sending would hang for the human bound.
+    const oldContext = Object.fromEntries(
+      Object.entries(PAGE_CONTEXT as Record<string, unknown>).filter(
+        ([k]) => k !== 'search' && k !== 'hash',
+      ),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'BLOCK_INIT', payload: buildInit(oldContext as BlockInitPayload['context']) },
+        origin: PARENT_ORIGIN,
+      }),
+    );
+    postMessageMock.mockClear();
+  });
+
+  afterEach(() => {
+    resetTransport();
+  });
+
+  it('🔴 rejects AT ONCE with "unsupported on this host" and sends nothing', async () => {
+    const { result } = renderHook(() => useShareLink());
+    let p!: Promise<BlockShareLinkResult>;
+    act(() => {
+      p = result.current.share();
+      p.catch(() => {});
+    });
+    await expect(p).rejects.toThrow(/^unsupported on this host$/);
+    expect(calls(postMessageMock, 'SHARE_LINK')).toHaveLength(0);
+    await waitFor(() => expect(result.current.error?.message).toBe('unsupported on this host'));
   });
 });

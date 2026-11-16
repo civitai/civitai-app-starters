@@ -2242,6 +2242,54 @@ describe('createLiveHost — SHARE_LINK', () => {
     });
   });
 
+  it('🔴 refuses on a model slot with "unsupported on this host"', async () => {
+    uninstall = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      context: {
+        slotId: 'model.sidebar_top',
+        modelId: 11,
+        modelVersionId: 22,
+        modelName: 'Fixture model',
+        modelType: 'Checkpoint',
+        modelNsfwLevel: 1,
+      },
+    }).install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-share-m', subPath: 'c/1' });
+    const payload = await waitForMessage(inbound, 'SHARE_LINK_RESULT');
+    expect(payload).toEqual({ requestId: 'r-share-m', error: 'unsupported on this host' });
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a second share while one is in flight is refused as rate_limited', async () => {
+    let release!: () => void;
+    writeText.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-a', subPath: 'c/1' });
+    post('SHARE_LINK', { requestId: 'r-b', subPath: 'c/2' });
+    for (let i = 0; i < 50 && !inbound.messages.some((m) => m.payload?.requestId === 'r-b'); i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(inbound.messages.find((m) => m.payload?.requestId === 'r-b')?.payload).toEqual({
+      requestId: 'r-b',
+      error: 'rate_limited',
+    });
+    release();
+    expect(writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it('strips the host-owned pairs from the URL', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-strip', subPath: 'c/1', search: '?sl=x&take=3&src=detail' });
+    const payload = await waitForMessage(inbound, 'SHARE_LINK_RESULT');
+    expect(payload).toMatchObject({
+      result: { url: 'https://civitai.com/apps/run/live-characters/c/1?take=3' },
+    });
+  });
+
   it('refuses an escaping subPath like the page host', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
