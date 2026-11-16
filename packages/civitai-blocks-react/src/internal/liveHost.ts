@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 14 = blocks.* (14)
- * switch case labels .... 40, of which 17 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 41, of which 18 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -88,6 +88,9 @@
  *   • OPEN_BUZZ_PURCHASE — no headless / block-token Buzz-purchase path (buying
  *     Buzz strictly requires the interactive Stripe/Paddle host chrome). Deep-
  *     links the real purchase page and replies `purchased: false`.
+ *   • REQUEST_OUTPUT_UNLOCK — the unlock is bound to the viewer's signed-in
+ *     civitai.com session (the host's own dialog is the consent), which a dev
+ *     token cannot present. Replies `{ outcome: 'unavailable' }`.
  *   • SET_COLLECTION_FOLLOW — needs the session-authed follow procedures plus
  *     host-chrome consent. Replies `collection-unavailable`.
  *   • SET_ENTITY_REACTION — the server's reaction procedures take the viewer's
@@ -1181,6 +1184,25 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'BUZZ_PURCHASE_RESULT',
               payload: { requestId: requestId ?? '', purchased: false },
+            });
+            return;
+          }
+
+          case 'REQUEST_OUTPUT_UNLOCK': {
+            // The unlock is bound to the viewer's signed-in civitai.com session
+            // (the host's own dialog is the consent), which a dev token cannot
+            // present. Answer honestly instead of fabricating an unlock.
+            if (!isRoutableRequestId(requestId)) return;
+            dispatchToBlock({
+              type: 'OUTPUT_UNLOCK_RESULT',
+              payload: {
+                requestId,
+                result: {
+                  outcome: 'unavailable',
+                  message:
+                    'Unlocking an output needs the civitai.com host; it is not available in live dev.',
+                },
+              },
             });
             return;
           }

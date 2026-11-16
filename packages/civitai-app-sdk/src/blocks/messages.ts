@@ -49,6 +49,7 @@ import type {
   BlockTrainingDataUploadResult,
   WorkflowBodyTraining,
   WorkflowBodyPassThroughStep,
+  BlockOutputUnlockResult,
 } from './types.js';
 import type {
   BlockAppReaction,
@@ -559,6 +560,14 @@ export type ParentToBlockMessage =
   | {
       type: 'BUZZ_PURCHASE_RESULT';
       payload: { requestId: string; purchased: boolean; newBalance?: number };
+    }
+  | {
+      // Reply to REQUEST_OUTPUT_UNLOCK. Every outcome, a refusal included, is in
+      // `result` (`BlockOutputUnlockResult`); `error` is only the host's generic
+      // reply to a request it could not route. `result.snapshot` is projected like
+      // every other snapshot reply.
+      type: 'OUTPUT_UNLOCK_RESULT';
+      payload: { requestId: string; result?: BlockOutputUnlockResult; error?: string };
     }
   | {
       // Reply to GET_BUZZ_BALANCE. On success `balance` carries the viewer's
@@ -1186,6 +1195,18 @@ export type BlockToParentMessage =
   // cancel workflows the viewer owns.
   | { type: 'CANCEL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | { type: 'OPEN_BUZZ_PURCHASE'; payload: { requestId: string; suggestedAmount?: number } }
+  // Ask the host to unlock ONE restricted output of a workflow your app ran, named by
+  // its position in `snapshot.outputs`. The host reads the live workflow, decides
+  // what may be offered (an output restricted for the paying Buzz pool can be
+  // unlocked with yellow Buzz; a 'ceiling' / 'unrated' one is never charged) and
+  // draws its own dialog: the price the viewer confirms is the host's, never a
+  // number from this body. Replies `OUTPUT_UNLOCK_RESULT`.
+  //
+  // Viewer-gated ⇒ `'human'` timeout bucket.
+  | {
+      type: 'REQUEST_OUTPUT_UNLOCK';
+      payload: { requestId: string; workflowId: string; position: number };
+    }
   // Ask the host for the viewer's per-pool Buzz balance. Host-mediated + token-
   // bound: the host reads it via the `blocks.getMyBuzzBalance` tRPC mutation
   // (scoped to the block token's viewer) and replies with `BUZZ_BALANCE_RESULT`.
@@ -1928,6 +1949,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'POLL_WORKFLOW',
   'CANCEL_WORKFLOW',
   'OPEN_BUZZ_PURCHASE',
+  'REQUEST_OUTPUT_UNLOCK',
   'GET_BUZZ_BALANCE',
   'GET_VIEWER',
   'GET_BUZZ_TRANSACTIONS',

@@ -108,6 +108,8 @@ export type {
 } from './hooks/useBlockBreakpoint.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export type { UseBuzzPurchase } from './hooks/useBuzzPurchase.js';
+export { useOutputUnlock } from './hooks/useOutputUnlock.js';
+export type { UseOutputUnlock } from './hooks/useOutputUnlock.js';
 export { useBuzzBalance } from './hooks/useBuzzBalance.js';
 export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';
 export { useViewer } from './hooks/useViewer.js';

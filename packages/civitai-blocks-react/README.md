@@ -704,6 +704,47 @@ as locked, and no position moves. In the mock host,
 position 1 of a succeeded snapshot, and publish / post / persist naming position
 1 reply `output 1 is restricted`, so you can exercise both locally.
 
+#### Unlocking a restricted output: `useOutputUnlock()`
+
+`unlockOutput(workflowId, position)` asks the host to unlock the output at that
+position of a workflow your app ran. The host reads the live workflow, decides what
+it may offer, and draws its own dialog; your app supplies only the position, never
+a price. It resolves with a `BlockOutputUnlockResult` once the viewer is done:
+
+```tsx
+const { unlockOutput } = useOutputUnlock();
+const result = await unlockOutput(snapshot.workflowId, 1);
+if (result.outcome === 'unlocked') setSnapshot(result.snapshot!); // outputs[1] has its url
+```
+
+- **`reason: 'pool'`** (the Buzz that paid does not cover mature content): the viewer
+  can unlock it with yellow Buzz at the price the host shows, the same unlock as on
+  civitai.com. It adds no author share and counts against no spend limit: the
+  original generation's spend already did. `'refused'` means the viewer does not
+  have enough yellow Buzz.
+- **`'ceiling'` / `'unrated'`**: never charged. When the site your app runs on is
+  what keeps it out, the host offers your app on civitai.red at the same page
+  (`'linked-out'`); when the viewer's own settings hide it, `'unavailable'` with a
+  message.
+- `'not-restricted'` (it already had a url; a retry lands here), `'not-released'`
+  (still above the viewer's level after the unlock; `message` says why) and
+  `'dismissed'` (the viewer closed the dialog without a completed unlock) complete the
+  set. `'unavailable'` also covers a position that does not exist, a second request
+  for a position whose dialog is already open, and an unlock whose orchestrator write
+  got no answer (`message` says to check back). Treat an unknown outcome like
+  `'unavailable'`.
+
+The reply waits for the viewer, so it uses the human-interaction timeout (10 minutes):
+`unlockOutput` rejects when it runs out, which is also what an older host without an
+unlock handler produces, and when the host replies with an `error`.
+
+In the mock host, `generation.outputUnlock` decides a `'pool'` position: `'unlock'`
+(default), `'dismiss'`, `'insufficient'` (`'refused'`) or `'not-released'`.
+`generation.outputUnlockRestricted` decides a `'ceiling'` / `'unrated'` one:
+`'dismiss'` (default), `'link-out'` (`'linked-out'`) or `'settings'` (`'unavailable'`).
+As on the host, a missing position and a second open request for one position answer
+`'unavailable'`.
+
 #### Queue position, ETA and progress
 
 A snapshot from `watch()` / `poll()` carries where the run is right now, for a
