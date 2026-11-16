@@ -12,7 +12,10 @@ export interface UseOutputUnlock {
    * Ask the host to unlock the output at `position` (its index in
    * `snapshot.outputs`) of a workflow your app ran. Resolves when the viewer is done
    * with the host's dialog; see {@link BlockOutputUnlockResult} for each outcome.
-   * Rejects only when the host could not route the request at all.
+   * Rejects when the host answers with an `error` (it could not route the request),
+   * and when no reply arrives within the human-interaction timeout (10 minutes) —
+   * which is also what happens on an older host with no unlock handler, since it
+   * never replies.
    */
   unlockOutput: (workflowId: string, position: number) => Promise<BlockOutputUnlockResult>;
 }

@@ -627,17 +627,34 @@ export interface MockGenerationScenario {
    */
   neverRatedOutputs?: readonly number[];
   /**
-   * What the viewer does in the host's unlock dialog for `REQUEST_OUTPUT_UNLOCK`
-   * (`useOutputUnlock`) on a position restricted for `'pool'`: `'unlock'` (default)
-   * pays, so the position is reported `{ url }` from then on and the reply carries
-   * the re-read snapshot; `'dismiss'` closes the dialog. A `'ceiling'` or `'unrated'`
-   * position is never charged: the mock answers `'linked-out'`, the viewer following
-   * the host's link to the same app on civitai.red. `'insufficient'`: the viewer's
-   * yellow Buzz is short, answered `'refused'` with the host's message. A position
-   * that is not restricted answers `'not-restricted'`, and a workflow this mock did not
-   * run `'unavailable'`.
+   * What happens in the host's unlock dialog for `REQUEST_OUTPUT_UNLOCK`
+   * (`useOutputUnlock`) on a position restricted for `'pool'`:
+   * - `'unlock'` (default): the viewer pays; the position is reported `{ url }` from
+   *   then on and the reply carries the re-read snapshot;
+   * - `'dismiss'`: the viewer closes the dialog (`'dismissed'`);
+   * - `'insufficient'`: the viewer's yellow Buzz is short (`'refused'`, with the host's
+   *   message; the output stays restricted);
+   * - `'not-released'`: the unlock went through but the output is still above the
+   *   viewer's level (`'not-released'`, with the host's message; still restricted).
+   *
+   * Whatever the knob, as on the host: a position that is not restricted answers
+   * `'not-restricted'`; a position past the end, or a workflow this mock did not run,
+   * `'unavailable'`; and a second request for the same position while the first is
+   * still open `'unavailable'` ("already being unlocked"). The reply comes on a later
+   * tick, as the host's does once the viewer acts. For a `'ceiling'` or `'unrated'`
+   * position see `outputUnlockRestricted`.
    */
-  outputUnlock?: 'unlock' | 'dismiss' | 'insufficient';
+  outputUnlock?: 'unlock' | 'dismiss' | 'insufficient' | 'not-released';
+  /**
+   * What happens in the host's unlock dialog on a position restricted for `'ceiling'`
+   * or `'unrated'`, which is never charged:
+   * - `'dismiss'` (default): the viewer closes the dialog (`'dismissed'`);
+   * - `'link-out'`: the site keeps it out and the viewer follows the host's link to the
+   *   same app on civitai.red (`'linked-out'`);
+   * - `'settings'`: the viewer's own browsing level hides it (`'unavailable'`, with the
+   *   host's message pointing at their settings).
+   */
+  outputUnlockRestricted?: 'dismiss' | 'link-out' | 'settings';
 }
 
 /** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
@@ -759,6 +776,9 @@ function resolveTrainingItems(
  * BEFORE any pricing, rate-limit or budget work. ONE constant for every mock
  * path that refuses on `consentGranted === false`, so the copies cannot drift.
  */
+/** How long the mock's unlock "dialog" stays open before it answers (REQUEST_OUTPUT_UNLOCK). */
+const OUTPUT_UNLOCK_MOCK_DIALOG_MS = 10;
+
 export const MOCK_SPEND_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
 /** The real server's refusal for an unknown, expired or spent quote on `RUN_TRAINING`. */
 export const MOCK_TRAINING_QUOTE_GONE_ERROR =
@@ -2941,6 +2961,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // `body` is absent for an id this mock never submitted (a workflow id an app
     // restored after a reload). `canceled` is set by `CANCEL_WORKFLOW`, so later
     // polls keep answering `canceled` instead of resuming the countdown.
+    /** `workflowId:position` of each unlock dialog this mock has open (REQUEST_OUTPUT_UNLOCK). */
+    const unlocksInFlight = new Set<string>();
     const workflows = new Map<
       string,
       {
@@ -4355,6 +4377,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               reply({ outcome: 'unavailable', message: 'workflow does not belong to this viewer' });
               return;
             }
+            // As the host: a position must exist in the workflow's outputs.
+            const outputCount = succeededSnapshot(workflowId, { peek: true }).outputs?.length ?? 0;
+            if (!Number.isInteger(position) || position < 0 || position >= outputCount) {
+              reply({ outcome: 'unavailable', message: `output ${position} does not exist` });
+              return;
+            }
             const scenario = outputScenarioOf(workflowId);
             const reason = scenario.neverRatedOutputs?.includes(position)
               ? 'unrated'
@@ -4363,27 +4391,61 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               reply({ outcome: 'not-restricted' });
               return;
             }
-            if (reason !== 'pool') {
-              reply({ outcome: 'linked-out' });
+            // One dialog per position at a time, as on the host.
+            const inFlightKey = `${workflowId}:${position}`;
+            if (unlocksInFlight.has(inFlightKey)) {
+              reply({ outcome: 'unavailable', message: 'This output is already being unlocked.' });
               return;
             }
-            if ((gen.outputUnlock ?? 'unlock') === 'dismiss') {
-              reply({ outcome: 'dismissed' });
-              return;
-            }
-            if (gen.outputUnlock === 'insufficient') {
-              // The host's own refusal: nothing changed, so the read stays restricted.
+            unlocksInFlight.add(inFlightKey);
+            // Narrowed locals for the deferred reply below.
+            const unlockId: string = workflowId;
+            const unlockPosition: number = position;
+            const unlockRecord = wf;
+            // The host replies once the viewer acts on its dialog: on a later tick.
+            after(OUTPUT_UNLOCK_MOCK_DIALOG_MS, () => {
+              unlocksInFlight.delete(inFlightKey);
+              if (reason !== 'pool') {
+                const choice = gen.outputUnlockRestricted ?? 'dismiss';
+                reply(
+                  choice === 'link-out'
+                    ? { outcome: 'linked-out' }
+                    : choice === 'settings'
+                    ? {
+                        outcome: 'unavailable',
+                        message:
+                          'This output is above your browsing level. Change your mature content settings to view it.',
+                      }
+                    : { outcome: 'dismissed' }
+                );
+                return;
+              }
+              const choice = gen.outputUnlock ?? 'unlock';
+              if (choice === 'dismiss') {
+                reply({ outcome: 'dismissed' });
+                return;
+              }
+              if (choice === 'insufficient' || choice === 'not-released') {
+                // Nothing changed for this viewer, so the read stays restricted.
+                reply({
+                  outcome: choice === 'insufficient' ? 'refused' : 'not-released',
+                  snapshot: succeededSnapshot(unlockId, { peek: true }),
+                  message:
+                    choice === 'insufficient'
+                      ? 'You do not have enough yellow Buzz to unlock this output.'
+                      : 'The unlock went through, but this output is rated above your browsing level, so it stays hidden.',
+                });
+                return;
+              }
+              // Paid: the position is unrestricted from now on, on every later read.
+              const current = outputScenarioOf(unlockId);
+              const { [unlockPosition]: _unlocked, ...stillRestricted } = current.restrictedOutputs ?? {};
+              unlockRecord.outputScenario = { ...current, restrictedOutputs: stillRestricted };
               reply({
-                outcome: 'refused',
-                snapshot: succeededSnapshot(workflowId, { peek: true }),
-                message: 'You do not have enough yellow Buzz to unlock this output.',
+                outcome: 'unlocked',
+                snapshot: succeededSnapshot(unlockId, { peek: true }),
               });
-              return;
-            }
-            // Paid: the position is unrestricted from now on, on every later read.
-            const { [position]: _unlocked, ...stillRestricted } = scenario.restrictedOutputs ?? {};
-            wf.outputScenario = { ...scenario, restrictedOutputs: stillRestricted };
-            reply({ outcome: 'unlocked', snapshot: succeededSnapshot(workflowId, { peek: true }) });
+            });
             return;
           }
 

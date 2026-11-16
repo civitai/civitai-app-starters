@@ -728,12 +728,22 @@ if (result.outcome === 'unlocked') setSnapshot(result.snapshot!); // outputs[1] 
   message.
 - `'not-restricted'` (it already had a url; a retry lands here), `'not-released'`
   (still above the viewer's level after the unlock; `message` says why) and
-  `'dismissed'` complete the set. Treat an unknown outcome like `'unavailable'`.
+  `'dismissed'` (the viewer closed the dialog without a completed unlock) complete the
+  set. `'unavailable'` also covers a position that does not exist, a second request
+  for a position whose dialog is already open, and an unlock whose orchestrator write
+  got no answer (`message` says to check back). Treat an unknown outcome like
+  `'unavailable'`.
 
-The reply waits for the viewer, so it uses the human-interaction timeout. In the mock
-host a `'pool'` position unlocks (`generation: { outputUnlock: 'dismiss' }` closes the
-dialog instead, `'insufficient'` answers `'refused'`), a `'ceiling'` / `'unrated'` one
-answers `'linked-out'`.
+The reply waits for the viewer, so it uses the human-interaction timeout (10 minutes):
+`unlockOutput` rejects when it runs out, which is also what an older host without an
+unlock handler produces, and when the host replies with an `error`.
+
+In the mock host, `generation.outputUnlock` decides a `'pool'` position: `'unlock'`
+(default), `'dismiss'`, `'insufficient'` (`'refused'`) or `'not-released'`.
+`generation.outputUnlockRestricted` decides a `'ceiling'` / `'unrated'` one:
+`'dismiss'` (default), `'link-out'` (`'linked-out'`) or `'settings'` (`'unavailable'`).
+As on the host, a missing position and a second open request for one position answer
+`'unavailable'`.
 
 #### Queue position, ETA and progress
 

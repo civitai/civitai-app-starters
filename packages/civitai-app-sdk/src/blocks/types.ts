@@ -3058,7 +3058,9 @@ export type BlockWorkflowOutput =
  *   nothing was charged. `message` says so.
  * - `'linked-out'` — the site your app runs on cannot show it, and the viewer opened
  *   your app on civitai.red, at the same page, to see it there. Never charged.
- * - `'dismissed'` — the viewer closed the dialog. Nothing was charged.
+ * - `'dismissed'` — the viewer closed the dialog without a completed unlock. If an
+ *   unlock attempt failed before they closed it, its charge state is unknown: poll
+ *   the workflow to see the output's current entry.
  * - `'unavailable'` — it cannot be unlocked here; `message` says why (for example,
  *   the viewer's own mature content settings hide it).
  */
