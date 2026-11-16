@@ -944,15 +944,26 @@ function isModeratedUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
- * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — an
- * UNSCANNED private img2img source `{ url, width, height }` (no imageId /
- * nsfwLevel). Mirrors civitai's `BlockSourceImageInfo`.
+ * `imageId` / `ready` of a generation source the host kept as a private scanned
+ * row: each optional, and when present a positive integer / a boolean.
+ */
+function hasValidScannedRowFields(s: Record<string, unknown>): boolean {
+  if (s.imageId !== undefined && !isPositiveInteger(s.imageId)) return false;
+  if (s.ready !== undefined && typeof s.ready !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — a
+ * private img2img source `{ url, width, height }` (no nsfwLevel), plus
+ * `imageId` / `ready` when the host kept it as a scanned row. Mirrors civitai's
+ * `BlockSourceImageInfo`.
  */
 function isGenerationSourceUpload(s: Record<string, unknown>): boolean {
   if (!isNonEmptyString(s.url)) return false;
   if (!isFiniteNumber(s.width) || s.width <= 0) return false;
   if (!isFiniteNumber(s.height) || s.height <= 0) return false;
-  return true;
+  return hasValidScannedRowFields(s);
 }
 
 /**
@@ -1921,7 +1932,7 @@ function isValidMediaUploadInfo(s: unknown): boolean {
     return false;
   }
   if (s.durationMs !== undefined && (!isFiniteNumber(s.durationMs) || s.durationMs < 0)) return false;
-  return true;
+  return hasValidScannedRowFields(s);
 }
 
 /**

@@ -2388,7 +2388,7 @@ answers a raw `multiple` + Checkpoint request with the host's error.
 
 Host-mediated image upload — the host opens its native upload modal and the
 iframe never handles the bytes. Resolves with a moderated image (or `null` on
-dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source,
+dismiss); pass `{ purpose: 'generationSource' }` for a private img2img source,
 `{ purpose: 'trainingData' }` for several private training images in one call
 (`[{ url, air }] | null` — see the LoRA training section), or
 `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
@@ -2406,6 +2406,17 @@ if (img) {
   });
 }
 ```
+
+**`{ purpose: 'generationSource' }`** resolves with `{ url, width, height }`, ready
+for a `sourceImages` entry. When the host keeps picked sources as private, scanned
+images (it does while Civitai requires scanned generation sources from apps), the
+answer also carries `imageId` and `ready` (`BlockUploadedGenerationSource`), with the
+meaning they have for [`usePersistGenerationSource()`](#usepersistgenerationsource):
+`ready: false` means the scan is still running, and a generation using the source is
+refused with `'source-scan-pending'` until it finishes, so retry that generation
+shortly. An image the scan refuses is an upload error. Without the two fields the
+source is unscanned and usable at once. A single `useMediaUpload()` image carries the
+same two fields under the same rule.
 
 ### `useUploadImageBytes()`
 
