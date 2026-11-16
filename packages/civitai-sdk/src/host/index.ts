@@ -108,8 +108,8 @@ export interface Host {
    * civitai's own upload modal. The bytes go through the host's session, never
    * through the frame, and `null` means the viewer closed it without uploading.
    *
-   * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
-   * here, scanned by the orchestrator when the workflow runs.
+   * `purpose: 'generationSource'` uploads a PRIVATE img2img source; see
+   * {@link SourceImage} for its `imageId` and `ready`.
    */
   openImageUpload(
     args: { purpose: 'generationSource' },
@@ -395,9 +395,16 @@ function openDisplayUpload(
 
 function asSourceImage(value: unknown): SourceImage | null {
   const v = value as Partial<SourceImage> | undefined;
-  return typeof v?.url === 'string' && typeof v.width === 'number' && typeof v.height === 'number'
-    ? { url: v.url, width: v.width, height: v.height }
-    : null;
+  if (typeof v?.url !== 'string' || typeof v.width !== 'number' || typeof v.height !== 'number') {
+    return null;
+  }
+  return {
+    url: v.url,
+    width: v.width,
+    height: v.height,
+    ...(typeof v.imageId === 'number' ? { imageId: v.imageId } : {}),
+    ...(typeof v.ready === 'boolean' ? { ready: v.ready } : {}),
+  };
 }
 
 function asPendingUpload(value: unknown): { imageId: number; url: string } | null {
