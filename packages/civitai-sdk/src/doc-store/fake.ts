@@ -126,6 +126,18 @@ const SHARED_WRITE_BUDGET: readonly (readonly [number, number])[] = [
   [300, (DAY * 1000) / 300],
   [10, 30 * 60 * 1000],
 ];
+/**
+ * Server-side publish's own budget (`DOC_STORE_PUBLISH_BUDGET`): one token per publish call,
+ * burst 10 and daily 10, one back every 2.4 hours; rejections as above. Never the shared one.
+ */
+const PUBLISH_BUDGET: readonly (readonly [number, number])[] = [
+  [10, (DAY * 1000) / 10],
+  [10, (DAY * 1000) / 10],
+  [10, 30 * 60 * 1000],
+];
+/** Keys per publish or unpublish call, and copies pruned per publish. */
+const PUBLISH_MAX_KEYS = 500;
+const PUBLISH_PRUNE_LIMIT = 500;
 
 /** The default scanner's words: the contract's `conventions`, so a test can reach each refusal. */
 export const FAKE_STORAGE_MODERATION = Object.freeze({
@@ -276,6 +288,13 @@ export interface FakeStorageOptions {
    * Default: {@link FAKE_STORAGE_MODERATION}'s words.
    */
   moderate?: (text: string) => FakeModerationVerdict;
+  /**
+   * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
+   * `true`. `false` models a civitai.com that does not serve them — an older release, or the
+   * app's host flag off — which answers both as an unknown route (404 `not_found`), so an app can
+   * test its fallback; the client reports that as `publish_unavailable`.
+   */
+  publish?: boolean;
 }
 
 /** One request as the fake received it, and what it answered. */
@@ -566,6 +585,25 @@ function byCodePoint(a: string, b: string): number {
 }
 
 /**
+ * A JSON value's text with every object's keys sorted: equal content, equal text, as the
+ * server's jsonb text form compares a copy with its private document.
+ */
+function canonical(value: unknown): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(sort)
+      : isObject(v)
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]))
+        : v;
+  return JSON.stringify(sort(value));
+}
+
+/** A refusal raised for one document of a publish, with its key added. */
+function withKey(err: unknown, key: string): unknown {
+  return err instanceof Refusal ? refuse(err.code, err.message, { ...err.details, key }) : err;
+}
+
+/**
  * The stored unit: the length of the database's text form of the JSON, which puts a
  * space after every `:` and `,`. (Exact except where the two spell a number
  * differently, e.g. an exponent.)
@@ -686,31 +724,38 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
   }
 
-  /** Three continuously refilling buckets; each slot is the instant that bucket is full again. */
-  function reserveSharedWrite(uid: string): (rejected: boolean) => void {
+  /**
+   * Three continuously refilling buckets; each slot is the instant that bucket is full again.
+   * The shared write budget by default; a publish passes its own (its own key, too).
+   */
+  function reserveSharedWrite(
+    uid: string,
+    budget = SHARED_WRITE_BUDGET,
+    refusal = { message: 'shared write budget exhausted', bucket: 'shared-write' },
+  ): (rejected: boolean) => void {
     if (!options.enforceRateLimits) return () => undefined;
     const t = now();
     const full = (budgets.get(uid) ?? [t, t, t]).map((f) => Math.max(f, t));
     let wait = 0;
-    SHARED_WRITE_BUDGET.forEach(([cap, iv], i) => {
+    budget.forEach(([cap, iv], i) => {
       wait = Math.max(wait, full[i]! - t - (cap - 1) * iv);
     });
     if (wait > 0) {
-      throw refuse('rate_limited', 'shared write budget exhausted', {
-        bucket: 'shared-write',
+      throw refuse('rate_limited', refusal.message, {
+        bucket: refusal.bucket,
         retryAfter: Math.max(1, Math.ceil(wait / 1000)),
       });
     }
-    full[0]! += SHARED_WRITE_BUDGET[0]![1];
-    full[1]! += SHARED_WRITE_BUDGET[1]![1];
+    full[0]! += budget[0]![1];
+    full[1]! += budget[1]![1];
     budgets.set(uid, full);
     return (rejected: boolean) => {
       const t2 = now();
       const f = (budgets.get(uid) ?? [t2, t2, t2]).map((x) => Math.max(x, t2));
-      f[0] = Math.max(f[0]! - SHARED_WRITE_BUDGET[0]![1], t2);
-      f[1] = Math.max(f[1]! - SHARED_WRITE_BUDGET[1]![1], t2);
+      f[0] = Math.max(f[0]! - budget[0]![1], t2);
+      f[1] = Math.max(f[1]! - budget[1]![1], t2);
       if (rejected) {
-        const [cap, iv] = SHARED_WRITE_BUDGET[2]!;
+        const [cap, iv] = budget[2]!;
         f[2] = Math.min(f[2]! + iv, t2 + 2 * cap * iv);
       }
       budgets.set(uid, f);
@@ -1148,6 +1193,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   type Route =
     | { op: 'info' }
     | { op: 'list' | 'create' | 'getMany'; collection: string }
+    | { op: 'publish' | 'unpublish'; collection: string }
     | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
     | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string }
     // One update operator on one document; translated by `parseTallyPatch` before it runs.
@@ -1166,6 +1212,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         return pick({ GET: { op: 'list', collection: a! }, POST: { op: 'create', collection: a! } });
       case 2:
         if (a === '_get') return pick({ POST: { op: 'getMany', collection: b! } });
+        // Off, publish is not a route at all, as on a server that does not serve it.
+        if (a === '_publish' && options.publish !== false) return pick({ POST: { op: 'publish', collection: b! } });
+        if (a === '_unpublish' && options.publish !== false) return pick({ POST: { op: 'unpublish', collection: b! } });
         if (a!.startsWith('_')) return null;
         return pick({
           GET: { op: 'get', collection: a!, key: b! },
@@ -1431,7 +1480,13 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     let route = m.route;
     // Every collection route also takes `from` (an import); `info` takes none.
     const allowedQuery =
-      route.op === 'list' ? null : route.op === 'delete' ? ['ifVersion', 'from'] : route.op === 'info' ? [] : ['from'];
+      route.op === 'list'
+        ? null
+        : route.op === 'delete'
+          ? ['ifVersion', 'from']
+          : route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+            ? []
+            : ['from'];
     if (allowedQuery) {
       const stray = Object.keys(query).find((k) => !allowedQuery.includes(k));
       if (stray) throw invalid(`unknown query parameter ${stray}`);
@@ -1442,7 +1497,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     // Before the body is read, as the server resolves it; the call then runs AS THE SOURCE:
     // its data, declarations, ceilings and rate limits, and only the scopes the import confers.
     const imported =
-      route.op === 'info' ? null : resolveImport(caller, route, query, ownCtx, tokenScopes, consentUnavailable);
+      route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+        ? null
+        : resolveImport(caller, route, query, ownCtx, tokenScopes, consentUnavailable);
     const ctx = imported?.ctx ?? ownCtx;
     const scopes: readonly string[] = imported?.scopes ?? tokenScopes;
     const consentGone = imported ? false : consentUnavailable;
@@ -1601,6 +1658,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         if (shared && decl.write === 'none') moderateWrite({ key: route.key });
         return { status: 200, body: increment(ctx, coll, route.key, route.name, by as number | undefined) };
       }
+      case 'publish':
+        return { status: 200, body: publishDocs(ctx, coll, body, viewer!, requireSignedIn(), scopes, publishRefusal) };
+      case 'unpublish':
+        return { status: 200, body: unpublishDocs(ctx, coll, body, requireSignedIn()) };
       case 'mark':
       case 'unmark': {
         // A report cannot be withdrawn (withdraw + re-file would re-open a document a
@@ -1619,6 +1680,210 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         return { status: 200, body: route.name === REPORT ? { marked: result.marked } : result };
       }
     }
+  }
+
+  /**
+   * Server-side publish, as the server's `runPublish` and `publishCopies` do it, in their order:
+   * the body and the keys, the two collections, the publish consent, the trust gate, then every
+   * body that would be written checked (schema, `ownedModelVersions`) before the publish budget
+   * is spent, then moderation, then every change applied at once — the ceilings checked for the
+   * whole publish first, so a refusal leaves the store exactly as it was. Moderator hides are not
+   * modelled, so `hidden` never appears here.
+   */
+  function publishDocs(
+    ctx: Ctx,
+    to: string,
+    body: unknown,
+    viewer: FakeStorageViewer,
+    me: number,
+    scopes: readonly string[],
+    publishRefusal: () => Refusal,
+  ) {
+    const input = parseBody(
+      body,
+      { from: (v) => typeof v === 'string', keys: isStringArray, prune: (v) => typeof v === 'boolean', prunePrefix: (v) => typeof v === 'string' },
+      ['from', 'keys'],
+    );
+    const keys = assertPublishKeys(input.keys as string[]);
+    const prune = input.prune === true;
+    const prefix = input.prunePrefix as string | undefined;
+    if (prefix !== undefined) {
+      if (!prune) throw invalid('prunePrefix needs prune: true', { reason: 'prune_prefix_without_prune' });
+      if (!KEY.test(prefix)) throw invalid('prunePrefix must be 1–128 characters of [A-Za-z0-9._:-]');
+    }
+    const from = input.from as string;
+    if (!COLLECTION_NAME.test(from) || !ctx.app.collections.has(from)) {
+      throw refuse('collection_not_declared', `collection ${from} is not declared`, { collection: from });
+    }
+    const fromDecl = declOf(ctx, from);
+    const toDecl = declOf(ctx, to);
+    if (fromDecl.visibility !== 'private' || toDecl.visibility !== 'shared') {
+      throw invalid('publish copies from a private collection into a shared one', { reason: 'publish_visibility' });
+    }
+    assertShareWritable(toDecl);
+    if (!scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
+    assertTrusted(viewer);
+    storageOn();
+
+    const sourceOf = (key: string) => docs.get(docId(ctx, from, me, key));
+    const copyOf = (key: string) => docs.get(docId(ctx, to, 0, key));
+    const mine = (d: DocRow) => d.authorKind === 'user' && d.authorUid === me;
+    const plan = keys.map((key) => {
+      const source = sourceOf(key);
+      const copy = copyOf(key);
+      let action: 'create' | 'update' | 'unchanged' | 'missing' | 'not_author';
+      if (copy && !mine(copy)) action = 'not_author';
+      else if (!source) action = 'missing';
+      else if (!copy) action = 'create';
+      else action = canonical(copy.data) === canonical(source.data) ? 'unchanged' : 'update';
+      return { key, action, source, copy };
+    });
+    const toWrite = plan.filter((p) => p.action === 'create' || p.action === 'update');
+    for (const p of toWrite) {
+      try {
+        assertMatchesSchema(to, toDecl, p.source!.data);
+        assertOwnedModelVersions(toDecl, p.source!.data, viewer);
+      } catch (err) {
+        throw withKey(err, p.key);
+      }
+    }
+    const release = reserveSharedWrite(`${ctx.app.id}:${me}:publish`, PUBLISH_BUDGET, {
+      message: 'publish budget exhausted',
+      bucket: 'publish',
+    });
+    let landed = false;
+    try {
+      for (const p of toWrite) {
+        try {
+          moderateWrite({ data: p.source!.data, key: p.key });
+        } catch (err) {
+          throw withKey(err, p.key);
+        }
+      }
+      // The caller's own visible copies whose key has no private document left.
+      let candidates: string[] = [];
+      let pruneIncomplete = false;
+      if (prune) {
+        candidates = docsIn(ctx, to, 0)
+          .filter((d) => mine(d) && d.key.startsWith(prefix ?? '') && !sourceOf(d.key))
+          .map((d) => d.key)
+          .sort(byCodePoint);
+        pruneIncomplete = candidates.length > PUBLISH_PRUNE_LIMIT;
+        candidates = candidates.slice(0, PUBLISH_PRUNE_LIMIT);
+      }
+      const pruneSet = new Set(candidates);
+      let bytes = 0;
+      let count = 0;
+      for (const p of toWrite) {
+        const doc = serialize(p.source!.data);
+        indexRows(toDecl, doc);
+        const size = storedSize(doc);
+        bytes += size - (p.copy?.size ?? 0);
+        if (!p.copy) count += 1;
+      }
+      for (const key of candidates) {
+        bytes -= copyOf(key)!.size;
+        count -= 1;
+      }
+      const commit = chargeUsage(ctx, me, bytes, count, 'author');
+      commit();
+      const t = now();
+      const result = {
+        created: [] as string[],
+        updated: [] as string[],
+        unchanged: [] as string[],
+        pruned: [] as string[],
+        skipped: [] as { key: string; reason: string }[],
+        pruneIncomplete,
+      };
+      for (const p of plan) {
+        if (p.action === 'create' || p.action === 'update') {
+          const data = JSON.parse(JSON.stringify(p.source!.data)) as Record<string, unknown>;
+          const index = indexRows(toDecl, data);
+          const size = storedSize(data);
+          if (p.copy) {
+            Object.assign(p.copy, { data, size, version: p.copy.version + 1, updatedAt: t, index });
+            result.updated.push(p.key);
+          } else {
+            docs.set(docId(ctx, to, 0, p.key), {
+              key: p.key,
+              data,
+              size,
+              version: 1,
+              createdAt: t,
+              updatedAt: t,
+              authorUid: me,
+              authorKind: 'user',
+              index,
+              counters: new Map(),
+              markCounts: new Map(),
+              marks: new Set(),
+            });
+            result.created.push(p.key);
+          }
+        } else if (p.action === 'unchanged') {
+          result.unchanged.push(p.key);
+        } else if (!(p.action === 'missing' && pruneSet.has(p.key))) {
+          result.skipped.push({ key: p.key, reason: p.action });
+        }
+      }
+      for (const key of candidates) {
+        docs.delete(docId(ctx, to, 0, key));
+        result.pruned.push(key);
+      }
+      landed = true;
+      // A publish that changed nothing gives its token back.
+      if (result.created.length + result.updated.length + result.pruned.length === 0) release(false);
+      return result;
+    } catch (err) {
+      if (!landed) release(!isOurFault(err));
+      throw err;
+    }
+  }
+
+  function unpublishDocs(ctx: Ctx, to: string, body: unknown, me: number) {
+    const { keys: raw } = parseBody(body, { keys: isStringArray }, ['keys']);
+    const keys = assertPublishKeys(raw as string[]);
+    const toDecl = declOf(ctx, to);
+    if (toDecl.visibility !== 'shared') {
+      throw invalid('unpublish removes documents from a shared collection', { reason: 'publish_visibility' });
+    }
+    assertShareWritable(toDecl);
+    charge('write', me, ctx.app.id);
+    storageOn();
+    const result = { deleted: [] as string[], skipped: [] as { key: string; reason: string }[] };
+    let bytes = 0;
+    const gone: string[] = [];
+    for (const key of keys) {
+      const copy = docs.get(docId(ctx, to, 0, key));
+      if (!copy) result.skipped.push({ key, reason: 'missing' });
+      else if (!(copy.authorKind === 'user' && copy.authorUid === me)) result.skipped.push({ key, reason: 'not_author' });
+      else {
+        bytes += copy.size;
+        gone.push(key);
+      }
+    }
+    if (gone.length > 0) chargeUsage(ctx, me, -bytes, -gone.length, 'author')();
+    for (const key of gone) {
+      docs.delete(docId(ctx, to, 0, key));
+      result.deleted.push(key);
+    }
+    return result;
+  }
+
+  /** 1–500 keys, each valid, none twice; returned in key order. */
+  function assertPublishKeys(keys: string[]): string[] {
+    if (keys.length === 0) throw invalid('keys must name at least one document', { reason: 'empty_keys' });
+    if (keys.length > PUBLISH_MAX_KEYS) {
+      throw invalid(`at most ${PUBLISH_MAX_KEYS} keys per call`, { reason: 'too_many_keys', max: PUBLISH_MAX_KEYS });
+    }
+    const seen = new Set<string>();
+    for (const key of keys) {
+      assertKey(key);
+      if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
+      seen.add(key);
+    }
+    return [...seen].sort(byCodePoint);
   }
 
   /**
