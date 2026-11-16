@@ -4339,8 +4339,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'REQUEST_OUTPUT_UNLOCK': {
             if (!isRoutableRequestId(requestId)) return;
-            const workflowId = typed.payload?.workflowId;
-            const position = typed.payload?.position;
+            // The dispatcher's `typed` is not narrowed per case; read the payload as untrusted.
+            const unlockPayload = typed.payload as
+              | { workflowId?: unknown; position?: unknown }
+              | undefined;
+            const workflowId = unlockPayload?.workflowId;
+            const position = unlockPayload?.position;
             const reply = (result: BlockOutputUnlockResult) =>
               dispatchToBlock({ type: 'OUTPUT_UNLOCK_RESULT', payload: { requestId, result } });
             const wf = typeof workflowId === 'string' ? workflows.get(workflowId) : undefined;

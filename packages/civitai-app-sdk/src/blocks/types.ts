@@ -3077,8 +3077,8 @@ export type KnownBlockOutputUnlockOutcome =
  *
  * The host decides what to offer from the live workflow, never from your app: an
  * output restricted for the paying Buzz pool (`reason: 'pool'`) can be unlocked with
- * yellow Buzz (the viewer confirms the price in the host's dialog; your app's author
- * share applies); one restricted for `'ceiling'` or `'unrated'` is never charged (the
+ * yellow Buzz (the viewer confirms the price in the host's dialog; no author share is
+ * added to an unlock); one restricted for `'ceiling'` or `'unrated'` is never charged (the
  * host links to civitai.red when that site could show it).
  */
 export interface BlockOutputUnlockResult {

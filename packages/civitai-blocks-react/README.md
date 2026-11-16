@@ -719,8 +719,9 @@ if (result.outcome === 'unlocked') setSnapshot(result.snapshot!); // outputs[1] 
 
 - **`reason: 'pool'`** (the Buzz that paid does not cover mature content): the viewer
   can unlock it with yellow Buzz at the price the host shows, the same unlock as on
-  civitai.com. Your app's author share applies, and the spend counts toward the
-  viewer's daily Buzz limit for your app (`'refused'` when it is reached).
+  civitai.com. No author share is added (your app was paid on the original
+  generation, if at all), and the spend counts toward the viewer's daily Buzz limit
+  for your app (`'refused'` when it is reached).
 - **`'ceiling'` / `'unrated'`**: never charged. When the site your app runs on is
   what keeps it out, the host offers civitai.red (`'linked-out'`); when the viewer's
   own settings hide it, `'unavailable'` with a message.

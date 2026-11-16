@@ -23,9 +23,10 @@ export interface UseOutputUnlock {
  * Offer it on an output whose entry is `{ restricted: true }`. The host reads the
  * live workflow and decides what to offer; your app supplies only the position:
  * - `reason: 'pool'` (the paying Buzz pool does not cover mature content): the
- *   viewer can unlock it with yellow Buzz at the price the host shows (your app's
- *   author share applies, and the spend counts toward the viewer's daily limit for
- *   your app). On `'unlocked'`, `result.snapshot.outputs[position]` carries the url.
+ *   viewer can unlock it with yellow Buzz at the price the host shows (no author
+ *   share is added: your app was paid on the original generation, if at all; the
+ *   spend counts toward the viewer's daily limit for your app). On `'unlocked'`,
+ *   `result.snapshot.outputs[position]` carries the url.
  * - `'ceiling'` / `'unrated'`: never charged. The host links the viewer to
  *   civitai.red when that site could show it (`'linked-out'`), or explains why not
  *   (`'unavailable'`).
