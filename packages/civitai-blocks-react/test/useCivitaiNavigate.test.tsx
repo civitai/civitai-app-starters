@@ -120,6 +120,24 @@ describe('useCivitaiNavigate', () => {
     expect(lastSent().payload).toEqual({ path: 'models/12345', scope: 'site', target: 'new_tab' });
   });
 
+  // HQ app_blocks_sdk_j1gc: `replace: true` asks the host to REPLACE the history entry
+  // instead of pushing one. Exact payloads, so `replace` is sent only when asked for.
+  it('🔴 sends `replace: true` when the caller asks to replace the history entry', () => {
+    const { result } = renderHook(() => useCivitaiNavigate());
+    act(() => {
+      result.current.navigate('c/42?take=4', { replace: true });
+    });
+    expect(lastSent().payload).toEqual({ path: 'c/42?take=4', target: 'current', replace: true });
+  });
+
+  it('omits `replace` when false or absent (an ordinary navigate pushes a history entry)', () => {
+    const { result } = renderHook(() => useCivitaiNavigate());
+    act(() => {
+      result.current.navigate('c/42', { replace: false });
+    });
+    expect(lastSent().payload).toEqual({ path: 'c/42', target: 'current' });
+  });
+
   it('sends an EXPLICIT `scope: "app"` through rather than dropping it', () => {
     const { result } = renderHook(() => useCivitaiNavigate());
     act(() => {

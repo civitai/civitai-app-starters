@@ -1400,6 +1400,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('RESOURCE_FILE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('GENERATION_SOURCE_PERSISTED')).toBeTypeOf('function');
+    expect(payloadValidatorFor('SHARE_LINK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');

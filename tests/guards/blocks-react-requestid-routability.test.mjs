@@ -229,21 +229,22 @@ const HELPER_CALL_LEDGER = {
   // +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS refusals, +1 OPEN_MEDIA_UPLOAD refusal,
   // -1 PREPARE_TRAINING_DATASET (removed from the protocol, civitai/civitai#6461),
   // +1 GET_RESOURCE_FILE refusal (#664), +1 OPEN_MEDIA_UPLOAD_BATCH refusal,
-  // +1 PERSIST_GENERATION_SOURCE refusal
-  'internal/liveHost.ts': 26,
+  // +1 PERSIST_GENERATION_SOURCE refusal, +1 SHARE_LINK
+  'internal/liveHost.ts': 27,
   // +1 SAVE_IMAGE (#583), +1 OPEN_IMAGE_UPLOAD { bytes } (#582), +1 ESTIMATE_WORKFLOW_BATCH,
   // +1 RUN_CONFIRMED_STEP, +1 OPEN_IMAGE_PICKER (#626), +2 SET_ENTITY_REACTION / GET_ENTITY_REACTIONS,
   // +1 OPEN_MEDIA_UPLOAD, -1 PREPARE_TRAINING_DATASET (removed, civitai/civitai#6461),
-  // +1 GET_RESOURCE_FILE (#664), +1 OPEN_MEDIA_UPLOAD_BATCH, +1 PERSIST_GENERATION_SOURCE
-  'internal/mockHost.ts': 26,
+  // +1 GET_RESOURCE_FILE (#664), +1 OPEN_MEDIA_UPLOAD_BATCH, +1 PERSIST_GENERATION_SOURCE,
+  // +1 SHARE_LINK
+  'internal/mockHost.ts': 27,
   'transport/iframeTransport.ts': 2,
   // +1 isValidEstimateBatchResult, +1 isValidConfirmedStepResult, +1 isValidImagePickerResult,
   // +2 isValidEntityReactionResult / isValidEntityReactionsResult, +1 isValidMediaUploadResult,
   // -1 isValidTrainingDatasetResult (its reply was removed, civitai/civitai#6461),
   // +1 isValidResourceFileResult (#664), +1 isValidMediaUploadBatchResult,
   // -13 the App Storage / shared-storage reply validators (legacy stores removed),
-  // +1 isValidGenerationSourcePersistedResult
-  'transport/validate.ts': 31,
+  // +1 isValidGenerationSourcePersistedResult, +1 isValidShareLinkResult
+  'transport/validate.ts': 32,
 };
 
 test('every consolidated call site is accounted for (asserted ledger)', () => {

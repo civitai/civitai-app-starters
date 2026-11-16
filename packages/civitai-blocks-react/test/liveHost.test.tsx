@@ -1976,7 +1976,7 @@ describe('createLiveHost — NAVIGATE', () => {
     const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
     // No leading slash: the sub-path BELOW the app root, matching the
     // `PageSlotContext.subPath` field it updates.
-    expect(msg).toEqual({ subPath: 'detail/7' });
+    expect(msg).toEqual({ subPath: 'detail/7', search: '', hash: '' });
     expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/detail/7`);
   });
 
@@ -2051,7 +2051,7 @@ describe('createLiveHost — NAVIGATE', () => {
     // …and a DIFFERENT route still reflects, so the seed is a seed and not a mute.
     post('NAVIGATE', { path: 'detail/7' });
     const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
-    expect(msg).toEqual({ subPath: 'detail/7' });
+    expect(msg).toEqual({ subPath: 'detail/7', search: '', hash: '' });
   });
 
   it('app scope + new_tab opens the DEV origin, not the site', async () => {
@@ -2146,6 +2146,109 @@ describe('createLiveHost — NAVIGATE', () => {
     post('NAVIGATE', { path: '50%25-off/x', scope: 'site' });
     await new Promise((r) => setTimeout(r, 10));
     expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/50%25-off/x');
+  });
+
+  // HQ app_blocks_sdk_j1gc: the dev host mirrors the page host's search/hash forwarding
+  // and its history semantics.
+  it('🔴 a navigate carrying ?query#hash reflects them as search and hash, not inside subPath', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'c/42?take=3#top' });
+    const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
+    expect(msg).toEqual({ subPath: 'c/42', search: '?take=3', hash: '#top' });
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/c/42?take=3#top`);
+  });
+
+  it('🔴 replace:true replaces the history entry instead of pushing one', async () => {
+    const replaceSpy = vi.spyOn(window.history, 'replaceState');
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    replaceSpy.mockClear();
+    pushSpy.mockClear();
+    post('NAVIGATE', { path: 'c/42?take=4', replace: true });
+    const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
+    expect(msg).toEqual({ subPath: 'c/42', search: '?take=4', hash: '' });
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/c/42?take=4`);
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it('🔴 back (popstate) reflects the location the browser moved to, search and hash included', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    window.history.pushState(null, '', `${ORIGIN}/gallery?sort=new#grid`);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
+    expect(msg).toEqual({ subPath: 'gallery', search: '?sort=new', hash: '#grid' });
+  });
+});
+
+describe('createLiveHost — SHARE_LINK', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let writeText: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+    writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+    delete (navigator as unknown as Record<string, unknown>).clipboard;
+  });
+
+  function install() {
+    uninstall = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      context: {
+        slotId: 'app.page',
+        entityType: 'none',
+        slug: 'live-characters',
+        subPath: '',
+        viewerUserId: 42,
+      },
+    }).install();
+  }
+
+  it('replies with the canonical run URL on the backend origin, copied', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-share', subPath: 'c/42', search: '?take=3' });
+    const payload = await waitForMessage(inbound, 'SHARE_LINK_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-share',
+      result: {
+        url: 'https://civitai.com/apps/run/live-characters/c/42?take=3',
+        copied: true,
+        method: 'clipboard',
+      },
+    });
+    expect(writeText).toHaveBeenCalledWith('https://civitai.com/apps/run/live-characters/c/42?take=3');
+  });
+
+  it('a rejected clipboard write is copied:false, method none', async () => {
+    writeText.mockRejectedValueOnce(new Error('denied'));
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-share2', subPath: 'c/1' });
+    const payload = await waitForMessage(inbound, 'SHARE_LINK_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-share2',
+      result: { url: 'https://civitai.com/apps/run/live-characters/c/1', copied: false, method: 'none' },
+    });
+  });
+
+  it('refuses an escaping subPath like the page host', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARE_LINK', { requestId: 'r-share3', subPath: '../other-app' });
+    const payload = await waitForMessage(inbound, 'SHARE_LINK_RESULT');
+    expect(payload).toEqual({ requestId: 'r-share3', error: 'invalid share link' });
+    expect(writeText).not.toHaveBeenCalled();
   });
 });
 

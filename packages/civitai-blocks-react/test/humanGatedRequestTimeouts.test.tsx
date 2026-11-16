@@ -14,6 +14,7 @@ import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRunConfirmedStep } from '../src/hooks/useRunConfirmedStep.js';
 import { useRunTraining } from '../src/hooks/useRunTraining.js';
+import { useShareLink } from '../src/hooks/useShareLink.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   HUMAN_GATED_REQUEST_TYPES,
@@ -106,6 +107,10 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => useCollectionFollow());
     return () => result.current.setFollow({ collectionId: 42, follow: true });
   },
+  SHARE_LINK: () => {
+    const { result } = renderHook(() => useShareLink());
+    return () => result.current.share({ subPath: 'c/42' });
+  },
   CREATE_POST_FROM_APP: () => {
     const { result } = renderHook(() => useCreatePostFromApp());
     return () =>
@@ -168,6 +173,10 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   PUBLISH_GENERATION_OUTPUTS: {
     type: 'PUBLISH_RESULT',
     extra: { result: { imageIds: [1] } },
+  },
+  SHARE_LINK: {
+    type: 'SHARE_LINK_RESULT',
+    extra: { result: { url: 'https://civitai.com/apps/run/x/c/42', copied: true, method: 'clipboard' } },
   },
   SET_COLLECTION_FOLLOW: {
     type: 'COLLECTION_FOLLOW_RESULT',
@@ -248,6 +257,9 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       // would reject with the dialog still open, so a viewer who then confirmed
       // would get a followed collection and a block showing a failure.
       'SET_COLLECTION_FOLLOW',
+      // The host copies the link or opens the native share sheet, and a share sheet
+      // replies only when the viewer picks a target or dismisses it.
+      'SHARE_LINK',
     ] satisfies BlockToParentMessageType[]);
   });
 
