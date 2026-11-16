@@ -117,7 +117,10 @@ export function useUploadImageBytes(): UseUploadImageBytes {
       // No `ok` on this reply, so the presence-based helper (internal/replyError.ts).
       throwOnReplyError(reply, 'image upload failed');
       const selected = reply.selected;
-      if (selected && !('status' in selected) && 'imageId' in selected) return selected;
+      // A moderated image, not a generation source that also carries an `imageId`.
+      if (selected && !('status' in selected) && 'imageId' in selected && 'nsfwLevel' in selected) {
+        return selected;
+      }
       throw new Error(UPLOAD_IMAGE_BYTES_NO_IMAGE_ERROR);
     },
     [],

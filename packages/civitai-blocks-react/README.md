@@ -2388,7 +2388,7 @@ answers a raw `multiple` + Checkpoint request with the host's error.
 
 Host-mediated image upload — the host opens its native upload modal and the
 iframe never handles the bytes. Resolves with a moderated image (or `null` on
-dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source,
+dismiss); pass `{ purpose: 'generationSource' }` for a private img2img source,
 `{ purpose: 'trainingData' }` for several private training images in one call
 (`[{ url, air }] | null` — see the LoRA training section), or
 `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
@@ -2406,6 +2406,9 @@ if (img) {
   });
 }
 ```
+
+**`{ purpose: 'generationSource' }`** resolves with a `BlockUploadedGenerationSource`
+(`@civitai/app-sdk/blocks`; see its docs for `imageId` and `ready`).
 
 ### `useUploadImageBytes()`
 

@@ -57,9 +57,13 @@ export interface UploadedImage {
 }
 
 /**
- * A private img2img source. The host stores it UNSCANNED — the orchestrator
- * scans it when the workflow runs — so it carries no moderation verdict and
- * belongs in a generation step, not on a surface other viewers can see.
+ * A private img2img source. It carries no moderation verdict and belongs in a
+ * generation step, not on a surface other viewers can see.
+ *
+ * `imageId` and `ready` are set when the host kept the source as a private,
+ * scanned image: as on `BlockUploadedGenerationSource` (`@civitai/app-sdk/blocks`).
+ * Without them the source is unscanned, and the orchestrator scans it when the
+ * workflow runs.
  *
  * A step takes the url and the dimensions separately: `sourceImage` is the url,
  * and `width`/`height` are the step's own.
@@ -68,6 +72,8 @@ export interface SourceImage {
   url: string;
   width: number;
   height: number;
+  imageId?: number;
+  ready?: boolean;
 }
 
 /**

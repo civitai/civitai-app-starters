@@ -214,6 +214,7 @@ export type {
   BlockResourceFileMeta,
   BlockPersistGenerationSourceRequest,
   BlockPersistedGenerationSource,
+  BlockUploadedGenerationSource,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
