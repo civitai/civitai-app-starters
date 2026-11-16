@@ -45,7 +45,7 @@ import {
   type BlockResourceInfo,
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
-  type BlockGenerationSourceImageInfo,
+  type BlockUploadedGenerationSource,
   type BlockPersistedGenerationSource,
   type BlockShareLinkMethod,
   type BlockImageScanResult,
@@ -1193,11 +1193,13 @@ export interface MockHostOptions {
    * The canned source image returned from `OPEN_IMAGE_UPLOAD` when the block
    * requests `purpose:'generationSource'` — what
    * `useImageUpload({ purpose:'generationSource' }).open()` resolves with. The
-   * UNSCANNED private img2img shape `{ url, width, height }`. `null` simulates a
-   * dismissed modal (→ no `selected`). Absent →
-   * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}.
+   * private img2img shape `{ url, width, height }` (the host with its
+   * scanned-rows rule off). Add `imageId` and `ready` to answer as the host does
+   * with it on, where the source is a private scanned row (`ready: false`: the
+   * scan was still running). `null` simulates a dismissed modal (→ no
+   * `selected`). Absent → {@link DEFAULT_GENERATION_SOURCE_UPLOAD}.
    */
-  cannedGenerationSourceUpload?: BlockGenerationSourceImageInfo | null;
+  cannedGenerationSourceUpload?: BlockUploadedGenerationSource | null;
   /**
    * The canned ASYNC scan verdict streamed on `IMAGE_SCAN_RESOLVED` after an
    * `asyncScan:true` display upload early-resolves (what
@@ -2104,9 +2106,9 @@ const DEFAULT_IMAGE_UPLOAD: BlockUploadedImageInfo = {
 
 /**
  * The canned source image the mock host "returns" from `OPEN_IMAGE_UPLOAD` when
- * the block requested `purpose:'generationSource'`. Mirrors the host's
- * UNSCANNED {@link BlockGenerationSourceImageInfo} shape (`{ url, width, height }`
- * — no imageId/nsfwLevel). `null` simulates a user-dismissed modal. The url is a
+ * the block requested `purpose:'generationSource'`. Mirrors the host's blob
+ * reply (`{ url, width, height }`, no imageId/ready: its scanned-rows rule off;
+ * see {@link BlockUploadedGenerationSource}). `null` simulates a user-dismissed modal. The url is a
  * Civitai-hosted image so a dev can feed it straight into a `sourceImage` body.
  */
 /**
@@ -2124,7 +2126,7 @@ const DEFAULT_IMAGE_BYTES_UPLOAD: BlockUploadedImageInfo = {
 /** Where the default `trainingData` upload's placeholder blob urls point. */
 const DEFAULT_TRAINING_DATA_URL_BASE = 'https://blobs.mock.invalid/v2/consumer/blobs/';
 
-const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
+const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockUploadedGenerationSource = {
   url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
   width: 1024,
   height: 1024,
@@ -2757,7 +2759,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
   // Canned generationSource-upload result (purpose:'generationSource').
-  let cannedGenerationSourceUpload: BlockGenerationSourceImageInfo | null =
+  let cannedGenerationSourceUpload: BlockUploadedGenerationSource | null =
     options.cannedGenerationSourceUpload === undefined
       ? DEFAULT_GENERATION_SOURCE_UPLOAD
       : options.cannedGenerationSourceUpload;

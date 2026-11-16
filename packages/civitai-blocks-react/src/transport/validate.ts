@@ -951,9 +951,10 @@ function isModeratedUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
- * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — an
- * UNSCANNED private img2img source `{ url, width, height }` (no imageId /
- * nsfwLevel). Mirrors civitai's `BlockSourceImageInfo`.
+ * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — a
+ * private img2img source `{ url, width, height }` (no nsfwLevel), plus
+ * `imageId` / `ready` when the host kept it as a scanned row. Mirrors civitai's
+ * `BlockSourceImageInfo`.
  */
 function isGenerationSourceUpload(s: Record<string, unknown>): boolean {
   if (!isNonEmptyString(s.url)) return false;

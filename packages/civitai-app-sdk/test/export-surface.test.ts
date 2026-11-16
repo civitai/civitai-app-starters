@@ -119,9 +119,9 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
         'either is a breaking change.',
     },
     reason:
-      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 241 ' +
+      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 242 ' +
       'symbols of Civitai-Apps contract that an OAuth app never touches. Disjoint audiences. ' +
-      'The 241 is asserted below, not merely quoted — it said 119 against a real 125 until ' +
+      'The 242 is asserted below, not merely quoted — it said 119 against a real 125 until ' +
       '2026-10-04.',
   },
   './safe-storage': {
@@ -379,7 +379,7 @@ describe('root barrel / subpath relationship (#377)', () => {
     // When this goes red the fix is not to change the number here alone: update
     // BOTH prose sites in the same commit, and say in the changeset whether the
     // additions are a `minor` (they are, for a published subpath).
-    expect(surface.get('./blocks')!.size).toBe(241);
+    expect(surface.get('./blocks')!.size).toBe(242);
   });
 
   it('🔴 keeps EXACTLY the seven deprecated legacy-store constants on `./blocks` until app-sdk 1.0.0', async () => {

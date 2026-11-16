@@ -217,6 +217,7 @@ export type {
   BlockShareLinkMethod,
   BlockShareLinkRequest,
   BlockShareLinkResult,
+  BlockUploadedGenerationSource,
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,

@@ -3789,8 +3789,8 @@ export interface Host {
      * civitai's own upload modal. The bytes go through the host's session, never
      * through the frame, and `null` means the viewer closed it without uploading.
      *
-     * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
-     * here, scanned by the orchestrator when the workflow runs.
+     * `purpose: 'generationSource'` uploads a PRIVATE img2img source; see
+     * {@link SourceImage} for its `imageId` and `ready`.
      */
     openImageUpload(args: {
         purpose: 'generationSource';

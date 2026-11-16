@@ -227,6 +227,7 @@ export type {
   BlockSourceImage,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockUploadedGenerationSource,
   BlockPersistGenerationSourceRequest,
   BlockPersistedGenerationSource,
   BlockImagePickerSource,

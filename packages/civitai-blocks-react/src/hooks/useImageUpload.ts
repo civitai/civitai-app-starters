@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import type {
-  BlockGenerationSourceImageInfo,
   BlockImageScanResult,
   BlockPendingImageInfo,
   BlockTrainingDataImage,
+  BlockUploadedGenerationSource,
   BlockUploadedImageInfo,
   BlockUploadPurpose,
 } from '@civitai/app-sdk/blocks';
@@ -51,7 +51,8 @@ export interface UseImageUpload {
 
 /** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
 export interface UseImageUploadGenerationSource {
-  open: () => Promise<BlockGenerationSourceImageInfo | null>;
+  /** The source, or `null` on dismiss. See {@link BlockUploadedGenerationSource}. */
+  open: () => Promise<BlockUploadedGenerationSource | null>;
 }
 
 /** What {@link useImageUpload} returns for `{ purpose: 'trainingData' }`. */
@@ -87,7 +88,7 @@ export interface UseImageUploadAsyncScan {
 export interface UseImageUploadImplementation {
   open: () => Promise<
     | BlockUploadedImageInfo
-    | BlockGenerationSourceImageInfo
+    | BlockUploadedGenerationSource
     | BlockPendingImageInfo
     | BlockTrainingDataImage[]
     | null
@@ -101,9 +102,8 @@ export interface UseImageUploadOptions {
    * Upload MODE (default `'display'`):
    *  - `'display'` — a PUBLIC image; the host returns a MODERATED
    *    {@link BlockUploadedImageInfo} (scanned clean, within the SFW ceiling).
-   *  - `'generationSource'` — a PRIVATE img2img source; UNSCANNED, so the host
-   *    returns ONLY the source shape {@link BlockGenerationSourceImageInfo}
-   *    (`{ url, width, height }`).
+   *  - `'generationSource'` — a PRIVATE img2img source; the host returns a
+   *    {@link BlockUploadedGenerationSource}.
    *  - `'trainingData'` — PRIVATE training images for a `kind: 'training'` run
    *    (page apps only): up to 50 picked in one host modal, returned together as
    *    {@link BlockTrainingDataImage}`[]`.
@@ -173,9 +173,9 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  *    obtain it with `scanStatus(handle)`. Do NOT persist the image to a
  *    cross-user surface until `scanStatus` resolves `'scanned'`.
  *  - `'generationSource'` → resolves with the source
- *    {@link BlockGenerationSourceImageInfo} (`{ url, width, height }`, UNSCANNED —
- *    the orchestrator scans it at gen time), or `null` on dismiss. Feed it
- *    straight into a `WorkflowBody.sourceImage` for an img2img graph.
+ *    {@link BlockUploadedGenerationSource} (`imageId` / `ready`: see there), or
+ *    `null` on dismiss. Feed it straight into a `WorkflowBody.sourceImage` for an
+ *    img2img graph.
  *  - `'trainingData'` → resolves with EVERY image the viewer uploaded,
  *    {@link BlockTrainingDataImage}`[]` (`{ url, air }` each), or `null` on
  *    cancel. Step 1 of a `kind: 'training'` run: pair each `air` with a caption
@@ -216,9 +216,9 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  * else retryLater(verdict.message);       // transient — re-call scanStatus(handle)
  *
  * @example
- * // generationSource (private img2img source, unscanned)
+ * // generationSource (private img2img source)
  * const { open } = useImageUpload({ purpose: 'generationSource' });
- * const src = await open();               // { url, width, height } | null
+ * const src = await open();               // BlockUploadedGenerationSource | null
  * if (!src) return;
  * await submit({ kind: 'textToImage', modelId, modelVersionId,
  *   sourceImage: src, params: { prompt } });

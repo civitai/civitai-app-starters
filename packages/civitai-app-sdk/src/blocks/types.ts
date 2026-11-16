@@ -276,9 +276,10 @@ export type BlockImageScanResult =
  *    routes through the session-authed scan pipeline (SFW + no-flag gate). The
  *    host returns a moderated {@link BlockUploadedImageInfo}.
  *  - `'generationSource'`: a PRIVATE generation INPUT (an img2img source image).
- *    UNSCANNED — the orchestrator scans it at generation time — so the host
- *    returns ONLY the source shape ({@link BlockGenerationSourceImageInfo}); no
- *    `imageId`/`nsfwLevel`/`contentRating` crosses back into the block.
+ *    The host returns the source shape ({@link BlockUploadedGenerationSource});
+ *    no `nsfwLevel`/`contentRating` crosses back into the block. While the
+ *    host's scanned-rows rule is on, the source is a private SCANNED row and
+ *    the reply also carries its `imageId` and `ready`.
  *  - `'trainingData'`: PRIVATE training images for a `kind: 'training'` run
  *    (civitai/civitai#6461). The viewer picks up to
  *    {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} PNG, JPEG or WebP files in a host
@@ -364,6 +365,37 @@ export interface BlockShareLinkResult {
  * lockstep.
  */
 export type BlockGenerationSourceImageInfo = BlockSourceImage;
+
+/**
+ * What `useImageUpload({ purpose: 'generationSource' })` resolves with: a
+ * {@link BlockGenerationSourceImageInfo} (`{ url, width, height }`, straight into
+ * a `sourceImages` entry), plus `imageId` and `ready` when the host kept the
+ * picked file as a private, SCANNED `Image` row.
+ *
+ * The host does that while its `app-block-source-scanned-rows` rule is on: it
+ * then refuses a generation source that is not a scanned image on Civitai, so it
+ * copies the upload into a row owned by the viewer, never on the app's shared
+ * grid and not postable, and returns that row, as `PERSIST_GENERATION_SOURCE`
+ * does ({@link BlockPersistedGenerationSource}):
+ *
+ * - `imageId` is the row's id.
+ * - `ready` says whether the scan finished; the host waits up to about 30 s.
+ *   `ready: false` means it is still running: a generation that uses the source
+ *   is refused with the `source-scan-pending` error code until it finishes, so
+ *   retry that generation later. A scan that refuses the image is an upload
+ *   error, and `open()` never resolves with that image.
+ *
+ * Both are ABSENT when the rule is off, and from a host that predates it: the
+ * source is then an unscanned private upload the orchestrator scans when the
+ * workflow runs, usable at once.
+ *
+ * Mirrors the host's `BlockSourceImageInfo` in civitai/civitai's
+ * `src/components/AppBlocks/BlockGenerationSourceUploadModal.tsx`.
+ */
+export interface BlockUploadedGenerationSource extends BlockGenerationSourceImageInfo {
+  imageId?: number;
+  ready?: boolean;
+}
 
 /**
  * What a block sends in `PERSIST_GENERATION_SOURCE`: ONE output of one of the
@@ -553,6 +585,10 @@ export interface BlockMediaUploadInfo {
   height?: number;
   /** Duration in milliseconds, for `'video'` / `'audio'` when known. Never set for `'image'`. */
   durationMs?: number;
+  /** As on {@link BlockUploadedGenerationSource}, for a single `'image'` upload. */
+  imageId?: number;
+  /** As on {@link BlockUploadedGenerationSource}. */
+  ready?: boolean;
 }
 
 /**

@@ -14,7 +14,7 @@ import type {
   BlockResourceInfo,
   BlockResourcePickerType,
   BlockUploadedImageInfo,
-  BlockGenerationSourceImageInfo,
+  BlockUploadedGenerationSource,
   BlockPersistedGenerationSource,
   BlockImagePickerSource,
   BlockPickedImageInfo,
@@ -925,9 +925,8 @@ export type ParentToBlockMessage =
       //     resolves the modal on PERSIST (before the scan). The scan verdict
       //     streams later on `IMAGE_SCAN_RESOLVED`. `status:'pending'` is the
       //     on-wire discriminant vs the moderated shape.
-      //   • `'generationSource'`: an UNSCANNED private img2img source
-      //     ({@link BlockGenerationSourceImageInfo} — only { url, width, height };
-      //     no imageId/nsfwLevel, scanned by the orchestrator at gen time).
+      //   • `'generationSource'`: a private img2img source
+      //     ({@link BlockUploadedGenerationSource}).
       //   • `'trainingData'` (civitai/civitai#6461): SEVERAL private training
       //     images in one reply ({@link BlockTrainingDataUploadResult} —
       //     `{ images: [{ url, air }] }`). A cancel is the bare `{ requestId }`.
@@ -945,7 +944,7 @@ export type ParentToBlockMessage =
         requestId: string;
         selected?:
           | BlockUploadedImageInfo
-          | BlockGenerationSourceImageInfo
+          | BlockUploadedGenerationSource
           | BlockPendingImageInfo
           | BlockTrainingDataUploadResult;
         /** A `bytes` upload's refusal or failure: a host string or a forwarded server message. */
@@ -1512,9 +1511,8 @@ export type BlockToParentMessage =
       //   • `'display'` — a PUBLIC image; routes through civitai's session-authed
       //     scan pipeline (SFW + no-flag gate). The host returns a MODERATED
       //     {@link BlockUploadedImageInfo} on `IMAGE_UPLOAD_RESULT`.
-      //   • `'generationSource'` — a PRIVATE img2img source; UNSCANNED (the
-      //     orchestrator scans at gen time). The host returns ONLY the source
-      //     shape ({@link BlockGenerationSourceImageInfo} — { url, width, height }).
+      //   • `'generationSource'` — a PRIVATE img2img source. The host returns a
+      //     {@link BlockUploadedGenerationSource}.
       //   • `'trainingData'` — PRIVATE training images for a `kind: 'training'`
       //     run (civitai/civitai#6461), PAGE APPS ONLY: the viewer picks up to 50
       //     in a host modal, each uploaded as a consumer blob. ONE reply carries

@@ -36,6 +36,22 @@ describe('host.openImageUpload — generationSource', () => {
     });
   });
 
+  it('passes through the imageId and ready of a source the host kept as a scanned image', async () => {
+    const t = createFakeTransport();
+    const scanned = {
+      url: 'https://image.civitai.com/k/original=true/k.jpeg',
+      width: 638,
+      height: 479,
+      imageId: 9001,
+      ready: false,
+    };
+    t.reply('OPEN_IMAGE_UPLOAD', { selected: scanned });
+
+    await expect(createHost(t).openImageUpload({ purpose: 'generationSource' })).resolves.toEqual(
+      scanned,
+    );
+  });
+
   it('resolves null when the viewer closes the modal', async () => {
     const t = createFakeTransport();
     t.reply('OPEN_IMAGE_UPLOAD', {});
