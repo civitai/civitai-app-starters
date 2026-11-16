@@ -27,7 +27,7 @@ describe('OUTPUT_UNLOCK_RESULT', () => {
   it('accepts each outcome shape the host sends', () => {
     for (const result of [
       { outcome: 'unlocked', snapshot: SNAPSHOT },
-      { outcome: 'refused', snapshot: SNAPSHOT, message: 'app Buzz limit reached' },
+      { outcome: 'refused', snapshot: SNAPSHOT, message: 'You do not have enough yellow Buzz to unlock this output.' },
       { outcome: 'not-restricted' },
       { outcome: 'linked-out' },
       { outcome: 'dismissed' },

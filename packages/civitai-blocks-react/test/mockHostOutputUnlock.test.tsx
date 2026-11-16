@@ -68,7 +68,18 @@ describe('useOutputUnlock — mock host', () => {
       });
       return snap;
     };
-    return { workflowId, unlock, poll };
+    /** Two requests for one position before either is answered. */
+    const unlockTwice = async (position: number) => {
+      let out!: BlockOutputUnlockResult[];
+      await act(async () => {
+        out = await Promise.all([
+          result.current.unlock.unlockOutput(workflowId, position),
+          result.current.unlock.unlockOutput(workflowId, position),
+        ]);
+      });
+      return out;
+    };
+    return { workflowId, unlock, unlockTwice, poll };
   }
 
   it("a 'pool' position unlocks in place and stays unlocked", async () => {
@@ -86,11 +97,36 @@ describe('useOutputUnlock — mock host', () => {
     expect(await unlock(1)).toStrictEqual({ outcome: 'not-restricted' });
   });
 
-  it("'ceiling' and 'unrated' are never charged: the viewer is linked out", async () => {
+  it("'ceiling' and 'unrated' by default: the viewer closes the dialog, nothing changes", async () => {
     const { unlock, poll } = await ran({
       images: IMAGES,
       restrictedOutputs: { 0: 'ceiling' },
       neverRatedOutputs: [2],
+    });
+    expect(await unlock(0)).toStrictEqual({ outcome: 'dismissed' });
+    expect(await unlock(2)).toStrictEqual({ outcome: 'dismissed' });
+    expect((await poll()).outputs?.[0]).toStrictEqual({ restricted: true, reason: 'ceiling' });
+  });
+
+  it("outputUnlockRestricted 'settings': unavailable, with the host's settings message", async () => {
+    const { unlock } = await ran({
+      images: IMAGES,
+      restrictedOutputs: { 0: 'ceiling' },
+      outputUnlockRestricted: 'settings',
+    });
+    expect(await unlock(0)).toStrictEqual({
+      outcome: 'unavailable',
+      message:
+        'This output is above your browsing level. Change your mature content settings to view it.',
+    });
+  });
+
+  it("outputUnlockRestricted 'link-out': 'ceiling' and 'unrated' are never charged, the viewer is linked out", async () => {
+    const { unlock, poll } = await ran({
+      images: IMAGES,
+      restrictedOutputs: { 0: 'ceiling' },
+      neverRatedOutputs: [2],
+      outputUnlockRestricted: 'link-out',
     });
     expect(await unlock(0)).toStrictEqual({ outcome: 'linked-out' });
     expect(await unlock(2)).toStrictEqual({ outcome: 'linked-out' });
@@ -120,6 +156,46 @@ describe('useOutputUnlock — mock host', () => {
     expect(result.message).toBe('You do not have enough yellow Buzz to unlock this output.');
     expect(result.snapshot?.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
     expect((await poll()).outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
+  });
+
+  it("'not-released': the reply carries the host's message, the output stays restricted", async () => {
+    const { unlock } = await ran({
+      images: IMAGES,
+      restrictedOutputs: { 1: 'pool' },
+      outputUnlock: 'not-released',
+    });
+    const result = await unlock(1);
+    expect(result.outcome).toBe('not-released');
+    expect(result.message).toBe(
+      'The unlock went through, but this output is rated above your browsing level, so it stays hidden.',
+    );
+    expect(result.snapshot?.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
+  });
+
+  it('positions that do not exist are unavailable, as on the host', async () => {
+    const { unlock } = await ran({ images: IMAGES, restrictedOutputs: { 1: 'pool' } });
+    expect(await unlock(3)).toStrictEqual({
+      outcome: 'unavailable',
+      message: 'output 3 does not exist',
+    });
+    expect(await unlock(-1)).toStrictEqual({
+      outcome: 'unavailable',
+      message: 'output -1 does not exist',
+    });
+    expect(await unlock(1.5)).toStrictEqual({
+      outcome: 'unavailable',
+      message: 'output 1.5 does not exist',
+    });
+  });
+
+  it('a second request for the same position while the first is open is unavailable', async () => {
+    const { unlockTwice } = await ran({ images: IMAGES, restrictedOutputs: { 1: 'pool' } });
+    const results = await unlockTwice(1);
+    expect(results.map((r) => r.outcome).sort()).toStrictEqual(['unavailable', 'unlocked']);
+    expect(results.find((r) => r.outcome === 'unavailable')).toStrictEqual({
+      outcome: 'unavailable',
+      message: 'This output is already being unlocked.',
+    });
   });
 
   it('an unrestricted position and a workflow the mock did not run', async () => {
