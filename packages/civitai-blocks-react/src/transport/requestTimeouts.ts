@@ -166,6 +166,11 @@ export type RequestTimeoutClass =
 const REQUEST_TIMEOUT_CLASS = {
   // ── Gated on a human ────────────────────────────────────────────────────
   OPEN_BUZZ_PURCHASE: 'human', //          viewer walks a purchase flow
+  // The host's unlock dialog: the viewer reads the price and confirms, follows the
+  // link to civitai.red, or closes it. At the 30s default a slow confirm would
+  // reject while the viewer is still deciding, and an unlock they then paid for
+  // would read to the block as a failure.
+  REQUEST_OUTPUT_UNLOCK: 'human',
   OPEN_CHECKPOINT_PICKER: 'human', //      viewer browses + picks
   OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file

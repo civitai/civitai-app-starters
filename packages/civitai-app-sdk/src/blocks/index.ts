@@ -275,6 +275,8 @@ export type {
   BlockWorkflowBlockedOutput,
   KnownBlockWorkflowOutputRating,
   KnownBlockWorkflowRestrictionReason,
+  KnownBlockOutputUnlockOutcome,
+  BlockOutputUnlockResult,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,

@@ -9,6 +9,7 @@ import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
 import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { useMediaUpload } from '../src/hooks/useMediaUpload.js';
+import { useOutputUnlock } from '../src/hooks/useOutputUnlock.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useImagePicker } from '../src/hooks/useImagePicker.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
@@ -73,6 +74,10 @@ function buildInit(): BlockInitPayload {
  * point is that the hook's own `sendTypedRequest` opts are what get exercised.
  */
 const DRIVERS: Record<string, () => () => Promise<unknown>> = {
+  REQUEST_OUTPUT_UNLOCK: () => {
+    const { result } = renderHook(() => useOutputUnlock());
+    return () => result.current.unlockOutput('wf_1', 0);
+  },
   OPEN_BUZZ_PURCHASE: () => {
     const { result } = renderHook(() => useBuzzPurchase());
     return () => result.current.openPurchaseModal(500);
@@ -166,6 +171,7 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
 /** The reply message each request type is answered with, plus a minimal body. */
 const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> = {
   OPEN_BUZZ_PURCHASE: { type: 'BUZZ_PURCHASE_RESULT', extra: { purchased: false } },
+  REQUEST_OUTPUT_UNLOCK: { type: 'OUTPUT_UNLOCK_RESULT', extra: { result: { outcome: 'dismissed' } } },
   OPEN_CHECKPOINT_PICKER: { type: 'CHECKPOINT_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_PICKER: { type: 'IMAGE_PICKER_RESULT', extra: {} },
   OPEN_IMAGE_UPLOAD: { type: 'IMAGE_UPLOAD_RESULT', extra: {} },
@@ -244,6 +250,11 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_MEDIA_UPLOAD_BATCH',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
+      // The host shows the unlock price in its OWN dialog and spends only on the
+      // viewer's click. At the 30s default the request would reject with the
+      // dialog open, and an unlock the viewer then paid for would read to the
+      // block as a failure.
+      'REQUEST_OUTPUT_UNLOCK',
       // The host shows the viewer a job's price in its own confirm and submits
       // only on their click. At the 30s default the request would reject with
       // the dialog open, and a viewer who then confirmed would start a CHARGED

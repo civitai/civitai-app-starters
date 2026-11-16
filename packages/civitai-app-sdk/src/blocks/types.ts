@@ -3089,6 +3089,54 @@ export type BlockWorkflowOutput =
   | BlockWorkflowBlockedOutput;
 
 /**
+ * How an output unlock ended ({@link BlockOutputUnlockResult}). An unknown value is
+ * possible; treat it like `'unavailable'`.
+ *
+ * - `'unlocked'` — the output now carries a url: read it from `snapshot.outputs` at
+ *   the position you asked about. The viewer paid for it in the host's own dialog.
+ * - `'not-restricted'` — it already had a url (a retry after an unlock lands here).
+ *   Nothing was shown or charged; poll the workflow to read it.
+ * - `'not-released'` — the unlock ran but the output is still above the viewer's
+ *   browsing level; `snapshot` shows it still restricted, `message` says why.
+ * - `'refused'` — the viewer does not have enough yellow Buzz for the unlock;
+ *   nothing was charged. `message` says so.
+ * - `'linked-out'` — the site your app runs on cannot show it, and the viewer opened
+ *   your app on civitai.red, at the same page, to see it there. Never charged.
+ * - `'dismissed'` — the viewer closed the dialog without a completed unlock. If an
+ *   unlock attempt failed before they closed it, its charge state is unknown: poll
+ *   the workflow to see the output's current entry.
+ * - `'unavailable'` — it cannot be unlocked here; `message` says why (for example,
+ *   the viewer's own mature content settings hide it).
+ */
+export type KnownBlockOutputUnlockOutcome =
+  | 'unlocked'
+  | 'not-restricted'
+  | 'not-released'
+  | 'refused'
+  | 'linked-out'
+  | 'dismissed'
+  | 'unavailable';
+
+/**
+ * The outcome of asking the host to unlock ONE restricted output
+ * (`REQUEST_OUTPUT_UNLOCK`, `@civitai/blocks-react`'s `useOutputUnlock`).
+ *
+ * The host decides what to offer from the live workflow, never from your app: an
+ * output restricted for the paying Buzz pool (`reason: 'pool'`) can be unlocked with
+ * yellow Buzz (the viewer confirms the price in the host's dialog). An unlock adds no
+ * author share and counts against no spend limit: the original generation's spend
+ * already did. One restricted for `'ceiling'` or `'unrated'` is never charged (the host
+ * links to your app on civitai.red when that site could show it).
+ */
+export interface BlockOutputUnlockResult {
+  outcome: KnownBlockOutputUnlockOutcome | (string & {});
+  /** The re-read workflow, on `'unlocked'`, `'not-released'` and `'refused'`. */
+  snapshot?: BlockWorkflowSnapshot;
+  /** Why, on `'refused'`, `'not-released'` and `'unavailable'`. For display. */
+  message?: string;
+}
+
+/**
  * One entry of {@link BlockWorkflowSnapshot.model3dOutputs} /
  * {@link AppWorkflow.model3dOutputs} — the label for one 3D model url.
  */
