@@ -632,10 +632,12 @@ export interface MockGenerationScenario {
    * pays, so the position is reported `{ url }` from then on and the reply carries
    * the re-read snapshot; `'dismiss'` closes the dialog. A `'ceiling'` or `'unrated'`
    * position is never charged: the mock answers `'linked-out'`, the viewer following
-   * the host's link to civitai.red. A position that is not restricted answers
-   * `'not-restricted'`, and a workflow this mock did not run `'unavailable'`.
+   * the host's link to the same app on civitai.red. `'insufficient'`: the viewer's
+   * yellow Buzz is short, answered `'refused'` with the host's message. A position
+   * that is not restricted answers `'not-restricted'`, and a workflow this mock did not
+   * run `'unavailable'`.
    */
-  outputUnlock?: 'unlock' | 'dismiss';
+  outputUnlock?: 'unlock' | 'dismiss' | 'insufficient';
 }
 
 /** The output-shaping knobs a workflow records at submit (`restricted`/`pending`/`blocked`). */
@@ -4367,6 +4369,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
             if ((gen.outputUnlock ?? 'unlock') === 'dismiss') {
               reply({ outcome: 'dismissed' });
+              return;
+            }
+            if (gen.outputUnlock === 'insufficient') {
+              // The host's own refusal: nothing changed, so the read stays restricted.
+              reply({
+                outcome: 'refused',
+                snapshot: succeededSnapshot(workflowId, { peek: true }),
+                message: 'You do not have enough yellow Buzz to unlock this output.',
+              });
               return;
             }
             // Paid: the position is unrestricted from now on, on every later read.

@@ -3053,11 +3053,11 @@ export type BlockWorkflowOutput =
  * - `'not-restricted'` — it already had a url (a retry after an unlock lands here).
  *   Nothing was shown or charged; poll the workflow to read it.
  * - `'not-released'` — the unlock ran but the output is still above the viewer's
- *   browsing level; `snapshot` shows it still restricted.
- * - `'refused'` — the viewer's daily Buzz limit for your app refused the spend;
- *   nothing was charged. `message` says why.
+ *   browsing level; `snapshot` shows it still restricted, `message` says why.
+ * - `'refused'` — the viewer does not have enough yellow Buzz for the unlock;
+ *   nothing was charged. `message` says so.
  * - `'linked-out'` — the site your app runs on cannot show it, and the viewer opened
- *   civitai.red to see it there. Never charged.
+ *   your app on civitai.red, at the same page, to see it there. Never charged.
  * - `'dismissed'` — the viewer closed the dialog. Nothing was charged.
  * - `'unavailable'` — it cannot be unlocked here; `message` says why (for example,
  *   the viewer's own mature content settings hide it).
@@ -3077,15 +3077,16 @@ export type KnownBlockOutputUnlockOutcome =
  *
  * The host decides what to offer from the live workflow, never from your app: an
  * output restricted for the paying Buzz pool (`reason: 'pool'`) can be unlocked with
- * yellow Buzz (the viewer confirms the price in the host's dialog; no author share is
- * added to an unlock); one restricted for `'ceiling'` or `'unrated'` is never charged (the
- * host links to civitai.red when that site could show it).
+ * yellow Buzz (the viewer confirms the price in the host's dialog). An unlock adds no
+ * author share and counts against no spend limit: the original generation's spend
+ * already did. One restricted for `'ceiling'` or `'unrated'` is never charged (the host
+ * links to your app on civitai.red when that site could show it).
  */
 export interface BlockOutputUnlockResult {
   outcome: KnownBlockOutputUnlockOutcome | (string & {});
   /** The re-read workflow, on `'unlocked'`, `'not-released'` and `'refused'`. */
   snapshot?: BlockWorkflowSnapshot;
-  /** Why, on `'refused'` and `'unavailable'`. For display. */
+  /** Why, on `'refused'`, `'not-released'` and `'unavailable'`. For display. */
   message?: string;
 }
 

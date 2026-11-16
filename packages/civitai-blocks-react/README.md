@@ -719,19 +719,21 @@ if (result.outcome === 'unlocked') setSnapshot(result.snapshot!); // outputs[1] 
 
 - **`reason: 'pool'`** (the Buzz that paid does not cover mature content): the viewer
   can unlock it with yellow Buzz at the price the host shows, the same unlock as on
-  civitai.com. No author share is added (your app was paid on the original
-  generation, if at all), and the spend counts toward the viewer's daily Buzz limit
-  for your app (`'refused'` when it is reached).
+  civitai.com. It adds no author share and counts against no spend limit: the
+  original generation's spend already did. `'refused'` means the viewer does not
+  have enough yellow Buzz.
 - **`'ceiling'` / `'unrated'`**: never charged. When the site your app runs on is
-  what keeps it out, the host offers civitai.red (`'linked-out'`); when the viewer's
-  own settings hide it, `'unavailable'` with a message.
+  what keeps it out, the host offers your app on civitai.red at the same page
+  (`'linked-out'`); when the viewer's own settings hide it, `'unavailable'` with a
+  message.
 - `'not-restricted'` (it already had a url; a retry lands here), `'not-released'`
-  (still above the viewer's level after the unlock; nothing extra charged) and
+  (still above the viewer's level after the unlock; `message` says why) and
   `'dismissed'` complete the set. Treat an unknown outcome like `'unavailable'`.
 
 The reply waits for the viewer, so it uses the human-interaction timeout. In the mock
-host a `'pool'` position unlocks (or `generation: { outputUnlock: 'dismiss' }`), a
-`'ceiling'` / `'unrated'` one answers `'linked-out'`.
+host a `'pool'` position unlocks (`generation: { outputUnlock: 'dismiss' }` closes the
+dialog instead, `'insufficient'` answers `'refused'`), a `'ceiling'` / `'unrated'` one
+answers `'linked-out'`.
 
 #### Queue position, ETA and progress
 
