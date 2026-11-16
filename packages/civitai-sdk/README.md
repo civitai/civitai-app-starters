@@ -324,7 +324,61 @@ or `put` whose `data` holds, at one of those fields, anything but a model versio
 the viewer owns: `resource_not_owned` (403), `details.pointer` naming the field,
 before moderation and before any write budget. An absent field is allowed;
 ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
-owner-written documents yet.
+owner-written documents yet (server-side publish, below, is the one multi-document write).
+
+### Publishing private documents in one call
+
+`collection(to).publish({ from, keys, prune? })` asks the server to copy
+the viewer's own documents at `keys` (1 to 500) from this app's PRIVATE collection
+`from` into the SHARED collection `to`, authored by the viewer, in one transaction:
+every copy lands or none does, and the data never travels through the app. It is
+for "make this public" flows that would otherwise cost one shared write per document.
+
+- **Only what changed is written.** A copy whose content equals its private document
+  is reported `unchanged` and costs nothing.
+- **Each copy is checked like a `put`** (publish consent, trust, schema,
+  `ownedModelVersions`, moderation, the viewer's and the app's ceilings, and copies
+  count against the viewer's document cap). Any refusal refuses the whole publish;
+  `details.key` names the document where it applies.
+- **Skipped, never refused:** `missing` (no private document at that key),
+  `not_author` (another viewer's copy holds the key; it is never touched), `hidden`
+  (your own copy, hidden by a moderator; never rewritten).
+- **`prune: true`** also deletes your own copies in `to` whose key has no document
+  in `from`, at most 500 per call (`pruneIncomplete: true` means call again).
+  Copies whose private documents still exist in `from` are never pruned. **Prune is
+  scoped by `from`, not by where a copy came from:** if several private collections
+  feed one shared collection, a prune from one of them deletes the copies you
+  published from the others.
+- **Its own budget**, about 10 publishes per viewer per app per day, never the shared
+  write budget. A refusal is `rate_limited` with `details.bucket: 'publish'` and
+  `error.retryAfter`. Every call, even one that changes nothing, also spends one token
+  of the private-write window (120 a minute; `details.bucket: 'write'` when empty). A
+  private document changed mid-publish is `version_conflict` with `details.reason:
+  'source_changed'`, a shared copy that changed with `'target_changed'`: publish again.
+- `collection(to).unpublish(keys)` deletes your own copies in one transaction.
+
+**Older hosts.** civitai.com ships publish behind a per-app flag. A host that does not
+serve it answers as an unknown route; the client rejects with the LOCAL code
+`publish_unavailable`. Fall back to one `put` per document, waiting out each
+`rate_limited` for its `retryAfter` (this client never retries by itself), and write
+the listing last:
+
+```ts
+import { StorageError, type StorageCollection } from '@civitai/sdk';
+
+declare const clips: StorageCollection;
+declare const keys: string[];
+declare function putEachWithBackoff(keys: string[]): Promise<void>;
+
+try {
+  const r = await clips.publish({ from: 'my_clips', keys, prune: true });
+  console.log(r.created.length, r.updated.length, r.unchanged.length, r.skipped);
+} catch (error) {
+  if (error instanceof StorageError && error.code === 'publish_unavailable') await putEachWithBackoff(keys);
+  else if (error instanceof StorageError && error.code === 'rate_limited') console.log('retry in', error.retryAfter, 's');
+  else throw error;
+}
+```
 
 ### Another app's collections: imports
 
@@ -1234,6 +1288,11 @@ const anon = fake.as({ viewer: null }).storage;
 for reads, private writes and deletes, marks and counters, and reports, plus the
 shared write budget — when you want to test how the app handles `rate_limited`
 (drive the clock with `now`).
+
+`publish` and `unpublish` are OFF by default, as on civitai.com, where they sit
+behind a per-app flag: both answer as an unknown route, which the client reports as
+`publish_unavailable`, so your default tests exercise the fallback. Pass
+`publish: true` to serve them with the server's rules and budget.
 
 Where it differs from the server on purpose:
 

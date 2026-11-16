@@ -85,7 +85,7 @@ const STEP_KEYS = ['as', 'token', 'scopes', 'method', 'path', 'query', 'body', '
 /** The contract's own `stepFields` (case- and step-level modifiers) this runner applies. */
 const HANDLED_STEP_FIELDS = ['as', 'token', 'scopes', 'consentMarker', 'appStatus', 'storage', 'repeat'];
 const MATCHERS = ['$string', '$number', '$iso', '$present', '$absent', '$null'];
-const CONVENTION_KEYS = ['blockedText', 'blockedLink', 'scannerDown', 'note', 'rateLimits', 'keys'];
+const CONVENTION_KEYS = ['blockedText', 'blockedLink', 'scannerDown', 'note', 'rateLimits', 'keys', 'publish'];
 
 /**
  * Steps the CLIENT has no way to send — a method, query parameter or body field
