@@ -686,7 +686,11 @@ export declare class StorageError extends ApiError {
      */
     readonly details?: Record<string, unknown>;
     constructor(status: number, code: StorageErrorCode, message: string, body: unknown, details?: Record<string, unknown>, options?: ErrorOptions);
-    /** Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503). */
+    /**
+     * Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503):
+     * `details.retryAfter`, else the envelope's `rateLimit.retryAfterSeconds` (sent on every 429
+     * beside the `Retry-After` header). This client never retries a refusal by itself.
+     */
     get retryAfter(): number | undefined;
 }
 
@@ -807,6 +811,56 @@ export interface StorageUnmarkOp {
  */
 export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
 
+/** What {@link StorageCollection.publish} copies, and from where. */
+export interface StoragePublishRequest {
+    /**
+     * One of THIS app's PRIVATE collections: the viewer's own documents are read from it by the
+     * server. (Not an import's source app: a publish runs in this app only.)
+     */
+    from: string;
+    /** 1 to 500 keys, none twice. */
+    keys: readonly string[];
+    /**
+     * Also delete the viewer's own copies in this collection whose key no longer has a document
+     * in `from` (at most 500 per call; see {@link StoragePublishResult.pruneIncomplete}). Copies
+     * whose private documents still exist (another character's, say) are never pruned.
+     */
+    prune?: boolean;
+    /** With `prune`: prune only copies whose key starts with this (e.g. `'char-42:'`). */
+    prunePrefix?: string;
+}
+
+/**
+ * Why a key was not copied. `missing`: the viewer has no document at that key in `from`.
+ * `not_author`: another user's copy holds the key; it is never touched. `hidden`: the viewer's
+ * own copy was hidden by a moderator; it is never rewritten. Open-ended for a later server.
+ */
+export type StoragePublishSkipReason = 'missing' | 'not_author' | 'hidden' | (string & {});
+
+/** Every list is in key order. */
+export interface StoragePublishResult {
+    created: string[];
+    updated: string[];
+    /** Same content as the private document: not written, and it cost nothing. */
+    unchanged: string[];
+    pruned: string[];
+    skipped: {
+        key: string;
+        reason: StoragePublishSkipReason;
+    }[];
+    /** More copies were prunable than one call prunes: call `publish` again. */
+    pruneIncomplete: boolean;
+}
+
+export interface StorageUnpublishResult {
+    deleted: string[];
+    /** `missing`: nothing visible at that key. `not_author`: another user's copy, never touched. */
+    skipped: {
+        key: string;
+        reason: 'missing' | 'not_author' | (string & {});
+    }[];
+}
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
     /** The document, or `null` when there is none (missing, hidden and absent read alike). */
     get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -900,6 +954,41 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
         marked: false;
         count?: number;
     }>;
+    /**
+     * Server-side PUBLISH into this SHARED collection: the server copies the viewer's own
+     * documents at `keys` from this app's PRIVATE collection `from`, authored by the viewer, in
+     * ONE transaction — every copy lands or none does. The data never travels through the app.
+     * Sends `POST …/_publish/:collection`.
+     *
+     * - A re-publish writes only new or changed documents; `unchanged` ones cost nothing.
+     * - Each copy is checked as a `put` would be (publish consent, trust, schema,
+     *   `ownedModelVersions`, moderation, the viewer's and the app's ceilings). Any refusal
+     *   refuses the whole publish; `details.key` names the document where it applies.
+     * - A private document that changes while the publish runs: `version_conflict` with
+     *   `details.reason: 'source_changed'`. Publish again.
+     * - Its own budget, never the shared write budget: about 10 publishes per viewer per day.
+     *   Refused: `rate_limited` (429) with `details.bucket: 'publish'` and
+     *   {@link StorageError.retryAfter}.
+     * - Refused before anything is spent: no keys (`reason: 'empty_keys'`), more than 500
+     *   (`too_many_keys`) or a key twice (`duplicate_key`).
+     *
+     * A civitai.com that does not serve publish — an older release, or the app's host flag off —
+     * answers as an unknown route; this method then rejects with the LOCAL code
+     * `publish_unavailable` (status 404). Fall back to writing the copies one by one, waiting
+     * out each `rate_limited` for its `retryAfter`.
+     *
+     * @example
+     * ```ts
+     * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true, prunePrefix: `${characterId}:` });
+     * ```
+     */
+    publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
+    /**
+     * Delete the viewer's own documents at `keys` (1 to 500) from this SHARED collection in ONE
+     * transaction. Another user's document at a key is skipped as `not_author`, never touched.
+     * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
+     */
+    unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
 }
 
 export type StorageIndexType = 'string' | 'number' | 'boolean' | 'time';
@@ -1014,7 +1103,12 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
 /** LOCAL, never sent by the server: the local preview's manifest declares storage the local store cannot serve. */
  | 'local_preview_invalid_manifest'
 /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
- | 'local_preview_unavailable' | (string & {});
+ | 'local_preview_unavailable'
+/**
+ * LOCAL, never sent by the server: `publish` / `unpublish` reached a civitai.com that does not
+ * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
+ */
+ | 'publish_unavailable' | (string & {});
 
 /**
  * `details.reason` of a `not_eligible` that only an import gets — every one the server's
@@ -4226,6 +4320,13 @@ export interface FakeStorageOptions {
      * Default: {@link FAKE_STORAGE_MODERATION}'s words.
      */
     moderate?: (text: string) => FakeModerationVerdict;
+    /**
+     * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
+     * `true`. `false` models a civitai.com that does not serve them — an older release, or the
+     * app's host flag off — which answers both as an unknown route (404 `not_found`), so an app can
+     * test its fallback; the client reports that as `publish_unavailable`.
+     */
+    publish?: boolean;
 }
 
 /** One request as the fake received it, and what it answered. */
