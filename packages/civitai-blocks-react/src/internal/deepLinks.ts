@@ -18,6 +18,60 @@ export const DEEP_LINK_MAX_LENGTH = 2048;
 /** The page host's refusal text for a share link that would leave the app. */
 export const SHARE_LINK_INVALID_ERROR = 'invalid share link';
 
+/** The page host's refusal for a second share inside the interval or while one is in flight. */
+export const SHARE_LINK_RATE_LIMITED_ERROR = 'rate_limited';
+
+/** What a host that cannot serve SHARE_LINK (a non-page slot) answers. */
+export const SHARE_LINK_UNSUPPORTED_ERROR = 'unsupported on this host';
+
+/** The page host's minimum gap between two admitted shares. */
+export const SHARE_LINK_MIN_INTERVAL_MS = 1000;
+
+/**
+ * Query parameters the page host owns on a run URL (civitai/civitai
+ * `HOST_OWNED_RUN_PARAMS`): stripped from every share URL, however the key is spelled.
+ */
+export const HOST_OWNED_RUN_PARAMS: readonly string[] = ['from', 'sl', 'src'];
+
+function stripHostOwnedPairs(search: string): string {
+  if (search === '' || search === '?') return '';
+  const pairs = search
+    .slice(1)
+    .split('&')
+    .filter((pair) => {
+      if (pair === '') return false;
+      const eq = pair.indexOf('=');
+      const rawKey = (eq < 0 ? pair : pair.slice(0, eq)).replace(/\+/g, ' ');
+      try {
+        return !HOST_OWNED_RUN_PARAMS.includes(decodeURIComponent(rawKey));
+      } catch {
+        return true;
+      }
+    });
+  return pairs.length ? `?${pairs.join('&')}` : '';
+}
+
+/**
+ * The page host's share limiter: one in flight, at most one per
+ * {@link SHARE_LINK_MIN_INTERVAL_MS}. `admit()` false ⇒ reply {@link SHARE_LINK_RATE_LIMITED_ERROR}.
+ */
+export function createShareLinkLimiter(now: () => number = () => Date.now()) {
+  let inFlight = false;
+  let last = Number.NEGATIVE_INFINITY;
+  return {
+    admit(): boolean {
+      const t = now();
+      if (inFlight || t - last < SHARE_LINK_MIN_INTERVAL_MS) return false;
+      inFlight = true;
+      last = t;
+      return true;
+    },
+    settle(): void {
+      inFlight = false;
+    },
+  };
+}
+
 export interface AppLocation {
   subPath: string;
   search: string;
@@ -90,6 +144,6 @@ export function buildShareLinkUrl(origin: string, slug: string, raw: unknown): s
   if (isHostile(`${subPath}${search}${hash}`)) return null;
   const sub = normaliseSubPath(subPath);
   if (sub === null) return null;
-  const tail = `${search === '?' ? '' : search}${hash === '#' ? '' : hash}`;
+  const tail = `${stripHostOwnedPairs(search)}${hash === '#' ? '' : hash}`;
   return `${origin}/apps/run/${encodeURIComponent(slug)}${sub ? `/${sub}` : ''}${tail}`;
 }

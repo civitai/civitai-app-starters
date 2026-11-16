@@ -162,8 +162,11 @@ import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 import {
   SHARE_LINK_INVALID_ERROR,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+  SHARE_LINK_UNSUPPORTED_ERROR,
   appLocationFromNavigatePath,
   buildShareLinkUrl,
+  createShareLinkLimiter,
 } from './deepLinks.js';
 import { createTrackEventChecker } from './trackEventCheck.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
@@ -692,6 +695,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   let currentSearch = '';
   let currentHash = '';
   let currentSlug = 'live-dev-app';
+  const shareLimiter = createShareLinkLimiter();
   let initDispatched = false;
 
   function install(): () => void {
@@ -783,6 +787,10 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         entityType: 'none',
         slug: 'live-dev-app',
         subPath: '',
+        // A current page host always sends both; `useShareLink` reads their presence as
+        // "this host knows SHARE_LINK".
+        search: '',
+        hash: '',
         viewerUserId: viewer?.id ?? null,
         viewerUsername: viewer?.username ?? null,
         theme: currentTheme,
@@ -1612,6 +1620,13 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // clipboard write decides `copied`. The harness is the top-level page,
             // so the write needs no relay.
             if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(options.context)) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_UNSUPPORTED_ERROR },
+              });
+              return;
+            }
             const url = buildShareLinkUrl(baseUrl, currentSlug, typed.payload);
             if (url === null) {
               dispatchToBlock({
@@ -1620,11 +1635,20 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               });
               return;
             }
-            const reply = (copied: boolean) =>
+            if (!shareLimiter.admit()) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_RATE_LIMITED_ERROR },
+              });
+              return;
+            }
+            const reply = (copied: boolean) => {
+              shareLimiter.settle();
               dispatchToBlock({
                 type: 'SHARE_LINK_RESULT',
                 payload: { requestId, result: { url, copied, method: copied ? 'clipboard' : 'none' } },
               });
+            };
             const clip = (win.navigator as Navigator | undefined)?.clipboard;
             if (!clip || typeof clip.writeText !== 'function') {
               reply(false);

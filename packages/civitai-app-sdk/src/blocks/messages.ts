@@ -709,9 +709,15 @@ export type ParentToBlockMessage =
       // is a normal outcome (show `url` as selectable text). On a refusal
       // `error` is one of `'invalid share link'` (the view would leave the app),
       // `'sharing is not available here'` (no app route on this surface, or
-      // review), `'the app is not ready yet'` or `'rate_limited'`, and `result`
-      // is absent. A host that predates the message answers with its generic
-      // unsupported-message error.
+      // review, or the dev tunnel), `'the app is not ready yet'` or `'rate_limited'`,
+      // and `result` is absent.
+      //
+      // 🔴 A HOST THAT PREDATES THE MESSAGE SENDS NO REPLY AT ALL: its NACK path
+      // only answers types its own inventory declares, so a sender would wait out
+      // its whole timeout. `useShareLink` therefore refuses up front, with
+      // `'unsupported on this host'`, when the init context has no `search` field
+      // (the field every host that knows SHARE_LINK sends on a page). A raw sender
+      // must apply the same check.
       type: 'SHARE_LINK_RESULT';
       payload: { requestId: string; result?: BlockShareLinkResult; error?: string };
     }
@@ -1309,7 +1315,7 @@ export type BlockToParentMessage =
       // URL — copies it (or opens the native share sheet on a phone), and replies
       // with `SHARE_LINK_RESULT`. Copying needs the viewer's click: send this from
       // a click handler, with nothing awaited first. Rate-limited per instance;
-      // page hosts only.
+      // page hosts only. An old host never replies — see SHARE_LINK_RESULT.
       type: 'SHARE_LINK';
       payload: { requestId: string; subPath: string; search?: string; hash?: string };
     }

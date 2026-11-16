@@ -3148,8 +3148,8 @@ const take = new URLSearchParams(search).get('take');   // '?take=3' → '3'
 ```
 
 - `search` is `''` or starts with `?`, and `hash` is `''` or starts with `#`. The
-  host strips its own launch-origin `from` pair. A value over 2048 chars arrives
-  as `''`.
+  host strips the query pairs it owns (`from`, `sl`, `src`); everything else
+  arrives byte-for-byte, with no length cap.
 - The first value comes from `BLOCK_INIT.context`. Every later one comes from
   `ROUTE_CHANGED`, which the host sends on your navigations, on the viewer's
   Back and Forward, and on a search-only or hash-only move.
@@ -3213,7 +3213,7 @@ function CopyLink() {
   return (
     <>
       {/* From the click handler, with nothing awaited first: the copy needs the click. */}
-      <button onClick={() => void share()}>Copy link</button>
+      <button onClick={() => share().catch(() => {})}>Copy link</button>
       {lastResult?.copied && <span>Link copied</span>}
       {lastResult?.method === 'none' && (
         <input readOnly value={lastResult.url} onFocus={(e) => e.currentTarget.select()} />
@@ -3238,20 +3238,27 @@ function CopyLink() {
 - It rejects on a refusal:
   - `'invalid share link'`: the view would leave your app (`..`, `//host`, a
     scheme, a `?` or `#` inside `subPath`);
-  - `'sharing is not available here'`: a surface with no app route, or review;
+  - `'sharing is not available here'`: a surface with no app route, review, or
+    the dev tunnel;
   - `'the app is not ready yet'`;
   - `'rate_limited'`: the host runs one share at a time, and at most one per
-    second.
+    second;
+  - `'unsupported on this host'`: a page host older than SHARE_LINK, or a slot that
+    is not a full page. The hook decides this **before sending**, from the init
+    context having no `search` field, because an old host sends no reply at all
+    and the request would otherwise wait out the 10-minute bound.
 - 🔴 **Call it from the click handler.** The clipboard and the share sheet need
   the viewer's click. The click reaches the host from your frame, but it expires,
   so do not `await` anything before `share()`. Without a click the host does not
   try, and answers `method: 'none'`.
 - The link opens the same view for anyone who can open your app. Your app has to
   load that view from `useCivitaiLocation()` on mount.
-- `createMockHost` answers with the canonical URL built from the context slug.
-  `shareLink: { copied: false }`, `shareLink: { method: 'share' }` and
-  `shareLinkError` simulate the other outcomes. `pnpm dev:live` writes the real
-  clipboard.
+- `createMockHost` answers with the canonical URL built from the context slug,
+  strips `from` / `sl` / `src` from it, refuses a second share within a second
+  with `'rate_limited'`, and refuses a non-page context with `'unsupported on this
+  host'`, as the page host does. `shareLink: { copied: false }`,
+  `shareLink: { method: 'share' }` and `shareLinkError` simulate the other
+  outcomes. `pnpm dev:live` writes the real clipboard.
 
 ### `useBlockAnalytics()`
 

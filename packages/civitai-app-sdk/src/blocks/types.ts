@@ -328,7 +328,7 @@ export type BlockShareLinkMethod = 'clipboard' | 'share' | 'none';
  * The view a `SHARE_LINK` links to. Every field is RELATIVE to the app: the host
  * builds the absolute `/apps/run/<slug>/<subPath><search><hash>` URL from its own
  * origin and slug, and refuses anything that would leave it (`..`, `//host`, a
- * scheme). `subPath` carries no `?` or `#`; `search` is `''` or starts with `?`;
+ * scheme), and drops the host-owned `from` / `sl` / `src` pairs. `subPath` carries no `?` or `#`; `search` is `''` or starts with `?`;
  * `hash` is `''` or starts with `#`; each at most 2048 chars.
  */
 export interface BlockShareLinkRequest {
@@ -687,13 +687,13 @@ export interface PageSlotContext {
   subPath: string;
   /**
    * The query string of the host URL below the app route — `''` or starting with
-   * `?` (`'?take=3'`). The host strips its own launch-origin `from` pair and sends
-   * `''` for a value over 2048 chars. Lets an app deep-link into its own STATE, not
+   * `?` (`'?take=3'`). The host strips the query pairs it owns (`from`, `sl`, `src`);
+   * every other pair arrives byte-for-byte, uncapped. Lets an app deep-link into its own STATE, not
    * just a route. Absent from a host that predates the field; read it through
    * `useCivitaiLocation()` (blocks-react), which reads absent as `''`.
    */
   search?: string;
-  /** The fragment — `''` or starting with `#` (`'#top'`). Same source and cap as `search`. */
+  /** The fragment — `''` or starting with `#` (`'#top'`). Same source as `search`. */
   hash?: string;
   /** `null` for an anonymous viewer. */
   viewerUserId: number | null;

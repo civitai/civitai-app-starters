@@ -140,8 +140,11 @@ import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 import {
   SHARE_LINK_INVALID_ERROR,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+  SHARE_LINK_UNSUPPORTED_ERROR,
   appLocationFromNavigatePath,
   buildShareLinkUrl,
+  createShareLinkLimiter,
   type AppLocation,
 } from './deepLinks.js';
 
@@ -1333,6 +1336,11 @@ export interface MockHostOptions {
    * `'invalid share link'`. Absent → `{ copied: true, method: 'clipboard' }`.
    * `{ copied: false }` simulates a refused clipboard (`method: 'none'`, show the url);
    * `{ method: 'share' }` a phone share sheet (`copied: false`). Not live-tunable.
+   * Only the three pairs the page host emits are accepted — `{ copied: false, method:
+   * 'clipboard' }` or `copied: true` with `'share'` / `'none'` throws at `createMockHost`.
+   * Like the page host, the mock strips `from` / `sl` / `src` from the URL, refuses a
+   * second share within a second with `'rate_limited'`, and refuses a non-page context
+   * with `'unsupported on this host'`.
    */
   shareLink?: { copied?: boolean; method?: BlockShareLinkMethod };
   /**
@@ -2661,6 +2669,17 @@ export function readMockHostUrlOptions(
  * uninstall();
  */
 export function createMockHost(options: MockHostOptions = {}): MockHost {
+  // Only the three `{ copied, method }` pairs the page host emits can be simulated, so a
+  // harness cannot teach a block to expect a reply the host never sends.
+  if (options.shareLink) {
+    const { copied, method } = options.shareLink;
+    if ((copied === false && method === 'clipboard') || (copied === true && method !== undefined && method !== 'clipboard')) {
+      throw new Error(
+        `createMockHost: shareLink ${JSON.stringify(options.shareLink)} is not a result the page host sends ` +
+          "— use { copied: true, method: 'clipboard' }, { copied: false, method: 'share' } or { copied: false, method: 'none' }.",
+      );
+    }
+  }
   const maybeWin =
     options.window ?? (globalThis as { window?: Window & typeof globalThis }).window;
   if (!maybeWin) {
@@ -3029,6 +3048,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // The page route the mock is showing (HQ app_blocks_sdk_j1gc). Seeded from the
     // init context below; `null` on a non-page context, which has no route to move.
     let mockRoute: AppLocation | null = null;
+    const shareLimiter = createShareLinkLimiter();
     const after = (ms: number, fn: () => void) => {
       const t = setTimeout(() => {
         timers.delete(t);
@@ -4927,6 +4947,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // The page host's canonical link, built from the CONTEXT slug; the
             // block names only the view. Drop a request with no requestId.
             if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(context)) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_UNSUPPORTED_ERROR },
+              });
+              return;
+            }
             if (options.shareLinkError !== undefined && options.shareLinkError !== false) {
               const e = options.shareLinkError;
               const error =
@@ -4943,6 +4970,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // The mock replies at once, so nothing is ever in flight; the interval is
+            // what a second click inside a second meets, as on the page host.
+            if (!shareLimiter.admit()) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_RATE_LIMITED_ERROR },
+              });
+              return;
+            }
+            shareLimiter.settle();
             const method: BlockShareLinkMethod =
               options.shareLink?.method ?? (options.shareLink?.copied === false ? 'none' : 'clipboard');
             dispatchToBlock({
@@ -5425,6 +5462,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       entityType: 'none',
       slug: 'mock-app',
       subPath: '',
+      // A current page host always sends both (HQ app_blocks_sdk_j1gc); `useShareLink`
+      // reads their presence as "this host knows SHARE_LINK".
+      search: '',
+      hash: '',
       viewerUserId: viewer?.id ?? null,
       viewerUsername: viewer?.username ?? null,
       theme: currentTheme,

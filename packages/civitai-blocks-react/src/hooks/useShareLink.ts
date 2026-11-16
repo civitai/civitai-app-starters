@@ -5,6 +5,7 @@ import type { BlockShareLinkRequest, BlockShareLinkResult } from '@civitai/app-s
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
+import { useTransportSnapshot } from './useBlockContext.js';
 import { useCivitaiLocation } from './useCivitaiLocation.js';
 import { useTransportConnection } from './useTransportConnection.js';
 
@@ -27,6 +28,12 @@ export interface UseShareLink {
 const SHARE_FAILED = 'failed to share the link';
 
 /**
+ * The refusal for a host that cannot serve SHARE_LINK: a page host that predates it, or any
+ * slot that is not a full page. The same text the mock and dev:live hosts reply with.
+ */
+export const SHARE_LINK_UNSUPPORTED_ERROR = 'unsupported on this host';
+
+/**
  * A "Copy link" for a view of your app (HQ app_blocks_sdk_j1gc).
  *
  * The HOST builds the canonical URL — `https://civitai.com/apps/run/<slug>/<subPath>`
@@ -46,12 +53,18 @@ const SHARE_FAILED = 'failed to share the link';
  * Without it the host does not try, and answers `method: 'none'`.
  *
  * Refusals (rejections): `'invalid share link'`, `'sharing is not available here'`
- * (a surface with no app route, or review), `'the app is not ready yet'`, and
- * `'rate_limited'` (the host admits one share at a time, at most one a second).
+ * (a surface with no app route, review, or the dev tunnel), `'the app is not ready yet'`,
+ * `'rate_limited'` (the host admits one share at a time, at most one a second), and
+ * `'unsupported on this host'`.
+ *
+ * 🔴 `'unsupported on this host'` IS DECIDED HERE, BEFORE ANYTHING IS SENT, when the init
+ * context carries no `search` field: that is a page host older than SHARE_LINK, or a slot
+ * that is not a full page. An old host sends NO reply to a message type it does not know,
+ * so sending would leave `share()` pending for the whole human bound (10 min).
  *
  * ```tsx
  * const { share, lastResult } = useShareLink();
- * <Button onClick={() => void share()}>Copy link</Button>
+ * <Button onClick={() => share().catch(() => {})}>Copy link</Button>
  * {lastResult && !lastResult.copied && lastResult.method === 'none' && (
  *   <input readOnly value={lastResult.url} onFocus={(e) => e.currentTarget.select()} />
  * )}
@@ -63,6 +76,10 @@ const SHARE_FAILED = 'failed to share the link';
 export function useShareLink(): UseShareLink {
   useTransportConnection();
   const currentView = useCivitaiLocation();
+  // A page host that knows SHARE_LINK always sends `search` (possibly `''`); its absence is
+  // the old-host / non-page signal. See the docblock.
+  const hostKnowsShareLink =
+    typeof (useTransportSnapshot().context as { search?: unknown }).search === 'string';
   const [inFlight, setInFlight] = useState(0);
   const [error, setError] = useState<Error | null>(null);
   const [lastResult, setLastResult] = useState<BlockShareLinkResult | null>(null);
@@ -79,6 +96,11 @@ export function useShareLink(): UseShareLink {
     const view = target
       ? { subPath: target.subPath ?? '', search: target.search ?? '', hash: target.hash ?? '' }
       : currentView;
+    if (!hostKnowsShareLink) {
+      const unsupported = new Error(SHARE_LINK_UNSUPPORTED_ERROR);
+      if (mountedRef.current) setError(unsupported);
+      throw unsupported;
+    }
     if (mountedRef.current) {
       setInFlight((n) => n + 1);
       setError(null);
@@ -112,7 +134,7 @@ export function useShareLink(): UseShareLink {
     } finally {
       if (mountedRef.current) setInFlight((n) => n - 1);
     }
-  }, [currentView]);
+  }, [currentView, hostKnowsShareLink]);
 
   return { share, isPending: inFlight > 0, error, lastResult };
 }

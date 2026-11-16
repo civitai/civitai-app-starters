@@ -2070,17 +2070,18 @@ export function isValidShareLinkResult(p: unknown): boolean {
 export const SHARE_LINK_MALFORMED_ERROR = 'the host sent a malformed reply to SHARE_LINK';
 
 /**
- * A well-formed `SHARE_LINK_RESULT.result`: an `http(s)` `url`, a boolean
- * `copied`, a string `method`, and `copied: true` only with `method: 'clipboard'`
- * (a host claiming a copy it did not make through the clipboard is not believed).
+ * A well-formed `SHARE_LINK_RESULT.result`: an `http(s)` `url` and EXACTLY one of the three
+ * `{ copied, method }` pairs the page host emits (civitai/civitai `deepLinkLogic.ts`
+ * `performShareLink`): `true`/`'clipboard'` (the write resolved), `false`/`'share'` and
+ * `false`/`'none'`. Any other pair — a copy claimed through the share sheet, a clipboard
+ * method that did not copy, an unknown method — is not believed.
  */
 function isValidShareLinkResultBody(r: unknown): boolean {
   if (!isObject(r)) return false;
   if (!isNonEmptyString(r.url) || !/^https?:\/\//.test(r.url)) return false;
-  if (typeof r.copied !== 'boolean') return false;
-  if (typeof r.method !== 'string') return false;
-  if (r.copied && r.method !== 'clipboard') return false;
-  return true;
+  if (r.copied === true) return r.method === 'clipboard';
+  if (r.copied === false) return r.method === 'share' || r.method === 'none';
+  return false;
 }
 
 /**
