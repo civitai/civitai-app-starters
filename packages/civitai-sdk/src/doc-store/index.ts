@@ -147,11 +147,11 @@ export interface StoragePublishRequest {
   /**
    * Also delete the viewer's own copies in this collection whose key no longer has a document
    * in `from` (at most 500 per call; see {@link StoragePublishResult.pruneIncomplete}). Copies
-   * whose private documents still exist (another character's, say) are never pruned.
+   * whose private documents still exist in `from` (another character's, say) are never pruned.
+   * Prune is scoped by `from`, not by where a copy came from: if several private collections
+   * feed this one, a prune from one of them deletes the copies published from the others.
    */
   prune?: boolean;
-  /** With `prune`: prune only copies whose key starts with this (e.g. `'char-42:'`). */
-  prunePrefix?: string;
 }
 
 /**
@@ -283,7 +283,7 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    *
    * @example
    * ```ts
-   * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true, prunePrefix: `${characterId}:` });
+   * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true });
    * ```
    */
   publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
@@ -469,17 +469,10 @@ export class StorageError extends ApiError {
     if (details !== undefined) this.details = details;
   }
 
-  /**
-   * Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503):
-   * `details.retryAfter`, else the envelope's `rateLimit.retryAfterSeconds` (sent on every 429
-   * beside the `Retry-After` header). This client never retries a refusal by itself.
-   */
+  /** Seconds to wait before retrying, when the server named one (`rate_limited`, a retryable 503). */
   get retryAfter(): number | undefined {
     const value = this.details?.retryAfter;
-    if (typeof value === 'number') return value;
-    const meta = isRecord(this.body) ? this.body.rateLimit : undefined;
-    const seconds = isRecord(meta) ? meta.retryAfterSeconds : undefined;
-    return typeof seconds === 'number' ? seconds : undefined;
+    return typeof value === 'number' ? value : undefined;
   }
 }
 
@@ -923,11 +916,11 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
 
         async publish(request, { signal } = {}) {
           refusePublishImport(options, 'publish');
-          const { from: source, keys, prune, prunePrefix } = request ?? ({} as StoragePublishRequest);
+          const { from: source, keys, prune } = request ?? ({} as StoragePublishRequest);
           const reply = await publishCall(() =>
             call('POST', `${BASE}/${PUBLISH}/${coll()}`, {
-              // Named rather than spread: JSON drops an undefined `prune` / `prunePrefix`.
-              body: { from: source, keys: Array.isArray(keys) ? [...keys] : keys, prune, prunePrefix },
+              // Named rather than spread: JSON drops an undefined `prune`.
+              body: { from: source, keys: Array.isArray(keys) ? [...keys] : keys, prune },
               signal,
             }),
           );

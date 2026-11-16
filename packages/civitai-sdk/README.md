@@ -328,7 +328,7 @@ owner-written documents yet (server-side publish, below, is the one multi-docume
 
 ### Publishing private documents in one call
 
-`collection(to).publish({ from, keys, prune?, prunePrefix? })` asks the server to copy
+`collection(to).publish({ from, keys, prune? })` asks the server to copy
 the viewer's own documents at `keys` (1 to 500) from this app's PRIVATE collection
 `from` into the SHARED collection `to`, authored by the viewer, in one transaction:
 every copy lands or none does, and the data never travels through the app. It is
@@ -343,10 +343,12 @@ for "make this public" flows that would otherwise cost one shared write per docu
 - **Skipped, never refused:** `missing` (no private document at that key),
   `not_author` (another viewer's copy holds the key; it is never touched), `hidden`
   (your own copy, hidden by a moderator; never rewritten).
-- **`prune: true`** also deletes your own copies in `to` whose private document is
-  gone, at most 500 per call (`pruneIncomplete: true` means call again).
-  `prunePrefix` narrows it, e.g. to one character's keys. Copies whose private
-  documents still exist are never pruned.
+- **`prune: true`** also deletes your own copies in `to` whose key has no document
+  in `from`, at most 500 per call (`pruneIncomplete: true` means call again).
+  Copies whose private documents still exist in `from` are never pruned. **Prune is
+  scoped by `from`, not by where a copy came from:** if several private collections
+  feed one shared collection, a prune from one of them deletes the copies you
+  published from the others.
 - **Its own budget**, about 10 publishes per viewer per app per day, never the shared
   write budget. A refusal is `rate_limited` with `details.bucket: 'publish'` and
   `error.retryAfter`. A private document changed mid-publish is `version_conflict`
@@ -367,7 +369,7 @@ declare const keys: string[];
 declare function putEachWithBackoff(keys: string[]): Promise<void>;
 
 try {
-  const r = await clips.publish({ from: 'my_clips', keys, prune: true, prunePrefix: 'char-42:' });
+  const r = await clips.publish({ from: 'my_clips', keys, prune: true });
   console.log(r.created.length, r.updated.length, r.unchanged.length, r.skipped);
 } catch (error) {
   if (error instanceof StorageError && error.code === 'publish_unavailable') await putEachWithBackoff(keys);
@@ -1285,9 +1287,10 @@ for reads, private writes and deletes, marks and counters, and reports, plus the
 shared write budget — when you want to test how the app handles `rate_limited`
 (drive the clock with `now`).
 
-It serves `publish` and `unpublish` too; `publish: false` makes both answer as on a
-civitai.com that does not serve them, so you can test the `publish_unavailable`
-fallback.
+`publish` and `unpublish` are OFF by default, as on civitai.com, where they sit
+behind a per-app flag: both answer as an unknown route, which the client reports as
+`publish_unavailable`, so your default tests exercise the fallback. Pass
+`publish: true` to serve them with the server's rules and budget.
 
 Where it differs from the server on purpose:
 

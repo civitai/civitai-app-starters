@@ -4,7 +4,7 @@ import { StorageError, type StoragePublishResult } from '../../src/doc-store/ind
 import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js';
 
 /**
- * `collection(to).publish({ from, keys, prune?, prunePrefix? })` and `.unpublish(keys)`: the
+ * `collection(to).publish({ from, keys, prune? })` and `.unpublish(keys)`: the
  * real client over the fake, which ports the server's server-side publish (civitai/civitai,
  * `runPublish` / `publishCopies` in `doc-store-api.ts` / `doc-store.ts`). Not contract-pinned:
  * the server's routes sit behind a per-app flag, so the contract describes them in
@@ -27,6 +27,8 @@ function make(extra: Partial<FakeStorageOptions> = {}) {
     manifest: { scopes: SCOPES, storage: { collections: COLLECTIONS } },
     viewer: ALICE,
     now: () => t,
+    // Off by default, as on civitai.com; these tests exercise the publish path.
+    publish: true,
     ...extra,
   });
   const alice = fake.storage;
@@ -107,12 +109,23 @@ describe('publish', () => {
     await bob.collection('drafts').put('A:9', { by: 'bob' });
     await bob.collection('clips').publish({ from: 'drafts', keys: ['A:9'] });
     await drafts.delete('A:2');
-    await drafts.delete('B:2');
 
-    const r = await clips.publish({ from: 'drafts', keys: ['A:1'], prune: true, prunePrefix: 'A:' });
+    const r = await clips.publish({ from: 'drafts', keys: ['A:1'], prune: true });
     expect(r).toEqual(result({ unchanged: ['A:1'], pruned: ['A:2'] }));
     const page = await clips.list();
     expect(page.items.map((d) => d.key)).toEqual(['A:1', 'A:9', 'B:1', 'B:2']);
+  });
+
+  it("prune is scoped by `from`: it deletes the viewer's copies published from another private collection", async () => {
+    const { alice } = make();
+    await alice.collection('drafts').put('d1', { src: 'drafts' });
+    await alice.collection('notes').put('n1', { src: 'notes' });
+    const clips = alice.collection('clips');
+    await clips.publish({ from: 'drafts', keys: ['d1'] });
+    await clips.publish({ from: 'notes', keys: ['n1'] });
+    const r = await clips.publish({ from: 'drafts', keys: ['d1'], prune: true });
+    expect(r).toEqual(result({ unchanged: ['d1'], pruned: ['n1'] }));
+    expect((await clips.list()).items.map((d) => d.key)).toEqual(['d1']);
   });
 
   it('refuses no keys, too many and a duplicate before sending anything the server would spend', async () => {
@@ -199,9 +212,10 @@ describe('unpublish', () => {
   });
 });
 
-describe('a host that does not serve publish', () => {
+describe('a host that does not serve publish (the fake by default, as civitai.com with the flag off)', () => {
   it('answers 404 not_found on the wire, which the client reports as publish_unavailable', async () => {
-    const { alice, fake } = make({ publish: false });
+    const fake = createFakeStorage({ manifest: { scopes: SCOPES, storage: { collections: COLLECTIONS } }, viewer: ALICE });
+    const alice = fake.storage;
     await alice.collection('drafts').put('k', { k: 1 });
     for (const p of [
       alice.collection('clips').publish({ from: 'drafts', keys: ['k'] }),
@@ -211,18 +225,5 @@ describe('a host that does not serve publish', () => {
       expect([err.status, err.code]).toEqual([404, 'publish_unavailable']);
       expect(fake.calls.at(-1)?.response).toMatchObject({ code: 'not_found', message: 'no such storage route' });
     }
-  });
-});
-
-describe('StorageError.retryAfter', () => {
-  it('reads details.retryAfter, else the envelope rateLimit.retryAfterSeconds', () => {
-    const withDetails = new StorageError(429, 'rate_limited', 'x', {}, { retryAfter: 12 });
-    expect(withDetails.retryAfter).toBe(12);
-    const withMeta = new StorageError(429, 'rate_limited', 'x', {
-      code: 'rate_limited',
-      rateLimit: { retryAfterSeconds: 34, retryAt: '2031-01-01T00:00:34.000Z' },
-    });
-    expect(withMeta.retryAfter).toBe(34);
-    expect(new StorageError(429, 'rate_limited', 'x', {}).retryAfter).toBeUndefined();
   });
 });

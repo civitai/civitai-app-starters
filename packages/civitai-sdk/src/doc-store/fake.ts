@@ -290,9 +290,9 @@ export interface FakeStorageOptions {
   moderate?: (text: string) => FakeModerationVerdict;
   /**
    * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
-   * `true`. `false` models a civitai.com that does not serve them — an older release, or the
-   * app's host flag off — which answers both as an unknown route (404 `not_found`), so an app can
-   * test its fallback; the client reports that as `publish_unavailable`.
+   * `false`, as on civitai.com, where they sit behind a per-app flag that is off: both answer as
+   * an unknown route (404 `not_found`), which the client reports as `publish_unavailable`, so an
+   * app's default tests exercise its fallback. `true` serves them, to test the publish path.
    */
   publish?: boolean;
 }
@@ -1213,8 +1213,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       case 2:
         if (a === '_get') return pick({ POST: { op: 'getMany', collection: b! } });
         // Off, publish is not a route at all, as on a server that does not serve it.
-        if (a === '_publish' && options.publish !== false) return pick({ POST: { op: 'publish', collection: b! } });
-        if (a === '_unpublish' && options.publish !== false) return pick({ POST: { op: 'unpublish', collection: b! } });
+        if (a === '_publish' && options.publish === true) return pick({ POST: { op: 'publish', collection: b! } });
+        if (a === '_unpublish' && options.publish === true) return pick({ POST: { op: 'unpublish', collection: b! } });
         if (a!.startsWith('_')) return null;
         return pick({
           GET: { op: 'get', collection: a!, key: b! },
@@ -1701,16 +1701,11 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   ) {
     const input = parseBody(
       body,
-      { from: (v) => typeof v === 'string', keys: isStringArray, prune: (v) => typeof v === 'boolean', prunePrefix: (v) => typeof v === 'string' },
+      { from: (v) => typeof v === 'string', keys: isStringArray, prune: (v) => typeof v === 'boolean' },
       ['from', 'keys'],
     );
     const keys = assertPublishKeys(input.keys as string[]);
     const prune = input.prune === true;
-    const prefix = input.prunePrefix as string | undefined;
-    if (prefix !== undefined) {
-      if (!prune) throw invalid('prunePrefix needs prune: true', { reason: 'prune_prefix_without_prune' });
-      if (!KEY.test(prefix)) throw invalid('prunePrefix must be 1–128 characters of [A-Za-z0-9._:-]');
-    }
     const from = input.from as string;
     if (!COLLECTION_NAME.test(from) || !ctx.app.collections.has(from)) {
       throw refuse('collection_not_declared', `collection ${from} is not declared`, { collection: from });
@@ -1765,7 +1760,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       let pruneIncomplete = false;
       if (prune) {
         candidates = docsIn(ctx, to, 0)
-          .filter((d) => mine(d) && d.key.startsWith(prefix ?? '') && !sourceOf(d.key))
+          .filter((d) => mine(d) && !sourceOf(d.key))
           .map((d) => d.key)
           .sort(byCodePoint);
         pruneIncomplete = candidates.length > PUBLISH_PRUNE_LIMIT;
