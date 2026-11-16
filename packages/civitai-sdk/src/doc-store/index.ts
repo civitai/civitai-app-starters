@@ -269,10 +269,12 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    *   `ownedModelVersions`, moderation, the viewer's and the app's ceilings). Any refusal
    *   refuses the whole publish; `details.key` names the document where it applies.
    * - A private document that changes while the publish runs: `version_conflict` with
-   *   `details.reason: 'source_changed'`. Publish again.
+   *   `details.reason: 'source_changed'`; a shared copy that changes: `'target_changed'`.
+   *   Publish again.
    * - Its own budget, never the shared write budget: about 10 publishes per viewer per day.
    *   Refused: `rate_limited` (429) with `details.bucket: 'publish'` and
-   *   {@link StorageError.retryAfter}.
+   *   {@link StorageError.retryAfter}. Every call, one that changes nothing included, also
+   *   spends one token of the private-write window (`details.bucket: 'write'` when empty).
    * - Refused before anything is spent: no keys (`reason: 'empty_keys'`), more than 500
    *   (`too_many_keys`) or a key twice (`duplicate_key`).
    *

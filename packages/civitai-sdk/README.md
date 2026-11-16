@@ -351,8 +351,10 @@ for "make this public" flows that would otherwise cost one shared write per docu
   published from the others.
 - **Its own budget**, about 10 publishes per viewer per app per day, never the shared
   write budget. A refusal is `rate_limited` with `details.bucket: 'publish'` and
-  `error.retryAfter`. A private document changed mid-publish is `version_conflict`
-  with `details.reason: 'source_changed'`: publish again.
+  `error.retryAfter`. Every call, even one that changes nothing, also spends one token
+  of the private-write window (120 a minute; `details.bucket: 'write'` when empty). A
+  private document changed mid-publish is `version_conflict` with `details.reason:
+  'source_changed'`, a shared copy that changed with `'target_changed'`: publish again.
 - `collection(to).unpublish(keys)` deletes your own copies in one transaction.
 
 **Older hosts.** civitai.com ships publish behind a per-app flag. A host that does not

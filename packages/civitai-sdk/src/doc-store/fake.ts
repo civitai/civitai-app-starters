@@ -1717,6 +1717,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
     assertShareWritable(toDecl);
     if (!scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
+    // One token of the private-write / delete window per call, never given back, before the
+    // trust gate and any read: the server's throttle on publishes that change nothing.
+    charge('write', me, ctx.app.id);
     assertTrusted(viewer);
     storageOn();
 
