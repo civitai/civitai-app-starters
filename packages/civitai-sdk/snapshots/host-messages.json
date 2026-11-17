@@ -1,7 +1,7 @@
 {
   "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
-  "capturedFrom": "4c13810287",
-  "capturedAt": "2026-11-03",
+  "capturedFrom": "ded983ddca",
+  "capturedAt": "2026-11-17",
   "messages": {
     "APP_STORAGE_DELETE": {
       "request": true,
@@ -349,6 +349,22 @@
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
+    "GET_WORKFLOW_MEDIA": {
+      "request": true,
+      "reply": "WORKFLOW_MEDIA_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
     "NAVIGATE": {
       "request": false,
       "reply": ""
@@ -433,6 +449,26 @@
       ],
       "optionalReplyKeys": [
         "selected"
+      ],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "OPEN_MEDIA_UPLOAD_BATCH": {
+      "request": true,
+      "reply": "MEDIA_UPLOAD_BATCH_RESULT",
+      "replyKeys": [
+        "expiresAt",
+        "results"
+      ],
+      "optionalReplyKeys": [
+        "expiresAt",
+        "results"
       ],
       "replyKeysFrom": "inventory",
       "framing": "legacy",
@@ -542,6 +578,38 @@
     "REQUEST_CONSENT": {
       "request": false,
       "reply": ""
+    },
+    "REQUEST_DAILY_LIMIT_RAISE": {
+      "request": true,
+      "reply": "DAILY_LIMIT_RAISE_RESULT",
+      "replyKeys": [
+        "raised"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "REQUEST_OUTPUT_UNLOCK": {
+      "request": true,
+      "reply": "OUTPUT_UNLOCK_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
     },
     "REQUEST_SIGN_IN": {
       "request": false,
@@ -665,6 +733,22 @@
       "optionalErrorKeys": [
         "ok"
       ],
+      "errorKeysFrom": "inventory",
+      "failure": "string"
+    },
+    "SHARE_LINK": {
+      "request": true,
+      "reply": "SHARE_LINK_RESULT",
+      "replyKeys": [
+        "result"
+      ],
+      "optionalReplyKeys": [],
+      "replyKeysFrom": "inventory",
+      "framing": "legacy",
+      "errorKeys": [
+        "error"
+      ],
+      "optionalErrorKeys": [],
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
@@ -852,22 +936,6 @@
       "optionalErrorKeys": [
         "rateLimit"
       ],
-      "errorKeysFrom": "inventory",
-      "failure": "string"
-    },
-    "SHARE_LINK": {
-      "request": true,
-      "reply": "SHARE_LINK_RESULT",
-      "replyKeys": [
-        "result"
-      ],
-      "optionalReplyKeys": [],
-      "replyKeysFrom": "inventory",
-      "framing": "legacy",
-      "errorKeys": [
-        "error"
-      ],
-      "optionalErrorKeys": [],
       "errorKeysFrom": "inventory",
       "failure": "string"
     },
