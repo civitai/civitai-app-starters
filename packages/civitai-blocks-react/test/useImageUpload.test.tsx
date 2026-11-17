@@ -339,6 +339,70 @@ describe('useImageUpload', () => {
     expect(sent.payload.asyncScan).toBeUndefined();
     expect(Object.keys(sent.payload)).toEqual(['requestId']);
   });
+
+  // `share`: the per-upload opt-in that lets this app's other viewers see a scanned
+  // display upload. On the wire ONLY when asked for, and only for a display upload.
+  it('share: true sends share:true and nothing else on a display upload', () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(sent.payload.share).toBe(true);
+    expect(Object.keys(sent.payload).sort()).toEqual(['requestId', 'share']);
+  });
+
+  it("share: true with purpose 'display' still sends share:true and no purpose", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'display', share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(Object.keys(sent.payload).sort()).toEqual(['requestId', 'share']);
+  });
+
+  it('share: false, or a non-boolean truthy value, sends no share field', () => {
+    for (const share of [false, 'yes' as unknown as boolean, 1 as unknown as boolean]) {
+      const { result } = renderHook(() => useImageUpload({ share }));
+      act(() => {
+        result.current.open().catch(() => {});
+      });
+      expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload)).toEqual(['requestId']);
+    }
+  });
+
+  it('share is never sent for a generationSource or trainingData upload', () => {
+    const source = renderHook(() =>
+      useImageUpload({ purpose: 'generationSource', share: true } as unknown as { purpose: 'generationSource' }),
+    );
+    act(() => {
+      source.result.current.open().catch(() => {});
+    });
+    expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload).sort()).toEqual([
+      'purpose',
+      'requestId',
+    ]);
+    const training = renderHook(() =>
+      useImageUpload({ purpose: 'trainingData', share: true } as unknown as { purpose: 'trainingData' }),
+    );
+    act(() => {
+      training.result.current.open().catch(() => {});
+    });
+    expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload).sort()).toEqual([
+      'purpose',
+      'requestId',
+    ]);
+  });
+
+  it('share: true resolves with the moderated image like any display upload', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toEqual(MODERATED);
+  });
 });
 
 /**
@@ -413,6 +477,16 @@ describe('useImageUpload — asyncScan (non-blocking display)', () => {
     expect(sent.payload.asyncScan).toBe(true);
     expect(sent.payload.purpose).toBeUndefined();
     expect(Object.keys(sent.payload).sort()).toEqual(['asyncScan', 'requestId']);
+  });
+
+  it('share: true rides along with asyncScan', () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(sent.payload.share).toBe(true);
+    expect(Object.keys(sent.payload).sort()).toEqual(['asyncScan', 'requestId', 'share']);
   });
 
   it('open() early-resolves with the pending handle', async () => {
