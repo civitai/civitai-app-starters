@@ -392,7 +392,7 @@ confirms that price in Civitai's own dialog. A confirmed run may exceed the toke
 budget, up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000). Page apps only, `ai:write:budgeted`,
 behind the host flag `app-blocks-training-kind` (off by default), and refused from development
 and review sessions. The images are uploaded over `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`,
-which replies `IMAGE_UPLOAD_RESULT { selected: { images: [{ url, air }] } }`
+which replies `IMAGE_UPLOAD_RESULT { selected: { images: [{ air }] } }`, an AIR reference per image
 (`BlockTrainingDataUploadResult`); the host refuses a run whose quote names a blob it did not
 upload for the block, with the `BlockRunTrainingHostError` `training data not uploaded here`.
 `PREPARE_TRAINING_DATASET` (the server-prepared dataset of civitai/civitai#5438) is removed from

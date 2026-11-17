@@ -162,7 +162,8 @@ describe('useImageUpload', () => {
     expect(Object.keys(sent.payload).sort()).toEqual(['purpose', 'requestId']);
   });
 
-  it('trainingData: resolves with the images array, in the order the host sent it', async () => {
+  it('trainingData: resolves with each image\'s air, in the order the host sent it, and no url', async () => {
+    // An older host still sends a url beside each air; the hook passes only the air on.
     const images = [
       { url: 'https://example.test/v2/consumer/blobs/k1.png', air: 'k1.png' },
       { url: 'https://example.test/v2/consumer/blobs/k2.webp', air: 'k2.webp' },
@@ -173,7 +174,7 @@ describe('useImageUpload', () => {
       pick = result.current.open();
     });
     replyResult(lastSent().payload.requestId, { images });
-    await expect(pick).resolves.toEqual(images);
+    await expect(pick).resolves.toStrictEqual([{ air: 'k1.png' }, { air: 'k2.webp' }]);
   });
 
   it('trainingData: resolves to null when the viewer cancelled (no `selected`)', async () => {
@@ -193,7 +194,7 @@ describe('useImageUpload', () => {
   it('trainingData: a reply arriving AFTER the 10-minute human bound still resolves the images', async () => {
     vi.useFakeTimers();
     try {
-      const images = [{ url: 'https://example.test/v2/consumer/blobs/k1.png', air: 'k1.png' }];
+      const images = [{ air: 'k1.png' }];
       const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
       let pick!: Promise<unknown>;
       act(() => {

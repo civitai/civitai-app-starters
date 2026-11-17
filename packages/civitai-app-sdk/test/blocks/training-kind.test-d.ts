@@ -125,7 +125,7 @@ expectTypeOf<BlockTrainingQuote>().toEqualTypeOf<{
 // --- the upload: a `trainingData` purpose, answered with several images ---
 expectTypeOf<'trainingData'>().toMatchTypeOf<BlockUploadPurpose>();
 expectTypeOf<BlockUploadPurpose>().toEqualTypeOf<'display' | 'generationSource' | 'trainingData'>();
-expectTypeOf<BlockTrainingDataImage>().toEqualTypeOf<{ url: string; air: string }>();
+expectTypeOf<BlockTrainingDataImage>().toEqualTypeOf<{ air: string }>();
 expectTypeOf<BlockTrainingDataUploadResult>().toEqualTypeOf<{ images: BlockTrainingDataImage[] }>();
 const trainingUpload: Extract<BlockToParentMessage, { type: 'OPEN_IMAGE_UPLOAD' }> = {
   type: 'OPEN_IMAGE_UPLOAD',
@@ -136,7 +136,7 @@ const uploaded: Extract<ParentToBlockMessage, { type: 'IMAGE_UPLOAD_RESULT' }> =
   type: 'IMAGE_UPLOAD_RESULT',
   payload: {
     requestId: 'r1',
-    selected: { images: [{ url: 'https://example.test/v2/consumer/blobs/k1a2b3.png', air: 'k1a2b3.png' }] },
+    selected: { images: [{ air: 'k1a2b3.png' }] },
   },
 };
 void uploaded;

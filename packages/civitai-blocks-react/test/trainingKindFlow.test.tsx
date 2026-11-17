@@ -183,12 +183,10 @@ describe('kind:training — upload → estimate → run → watch', () => {
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
     const { images, estimate, body } = await uploadAndQuote(result);
-    // The default canned upload: three images, each a url and a distinct key.
+    // The default canned upload: three images, each only a distinct AIR reference.
     expect(images).toHaveLength(3);
     expect(new Set(images.map((i) => i.air)).size).toBe(3);
-    for (const img of images) {
-      expect(img.url.endsWith(`/v2/consumer/blobs/${img.air}`)).toBe(true);
-    }
+    for (const img of images) expect(Object.keys(img)).toEqual(['air']);
     const uploadMsg = m.outbound.find((o) => o.type === 'OPEN_IMAGE_UPLOAD');
     expect((uploadMsg!.payload as { purpose?: string }).purpose).toBe('trainingData');
 
@@ -232,7 +230,7 @@ describe('kind:training — upload → estimate → run → watch', () => {
 
   it('`cannedTrainingDataUpload` is returned verbatim; `null` is a cancel', async () => {
     const canned: BlockTrainingDataImage[] = [
-      { url: 'https://example.test/v2/consumer/blobs/AbC123.png', air: 'AbC123.png' },
+      { air: 'AbC123.png' },
     ];
     const m = install({ cannedTrainingDataUpload: canned });
     uninstall = m.uninstall;
@@ -271,7 +269,7 @@ describe('kind:training — upload → estimate → run → watch', () => {
     // before the server claimed it.
     m.host.setScenario({
       cannedTrainingDataUpload: [
-        { url: 'https://example.test/v2/consumer/blobs/foreignkey0001.png', air: 'foreignkey0001.png' },
+        { air: 'foreignkey0001.png' },
       ],
     });
     await settle(() => result.current.upload.open());
@@ -283,8 +281,8 @@ describe('kind:training — upload → estimate → run → watch', () => {
   it('upload keys compare case-insensitively, and an item may name the blob by its url', async () => {
     const m = install({
       cannedTrainingDataUpload: [
-        { url: 'https://example.test/v2/consumer/blobs/MiXeD01.png', air: 'MiXeD01.png' },
-        { url: 'https://example.test/v2/consumer/blobs/plain02.webp', air: 'plain02.webp' },
+        { air: 'MiXeD01.png' },
+        { air: 'plain02.webp' },
       ],
     });
     uninstall = m.uninstall;

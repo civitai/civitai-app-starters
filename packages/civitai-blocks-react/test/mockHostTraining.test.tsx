@@ -193,7 +193,7 @@ describe('createMockHost — training-data upload', () => {
   }
 
   it('answers each purpose with its own shape — the training knob does not leak into display or source', async () => {
-    const images = [{ url: 'https://example.test/v2/consumer/blobs/t1.png', air: 't1.png' }];
+    const images = [{ air: 't1.png' }];
     const { result } = await mount({ cannedTrainingDataUpload: images });
 
     let training: unknown;
