@@ -136,7 +136,9 @@ const OVERLOADED_HOOKS = {
   useImageUpload: [
     'UseImageUploadGenerationSource',
     'UseImageUploadTrainingData',
+    'UseImageUploadAsyncScanShared',
     'UseImageUploadAsyncScan',
+    'UseImageUploadShared',
     'UseImageUpload',
     // The implementation signature. Not a call shape any consumer can reach,
     // and deliberately NOT on the entry — see the assertion below.
@@ -309,7 +311,7 @@ test('#380 — INTERNAL_HOOKS really are absent from the entry', () => {
 test('POSITIVE CONTROL — the annotation reader finds real annotations, including overloads', () => {
   // A reader that silently returned [] would make every check above vacuous.
   const upload = returnAnnotations(readFileSync(join(HOOKS, 'useImageUpload.ts'), 'utf8'), 'useImageUpload');
-  assert.equal(upload.length, 5, `expected 5 useImageUpload signatures, read ${upload.length}`);
+  assert.equal(upload.length, 7, `expected 7 useImageUpload signatures, read ${upload.length}`);
 
   const picker = returnAnnotations(
     readFileSync(join(HOOKS, 'useResourcePicker.ts'), 'utf8'),

@@ -245,6 +245,8 @@ export { useImageUpload } from './hooks/useImageUpload.js';
 export type {
   UseImageUpload,
   UseImageUploadAsyncScan,
+  UseImageUploadAsyncScanShared,
+  UseImageUploadShared,
   UseImageUploadGenerationSource,
   UseImageUploadTrainingData,
   UseImageUploadOptions,
