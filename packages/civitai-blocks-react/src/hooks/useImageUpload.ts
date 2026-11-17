@@ -118,6 +118,19 @@ export interface UseImageUploadOptions {
    * legacy blocking behavior.
    */
   asyncScan?: boolean;
+  /**
+   * SHARE this `'display'` upload with this app's other viewers once Civitai
+   * has scanned it (default: private to the uploader). The host's upload
+   * dialog tells the viewer so before they pick a file, and the server records
+   * this app from the verified block token. Readable afterwards through
+   * `useGatedImages()`, scanned images only. Sent as `share: true` on
+   * `OPEN_IMAGE_UPLOAD` only when `true`, so an unshared upload's wire is
+   * byte-identical to before. Ignored for `'generationSource'` and
+   * `'trainingData'`. 🔴 A host that predates the field ignores it and the
+   * upload stays private: do not tell viewers it is shared unless your app
+   * runs on a host that supports it.
+   */
+  share?: boolean;
 }
 
 /** Per-upload scan-tracking entry (keyed by `imageId` in the hook's internal map). */
@@ -237,12 +250,15 @@ export function useImageUpload(options: { purpose: 'trainingData' }): UseImageUp
 export function useImageUpload(options: {
   purpose?: 'display';
   asyncScan: true;
+  share?: boolean;
 }): UseImageUploadAsyncScan;
-export function useImageUpload(options?: { purpose?: 'display' }): UseImageUpload;
+export function useImageUpload(options?: { purpose?: 'display'; share?: boolean }): UseImageUpload;
 export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
   useTransportConnection();
   const purpose = options?.purpose;
   const asyncScan = options?.asyncScan === true && (purpose === undefined || purpose === 'display');
+  // Only a display upload can be shared, and only the exact value `true` asks for it.
+  const share = options?.share === true && (purpose === undefined || purpose === 'display');
 
   // Per-instance scan tracking, keyed by imageId. Persists across renders; a
   // verdict is correlated back to its upload by imageId + the generated requestId.
@@ -312,7 +328,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
       // Omit `purpose` (display byte-compat) but opt into the early-resolve flow.
       const { requestId, selected } = await sendTypedRequest(
         getTransport(),
-        { type: 'OPEN_IMAGE_UPLOAD', payload: { asyncScan: true } },
+        { type: 'OPEN_IMAGE_UPLOAD', payload: share ? { asyncScan: true, share: true } : { asyncScan: true } },
         'IMAGE_UPLOAD_RESULT',
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
@@ -372,7 +388,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     // ---- Existing BLOCKING behavior (unchanged) ----
     // Omit `purpose` for the default/display mode so the wire stays
     // byte-compatible with an older host that predates the field.
-    const payload = purpose === 'generationSource' ? { purpose } : {};
+    const payload = purpose === 'generationSource' ? { purpose } : share ? { share: true } : {};
     const { selected } = await sendTypedRequest(
       getTransport(),
       { type: 'OPEN_IMAGE_UPLOAD', payload },
@@ -384,7 +400,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     // A multi-image training reply is not an answer to a single-image purpose.
     if (!selected || 'images' in selected) return null;
     return selected;
-  }, [asyncScan, purpose]);
+  }, [asyncScan, purpose, share]);
 
   const scanStatus = useCallback(
     (handle: BlockPendingImageInfo): Promise<BlockImageScanResult> => {

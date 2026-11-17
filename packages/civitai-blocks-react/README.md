@@ -2393,6 +2393,16 @@ dismiss); pass `{ purpose: 'generationSource' }` for a private img2img source,
 (`[{ air }] | null`, an AIR reference each — see the LoRA training section), or
 `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
 
+**`{ share: true }`** (display uploads, with or without `asyncScan`) shares the
+upload with your app's other viewers once Civitai has scanned it. Before the
+viewer picks a file, the host's upload dialog says the image will be visible to
+other viewers of your app once scanned. The server records your app from the
+verified block token, and `useGatedImages()` then returns the image to other
+viewers once it is scanned, clamped to each viewer's own browsing level; a
+pending or flagged one comes back `hidden`. Without `share` (the default) the
+upload is private to the uploader. A host that predates `share` ignores it, and
+the upload stays private.
+
 ```tsx
 const { open } = useImageUpload();
 const img = await open();               // BlockUploadedImageInfo | null
