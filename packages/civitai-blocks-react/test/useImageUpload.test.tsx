@@ -394,6 +394,37 @@ describe('useImageUpload', () => {
     ]);
   });
 
+  function replyError(requestId: string, error: string) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, error } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('share: true REJECTS with the host error when the host refuses the shared upload', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyError(lastSent().payload.requestId, 'no block token');
+    await expect(pick).rejects.toThrow('no block token');
+  });
+
+  it('without share, an error reply still resolves null (unchanged)', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyError(lastSent().payload.requestId, 'no block token');
+    await expect(pick).resolves.toBeNull();
+  });
+
   it('share: true resolves with the moderated image like any display upload', async () => {
     const { result } = renderHook(() => useImageUpload({ share: true }));
     let pick!: Promise<BlockUploadedImageInfo | null>;
@@ -477,6 +508,23 @@ describe('useImageUpload — asyncScan (non-blocking display)', () => {
     expect(sent.payload.asyncScan).toBe(true);
     expect(sent.payload.purpose).toBeUndefined();
     expect(Object.keys(sent.payload).sort()).toEqual(['asyncScan', 'requestId']);
+  });
+
+  it('share: true with asyncScan REJECTS with the host error on a refused shared upload', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId: lastSent().payload.requestId, error: 'no block token' } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).rejects.toThrow('no block token');
   });
 
   it('share: true rides along with asyncScan', () => {

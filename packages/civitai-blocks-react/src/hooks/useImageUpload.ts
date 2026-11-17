@@ -126,11 +126,23 @@ export interface UseImageUploadOptions {
    * `useGatedImages()`, scanned images only. Sent as `share: true` on
    * `OPEN_IMAGE_UPLOAD` only when `true`, so an unshared upload's wire is
    * byte-identical to before. Ignored for `'generationSource'` and
-   * `'trainingData'`. 🔴 A host that predates the field ignores it and the
+   * `'trainingData'`. A shared upload the host refuses (e.g. `no block
+   * token`) makes `open()` REJECT with the host's error, never resolve `null`
+   * as if dismissed. 🔴 A host that predates the field ignores it and the
    * upload stays private: do not tell viewers it is shared unless your app
    * runs on a host that supports it.
    */
   share?: boolean;
+}
+
+/**
+ * A SHARED upload the host refused (e.g. `no block token`) REJECTS with the
+ * host's error, so an app never reads the refusal as a dismissed picker and goes
+ * on telling the viewer their image is shared. An unshared upload keeps the
+ * hook's long-standing behaviour (an error reply resolves `null`).
+ */
+function throwIfShareRefused(share: boolean, reply: { error?: string }): void {
+  if (share && typeof reply.error === 'string' && reply.error.length > 0) throw new Error(reply.error);
 }
 
 /** Per-upload scan-tracking entry (keyed by `imageId` in the hook's internal map). */
@@ -326,12 +338,14 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
   const open = useCallback(async () => {
     if (asyncScan) {
       // Omit `purpose` (display byte-compat) but opt into the early-resolve flow.
-      const { requestId, selected } = await sendTypedRequest(
+      const reply = await sendTypedRequest(
         getTransport(),
         { type: 'OPEN_IMAGE_UPLOAD', payload: share ? { asyncScan: true, share: true } : { asyncScan: true } },
         'IMAGE_UPLOAD_RESULT',
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
+      throwIfShareRefused(share, reply);
+      const { requestId, selected } = reply;
       if (!selected) return null; // dismissed
 
       // NEW host: an early-resolve pending handle. Track it and wait for the push.
@@ -389,12 +403,14 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     // Omit `purpose` for the default/display mode so the wire stays
     // byte-compatible with an older host that predates the field.
     const payload = purpose === 'generationSource' ? { purpose } : share ? { share: true } : {};
-    const { selected } = await sendTypedRequest(
+    const reply = await sendTypedRequest(
       getTransport(),
       { type: 'OPEN_IMAGE_UPLOAD', payload },
       'IMAGE_UPLOAD_RESULT',
       { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
     );
+    throwIfShareRefused(share, reply);
+    const { selected } = reply;
     // Normalize the "dismissed" case to an explicit null so callers can
     // `if (!img) return;` without an `undefined` ambiguity.
     // A multi-image training reply is not an answer to a single-image purpose.
