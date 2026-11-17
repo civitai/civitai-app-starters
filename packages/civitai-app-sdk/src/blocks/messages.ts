@@ -25,6 +25,7 @@ import type {
   BlockImageScanResult,
   BlockUploadPurpose,
   BlockNavigateScope,
+  BlockShareLinkResult,
   BlockContext,
   BlockSettings,
   Theme,
@@ -488,8 +489,16 @@ export type ParentToBlockMessage =
       //   • NEW BLOCK / OLD HOST: nothing awaits this message. A host that never
       //     sends it just means the value never moves — i.e. today. No hook
       //     blocks on it and there is no timeout to hit.
+      //
+      // `search` / `hash` (HQ app_blocks_sdk_j1gc): the query and fragment of the
+      // host URL, same rules as on `PageSlotContext`. Sent by a host that knows
+      // them on EVERY push, so a search-only or hash-only move is a route change
+      // too; absent from an older host, whose pushes move `subPath` only. The
+      // host sends this on the viewer's back/forward as well, which is how an
+      // app's views become real history entries: navigate with
+      // `useCivitaiNavigate`, render from `useCivitaiLocation`.
       type: 'ROUTE_CHANGED';
-      payload: { subPath: string };
+      payload: { subPath: string; search?: string; hash?: string };
     }
   | {
       // Host-pushed REFUSAL of a `REQUEST_CONSENT` that can NEVER be granted.
@@ -701,6 +710,25 @@ export type ParentToBlockMessage =
       // `result` is absent.
       type: 'GENERATION_SOURCE_PERSISTED';
       payload: { requestId: string; result?: BlockPersistedGenerationSource; error?: string };
+    }
+  | {
+      // Reply to SHARE_LINK (HQ app_blocks_sdk_j1gc). On success `result` is
+      // `{ url, copied, method }` ({@link BlockShareLinkResult}): `copied` is
+      // `true` only when the host's clipboard write RESOLVED, and `copied: false`
+      // is a normal outcome (show `url` as selectable text). On a refusal
+      // `error` is one of `'invalid share link'` (the view would leave the app),
+      // `'sharing is not available here'` (no app route on this surface, or
+      // review, or the dev tunnel), `'the app is not ready yet'` or `'rate_limited'`,
+      // and `result` is absent.
+      //
+      // 🔴 A HOST THAT PREDATES THE MESSAGE SENDS NO REPLY AT ALL: its NACK path
+      // only answers types its own inventory declares, so a sender would wait out
+      // its whole timeout. `useShareLink` therefore refuses up front, with
+      // `'unsupported on this host'`, when the init context has no `search` field
+      // (the field every host that knows SHARE_LINK sends on a page). A raw sender
+      // must apply the same check.
+      type: 'SHARE_LINK_RESULT';
+      payload: { requestId: string; result?: BlockShareLinkResult; error?: string };
     }
   | {
       // Reply to CREATE_POST_FROM_APP. On success `result` carries the created
@@ -1301,6 +1329,17 @@ export type BlockToParentMessage =
       payload: { requestId: string; workflowId: string; imageIndex: number };
     }
   | {
+      // Ask the host for a link to a view of THIS app (HQ app_blocks_sdk_j1gc).
+      // The host builds the canonical absolute `/apps/run/<slug>/<subPath>` URL
+      // from its OWN origin and slug — the block names only the view, never a
+      // URL — copies it (or opens the native share sheet on a phone), and replies
+      // with `SHARE_LINK_RESULT`. Copying needs the viewer's click: send this from
+      // a click handler, with nothing awaited first. Rate-limited per instance;
+      // page hosts only. An old host never replies — see SHARE_LINK_RESULT.
+      type: 'SHARE_LINK';
+      payload: { requestId: string; subPath: string; search?: string; hash?: string };
+    }
+  | {
       // Ask the host to create a REAL, PUBLISHED Post on the VIEWER'S profile
       // from the calling app's OWN outputs. The strictly-more-consequential
       // SIBLING of PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row
@@ -1688,8 +1727,19 @@ export type BlockToParentMessage =
       // REFUSES the request (site scope on a surface without the capability, a
       // scheme, `/api/*` in site scope) simply drops the message and the block
       // never learns. Do not build a flow that needs to know.
+      //
+      // HISTORY (HQ app_blocks_sdk_j1gc): an app-scoped, same-tab NAVIGATE is a
+      // real history entry, and a navigate to the URL already showing creates
+      // none. `replace: true` replaces the current entry instead (a state tweak
+      // that should not cost a back press). Absent means push. Ignored for site
+      // scope and new_tab.
       type: 'NAVIGATE';
-      payload: { path: string; scope?: BlockNavigateScope; target: 'current' | 'new_tab' };
+      payload: {
+        path: string;
+        scope?: BlockNavigateScope;
+        target: 'current' | 'new_tab';
+        replace?: boolean;
+      };
     }
   // Anonymous conversion. A block rendered for a logged-out viewer
   // (`BLOCK_INIT.viewer === null`) asks the host to start the platform's
@@ -1958,6 +2008,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
   'PERSIST_GENERATION_SOURCE',
+  'SHARE_LINK',
   'CREATE_POST_FROM_APP',
   'RUN_TRAINING',
   'RUN_CONFIRMED_STEP',

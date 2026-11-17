@@ -86,7 +86,7 @@ const NO_REPLY_EXPECTED = ['BLOCK_HELLO', 'BLOCK_MESSAGE_REJECTED'];
  * Types `liveHost` cases on and `mockHost` deliberately does not. Every row is
  * FIRE-AND-FORGET from the block's side — no `requestId`, no reply — so the
  * mock letting them fall through costs nothing, while the live host has real
- * work to do (a `NAVIGATE` actually navigates; `BLOCK_READY`/`RESIZE_IFRAME`
+ * work to do (`BLOCK_READY`/`RESIZE_IFRAME`
  * are grouped into an explicit no-op so a reader can see they were considered).
  *
  * 🔴 THE ASYMMETRY IS ONE-DIRECTIONAL BY DESIGN. This list may be non-empty;
@@ -97,7 +97,8 @@ const NO_REPLY_EXPECTED = ['BLOCK_HELLO', 'BLOCK_MESSAGE_REJECTED'];
 const LIVE_ONLY_FIRE_AND_FORGET = [
   'BLOCK_ERROR',
   'BLOCK_READY',
-  'NAVIGATE',
+  // NAVIGATE left this list when the mock host started moving its route on an
+  // app-scoped navigate (HQ app_blocks_sdk_j1gc).
   'RESIZE_IFRAME',
   'TRACK_EVENT',
 ];

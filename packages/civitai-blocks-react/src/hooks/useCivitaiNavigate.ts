@@ -24,6 +24,14 @@ export interface UseCivitaiNavigateOptions {
   scope?: BlockNavigateScope;
   /** Where the host should open it. Defaults to `'current'`. */
   target?: 'current' | 'new_tab';
+  /**
+   * REPLACE the current history entry instead of pushing a new one. Use it for a
+   * state tweak that should not cost the viewer a Back press (switching the take
+   * shown on one character, a sort order). Absent or `false` pushes: an ordinary
+   * app navigate is a real history entry, so Back returns to the previous view.
+   * App scope, same tab only; ignored for `scope: 'site'` and `'new_tab'`.
+   */
+  replace?: boolean;
 }
 
 /** What {@link useCivitaiNavigate} returns. */
@@ -64,8 +72,17 @@ export interface UseCivitaiNavigate {
  * is dropped for every block at every trust tier and declaring it has no effect.
  * (Earlier versions of this doc said `"new_tab"` required it — that was wrong.)
  *
+ * HISTORY: an app-scoped, same-tab navigate is a real history entry on the host
+ * page, and a navigate to the view already showing adds none. The viewer's Back and
+ * Forward move between your views, and the host tells you where they landed over
+ * `ROUTE_CHANGED` — read it with `useCivitaiLocation()` (or `useCivitaiRoute()`).
+ * A `path` may carry `?query#hash`; the host keeps them, and they reach you as
+ * `search` and `hash`. Pass `{ replace: true }` to replace the entry instead.
+ *
  * @example
  * const { navigate } = useCivitaiNavigate();
+ * navigate('c/42');                                      // a history entry: Back returns here
+ * navigate('c/42?take=3', { replace: true });            // same entry, new state
  * navigate('settings');                                  // this app's own /settings
  * navigate('/settings');                                 // identical — the slash means nothing
  * navigate('models/12345', { scope: 'site' });           // civitai.com/models/12345
@@ -92,6 +109,8 @@ export function useCivitaiNavigate(): UseCivitaiNavigate {
           path,
           ...(opts.scope ? { scope: opts.scope } : {}),
           target: opts.target ?? 'current',
+          // Sent only when asked for, so an ordinary call's payload is unchanged.
+          ...(opts.replace === true ? { replace: true } : {}),
         },
       });
     },

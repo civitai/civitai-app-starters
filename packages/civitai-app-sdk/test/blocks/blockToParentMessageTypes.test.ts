@@ -124,6 +124,12 @@ describe('BLOCK_TO_PARENT_MESSAGE_TYPES', () => {
     expect(boundBlockToParentMessageType('PERSIST_GENERATION_SOURCE')).toBe('PERSIST_GENERATION_SOURCE');
   });
 
+  it('declares SHARE_LINK (HQ app_blocks_sdk_j1gc), in the union and the array', () => {
+    expect(deriveUnionMembersFromSource()).toContain('SHARE_LINK');
+    expect(BLOCK_TO_PARENT_MESSAGE_TYPES).toContain('SHARE_LINK');
+    expect(boundBlockToParentMessageType('SHARE_LINK')).toBe('SHARE_LINK');
+  });
+
   it('cannot collide with the `other` bucket', () => {
     // Every real type is SCREAMING_SNAKE_CASE, so the lowercase sentinel is safe —
     // asserted rather than left to the eye, because a future lowercase message

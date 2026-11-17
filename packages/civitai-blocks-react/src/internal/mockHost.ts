@@ -47,6 +47,7 @@ import {
   type BlockUploadedImageInfo,
   type BlockUploadedGenerationSource,
   type BlockPersistedGenerationSource,
+  type BlockShareLinkMethod,
   type BlockImageScanResult,
   type BuzzAccountType,
   type BlockBuzzTransaction,
@@ -138,6 +139,15 @@ import {
 } from './mockHostReactions.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
+import {
+  SHARE_LINK_INVALID_ERROR,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+  SHARE_LINK_UNSUPPORTED_ERROR,
+  appLocationFromNavigatePath,
+  buildShareLinkUrl,
+  createShareLinkLimiter,
+  type AppLocation,
+} from './deepLinks.js';
 
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody}, a
@@ -1354,6 +1364,26 @@ export interface MockHostOptions {
    * where `false` or `undefined` clears it.
    */
   persistGenerationSourceError?: boolean | string | Error;
+  /**
+   * How `SHARE_LINK` (what `useShareLink().share()` sends) reports delivery. The mock
+   * builds the page host's canonical URL — `https://civitai.com/apps/run/<context
+   * slug>/<subPath><search><hash>` — and refuses a view that would leave the app with
+   * `'invalid share link'`. Absent → `{ copied: true, method: 'clipboard' }`.
+   * `{ copied: false }` simulates a refused clipboard (`method: 'none'`, show the url);
+   * `{ method: 'share' }` a phone share sheet (`copied: false`). Not live-tunable.
+   * Only the three pairs the page host emits are accepted — `{ copied: false, method:
+   * 'clipboard' }` or `copied: true` with `'share'` / `'none'` throws at `createMockHost`.
+   * Like the page host, the mock strips `from` / `sl` / `src` from the URL, refuses a
+   * second share within a second with `'rate_limited'`, and refuses a non-page context
+   * with `'unsupported on this host'`.
+   */
+  shareLink?: { copied?: boolean; method?: BlockShareLinkMethod };
+  /**
+   * Force `SHARE_LINK` to reply with this FREE-TEXT `error` instead of a link — for
+   * example `'rate_limited'` or `'sharing is not available here'`. `true` → a default
+   * message. Absent → the share succeeds. Not live-tunable.
+   */
+  shareLinkError?: boolean | string | Error;
   /**
    * The per-viewer gated projection returned from `GET_IMAGES_BY_IDS` (what
    * `useGatedImages().getImages()` resolves with). Each entry is a
@@ -2674,6 +2704,17 @@ export function readMockHostUrlOptions(
  * uninstall();
  */
 export function createMockHost(options: MockHostOptions = {}): MockHost {
+  // Only the three `{ copied, method }` pairs the page host emits can be simulated, so a
+  // harness cannot teach a block to expect a reply the host never sends.
+  if (options.shareLink) {
+    const { copied, method } = options.shareLink;
+    if ((copied === false && method === 'clipboard') || (copied === true && method !== undefined && method !== 'clipboard')) {
+      throw new Error(
+        `createMockHost: shareLink ${JSON.stringify(options.shareLink)} is not a result the page host sends ` +
+          "— use { copied: true, method: 'clipboard' }, { copied: false, method: 'share' } or { copied: false, method: 'none' }.",
+      );
+    }
+  }
   const maybeWin =
     options.window ?? (globalThis as { window?: Window & typeof globalThis }).window;
   if (!maybeWin) {
@@ -3041,6 +3082,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       win.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
     };
     pushToBlock = dispatchToBlock;
+    // The page route the mock is showing (HQ app_blocks_sdk_j1gc). Seeded from the
+    // init context below; `null` on a non-page context, which has no route to move.
+    let mockRoute: AppLocation | null = null;
+    const shareLimiter = createShareLinkLimiter();
     const after = (ms: number, fn: () => void) => {
       const t = setTimeout(() => {
         timers.delete(t);
@@ -5001,6 +5046,74 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'NAVIGATE': {
+            // An app-scoped, same-tab NAVIGATE moves the route and pushes
+            // ROUTE_CHANGED with search and hash, as the page host does through
+            // its router; a move to the route already showing pushes nothing.
+            // Site scope and new_tab leave the app, so the route does not move.
+            const nav = typed.payload as { path?: unknown; scope?: unknown; target?: unknown } | undefined;
+            if (mockRoute === null || nav?.scope === 'site' || nav?.target === 'new_tab') return;
+            if (typeof nav?.path !== 'string') return;
+            const next = appLocationFromNavigatePath(nav.path);
+            if (next === null) return;
+            if (
+              next.subPath === mockRoute.subPath &&
+              next.search === mockRoute.search &&
+              next.hash === mockRoute.hash
+            ) {
+              return;
+            }
+            mockRoute = next;
+            dispatchToBlock({ type: 'ROUTE_CHANGED', payload: { ...next } });
+            return;
+          }
+
+          case 'SHARE_LINK': {
+            // The page host's canonical link, built from the CONTEXT slug; the
+            // block names only the view. Drop a request with no requestId.
+            if (!isRoutableRequestId(requestId)) return;
+            if (!emulatesPageHost(context)) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_UNSUPPORTED_ERROR },
+              });
+              return;
+            }
+            if (options.shareLinkError !== undefined && options.shareLinkError !== false) {
+              const e = options.shareLinkError;
+              const error =
+                e === true ? 'sharing the link failed' : typeof e === 'string' ? e : e.message;
+              dispatchToBlock({ type: 'SHARE_LINK_RESULT', payload: { requestId, error } });
+              return;
+            }
+            const slug = 'slug' in context && typeof context.slug === 'string' ? context.slug : 'mock-app';
+            const url = buildShareLinkUrl('https://civitai.com', slug, typed.payload);
+            if (url === null) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_INVALID_ERROR },
+              });
+              return;
+            }
+            // The mock replies at once, so nothing is ever in flight; the interval is
+            // what a second click inside a second meets, as on the page host.
+            if (!shareLimiter.admit()) {
+              dispatchToBlock({
+                type: 'SHARE_LINK_RESULT',
+                payload: { requestId, error: SHARE_LINK_RATE_LIMITED_ERROR },
+              });
+              return;
+            }
+            shareLimiter.settle();
+            const method: BlockShareLinkMethod =
+              options.shareLink?.method ?? (options.shareLink?.copied === false ? 'none' : 'clipboard');
+            dispatchToBlock({
+              type: 'SHARE_LINK_RESULT',
+              payload: { requestId, result: { url, copied: method === 'clipboard', method } },
+            });
+            return;
+          }
+
           case 'PERSIST_GENERATION_SOURCE': {
             // Save one of the app's OWN outputs as a private, scanned generation
             // source. No confirm, like the real page host. Drop a request with
@@ -5445,7 +5558,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           default:
             // No reply, as in production. What reaches here is a type with no
-            // reply channel (BLOCK_READY, NAVIGATE, TRACK_EVENT, …) or a type
+            // reply channel (BLOCK_READY, TRACK_EVENT, …) or a type
             // this protocol does not declare. The real host's `unsupported on
             // this host` reply is built only for a request type it KNOWS and
             // has no handler for; a type it does not know gets nothing.
@@ -5474,11 +5587,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       entityType: 'none',
       slug: 'mock-app',
       subPath: '',
+      // A current page host always sends both (HQ app_blocks_sdk_j1gc); `useShareLink`
+      // reads their presence as "this host knows SHARE_LINK".
+      search: '',
+      hash: '',
       viewerUserId: viewer?.id ?? null,
       viewerUsername: viewer?.username ?? null,
       theme: currentTheme,
     };
     const context: BlockContext = hostContextWithTheme(baseContext, currentTheme);
+    if ('subPath' in context && typeof context.subPath === 'string') {
+      const c = context as { subPath: string; search?: unknown; hash?: unknown };
+      mockRoute = {
+        subPath: c.subPath,
+        search: typeof c.search === 'string' ? c.search : '',
+        hash: typeof c.hash === 'string' ? c.hash : '',
+      };
+    }
 
     // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
     // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only

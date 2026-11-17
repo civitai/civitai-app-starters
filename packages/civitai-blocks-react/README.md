@@ -3172,10 +3172,137 @@ value simply stays at the init sub-path (the old behaviour); nothing awaits the
 message, so there is no hang either way.
 
 Exercise it locally with `pnpm dev:live`, where `navigate()` drives the real
-message end-to-end. `createMockHost` has **no** route control, deliberately: it
-does not handle `NAVIGATE` at all and has no URL to move, so a synthetic setter
-there would be a second, weaker way to produce a message the live host already
-produces from the call a block actually makes.
+message end-to-end. `createMockHost` follows an app-scoped, same-tab `navigate()`
+too: it moves its route and pushes `ROUTE_CHANGED`, as the page host does. It has
+no separate route setter, so the only way to move it is the call a block actually
+makes.
+
+### `useCivitaiLocation()`
+
+The view that is **currently showing**, as `{ subPath, search, hash }`. It is
+[`useCivitaiRoute()`](#usecivitairoute) plus the query string and the fragment,
+for an app that deep-links into its own **state** and not just a route
+(`c/42?take=3`). `useCivitaiRoute()` is unchanged and still returns the bare
+string.
+
+```tsx
+const { subPath, search, hash } = useCivitaiLocation();
+const [view, id] = subPath.split('/');                  // 'c/42' → ['c', '42']
+const take = new URLSearchParams(search).get('take');   // '?take=3' → '3'
+```
+
+- `search` is `''` or starts with `?`, and `hash` is `''` or starts with `#`. The
+  host strips the query pairs it owns (`from`, `sl`, `src`); everything else
+  arrives byte-for-byte, with no length cap.
+- The first value comes from `BLOCK_INIT.context`. Every later one comes from
+  `ROUTE_CHANGED`, which the host sends on your navigations, on the viewer's
+  Back and Forward, and on a search-only or hash-only move.
+- Old host: `search` and `hash` read as `''`. Model slot: all three are `''`.
+- The object keeps its identity until a value moves, so it is safe in effect
+  dependency lists.
+
+### Back and Forward inside your app
+
+The browser's Back button walks the **host page's** history. Your app gets a
+history entry only when it moves with `navigate()`:
+
+- an app-scoped, same-tab `navigate(path)` is a real history entry (a shallow push
+  on the host page);
+- a navigate to the view already showing adds no entry;
+- `navigate(path, { replace: true })` replaces the current entry instead of adding
+  one.
+
+Then render from the route, never from a copy of it:
+
+```tsx
+function App() {
+  const { subPath, search } = useCivitaiLocation();
+  const { navigate } = useCivitaiNavigate();
+  const [view, id] = subPath.split('/');
+  const take = new URLSearchParams(search).get('take') ?? '1';
+
+  if (view === 'c' && id) {
+    return (
+      <Character
+        id={id}
+        take={take}
+        // Same character, another take: replace, so Back does not step through takes.
+        onTake={(n: number) => navigate(`c/${id}?take=${n}`, { replace: true })}
+      />
+    );
+  }
+  // Opening a character pushes an entry, so Back returns to this gallery.
+  return <Gallery onOpen={(cid: string) => navigate(`c/${cid}`)} />;
+}
+```
+
+When the viewer presses Back, the host moves its URL, sends `ROUTE_CHANGED`, and
+`useCivitaiLocation()` re-renders with the gallery route.
+
+> 🔴 **Views kept only in `useState` are not in history.** An app that switches
+> from the gallery to a character with local state adds no history entry, so Back
+> leaves the app. Put the view in the route with `navigate()` and derive it from
+> `useCivitaiLocation()`.
+
+### `useShareLink()`
+
+A "Copy link" for a view of your app. The **host** builds the canonical URL
+(`https://civitai.com/apps/run/<slug>/<subPath><search><hash>`) from its own
+origin and your app's slug. It copies the URL, or opens the native share sheet on
+a phone, and tells you what happened. You name only the view, never a URL.
+
+```tsx
+function CopyLink() {
+  const { share, lastResult, error } = useShareLink();
+  return (
+    <>
+      {/* From the click handler, with nothing awaited first: the copy needs the click. */}
+      <button onClick={() => share().catch(() => {})}>Copy link</button>
+      {lastResult?.copied && <span>Link copied</span>}
+      {lastResult?.method === 'none' && (
+        <input readOnly value={lastResult.url} onFocus={(e) => e.currentTarget.select()} />
+      )}
+      {error && <span role="alert">{error.message}</span>}
+    </>
+  );
+}
+```
+
+- `share()` links to the view showing now (`useCivitaiLocation()`).
+  `share({ subPath: 'c/42', search: '?take=3' })` links to exactly that view, and
+  any field you leave out is `''`.
+- It resolves with `{ url, copied, method }`:
+  - `{ copied: true, method: 'clipboard' }`: the link is on the clipboard. The
+    host sets `copied: true` only after its clipboard write resolved.
+  - `{ copied: false, method: 'share' }`: the viewer used the share sheet.
+  - `{ copied: false, method: 'none' }`: nothing was delivered. **Show `url` as
+    selectable text.** This is a normal result, not an error: the browser can
+    refuse the copy, there may have been no click, or the viewer cancelled the
+    sheet.
+- It rejects on a refusal:
+  - `'invalid share link'`: the view would leave your app (`..`, `//host`, a
+    scheme, a `?` or `#` inside `subPath`);
+  - `'sharing is not available here'`: a surface with no app route, review, or
+    the dev tunnel;
+  - `'the app is not ready yet'`;
+  - `'rate_limited'`: the host runs one share at a time, and at most one per
+    second;
+  - `'unsupported on this host'`: a page host older than SHARE_LINK, or a slot that
+    is not a full page. The hook decides this **before sending**, from the init
+    context having no `search` field, because an old host sends no reply at all
+    and the request would otherwise wait out the 10-minute bound.
+- 🔴 **Call it from the click handler.** The clipboard and the share sheet need
+  the viewer's click. The click reaches the host from your frame, but it expires,
+  so do not `await` anything before `share()`. Without a click the host does not
+  try, and answers `method: 'none'`.
+- The link opens the same view for anyone who can open your app. Your app has to
+  load that view from `useCivitaiLocation()` on mount.
+- `createMockHost` answers with the canonical URL built from the context slug,
+  strips `from` / `sl` / `src` from it, refuses a second share within a second
+  with `'rate_limited'`, and refuses a non-page context with `'unsupported on this
+  host'`, as the page host does. `shareLink: { copied: false }`,
+  `shareLink: { method: 'share' }` and `shareLinkError` simulate the other
+  outcomes. `pnpm dev:live` writes the real clipboard.
 
 ### `useBlockAnalytics()`
 

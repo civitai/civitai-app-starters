@@ -65,7 +65,13 @@ const LIVE_HOST = 'packages/civitai-blocks-react/src/internal/liveHost.ts';
  * 🔴 This ledger is itself asserted (test 3): a row that no longer answers
  * locally fails rather than silently shrinking the derived refusal set.
  */
-const SERVED_LOCALLY = ['REQUEST_TOKEN'];
+const SERVED_LOCALLY = [
+  'REQUEST_TOKEN',
+  // Builds the page host's canonical share URL from the init context's slug and
+  // writes the clipboard: the whole of what the page host does for it, and
+  // nothing to fetch (HQ app_blocks_sdk_j1gc).
+  'SHARE_LINK',
+];
 
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8');
 const sorted = (xs) => [...xs].sort();
