@@ -193,8 +193,14 @@ describe('createMockHost — training-data upload', () => {
   }
 
   it('answers each purpose with its own shape — the training knob does not leak into display or source', async () => {
-    const images = [{ url: 'https://example.test/v2/consumer/blobs/t1.png', air: 't1.png' }];
+    const images = [{ air: 't1.png' }];
     const { result } = await mount({ cannedTrainingDataUpload: images });
+    // The raw reply, before the hook: the mock itself must send no url.
+    const replies: unknown[] = [];
+    const onMessage = (e: MessageEvent) => {
+      if ((e.data as { type?: string })?.type === 'IMAGE_UPLOAD_RESULT') replies.push(e.data);
+    };
+    window.addEventListener('message', onMessage);
 
     let training: unknown;
     let display: unknown;
@@ -204,7 +210,11 @@ describe('createMockHost — training-data upload', () => {
       display = await result.current.display.open();
       source = await result.current.source.open();
     });
+    window.removeEventListener('message', onMessage);
     expect(training).toEqual(images);
+    expect(replies[0]).toMatchObject({ payload: { selected: { images: [{ air: 't1.png' }] } } });
+    const raw = replies[0] as { payload: { selected: { images: object[] } } };
+    expect(Object.keys(raw.payload.selected.images[0])).toEqual(['air']);
     expect(display).toMatchObject({ contentRating: 'pg' });
     expect(display).not.toHaveProperty('images');
     expect(source).toMatchObject({ width: expect.any(Number), height: expect.any(Number) });

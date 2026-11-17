@@ -177,7 +177,7 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  *    `null` on dismiss. Feed it straight into a `WorkflowBody.sourceImage` for an
  *    img2img graph.
  *  - `'trainingData'` → resolves with EVERY image the viewer uploaded,
- *    {@link BlockTrainingDataImage}`[]` (`{ url, air }` each), or `null` on
+ *    {@link BlockTrainingDataImage}`[]` (an AIR reference each), or `null` on
  *    cancel. Step 1 of a `kind: 'training'` run: pair each `air` with a caption
  *    for `WorkflowBodyTraining.items`. The host remembers the keys it uploaded
  *    for this block and refuses a run naming any other
@@ -226,7 +226,7 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  * @example
  * // trainingData (private training images, several in one reply)
  * const { open } = useImageUpload({ purpose: 'trainingData' });
- * const images = await open();            // [{ url, air }, …] | null
+ * const images = await open();            // [{ air }, …] | null
  * if (!images) return;
  * const items = images.map((img) => ({ air: img.air, caption: captionFor(img) }));
  */
@@ -366,7 +366,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
       // moderated image — nothing a training item can name — so that, an empty
       // list and a cancel all resolve `null` rather than a fabricated list.
       if (!selected || !('images' in selected) || selected.images.length === 0) return null;
-      return selected.images.map(({ url, air }) => ({ url, air }));
+      return selected.images.map(({ air }) => ({ air }));
     }
 
     // ---- Existing BLOCKING behavior (unchanged) ----

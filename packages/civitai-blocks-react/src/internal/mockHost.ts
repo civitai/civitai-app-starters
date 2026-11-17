@@ -2123,9 +2123,6 @@ const DEFAULT_IMAGE_BYTES_UPLOAD: BlockUploadedImageInfo = {
   url: 'https://image.civitai.com/mock/original=true/dev-bytes-upload.png',
 };
 
-/** Where the default `trainingData` upload's placeholder blob urls point. */
-const DEFAULT_TRAINING_DATA_URL_BASE = 'https://blobs.mock.invalid/v2/consumer/blobs/';
-
 const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockUploadedGenerationSource = {
   url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
   width: 1024,
@@ -5386,7 +5383,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
 
             // TRAINING DATA (civitai/civitai#6461): several private images in ONE
-            // reply, `{ images: [{ url, air }] }`. Every key handed out is
+            // reply, `{ images: [{ air }] }`. Every key handed out is
             // remembered for RUN_TRAINING's not-uploaded-here check.
             if (typed.payload?.purpose === 'trainingData') {
               let images: BlockTrainingDataImage[] | null;
@@ -5394,7 +5391,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 images = Array.from({ length: DEFAULT_TRAINING_DATA_UPLOAD_COUNT }, () => {
                   trainingUploadSerial += 1;
                   const air = `mockblob${trainingUploadSerial.toString(16).padStart(8, '0')}.png`;
-                  return { url: `${DEFAULT_TRAINING_DATA_URL_BASE}${air}`, air };
+                  return { air };
                 });
               } else {
                 images = cannedTrainingDataUpload;
@@ -5409,7 +5406,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               }
               dispatchToBlock({
                 type: 'IMAGE_UPLOAD_RESULT',
-                payload: { requestId, selected: { images: images.map(({ url, air }) => ({ url, air })) } },
+                payload: { requestId, selected: { images: images.map(({ air }) => ({ air })) } },
               });
               return;
             }

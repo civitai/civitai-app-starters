@@ -31,34 +31,39 @@ const uploadReply = viaTransport('IMAGE_UPLOAD_RESULT');
 
 /**
  * `IMAGE_UPLOAD_RESULT` for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`
- * (civitai/civitai#6461): `selected: { images: [{ url, air }] }`, or no
+ * (civitai/civitai#6461): `selected: { images: [{ air }] }`, or no
  * `selected` when the viewer cancelled. A guard that dropped this shape would
  * leave `useImageUpload({ purpose: 'trainingData' }).open()` waiting out the
  * ten-minute human bound on an upload the host already finished.
  */
-const IMAGE = { url: 'https://example.test/v2/consumer/blobs/k1a2b3.png', air: 'k1a2b3.png' };
+const IMAGE_URL = 'https://example.test/v2/consumer/blobs/k1a2b3.png';
+const IMAGE = { air: 'k1a2b3.png' };
 const UPLOAD_OK = { requestId: 'r1', selected: { images: [IMAGE] } };
 
 describe('IMAGE_UPLOAD_RESULT — the trainingData multi-image shape', () => {
-  it('accepts one image, several images, and a cancel (no selected)', () => {
+  it('accepts air-only images (one or several) and a cancel (no selected)', () => {
     expect(uploadReply(UPLOAD_OK)).toBe(true);
     expect(
       uploadReply({
         requestId: 'r1',
-        selected: { images: [IMAGE, { url: 'https://example.test/b/2.webp', air: 'k2.webp' }] },
+        selected: { images: [IMAGE, { air: 'k2.webp' }] },
       }),
     ).toBe(true);
     expect(uploadReply({ requestId: 'r1' })).toBe(true);
+  });
+
+  it('accepts an older host that still sends a url beside each air', () => {
+    expect(
+      uploadReply({ requestId: 'r1', selected: { images: [{ url: IMAGE_URL, air: 'k1a2b3.png' }] } }),
+    ).toBe(true);
   });
 
   it('rejects a malformed images list, one field at a time', () => {
     const bad = (images: unknown) => uploadReply({ requestId: 'r1', selected: { images } });
     expect(bad('k1')).toBe(false);
     expect(bad([null])).toBe(false);
-    expect(bad([{ ...IMAGE, url: '' }])).toBe(false);
-    expect(bad([{ ...IMAGE, url: 7 }])).toBe(false);
     expect(bad([{ ...IMAGE, air: '' }])).toBe(false);
-    expect(bad([{ url: IMAGE.url }])).toBe(false);
+    expect(bad([{ url: IMAGE_URL }])).toBe(false);
     expect(bad([IMAGE, { ...IMAGE, air: 3 }])).toBe(false);
   });
 
@@ -66,10 +71,10 @@ describe('IMAGE_UPLOAD_RESULT — the trainingData multi-image shape', () => {
     expect(
       uploadReply({
         requestId: 'r1',
-        selected: { imageId: 5, nsfwLevel: 1, contentRating: 'pg', url: IMAGE.url },
+        selected: { imageId: 5, nsfwLevel: 1, contentRating: 'pg', url: IMAGE_URL },
       }),
     ).toBe(true);
-    expect(uploadReply({ requestId: 'r1', selected: { url: IMAGE.url, width: 8, height: 8 } })).toBe(
+    expect(uploadReply({ requestId: 'r1', selected: { url: IMAGE_URL, width: 8, height: 8 } })).toBe(
       true,
     );
   });

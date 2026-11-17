@@ -929,7 +929,7 @@ export type ParentToBlockMessage =
       //     ({@link BlockUploadedGenerationSource}).
       //   • `'trainingData'` (civitai/civitai#6461): SEVERAL private training
       //     images in one reply ({@link BlockTrainingDataUploadResult} —
-      //     `{ images: [{ url, air }] }`). A cancel is the bare `{ requestId }`.
+      //     `{ images: [{ air }] }`). A cancel is the bare `{ requestId }`.
       // The variant the host returns matches the `purpose`/`asyncScan` the block
       // requested; narrow structurally (`'images' in selected` for training data,
       // `'status' in selected` for pending, then `'imageId' in selected`) when a

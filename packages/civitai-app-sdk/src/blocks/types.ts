@@ -444,10 +444,8 @@ export interface BlockPersistedGenerationSource extends BlockGenerationSourceIma
  * `Image` row, so there is no `imageId`.
  */
 export interface BlockTrainingDataImage {
-  /** The uploaded blob's url. Show it as the thumbnail; it is also accepted as an item's `air`. */
-  url: string;
   /**
-   * The consumer-blob key — pass it as {@link BlockTrainingDatasetItem.air}.
+   * An AIR reference to the uploaded image — pass it as {@link BlockTrainingDatasetItem.air}.
    * Opaque. The host compares keys case-insensitively.
    */
   air: string;
@@ -2136,7 +2134,7 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
  *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
  *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
  *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
- *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     `[{ air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
  *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
  *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
  *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the

@@ -978,15 +978,15 @@ function isPendingUpload(s: Record<string, unknown>): boolean {
 
 /**
  * The `purpose:'trainingData'` `IMAGE_UPLOAD_RESULT.selected` shape
- * (civitai/civitai#6461): `{ images: [{ url, air }] }`, each `url` and `air` a
- * non-empty string. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
+ * (civitai/civitai#6461): `{ images: [{ air }] }`, each `air` a non-empty
+ * string. A `url` an older host sends beside it is ignored. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
  * its key format is the host's to check, at the estimate — so only its type is
  * pinned here.
  */
 function isTrainingDataUpload(s: Record<string, unknown>): boolean {
   if (!Array.isArray(s.images)) return false;
   return s.images.every(
-    (img) => isObject(img) && isNonEmptyString(img.url) && isNonEmptyString(img.air),
+    (img) => isObject(img) && isNonEmptyString(img.air),
   );
 }
 
@@ -999,7 +999,7 @@ function isTrainingDataUpload(s: Record<string, unknown>): boolean {
  *     value, `url` non-empty).
  *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
  *     dimensions, non-empty url; no imageId/nsfwLevel).
- *   • `'trainingData'` → `{ images: [{ url, air }] }` (non-empty strings).
+ *   • `'trainingData'` → `{ images: [{ air }] }` (non-empty strings).
  * The guard accepts ANY of the shapes (the result carries no purpose discriminator).
  * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
  * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /

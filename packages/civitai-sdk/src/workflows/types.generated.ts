@@ -1071,7 +1071,7 @@ export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
  *  1. **Upload** — `useImageUpload({ purpose: 'trainingData' }).open()`
  *     (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). The viewer picks up to
  *     {@link BLOCK_TRAINING_DATASET_MAX_ITEMS} images in a host modal; you get
- *     `[{ url, air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
+ *     `[{ air }]` ({@link BlockTrainingDataImage}), or `null` on cancel.
  *     Pair each `air` with your caption to build {@link WorkflowBodyTraining.items}.
  *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
  *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the

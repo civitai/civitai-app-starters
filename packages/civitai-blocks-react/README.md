@@ -1803,8 +1803,8 @@ steps, three hooks:
    (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`). Civitai opens an upload
    modal in **its own chrome**; the viewer picks up to 50 PNG, JPEG or WebP
    images, and each is uploaded as a private blob (not published). `open()`
-   resolves with every image that uploaded, `[{ url, air }]`, or `null` when
-   the viewer cancels. Pair each `air` with your caption — captions up to 8,192
+   resolves with every image that uploaded, `[{ air }]` (an AIR reference
+   each), or `null` when the viewer cancels. Pair each `air` with your caption — captions up to 8,192
    characters, one blob at most once. The host answers only when its modal
    closes, after every original has uploaded, so `open()` waits up to an hour,
    not the ten minutes the other pickers use.
@@ -2390,7 +2390,7 @@ Host-mediated image upload — the host opens its native upload modal and the
 iframe never handles the bytes. Resolves with a moderated image (or `null` on
 dismiss); pass `{ purpose: 'generationSource' }` for a private img2img source,
 `{ purpose: 'trainingData' }` for several private training images in one call
-(`[{ url, air }] | null` — see the LoRA training section), or
+(`[{ air }] | null`, an AIR reference each — see the LoRA training section), or
 `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
 
 ```tsx
