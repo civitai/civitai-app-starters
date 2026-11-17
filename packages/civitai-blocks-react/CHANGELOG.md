@@ -1,5 +1,52 @@
 # @civitai/blocks-react
 
+## 0.83.0
+
+### Minor Changes
+
+- 4408fd1: **Deep links into app state, a share link, and a working Back button inside an app.** All additive.
+
+  - **Versions.** The new types (`BlockShareLinkRequest`, `BlockShareLinkResult`, `BlockShareLinkMethod`, `search`/`hash` on `PageSlotContext`) ship in the `@civitai/app-sdk` minor this changeset produces (0.90.0 if it is released alone). `@civitai/blocks-react` imports only TYPES from it for this feature, so its runtime peer floor stays `>=0.57.0`. A TypeScript app that names those types needs that `@civitai/app-sdk` release or later.
+  - **Old hosts.** A page host that predates this change sends no `search`/`hash`, and sends **no reply at all** to `SHARE_LINK`: its NACK path answers only types it declares. `useShareLink().share()` therefore rejects at once with `'unsupported on this host'` when the init context has no `search` field, instead of waiting out its 10-minute bound. A raw `request('SHARE_LINK')` caller must apply the same check.
+
+  - **`search` and `hash` reach the app.** `PageSlotContext` gains optional `search` (`''` or `'?…'`) and `hash` (`''` or `'#…'`), and `ROUTE_CHANGED` carries both. The host reads them from its own URL and strips the query pairs it owns (`from`, `sl`, `src`). Everything else arrives byte-for-byte, uncapped.
+    - `@civitai/blocks-react`: **`useCivitaiLocation()`** returns `{ subPath, search, hash }` and follows every `ROUTE_CHANGED`, including a search-only or hash-only move. `useCivitaiRoute()` is unchanged and still returns the bare `subPath` string.
+  - **`SHARE_LINK { requestId, subPath, search?, hash? }` → `SHARE_LINK_RESULT { requestId, result?: { url, copied, method }, error? }`.** The host builds the canonical `https://civitai.com/apps/run/<slug>/<subPath><search><hash>` URL from its own origin and slug. It then copies the URL, or opens the native share sheet on a phone.
+    - `copied` is `true` only when the clipboard write resolved. `method` is `'clipboard'`, `'share'` or `'none'`. With `'none'`, show `url` as selectable text.
+    - The host strips `from`, `sl` and `src` from the URL. A view that would leave the app (`..`, `//host`, a scheme) is refused with `'invalid share link'`. The other refusals are `'sharing is not available here'` (no app route, review, or the dev tunnel), `'the app is not ready yet'`, `'rate_limited'` (one share at a time, at most one per second) and `'unsupported on this host'` (see Old hosts).
+    - The copy needs the viewer's click inside the app's own frame, so call `share()` from the click handler: `onClick={() => share().catch(() => {})}`.
+    - The host emits exactly three results: `{ copied: true, method: 'clipboard' }`, `{ copied: false, method: 'share' }` and `{ copied: false, method: 'none' }`. Any other pair is treated as a malformed reply.
+    - `@civitai/app-sdk` adds `BlockShareLinkRequest`, `BlockShareLinkResult` and `BlockShareLinkMethod` on `./blocks`. The pinned `./blocks` export count moves from 239 to 242.
+    - `@civitai/blocks-react`: **`useShareLink()`** returns `{ share, isPending, error, lastResult }`. `share()` with no argument links to the view showing now. A malformed reply rejects instead of hanging. The request waits the human bound (10 min), because a share sheet answers only when the viewer acts.
+  - **Back and Forward.** An app-scoped navigate is a real history entry on the host page. A navigate to the view already showing adds none. The host sends `ROUTE_CHANGED` when the viewer presses Back or Forward. `NAVIGATE` gains `replace?: boolean`, and `useCivitaiNavigate().navigate(path, { replace: true })` replaces the entry instead of pushing a new one. An app that switches views with local state alone gets no history entries, so Back leaves the app. The blocks-react README shows the pattern.
+  - **Mock host:** `SHARE_LINK` answers with the canonical URL, built from the context slug. Like the page host, it strips `from`/`sl`/`src`, refuses escapes, refuses a second share within a second with `'rate_limited'`, and refuses a non-page context with `'unsupported on this host'`. The `shareLink: { copied: false }` and `shareLink: { method: 'share' }` options and the `shareLinkError` option simulate the other outcomes; a `shareLink` pair the host never sends throws at `createMockHost`. The default page context now carries `search: ''` and `hash: ''`. An app-scoped `NAVIGATE` now moves the mock's route and pushes `ROUTE_CHANGED` with `search` and `hash`.
+  - **dev:live:** `ROUTE_CHANGED` carries `search` and `hash`. A `?query#hash` in a navigate path no longer ends up inside `subPath`. `replace: true` replaces the history entry, and a navigate to the current view adds none. `SHARE_LINK` builds the URL on the backend origin and writes the clipboard, with the same stripping, rate limit and non-page refusal as the mock.
+  - `@civitai/sdk`: the host reply ledger lists `SHARE_LINK`, so `request('SHARE_LINK', …)` settles with `{ url, copied, method }`.
+  - ⚠️ After upgrading, reinstall in every checkout. A stale `node_modules` reports type errors in your own source files that look like a broken main.
+
+- 824c107: **A picked generation source can come back as a private scanned image.** While Civitai requires the generation sources apps send to be scanned images on Civitai (the host's `app-block-source-scanned-rows` flag), the host copies a file picked through `useImageUpload({ purpose: 'generationSource' })`, or a single `useMediaUpload()` image, into a private, scanned image owned by the viewer, and answers with that image instead of the raw upload.
+
+  - **Same API.** `open()` still resolves with `{ url, width, height }` (or `null` on dismiss), now typed `BlockUploadedGenerationSource`, which may also carry `imageId` and `ready` (see its docs).
+  - **New type** (`@civitai/app-sdk/blocks`, re-exported by `@civitai/blocks-react`): `BlockUploadedGenerationSource` (`BlockGenerationSourceImageInfo` plus optional `imageId` and `ready`), now the `generationSource` return of `useImageUpload` and a member of `IMAGE_UPLOAD_RESULT.selected`. `BlockMediaUploadInfo` gains the same two optional fields.
+  - **Transport:** the `IMAGE_UPLOAD_RESULT` and `MEDIA_UPLOAD_RESULT` validators accept both shapes.
+  - **Mock host:** `cannedGenerationSourceUpload` and `cannedMediaUploads.image` accept `imageId` and `ready`, to answer as the host does with the flag on. The defaults are unchanged (the raw-upload shape).
+  - **`@civitai/sdk`:** `host.openImageUpload({ purpose: 'generationSource' })` now passes `imageId` and `ready` through (`SourceImage` gains both, optional) instead of dropping them.
+  - An older SDK keeps working: it passes the two fields through (or ignores them), and its source is the scanned image's url.
+
+- 05068f8: **Unlock a restricted workflow output in place.** `useOutputUnlock()` (`@civitai/blocks-react`) sends the new `REQUEST_OUTPUT_UNLOCK { workflowId, position }`; the host replies `OUTPUT_UNLOCK_RESULT { result }` once the viewer is done with its own dialog.
+
+  - **New types** (`@civitai/app-sdk/blocks`): `BlockOutputUnlockResult` (`{ outcome, snapshot?, message? }`) and `KnownBlockOutputUnlockOutcome` (`'unlocked' | 'not-restricted' | 'not-released' | 'refused' | 'linked-out' | 'dismissed' | 'unavailable'`, an open union).
+  - **What the host offers** is decided from the live workflow, never from the app. An output restricted for `'pool'` can be unlocked with yellow Buzz at the price the host shows. An unlock adds no author share and counts against no spend limit (the original generation's spend already counted); `'refused'` means the viewer's yellow Buzz is short. A `'ceiling'` or `'unrated'` output is never charged: the host links to the same app on civitai.red, at the current page, when that site could show it.
+  - **Transport:** `OUTPUT_UNLOCK_RESULT` is validated (an `error` string or a `result` with a string `outcome`) and its `result.snapshot` is projected like every other snapshot reply. `REQUEST_OUTPUT_UNLOCK` uses the human-interaction timeout.
+  - **Mock host:** answers the request as the host does. `generation.outputUnlock` decides a `'pool'` position: `'unlock'` (default; it stays unlocked), `'dismiss'`, `'insufficient'` (`'refused'`) or `'not-released'`. `generation.outputUnlockRestricted` decides a `'ceiling'` / `'unrated'` one: `'dismiss'` (default), `'link-out'` or `'settings'` (`'unavailable'`). A missing position, or a second open request for one position, answers `'unavailable'`. The live dev host answers `'unavailable'`: the unlock needs a signed-in civitai.com session.
+  - Needs a host with the unlock (civitai/civitai#9083); an older host has no handler, and the request times out.
+
+- cdfc2b7: **A training-data upload returns an AIR reference.** `useImageUpload({ purpose: 'trainingData' }).open()` resolves with `[{ air }]`, one AIR reference per uploaded image (or `null` on cancel). Pass each `air` as a `BlockTrainingDatasetItem.air`, as before.
+
+  - **Breaking type change:** `BlockTrainingDataImage` is now `{ air: string }`; its `url` field is removed. An app that showed `url` as a thumbnail should show a placeholder instead.
+  - **Transport:** the `IMAGE_UPLOAD_RESULT` validator requires only `air` on each training image. A `url` sent by an older host is ignored and not passed on.
+  - **Mock host:** the default and canned `trainingData` uploads answer `{ air }` only.
+
 ## 0.82.0
 
 ### Minor Changes
@@ -977,15 +1024,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                    single measurements on one machine.
+                                                                                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                        single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2805,10 +2852,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                                    after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                             @civitai/components  0.4.2                   — 1 copy
+                                                                                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                      after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
