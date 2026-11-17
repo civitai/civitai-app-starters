@@ -41,7 +41,7 @@ const IMAGE = { air: 'k1a2b3.png' };
 const UPLOAD_OK = { requestId: 'r1', selected: { images: [IMAGE] } };
 
 describe('IMAGE_UPLOAD_RESULT — the trainingData multi-image shape', () => {
-  it('accepts one image, several images, and a cancel (no selected)', () => {
+  it('accepts air-only images (one or several) and a cancel (no selected)', () => {
     expect(uploadReply(UPLOAD_OK)).toBe(true);
     expect(
       uploadReply({
