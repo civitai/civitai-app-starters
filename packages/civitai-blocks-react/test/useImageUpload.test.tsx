@@ -6,6 +6,7 @@ import type {
   BlockImageScanResult,
   BlockInitPayload,
   BlockPendingImageInfo,
+  BlockSharedUploadImageInfo,
   BlockUploadedImageInfo,
 } from '@civitai/app-sdk/blocks';
 
@@ -425,13 +426,57 @@ describe('useImageUpload', () => {
     await expect(pick).resolves.toBeNull();
   });
 
-  it('share: true resolves with the moderated image like any display upload', async () => {
+  function replyShared(requestId: string, selected: unknown, shared?: unknown) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: shared === undefined ? { requestId, selected } : { requestId, selected, shared },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('share: true resolves with the moderated image and shared: true when the host recorded the share', async () => {
     const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED, true);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: true });
+  });
+
+  it('share: true reads shared: false when the host says it did not record the share', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED, false);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: false });
+  });
+
+  it('share: true on an OLD host (no echo) reads shared: false, never true', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: false });
+  });
+
+  it('an unshared upload carries no shared field, even if the host sends one', async () => {
+    const { result } = renderHook(() => useImageUpload());
     let pick!: Promise<BlockUploadedImageInfo | null>;
     act(() => {
       pick = result.current.open();
     });
-    replyResult(lastSent().payload.requestId, MODERATED);
+    replyShared(lastSent().payload.requestId, MODERATED, true);
     await expect(pick).resolves.toEqual(MODERATED);
   });
 });
@@ -525,6 +570,35 @@ describe('useImageUpload — asyncScan (non-blocking display)', () => {
       );
     });
     await expect(pick).rejects.toThrow('no block token');
+  });
+
+  it('share: true with asyncScan: the pending handle carries the shared echo', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: {
+              requestId: lastSent().payload.requestId,
+              selected: { status: 'pending', imageId: 4242, url: 'https://image.civitai.com/x/p.jpeg' },
+              shared: true,
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).resolves.toEqual({
+      status: 'pending',
+      imageId: 4242,
+      url: 'https://image.civitai.com/x/p.jpeg',
+      shared: true,
+    });
   });
 
   it('share: true rides along with asyncScan', () => {

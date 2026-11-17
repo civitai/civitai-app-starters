@@ -209,6 +209,22 @@ export interface BlockUploadedImageInfo {
 }
 
 /**
+ * A `useImageUpload({ share: true })` result: the moderated image, plus whether
+ * sharing TOOK EFFECT. `shared: true` only when the host reports that the
+ * server recorded the upload as shared with the app's other viewers; `false`
+ * on a host that predates sharing (or did not record it), in which case the
+ * upload is private to the uploader and the app must not say otherwise.
+ *
+ * A shared upload is shown to the app's other viewers through its gated image
+ * read only once Civitai has scanned it, only at PG / PG13 (shared uploads are
+ * held to SFW), and clamped to each viewer's own browsing level.
+ */
+export type BlockSharedUploadImageInfo = BlockUploadedImageInfo & { shared: boolean };
+
+/** The `asyncScan: true` + `share: true` early handle: {@link BlockPendingImageInfo} plus `shared`. */
+export type BlockSharedPendingImageInfo = BlockPendingImageInfo & { shared: boolean };
+
+/**
  * Early-resolve handle for an ASYNC-SCAN `'display'` upload (`asyncScan: true`
  * on `OPEN_IMAGE_UPLOAD`). The image has been PERSISTED (its `imageId` is known)
  * but is NOT yet scanned — so it is AUTHOR-PREVIEW-ONLY until the verdict lands.

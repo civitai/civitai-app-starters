@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import type {
   BlockImageScanResult,
   BlockPendingImageInfo,
+  BlockSharedPendingImageInfo,
+  BlockSharedUploadImageInfo,
   BlockTrainingDataImage,
   BlockUploadedGenerationSource,
   BlockUploadedImageInfo,
@@ -50,6 +52,19 @@ export interface UseImageUpload {
 }
 
 /** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
+/** What {@link useImageUpload} returns for `{ share: true }`. */
+export interface UseImageUploadShared {
+  /** The moderated image plus whether sharing took effect, or `null` on dismiss. */
+  open: () => Promise<BlockSharedUploadImageInfo | null>;
+}
+
+/** What {@link useImageUpload} returns for `{ asyncScan: true, share: true }`. */
+export interface UseImageUploadAsyncScanShared {
+  /** The early handle plus whether sharing took effect, or `null` on dismiss. */
+  open: () => Promise<BlockSharedPendingImageInfo | null>;
+  scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
+}
+
 export interface UseImageUploadGenerationSource {
   /** The source, or `null` on dismiss. See {@link BlockUploadedGenerationSource}. */
   open: () => Promise<BlockUploadedGenerationSource | null>;
@@ -87,6 +102,8 @@ export interface UseImageUploadAsyncScan {
  */
 export interface UseImageUploadImplementation {
   open: () => Promise<
+    | BlockSharedUploadImageInfo
+    | BlockSharedPendingImageInfo
     | BlockUploadedImageInfo
     | BlockUploadedGenerationSource
     | BlockPendingImageInfo
@@ -128,7 +145,11 @@ export interface UseImageUploadOptions {
    * byte-identical to before. Ignored for `'generationSource'` and
    * `'trainingData'`. A shared upload the host refuses (e.g. `no block
    * token`) makes `open()` REJECT with the host's error, never resolve `null`
-   * as if dismissed. 🔴 A host that predates the field ignores it and the
+   * as if dismissed. `open()` resolves with `shared: boolean`: `true` only
+   * when the host reports the server recorded the upload as shared, `false`
+   * otherwise (including on a host that predates sharing). Shared uploads are
+   * held to SFW (PG / PG13) and clamped to each viewer's own browsing level.
+   * 🔴 A host that predates the field ignores it and the
    * upload stays private: do not tell viewers it is shared unless your app
    * runs on a host that supports it.
    */
@@ -262,8 +283,14 @@ export function useImageUpload(options: { purpose: 'trainingData' }): UseImageUp
 export function useImageUpload(options: {
   purpose?: 'display';
   asyncScan: true;
+  share: true;
+}): UseImageUploadAsyncScanShared;
+export function useImageUpload(options: {
+  purpose?: 'display';
+  asyncScan: true;
   share?: boolean;
 }): UseImageUploadAsyncScan;
+export function useImageUpload(options: { purpose?: 'display'; share: true }): UseImageUploadShared;
 export function useImageUpload(options?: { purpose?: 'display'; share?: boolean }): UseImageUpload;
 export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
   useTransportConnection();
@@ -356,7 +383,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
           imageId: selected.imageId,
           url: selected.url,
         };
-        return handle;
+        return share ? { ...handle, shared: reply.shared === true } : handle;
       }
 
       // OLD host (ignored asyncScan): it blocking-resolved a MODERATED image. Wrap
@@ -374,7 +401,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
           imageId: moderated.imageId,
           url: moderated.url,
         };
-        return handle;
+        return share ? { ...handle, shared: reply.shared === true } : handle;
       }
 
       // Any other shape on a display request (e.g. an unexpected source-only
@@ -415,6 +442,8 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     // `if (!img) return;` without an `undefined` ambiguity.
     // A multi-image training reply is not an answer to a single-image purpose.
     if (!selected || 'images' in selected) return null;
+    // A shared upload says whether sharing TOOK EFFECT; a host that predates the echo reads as false.
+    if (share) return { ...(selected as BlockUploadedImageInfo), shared: reply.shared === true };
     return selected;
   }, [asyncScan, purpose, share]);
 

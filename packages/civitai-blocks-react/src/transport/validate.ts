@@ -1015,6 +1015,7 @@ export function isValidImageUploadResult(
     | { status: 'pending'; imageId: number; url: string }
     | { images: Array<{ url: string; air: string }> };
   error?: string;
+  shared?: boolean;
 } {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
@@ -1024,6 +1025,8 @@ export function isValidImageUploadResult(
   // dropped `{ requestId, error }` would leave `useUploadImageBytes()` waiting
   // out its whole timeout on a refusal the host already sent.
   if (p.error !== undefined && typeof p.error !== 'string') return false;
+  // `shared`: whether a `share: true` upload was recorded as shared. Boolean when present.
+  if (p.shared !== undefined && typeof p.shared !== 'boolean') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
   // one of the purpose-keyed shapes (moderated / generationSource / pending /
   // trainingData).

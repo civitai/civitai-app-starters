@@ -949,6 +949,14 @@ export type ParentToBlockMessage =
           | BlockTrainingDataUploadResult;
         /** A `bytes` upload's refusal or failure: a host string or a forwarded server message. */
         error?: string;
+        /**
+         * Whether sharing TOOK EFFECT, on a reply to an `OPEN_IMAGE_UPLOAD` that
+         * carried `share: true`: `true` only when the server recorded this upload
+         * as shared with the app's other viewers, `false` otherwise. Absent on
+         * replies to unshared uploads, and from a host that predates the field,
+         * which the SDK reads as `false`.
+         */
+        shared?: boolean;
       };
     }
   | {

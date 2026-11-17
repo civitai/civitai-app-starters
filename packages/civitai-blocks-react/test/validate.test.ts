@@ -578,6 +578,13 @@ describe('isValidImageUploadResult', () => {
     expect(isValidImageUploadResult({ requestId: 'r', error: 'Too many image uploads — slow down.' })).toBe(true);
     expect(isValidImageUploadResult({ requestId: 'r', error: '' })).toBe(true);
   });
+
+  it('accepts a boolean `shared` echo and refuses any other type', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: true })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: false })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: 'true' })).toBe(false);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: 1 })).toBe(false);
+  });
   it.each([
     ['error a number', { requestId: 'r', error: 42 }],
     ['error an object', { requestId: 'r', error: { message: 'busy' } }],

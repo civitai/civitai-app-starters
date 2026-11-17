@@ -2398,10 +2398,15 @@ upload with your app's other viewers once Civitai has scanned it. Before the
 viewer picks a file, the host's upload dialog says the image will be visible to
 other viewers of your app once scanned. The server records your app from the
 verified block token, and `useGatedImages()` then returns the image to other
-viewers once it is scanned, clamped to each viewer's own browsing level; a
-pending or flagged one comes back `hidden`. Without `share` (the default) the
-upload is private to the uploader. A host that predates `share` ignores it, and
-the upload stays private.
+viewers once it is scanned. Shared uploads are held to SFW: only a PG or PG13
+image is shown to anyone else, clamped to each viewer's own browsing level; a
+pending, flagged or mature one comes back `hidden`. `open()` resolves with
+`shared: boolean`: `true` only when the host reports the server recorded the
+upload as shared, `false` otherwise. A host that predates `share` ignores it,
+the upload stays private, and `shared` reads `false`, so check it before you
+tell the viewer their image is shared. Without `share` (the default) the upload
+is private to the uploader. A refused shared upload makes `open()` reject with
+the host's error.
 
 ```tsx
 const { open } = useImageUpload();
