@@ -395,11 +395,11 @@ describe('useImageUpload', () => {
     ]);
   });
 
-  function replyError(requestId: string, error: string) {
+  function replyError(requestId: string, error: string, extra: Record<string, unknown> = {}) {
     act(() => {
       window.dispatchEvent(
         new MessageEvent('message', {
-          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, error } },
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, error, ...extra } },
           origin: PARENT_ORIGIN,
         }),
       );
@@ -412,8 +412,26 @@ describe('useImageUpload', () => {
     act(() => {
       pick = result.current.open();
     });
-    replyError(lastSent().payload.requestId, 'no block token');
+    // The host's exact no-token reply to a share request: `{ requestId, error, shared: false }`.
+    replyError(lastSent().payload.requestId, 'no block token', { shared: false });
     await expect(pick).rejects.toThrow('no block token');
+  });
+
+  it("share: true resolves null on the host's share-dismiss reply { requestId, shared: false }", async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId: lastSent().payload.requestId, shared: false } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).resolves.toBeNull();
   });
 
   it('without share, an error reply still resolves null (unchanged)', async () => {
@@ -564,7 +582,10 @@ describe('useImageUpload — asyncScan (non-blocking display)', () => {
     act(() => {
       window.dispatchEvent(
         new MessageEvent('message', {
-          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId: lastSent().payload.requestId, error: 'no block token' } },
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: { requestId: lastSent().payload.requestId, error: 'no block token', shared: false },
+          },
           origin: PARENT_ORIGIN,
         }),
       );

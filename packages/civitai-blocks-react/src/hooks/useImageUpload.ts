@@ -51,7 +51,6 @@ export interface UseImageUpload {
   open: () => Promise<BlockUploadedImageInfo | null>;
 }
 
-/** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
 /** What {@link useImageUpload} returns for `{ share: true }`. */
 export interface UseImageUploadShared {
   /** The moderated image plus whether sharing took effect, or `null` on dismiss. */
@@ -65,6 +64,7 @@ export interface UseImageUploadAsyncScanShared {
   scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
 }
 
+/** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
 export interface UseImageUploadGenerationSource {
   /** The source, or `null` on dismiss. See {@link BlockUploadedGenerationSource}. */
   open: () => Promise<BlockUploadedGenerationSource | null>;
@@ -143,24 +143,26 @@ export interface UseImageUploadOptions {
    * `useGatedImages()`, scanned images only. Sent as `share: true` on
    * `OPEN_IMAGE_UPLOAD` only when `true`, so an unshared upload's wire is
    * byte-identical to before. Ignored for `'generationSource'` and
-   * `'trainingData'`. A shared upload the host refuses (e.g. `no block
-   * token`) makes `open()` REJECT with the host's error, never resolve `null`
-   * as if dismissed. `open()` resolves with `shared: boolean`: `true` only
-   * when the host reports the server recorded the upload as shared, `false`
-   * otherwise (including on a host that predates sharing). Shared uploads are
-   * held to SFW (PG / PG13) and clamped to each viewer's own browsing level.
-   * 🔴 A host that predates the field ignores it and the
-   * upload stays private: do not tell viewers it is shared unless your app
+   * `'trainingData'`. The host's no-token refusal (`no block token`) makes
+   * `open()` REJECT with the host's error, never resolve `null` as if
+   * dismissed; its review-mode and pre-handshake refusals reply as a dismiss,
+   * so `open()` resolves `null` there. `open()` resolves with `shared:
+   * boolean`: `true` only when the host reports the server recorded the
+   * upload as shared, `false` otherwise (including on a host that predates
+   * sharing). Shared uploads are held to SFW (PG / PG13) and clamped to each
+   * viewer's own browsing level. 🔴 A host that predates the field ignores it
+   * and the upload stays private: do not tell viewers it is shared unless your app
    * runs on a host that supports it.
    */
   share?: boolean;
 }
 
 /**
- * A SHARED upload the host refused (e.g. `no block token`) REJECTS with the
- * host's error, so an app never reads the refusal as a dismissed picker and goes
- * on telling the viewer their image is shared. An unshared upload keeps the
- * hook's long-standing behaviour (an error reply resolves `null`).
+ * A SHARED upload the host refused with an error reply (its no-token refusal,
+ * `no block token`) REJECTS with the host's error, so an app never reads the
+ * refusal as a dismissed picker and goes on telling the viewer their image is
+ * shared. An unshared upload keeps the hook's long-standing behaviour (an error
+ * reply resolves `null`).
  */
 function throwIfShareRefused(share: boolean, reply: { error?: string }): void {
   if (share && typeof reply.error === 'string' && reply.error.length > 0) throw new Error(reply.error);
