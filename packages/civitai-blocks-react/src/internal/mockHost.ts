@@ -108,6 +108,7 @@ import {
 } from './saveBytesPrepare.js';
 import {
   UPLOAD_BYTES_INVALID_ERROR,
+  UPLOAD_BYTES_NO_TOKEN_ERROR,
   admitUploadBytes,
   resolveUploadBytesRequest,
   type UploadBytesWindowEntry,
@@ -1190,6 +1191,28 @@ export interface MockHostOptions {
    */
   cannedImageUpload?: BlockUploadedImageInfo | null;
   /**
+   * The `shared` echo on a `useImageUpload({ share: true })` reply (blocking or
+   * `asyncScan`) that returns an image: `true` (the default) answers as a host
+   * whose server recorded the share, `false` as one that did not. Mirrors the
+   * real host's reply shapes for a `share: true` request: a returned image
+   * carries `shared` ({@link cannedImageUploadShared}); a dismissed modal
+   * (`cannedImageUpload: null`) carries `shared: false`; the refusal
+   * ({@link imageUploadShareRefused}) carries `error` and `shared: false`. A
+   * request without `share: true`, and any `generationSource`, `trainingData`
+   * or `bytes` upload, never carries `shared`, as on the host. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  cannedImageUploadShared?: boolean;
+  /**
+   * Refuse every `share: true` display upload with the host's no-token reply,
+   * `{ requestId, error: 'no block token', shared: false }`, so
+   * `useImageUpload({ share: true }).open()` REJECTS with `no block token`.
+   * The real host sends it when it holds no block token to stamp the share
+   * with. Unshared uploads are unaffected. Default `false`. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  imageUploadShareRefused?: boolean;
+  /**
    * The canned source image returned from `OPEN_IMAGE_UPLOAD` when the block
    * requests `purpose:'generationSource'` — what
    * `useImageUpload({ purpose:'generationSource' }).open()` resolves with. The
@@ -1903,6 +1926,8 @@ export type MockHostScenarioPatch = Pick<
   | 'cannedMultiPicks'
   | 'cannedImagePicks'
   | 'cannedImageUpload'
+  | 'cannedImageUploadShared'
+  | 'imageUploadShareRefused'
   | 'cannedGenerationSourceUpload'
   | 'cannedImageScan'
   | 'generation'
@@ -2755,6 +2780,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Canned image-upload result. `null` = dismissed; undefined = default image.
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
+  // The `shared` echo for a `share: true` upload that returns an image, and the no-token refusal.
+  let cannedImageUploadShared = options.cannedImageUploadShared !== false;
+  let imageUploadShareRefused = options.imageUploadShareRefused === true;
   // Canned generationSource-upload result (purpose:'generationSource').
   let cannedGenerationSourceUpload: BlockUploadedGenerationSource | null =
     options.cannedGenerationSourceUpload === undefined
@@ -5413,20 +5441,38 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
             const isGenerationSource = typed.payload?.purpose === 'generationSource';
 
+            // SHARE (display only), as the real host reads it: strictly `=== true`
+            // off the raw payload. Every reply to a share request echoes `shared`;
+            // a reply to an unshared request omits it, so its wire is unchanged.
+            const shareRequested =
+              !isGenerationSource && (typed.payload as { share?: unknown } | undefined)?.share === true;
+            const echo = (shared: boolean) => (shareRequested ? { shared } : {});
+            if (shareRequested && imageUploadShareRefused) {
+              dispatchToBlock({
+                type: 'IMAGE_UPLOAD_RESULT',
+                payload: { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR, shared: false },
+              });
+              return;
+            }
+
             // NON-BLOCKING display path (asyncScan:true): early-resolve with a
             // PENDING handle, then stream the canned scan verdict on a later tick.
             // Ignored for generationSource (no host-side scan on that path).
             if (typed.payload?.asyncScan === true && !isGenerationSource) {
               // `null` cannedImageUpload = dismissed → bare result, no verdict.
               if (!cannedImageUpload) {
-                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId } });
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, ...echo(false) } });
                 return;
               }
               const { imageId, url } = cannedImageUpload;
               // 1) early-resolve on persist (imageId known, NOT yet scanned).
               dispatchToBlock({
                 type: 'IMAGE_UPLOAD_RESULT',
-                payload: { requestId, selected: { status: 'pending', imageId, url } },
+                payload: {
+                  requestId,
+                  selected: { status: 'pending', imageId, url },
+                  ...echo(cannedImageUploadShared),
+                },
               });
               // 2) stream the canned verdict on a later tick (mirrors the host's
               //    async BlockImageScanPoller resolving after the modal closed).
@@ -5450,11 +5496,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
 
-            // BLOCKING display / generationSource (unchanged).
+            // BLOCKING display / generationSource. A shared display reply echoes
+            // `shared`: the canned value on a returned image, `false` on dismiss.
             const selected = isGenerationSource ? cannedGenerationSourceUpload : cannedImageUpload;
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
-              payload: { requestId, ...(selected ? { selected } : {}) },
+              payload: {
+                requestId,
+                ...(selected ? { selected } : {}),
+                ...echo(selected ? cannedImageUploadShared : false),
+              },
             });
             return;
           }
@@ -5681,6 +5732,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         patch.cannedImagePicks === undefined ? DEFAULT_IMAGE_PICKS : patch.cannedImagePicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
+    if (patch.cannedImageUploadShared !== undefined)
+      cannedImageUploadShared = patch.cannedImageUploadShared;
+    if (patch.imageUploadShareRefused !== undefined)
+      imageUploadShareRefused = patch.imageUploadShareRefused;
     if ('cannedGenerationSourceUpload' in patch)
       cannedGenerationSourceUpload = patch.cannedGenerationSourceUpload ?? null;
     if (patch.cannedImageScan !== undefined) cannedImageScan = patch.cannedImageScan;

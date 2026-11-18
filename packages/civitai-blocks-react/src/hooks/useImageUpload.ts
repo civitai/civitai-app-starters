@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import type {
   BlockImageScanResult,
   BlockPendingImageInfo,
+  BlockSharedPendingImageInfo,
+  BlockSharedUploadImageInfo,
   BlockTrainingDataImage,
   BlockUploadedGenerationSource,
   BlockUploadedImageInfo,
@@ -49,6 +51,19 @@ export interface UseImageUpload {
   open: () => Promise<BlockUploadedImageInfo | null>;
 }
 
+/** What {@link useImageUpload} returns for `{ share: true }`. */
+export interface UseImageUploadShared {
+  /** The moderated image plus whether sharing took effect, or `null` on dismiss. */
+  open: () => Promise<BlockSharedUploadImageInfo | null>;
+}
+
+/** What {@link useImageUpload} returns for `{ asyncScan: true, share: true }`. */
+export interface UseImageUploadAsyncScanShared {
+  /** The early handle plus whether sharing took effect, or `null` on dismiss. */
+  open: () => Promise<BlockSharedPendingImageInfo | null>;
+  scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
+}
+
 /** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
 export interface UseImageUploadGenerationSource {
   /** The source, or `null` on dismiss. See {@link BlockUploadedGenerationSource}. */
@@ -87,6 +102,8 @@ export interface UseImageUploadAsyncScan {
  */
 export interface UseImageUploadImplementation {
   open: () => Promise<
+    | BlockSharedUploadImageInfo
+    | BlockSharedPendingImageInfo
     | BlockUploadedImageInfo
     | BlockUploadedGenerationSource
     | BlockPendingImageInfo
@@ -118,6 +135,37 @@ export interface UseImageUploadOptions {
    * legacy blocking behavior.
    */
   asyncScan?: boolean;
+  /**
+   * SHARE this `'display'` upload with this app's other viewers once Civitai
+   * has scanned it (default: private to the uploader). The host's upload
+   * dialog tells the viewer so before they pick a file, and the server records
+   * this app from the verified block token. Readable afterwards through
+   * `useGatedImages()`, scanned images only. Sent as `share: true` on
+   * `OPEN_IMAGE_UPLOAD` only when `true`, so an unshared upload's wire is
+   * byte-identical to before. Ignored for `'generationSource'` and
+   * `'trainingData'`. The host's no-token refusal (`no block token`) makes
+   * `open()` REJECT with the host's error, never resolve `null` as if
+   * dismissed; its review-mode and pre-handshake refusals reply as a dismiss,
+   * so `open()` resolves `null` there. `open()` resolves with `shared:
+   * boolean`: `true` only when the host reports the server recorded the
+   * upload as shared, `false` otherwise (including on a host that predates
+   * sharing). Shared uploads are held to SFW (PG / PG13) and clamped to each
+   * viewer's own browsing level. 🔴 A host that predates the field ignores it
+   * and the upload stays private: do not tell viewers it is shared unless your app
+   * runs on a host that supports it.
+   */
+  share?: boolean;
+}
+
+/**
+ * A SHARED upload the host refused with an error reply (its no-token refusal,
+ * `no block token`) REJECTS with the host's error, so an app never reads the
+ * refusal as a dismissed picker and goes on telling the viewer their image is
+ * shared. An unshared upload keeps the hook's long-standing behaviour (an error
+ * reply resolves `null`).
+ */
+function throwIfShareRefused(share: boolean, reply: { error?: string }): void {
+  if (share && typeof reply.error === 'string' && reply.error.length > 0) throw new Error(reply.error);
 }
 
 /** Per-upload scan-tracking entry (keyed by `imageId` in the hook's internal map). */
@@ -237,12 +285,21 @@ export function useImageUpload(options: { purpose: 'trainingData' }): UseImageUp
 export function useImageUpload(options: {
   purpose?: 'display';
   asyncScan: true;
+  share: true;
+}): UseImageUploadAsyncScanShared;
+export function useImageUpload(options: {
+  purpose?: 'display';
+  asyncScan: true;
+  share?: boolean;
 }): UseImageUploadAsyncScan;
-export function useImageUpload(options?: { purpose?: 'display' }): UseImageUpload;
+export function useImageUpload(options: { purpose?: 'display'; share: true }): UseImageUploadShared;
+export function useImageUpload(options?: { purpose?: 'display'; share?: boolean }): UseImageUpload;
 export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
   useTransportConnection();
   const purpose = options?.purpose;
   const asyncScan = options?.asyncScan === true && (purpose === undefined || purpose === 'display');
+  // Only a display upload can be shared, and only the exact value `true` asks for it.
+  const share = options?.share === true && (purpose === undefined || purpose === 'display');
 
   // Per-instance scan tracking, keyed by imageId. Persists across renders; a
   // verdict is correlated back to its upload by imageId + the generated requestId.
@@ -310,12 +367,14 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
   const open = useCallback(async () => {
     if (asyncScan) {
       // Omit `purpose` (display byte-compat) but opt into the early-resolve flow.
-      const { requestId, selected } = await sendTypedRequest(
+      const reply = await sendTypedRequest(
         getTransport(),
-        { type: 'OPEN_IMAGE_UPLOAD', payload: { asyncScan: true } },
+        { type: 'OPEN_IMAGE_UPLOAD', payload: share ? { asyncScan: true, share: true } : { asyncScan: true } },
         'IMAGE_UPLOAD_RESULT',
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
+      throwIfShareRefused(share, reply);
+      const { requestId, selected } = reply;
       if (!selected) return null; // dismissed
 
       // NEW host: an early-resolve pending handle. Track it and wait for the push.
@@ -326,7 +385,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
           imageId: selected.imageId,
           url: selected.url,
         };
-        return handle;
+        return share ? { ...handle, shared: reply.shared === true } : handle;
       }
 
       // OLD host (ignored asyncScan): it blocking-resolved a MODERATED image. Wrap
@@ -344,7 +403,7 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
           imageId: moderated.imageId,
           url: moderated.url,
         };
-        return handle;
+        return share ? { ...handle, shared: reply.shared === true } : handle;
       }
 
       // Any other shape on a display request (e.g. an unexpected source-only
@@ -372,19 +431,23 @@ export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadI
     // ---- Existing BLOCKING behavior (unchanged) ----
     // Omit `purpose` for the default/display mode so the wire stays
     // byte-compatible with an older host that predates the field.
-    const payload = purpose === 'generationSource' ? { purpose } : {};
-    const { selected } = await sendTypedRequest(
+    const payload = purpose === 'generationSource' ? { purpose } : share ? { share: true } : {};
+    const reply = await sendTypedRequest(
       getTransport(),
       { type: 'OPEN_IMAGE_UPLOAD', payload },
       'IMAGE_UPLOAD_RESULT',
       { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
     );
+    throwIfShareRefused(share, reply);
+    const { selected } = reply;
     // Normalize the "dismissed" case to an explicit null so callers can
     // `if (!img) return;` without an `undefined` ambiguity.
     // A multi-image training reply is not an answer to a single-image purpose.
     if (!selected || 'images' in selected) return null;
+    // A shared upload says whether sharing TOOK EFFECT; a host that predates the echo reads as false.
+    if (share) return { ...(selected as BlockUploadedImageInfo), shared: reply.shared === true };
     return selected;
-  }, [asyncScan, purpose]);
+  }, [asyncScan, purpose, share]);
 
   const scanStatus = useCallback(
     (handle: BlockPendingImageInfo): Promise<BlockImageScanResult> => {

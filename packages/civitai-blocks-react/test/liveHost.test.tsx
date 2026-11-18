@@ -2772,6 +2772,47 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
       resetTransport();
     }
   });
+
+  it('a `share: true` display upload gets the host share-dismiss shape { requestId, shared: false }, never true', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    const replyTo = async (requestId: string) => {
+      for (let i = 0; i < 50; i += 1) {
+        const found = inbound.messages.find(
+          (m) => m.type === 'IMAGE_UPLOAD_RESULT' && m.payload?.requestId === requestId,
+        );
+        if (found) return found.payload ?? {};
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      throw new Error(`no IMAGE_UPLOAD_RESULT for ${requestId}`);
+    };
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-share', share: true });
+    expect(await replyTo('r-share')).toEqual({ requestId: 'r-share', shared: false });
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-share-async', asyncScan: true, share: true });
+    expect(await replyTo('r-share-async')).toEqual({ requestId: 'r-share-async', shared: false });
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-share-display', purpose: 'display', share: true });
+    expect(await replyTo('r-share-display')).toEqual({ requestId: 'r-share-display', shared: false });
+    // Not a share request (absent, non-`true`, or a purpose share does not apply
+    // to): the reply stays the bare dismiss, with no `shared` key.
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-plain' });
+    expect(await replyTo('r-plain')).toEqual({ requestId: 'r-plain' });
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-truthy', share: 'yes' });
+    expect(await replyTo('r-truthy')).toEqual({ requestId: 'r-truthy' });
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-src', purpose: 'generationSource', share: true });
+    expect(await replyTo('r-src')).toEqual({ requestId: 'r-src' });
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-train-share', purpose: 'trainingData', share: true });
+    expect(await replyTo('r-train-share')).toEqual({ requestId: 'r-train-share' });
+  });
 });
 
 describe('createLiveHost — OPEN_IMAGE_PICKER (refused: nothing lists the viewer\'s images)', () => {

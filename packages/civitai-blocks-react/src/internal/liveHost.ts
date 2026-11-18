@@ -1848,9 +1848,19 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                   'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
               );
             }
+            // A `share: true` display request gets the real host's DISMISS shape for a
+            // share request, `{ requestId, shared: false }`: nothing was uploaded, so
+            // nothing was shared. Never `true` — this host records no share.
+            const p = typed.payload as { share?: unknown; purpose?: unknown; bytes?: unknown } | null;
+            const isShareRequest =
+              p != null &&
+              p.share === true &&
+              !('bytes' in p) &&
+              (p.purpose === undefined || p.purpose === 'display');
+            const shareEcho = isShareRequest ? { shared: false } : {};
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
-              payload: { requestId: requestId ?? '' },
+              payload: { requestId: requestId ?? '', ...shareEcho },
             });
             return;
           }

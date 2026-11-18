@@ -2393,6 +2393,31 @@ dismiss); pass `{ purpose: 'generationSource' }` for a private img2img source,
 (`[{ air }] | null`, an AIR reference each — see the LoRA training section), or
 `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
 
+**`{ share: true }`** (display uploads, with or without `asyncScan`) shares the
+upload with your app's other viewers once Civitai has scanned it. Before the
+viewer picks a file, the host's upload dialog says the image will be visible to
+other viewers of your app once scanned. The server records your app from the
+verified block token, and `useGatedImages()` then returns the image to other
+signed-in viewers once it is scanned. Shared uploads are held to SFW: only a PG or PG13
+image is shown to anyone else, clamped to each viewer's own browsing level; a
+pending, flagged or mature one comes back `hidden`. `open()` resolves with
+`shared: boolean`: `true` only when the host reports the server recorded the
+upload as shared, `false` otherwise. A host that predates `share` ignores it,
+the upload stays private, and `shared` reads `false`, so check it before you
+tell the viewer their image is shared. Without `share` (the default) the upload
+is private to the uploader. The host's no-token refusal (`no block token`) makes
+`open()` reject with the host's error; its review-mode and pre-handshake
+refusals reply as a dismiss, so `open()` resolves `null` there.
+
+With the mock host — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing` — a `share: true` upload answers as a host that
+recorded the share (`shared: true`). Pass `cannedImageUploadShared: false` for a
+host that did not, or `imageUploadShareRefused: true` to make `open()` reject
+with the no-token refusal (`no block token`). A dismissed modal
+(`cannedImageUpload: null`) replies `shared: false`, as the host does. Both are
+live-tunable with `setScenario`. `createLiveHost` (dev:live) cannot upload, so a
+`share: true` upload there resolves `null`, and the host never reports a share.
+
 ```tsx
 const { open } = useImageUpload();
 const img = await open();               // BlockUploadedImageInfo | null

@@ -949,6 +949,14 @@ export type ParentToBlockMessage =
           | BlockTrainingDataUploadResult;
         /** A `bytes` upload's refusal or failure: a host string or a forwarded server message. */
         error?: string;
+        /**
+         * Whether sharing TOOK EFFECT, on a reply to an `OPEN_IMAGE_UPLOAD` that
+         * carried `share: true`: `true` only when the server recorded this upload
+         * as shared with the app's other viewers, `false` otherwise. Absent on
+         * replies to unshared uploads, and from a host that predates the field,
+         * which the SDK reads as `false`.
+         */
+        shared?: boolean;
       };
     }
   | {
@@ -1556,6 +1564,19 @@ export type BlockToParentMessage =
         bytes?: ArrayBuffer;
         /** Optional name for a `bytes` upload (host-sanitised). */
         filename?: string;
+        /**
+         * Ask that THIS viewer-picked `display` upload be SHARED with this app's
+         * other viewers once Civitai has scanned it. Only the exact value `true`
+         * opts in; omit it (the default) and the upload stays private to the
+         * uploader, as before. The host shows the viewer a line saying so in its
+         * upload dialog before they pick a file, and the server records the app
+         * from the verified block token, never from this message. A shared upload
+         * is then readable by this app's gated image read (`GET_IMAGES_BY_IDS`),
+         * scanned rows only. Ignored for `generationSource`, `trainingData` and
+         * `bytes`. 🔴 A host that predates the field ignores it, so the upload is
+         * NOT shared there.
+         */
+        share?: boolean;
       };
     }
   | {
