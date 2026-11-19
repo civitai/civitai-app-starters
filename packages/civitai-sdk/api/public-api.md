@@ -3916,6 +3916,12 @@ export interface BlockSnapshot {
      * later change cannot move an app's storage between stores mid-session.
      */
     storageMode?: 'local-preview';
+    /**
+     * `true` when the host listed {@link ERROR_REPORTS_CAPABILITY} in
+     * `BLOCK_INIT.capabilities`: it collects this frame's non-fatal errors (a
+     * moderator's review preview). Absent otherwise. `initialize()` reads it ONCE.
+     */
+    errorReports?: true;
 }
 
 export interface BlockTransport {
