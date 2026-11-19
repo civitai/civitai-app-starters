@@ -138,8 +138,8 @@ export type HostRequests = {
 export type HostNotifications = {
   RESIZE_IFRAME: { height: number };
   /**
-   * `host.reportError()` sends `{ message, fatal }` only. In a dev-tunnel preview
-   * `initialize()` also forwards uncaught errors, unhandled rejections and
+   * `host.reportError()` sends `{ message, fatal }` only. In a dev-tunnel preview,
+   * and in a review preview whose host lists `blockErrors:v1`, `initialize()` also forwards uncaught errors, unhandled rejections and
    * `console.error` calls as `fatal: false` with `source`, `stack` (when there is
    * one) and `at` (epoch ms); see `reportDevErrors`.
    */

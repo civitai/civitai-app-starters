@@ -37,11 +37,13 @@ let uninstall: (() => void) | null = null;
 let reporting = false;
 
 /**
- * DEV SESSIONS ONLY. Forwards this frame's uncaught errors, unhandled promise
- * rejections and `console.error` calls to the host as non-fatal `BLOCK_ERROR`s
- * carrying `source`, `stack` and `at`, so the person (or the assistant)
- * building the app can see them. `initialize()` calls it only when the host
- * marked the frame a dev-tunnel preview; a production embed sends nothing new.
+ * DEV AND REVIEW SESSIONS ONLY. Forwards this frame's uncaught errors,
+ * unhandled promise rejections and `console.error` calls to the host as
+ * non-fatal `BLOCK_ERROR`s carrying `source`, `stack` and `at`, so the person
+ * (or the assistant) building the app, or the moderator reviewing it, can see
+ * them. `initialize()` calls it only when the host asked (`hostCollectsErrors`:
+ * a dev-tunnel preview, or a review preview listing `blockErrors:v1`); a
+ * production embed sends nothing new.
  *
  * Nothing is swallowed: listeners are passive, and `console.error` still
  * reaches the console first. Messages are redacted (JWT-shaped strings,

@@ -121,10 +121,23 @@ export interface BlockInitPayload {
    * the exact string switches anything — see {@link LOCAL_PREVIEW_STORAGE}.
    */
   storageMode?: unknown;
+  /**
+   * Bridge capabilities the host handles, e.g. `workflowMedia:v1`. Typed
+   * `unknown` on the wire: the SDK acts only on an array holding the exact
+   * string it looks for — see {@link ERROR_REPORTS_CAPABILITY}. Absent from a
+   * host that predates it.
+   */
+  capabilities?: unknown;
 }
 
 /** The one value of `BLOCK_INIT.storageMode` the SDK acts on. Compared exactly. */
 export const LOCAL_PREVIEW_STORAGE = 'local-preview';
+
+/**
+ * The `BLOCK_INIT.capabilities` entry by which a host says it collects this
+ * frame's non-fatal errors (a moderator's review preview). Compared exactly.
+ */
+export const ERROR_REPORTS_CAPABILITY = 'blockErrors:v1';
 
 /**
  * Host messages the transport itself acts on. Domains own everything else.

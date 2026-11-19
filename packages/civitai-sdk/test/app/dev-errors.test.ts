@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { reportDevErrors } from '../../src/host/dev-errors.js';
+import type { BlockInitPayload } from '../../src/core/handshake.js';
+import { snapshotFromInit } from '../../src/core/transport.js';
+import { DEV_ERROR_RATE_LIMIT, reportDevErrors } from '../../src/host/dev-errors.js';
 import { initialize } from '../../src/index.js';
 import { createFakeTransport, type FakeTransport } from '../../src/testing.js';
 
@@ -139,6 +141,100 @@ describe('dev session: forwards to the host', () => {
     expect(errors(t)).toEqual([
       { message: '[object Object]', fatal: false, source: 'unhandledrejection', at: T0 },
     ]);
+  });
+});
+
+// A moderator's REVIEW preview: the host lists `blockErrors:v1` in
+// `BLOCK_INIT.capabilities` and does NOT set `storageMode`, because the review
+// app must keep the real document-store routes. The same reports, the same caps.
+describe('review session (host lists blockErrors:v1): forwards to the host', () => {
+  async function startReview() {
+    const transport = createFakeTransport({
+      errorReports: true,
+      token: { raw: 'opaque-review-token-0123456789', scopes: [], expiresAt: new Date(0) },
+    });
+    const app = await initialize({ transport });
+    // Cleanup only, and deferred to afterEach: calling `reportDevErrors` here would INSTALL the
+    // reporter itself, so every assertion below would pass whether or not `initialize()` did.
+    // Idempotent per transport, so at teardown it hands back the stop for what is installed.
+    stops.push(() => reportDevErrors(transport)());
+    return { transport, app };
+  }
+
+  // 🔴 The regression test: before this change only `storageMode` turned the
+  // reporter on, so a review frame forwarded nothing and this was [].
+  it('an uncaught error, a rejection and console.error, as non-fatal reports', async () => {
+    const { transport } = await startReview();
+    fireError(boom('render failed'));
+    advance(1);
+    fireRejection(boom('fetch failed'));
+    advance(1);
+    console.error('bad <b>json</b>');
+    expect(errors(transport)).toEqual([
+      expect.objectContaining({ message: 'render failed', fatal: false, source: 'error', at: T0 }),
+      expect.objectContaining({ message: 'fetch failed', fatal: false, source: 'unhandledrejection', at: T0 + 1 }),
+      { message: 'bad <b>json</b>', fatal: false, source: 'console', at: T0 + 2 },
+    ]);
+  });
+
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
+  it('keeps the review app on the REAL document store: errors do not imply local preview', async () => {
+    const { app } = await startReview();
+    expect(app.storage.mode).toBe('remote');
+  });
+
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
+  it('with the same rate limit as a dev session', async () => {
+    const { transport } = await startReview();
+    for (let i = 0; i < DEV_ERROR_RATE_LIMIT + 5; i += 1) fireError(boom(`distinct ${i}`));
+    expect(errors(transport)).toHaveLength(DEV_ERROR_RATE_LIMIT);
+  });
+
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
+  it('with the same redaction: the frame’s own token never leaves it', async () => {
+    const { transport } = await startReview();
+    console.error('token is opaque-review-token-0123456789 here');
+    expect(errors(transport)).toEqual([
+      { message: 'token is [redacted] here', fatal: false, source: 'console', at: T0 },
+    ]);
+  });
+});
+
+describe('BLOCK_INIT.capabilities on the wire', () => {
+  const payload = (capabilities?: unknown): BlockInitPayload => ({
+    blockInstanceId: 'inst',
+    token: { raw: 't', scopes: [], expiresAt: '2031-01-01T00:00:00.000Z' },
+    context: { slotId: 'app.page' },
+    settings: { publisherSettings: {}, userSettings: {} },
+    viewer: null,
+    theme: 'light',
+    renderMode: 'iframe',
+    ...(capabilities === undefined ? {} : { capabilities }),
+  });
+
+  // The literal, not the SDK's constant: it is a wire contract with the host.
+  it('the exact capability string turns on errorReports, alongside others', () => {
+    const snap = snapshotFromInit(payload(['workflowMedia:v1', 'blockErrors:v1']), 'https://civitai.com');
+    expect(snap.errorReports).toBe(true);
+    // Not a dev session: storage stays remote.
+    expect(snap).not.toHaveProperty('storageMode');
+  });
+
+  it('any other shape does not', () => {
+    for (const other of [
+      undefined,
+      ['workflowMedia:v1'],
+      ['blockErrors:v2'],
+      ['BlockErrors:v1'],
+      'blockErrors:v1',
+      { blockErrors: 'v1' },
+      [['blockErrors:v1']],
+    ]) {
+      expect(snapshotFromInit(payload(other), 'https://civitai.com')).not.toHaveProperty('errorReports');
+    }
   });
 });
 
