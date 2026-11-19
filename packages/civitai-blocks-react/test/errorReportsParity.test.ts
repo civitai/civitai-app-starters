@@ -13,8 +13,8 @@ import { describe, expect, it } from 'vitest';
  * (redaction, truncation, the describe/stringify helpers) and `admit()` (dedupe and
  * rate limit), plus the cap values. NOT covered: `PRE_CAP`, `install()` (the
  * listeners and the `console.error` wrapper) and `report()` with its re-entrancy
- * guard, which differ by design in how a report reaches the host. A change there
- * in one copy does not go red here.
+ * guard. They sit outside both regions, and `report()` also differs by design in
+ * how a report reaches the host. A change there in one copy does not go red here.
  *
  * It compares SOURCE TEXT on purpose: the property is "the same code", and the
  * parts that differ by design (how a report reaches the host) are excluded by
