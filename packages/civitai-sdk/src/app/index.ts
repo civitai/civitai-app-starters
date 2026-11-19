@@ -1,7 +1,12 @@
 import { BridgeError, CivitaiError } from '../core/errors.js';
 import { getTransport } from '../core/get-transport.js';
 import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/handshake.js';
-import { isLocalPreviewStorage, type BlockSnapshot, type BlockTransport } from '../core/transport.js';
+import {
+  hostCollectsErrors,
+  isLocalPreviewStorage,
+  type BlockSnapshot,
+  type BlockTransport,
+} from '../core/transport.js';
 import { createHost, createHostSession, type Host } from '../host/index.js';
 import { reportDevErrors } from '../host/dev-errors.js';
 import { reportViewerActivity } from '../host/viewer-activity.js';
@@ -189,11 +194,13 @@ export async function initialize(
   // holds a token that looks the same as a preview's, and must keep getting the
   // real route's `insufficient_scope` rather than a silent local store.
   const localPreview = isLocalPreviewStorage(snapshot());
-  // The same host signal is the DEV SESSION signal: the host sets it from the
-  // surface it mounted (the dev tunnel, App Assistant's live preview included),
-  // never from the token or the URL. Production embeds never carry it, so they
-  // forward nothing.
-  if (localPreview) reportDevErrors(transport);
+  // Non-fatal errors go to a host that asked for them, and only to one: a dev
+  // tunnel (the same `storageMode` signal, App Assistant's live preview
+  // included) or a moderator's review preview (`errorReports`, from the host's
+  // `blockErrors:v1` capability). Both are set from the surface the host
+  // mounted, never from the token or the URL. Production embeds carry neither,
+  // so they forward nothing.
+  if (hostCollectsErrors(snapshot())) reportDevErrors(transport);
   // The same latched answer configures the session below, so `requestGrants`
   // and the store agree on whether the document store is local.
   const local = localPreview

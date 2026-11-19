@@ -1,4 +1,4 @@
-import { LOCAL_PREVIEW_STORAGE } from './handshake.js';
+import { ERROR_REPORTS_CAPABILITY, LOCAL_PREVIEW_STORAGE } from './handshake.js';
 import type {
   BlockContext,
   BlockInitPayload,
@@ -48,6 +48,12 @@ export interface BlockSnapshot {
    * later change cannot move an app's storage between stores mid-session.
    */
   storageMode?: 'local-preview';
+  /**
+   * `true` when the host listed {@link ERROR_REPORTS_CAPABILITY} in
+   * `BLOCK_INIT.capabilities`: it collects this frame's non-fatal errors (a
+   * moderator's review preview). Absent otherwise. `initialize()` reads it ONCE.
+   */
+  errorReports?: true;
 }
 
 
@@ -102,6 +108,16 @@ export function isLocalPreviewStorage(snapshot: Pick<BlockSnapshot, 'storageMode
   return snapshot.storageMode === LOCAL_PREVIEW_STORAGE;
 }
 
+/**
+ * Did the host ask for this frame's non-fatal errors? THE predicate for it:
+ * true on a dev-tunnel preview (`storageMode`, which older hosts send alone)
+ * and wherever the host listed {@link ERROR_REPORTS_CAPABILITY} (a review
+ * preview). Never inferred from the token or the URL.
+ */
+export function hostCollectsErrors(snapshot: Pick<BlockSnapshot, 'storageMode' | 'errorReports'>): boolean {
+  return isLocalPreviewStorage(snapshot) || snapshot.errorReports === true;
+}
+
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string): BlockSnapshot {
   return {
@@ -120,6 +136,11 @@ export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string):
     // The exact string or nothing: a value this SDK does not know must read as
     // "not a local preview", which keeps today's behaviour (the real routes).
     ...(payload.storageMode === LOCAL_PREVIEW_STORAGE ? { storageMode: LOCAL_PREVIEW_STORAGE } : {}),
+    // An array holding the exact string, or nothing: any other shape reads as
+    // "this host does not collect them", which keeps today's behaviour.
+    ...(Array.isArray(payload.capabilities) && payload.capabilities.includes(ERROR_REPORTS_CAPABILITY)
+      ? { errorReports: true as const }
+      : {}),
   };
 }
 
