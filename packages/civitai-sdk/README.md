@@ -1223,19 +1223,22 @@ are accepted against the approved manifest:
 - Fire-and-forget: there is no reply. Owners see aggregates in the app's
   analytics panel, never individual events.
 
-### Errors in a dev preview
+### Errors in a dev or review preview
 
-In a dev session only, `initialize()` forwards what would otherwise vanish
-inside the frame: an uncaught error (`window` `error`), an unhandled promise
-rejection, and every `console.error` call. Each goes to the host as a
-`BLOCK_ERROR` with `fatal: false`, `source` (`'error'`, `'unhandledrejection'`
-or `'console'`), `stack` when there is one, and `at` (epoch ms), so the person
-or the assistant building the app can see it.
+In a dev session or a moderator's review preview only, `initialize()` forwards
+what would otherwise vanish inside the frame: an uncaught error (`window`
+`error`), an unhandled promise rejection, and every `console.error` call. Each
+goes to the host as a `BLOCK_ERROR` with `fatal: false`, `source` (`'error'`,
+`'unhandledrejection'` or `'console'`), `stack` when there is one, and `at`
+(epoch ms), so the person or the assistant building the app, or the moderator
+reviewing it, can see it.
 
 - A dev session is one the host mounted as a dev-tunnel preview, App Assistant's
   live preview included: the same `BLOCK_INIT` `storageMode: 'local-preview'`
-  that switches the document store. A published app's frame never carries it
-  and sends nothing new.
+  that switches the document store.
+- A review preview is one whose host lists `blockErrors:v1` in
+  `BLOCK_INIT.capabilities`. It does not switch the document store.
+- A published app's frame carries neither and sends nothing new.
 - `console.error` still reaches the console, first and unchanged. Nothing is
   swallowed and no listener cancels the browser's default.
 - Before anything leaves the frame, JWT-shaped strings, `Bearer …` credentials
