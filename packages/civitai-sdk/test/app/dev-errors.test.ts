@@ -154,7 +154,10 @@ describe('review session (host lists blockErrors:v1): forwards to the host', () 
       token: { raw: 'opaque-review-token-0123456789', scopes: [], expiresAt: new Date(0) },
     });
     const app = await initialize({ transport });
-    stops.push(reportDevErrors(transport));
+    // Cleanup only, and deferred to afterEach: calling `reportDevErrors` here would INSTALL the
+    // reporter itself, so every assertion below would pass whether or not `initialize()` did.
+    // Idempotent per transport, so at teardown it hands back the stop for what is installed.
+    stops.push(() => reportDevErrors(transport)());
     return { transport, app };
   }
 
