@@ -20,6 +20,7 @@ import {
   type BlockTransport,
   type OutboundRequest,
 } from './transport.js';
+import { hostCollectsErrors, reportErrorsToHost } from './errorReports.js';
 import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
 import { isRoutableRequestId } from './requestId.js';
@@ -186,6 +187,8 @@ export class IframeTransport implements BlockTransport {
   private rejectInit!: (err: Error) => void;
   private initTimeoutId: ReturnType<typeof setTimeout>;
   private initResolved = false;
+  /** Stops non-fatal error forwarding; set only when the host listed `blockErrors:v1`. */
+  private stopErrorReports: (() => void) | null = null;
 
   private readonly messageListener: (event: MessageEvent) => void;
 
@@ -477,6 +480,8 @@ export class IframeTransport implements BlockTransport {
   /** Test-only: tear down listeners + reject pending. */
   dispose(): void {
     this.window.removeEventListener('message', this.messageListener);
+    this.stopErrorReports?.();
+    this.stopErrorReports = null;
     clearTimeout(this.initTimeoutId);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeoutId);
@@ -748,6 +753,15 @@ export class IframeTransport implements BlockTransport {
         // `sdkName`/`sdkVersion` are informational (the host counts versions
         // in the wild); nothing is negotiated on them and older blocks omit them.
         this.dispatch('BLOCK_READY', { height: 0, sdkName: 'blocks-react', sdkVersion: VERSION });
+        // A host that COLLECTS non-fatal errors (a moderator's review preview) says
+        // so in `capabilities`; it is read once, here, from the first init. Every
+        // other host — every production embed — gets nothing new.
+        if (hostCollectsErrors(data.payload)) {
+          this.stopErrorReports = reportErrorsToHost({
+            post: (payload) => this.dispatch('BLOCK_ERROR', payload),
+            secret: () => this.snapshot.token.raw,
+          });
+        }
         this.resolveInit(data.payload);
       }
       return;
