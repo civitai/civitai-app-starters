@@ -8,9 +8,13 @@ import { describe, expect, it } from 'vitest';
  * PARITY GUARD — `src/transport/errorReports.ts` is a PORT of `@civitai/sdk`'s
  * `src/host/dev-errors.ts`. This package does not depend on `@civitai/sdk`, so it
  * cannot import the reporter, and moving it into `@civitai/app-sdk` would cost a
- * peer-floor bump for every blocks-react consumer. Instead the two copies are
- * pinned to each other here: a change to the redaction, truncation, dedupe or rate
- * limit in one copy goes red until the other copy makes the same change.
+ * peer-floor bump for every blocks-react consumer. Instead two REGIONS of the
+ * copies are pinned to each other here: everything from `const JWT =` to the end
+ * (redaction, truncation, the describe/stringify helpers) and `admit()` (dedupe and
+ * rate limit), plus the cap values. NOT covered: `PRE_CAP`, `install()` (the
+ * listeners and the `console.error` wrapper) and `report()` with its re-entrancy
+ * guard, which differ by design in how a report reaches the host. A change there
+ * in one copy does not go red here.
  *
  * It compares SOURCE TEXT on purpose: the property is "the same code", and the
  * parts that differ by design (how a report reaches the host) are excluded by
