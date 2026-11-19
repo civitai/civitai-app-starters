@@ -1,5 +1,15 @@
 # @civitai/blocks-react
 
+## 0.85.0
+
+### Minor Changes
+
+- 4efa436: **A moderator's review preview sees the block's errors.** When the host lists `blockErrors:v1` in `BLOCK_INIT.capabilities` (civitai.com does on its review preview), `IframeTransport` forwards uncaught errors, unhandled promise rejections and `console.error` calls to the host as non-fatal `BLOCK_ERROR`s carrying `source`, `stack` (when there is one) and `at` (epoch ms). It is the forwarding `@civitai/sdk` does from 0.29.0, with the same limits: messages and stacks redacted (JWT-shaped strings, `Bearer …`, the frame's own token) and truncated to 2,000 / 4,000 characters, a repeat within 10 s dropped, and at most 20 a minute.
+
+  - `console.error` still reaches the console first, unchanged. Nothing is swallowed.
+  - Every other host, and every production embed, sends nothing new.
+  - The civitai.com review page currently tells a moderator that a `@civitai/blocks-react` app does not report other errors. It needs its own update to recognise a version of this package that does.
+
 ## 0.84.0
 
 ### Minor Changes
@@ -1030,15 +1040,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                            single measurements on one machine.
+                                                                                                                                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                                single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2858,10 +2868,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                                        after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                                 @civitai/components  0.4.2                   — 1 copy
+                                                                                                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                          after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                                   @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
