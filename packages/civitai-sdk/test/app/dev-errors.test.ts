@@ -177,17 +177,23 @@ describe('review session (host lists blockErrors:v1): forwards to the host', () 
     ]);
   });
 
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
   it('keeps the review app on the REAL document store: errors do not imply local preview', async () => {
     const { app } = await startReview();
     expect(app.storage.mode).toBe('remote');
   });
 
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
   it('with the same rate limit as a dev session', async () => {
     const { transport } = await startReview();
     for (let i = 0; i < DEV_ERROR_RATE_LIMIT + 5; i += 1) fireError(boom(`distinct ${i}`));
     expect(errors(transport)).toHaveLength(DEV_ERROR_RATE_LIMIT);
   });
 
+  // INVARIANT GUARD, not regression coverage: the reporter is mode-blind, so this pins the
+  // requirement (same caps / remote store) rather than catching a bug of its own.
   it('with the same redaction: the frame’s own token never leaves it', async () => {
     const { transport } = await startReview();
     console.error('token is opaque-review-token-0123456789 here');
