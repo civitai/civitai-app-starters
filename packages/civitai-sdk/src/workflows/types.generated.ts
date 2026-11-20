@@ -40,7 +40,7 @@ export type BuzzAccountType = 'blue' | 'green' | 'yellow';
 
 /**
  * Generation parameters a block can override. All optional — the host fills
- * sensible defaults (sampler='Euler', steps=25, dimensions from the
+ * sensible defaults (the family's default sampler, steps=25, dimensions from the
  * base-model family) when omitted, so the simplest block can submit
  * `{ kind: 'textToImage', modelId, modelVersionId, params: { prompt } }`.
  *
@@ -52,7 +52,13 @@ export interface BlockTextToImageParams {
   negativePrompt?: string;
   /** Range 1–30. */
   cfgScale?: number;
-  /** Sampler name (e.g. 'Euler', 'DPM++ 2M Karras'). Defaults to 'Euler'. */
+  /**
+   * Sampler name. Valid names depend on the model family: read them with
+   * `fetchGenerationSamplers` from `@civitai/app-sdk/blocks`. A name the family
+   * does not offer is replaced by the family's default, with no error. Omitted,
+   * the host uses the family's default, and sends none for a family with no
+   * sampler control.
+   */
   sampler?: string;
   /** Range 1–50. */
   steps?: number;
