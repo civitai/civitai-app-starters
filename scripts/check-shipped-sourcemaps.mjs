@@ -50,6 +50,13 @@
  * without sourcemaps" state and strictly quieter than a map that loads and then
  * cannot find its source.
  *
+ * ONE EXCEPTION, found later (#856): a module consumers name in Vitest's
+ * `setupFiles`. Vite transforms setup files even from `node_modules`, follows
+ * that comment, and prints `Failed to load source map … ENOENT` on every test
+ * run, so for those modules the 404 is NOT quiet. The second check below
+ * (`inspectSetupModules`) covers them; `@civitai/components` ships a
+ * self-contained map (`inlineSources`) for its `testing/happy-dom` module.
+ *
  * THE RULE THIS ENFORCES IS THE INVARIANT, NOT THE SPELLING. It does not grep
  * for `!dist/**​/*.map`; it reads the REAL packed file list and every REAL map's
  * `sources`. Ship `src` instead (option 1), or inline via `sourcesContent`, and
@@ -217,6 +224,99 @@ function mapsOnDisk(pkgDir) {
   return n;
 }
 
+// ------------------------------------------------- setup-file annotations (#856)
+
+/**
+ * The SECOND rule, and why the first one does not cover it.
+ *
+ * `inspect()` checks maps the tarball SHIPS. It says nothing about a shipped
+ * `.js` whose `//# sourceMappingURL=` names a map the tarball does NOT ship,
+ * and the note at the top of this file called that the quiet, ordinary state.
+ * For most modules it is. For a module a consumer names in Vitest's
+ * `setupFiles` it is not: Vitest hands setup files to Vite's transform even
+ * from `node_modules`, Vite follows the annotation, and every test run prints
+ * `Failed to load source map … ENOENT` with a stack trace. Measured in #856 on
+ * `@civitai/components@0.13.0`'s `testing/happy-dom` with vitest 4.1.11 /
+ * vite 8.0.14: removing only the annotation removed the warning.
+ *
+ * So for every `@civitai/*` specifier that a tracked Vitest/Vite config or a
+ * tracked markdown file puts in a `setupFiles` array, the module it resolves
+ * to must either carry no relative annotation or name a map the tarball ships
+ * (and `inspect()` then checks that map's `sources` like any other). The set
+ * of specifiers is READ from the repo, not listed here, so documenting a new
+ * setup module brings it under this rule with no edit to this file.
+ */
+const SETUP_FILES_ARRAY = /setupFiles\s*:\s*\[([^\]]*)\]/g;
+const CIVITAI_SPECIFIER = /['"](@civitai\/[^'"]+)['"]/g;
+
+/** Every `@civitai/*` specifier named in a `setupFiles` array in a tracked config or doc. */
+function documentedSetupSpecifiers() {
+  const listed = execFileSync(
+    'git',
+    ['ls-files', '-z', '--', '*vitest.config.*', '*vite.config.*', '*.md'],
+    { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  )
+    .split('\0')
+    .filter(Boolean);
+  const found = new Map(); // specifier -> first file naming it
+  for (const rel of listed) {
+    let text;
+    try {
+      text = readFileSync(join(REPO_ROOT, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const arr of text.matchAll(SETUP_FILES_ARRAY)) {
+      for (const spec of arr[1].matchAll(CIVITAI_SPECIFIER)) {
+        if (!found.has(spec[1])) found.set(spec[1], rel);
+      }
+    }
+  }
+  return found;
+}
+
+/** `exports[subpath]` → the file an `import` resolves to, or null. */
+function exportTarget(pkgJson, subpath) {
+  const entry = pkgJson.exports?.[subpath];
+  if (typeof entry === 'string') return entry;
+  if (entry && typeof entry === 'object') return entry.import ?? entry.default ?? null;
+  return null;
+}
+
+/**
+ * Check the setup modules `subpaths` of one package. Returns a list of
+ * problems; empty means every annotation resolves inside the tarball.
+ */
+function inspectSetupModules(pkgDir, subpaths) {
+  const pkgJson = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+  const shippedSet = new Set(packedFiles(pkgDir));
+  const problems = [];
+  for (const subpath of subpaths) {
+    const target = exportTarget(pkgJson, subpath);
+    if (!target) {
+      problems.push({ subpath, why: `${pkgJson.name} has no \`exports["${subpath}"]\` import target` });
+      continue;
+    }
+    const file = posix.normalize(target.replace(/^\.\//, ''));
+    if (!shippedSet.has(file)) {
+      problems.push({ subpath, why: `"${file}" is not in the tarball` });
+      continue;
+    }
+    const text = readFileSync(join(pkgDir, file), 'utf8');
+    const annotations = [...text.matchAll(/^\/\/# sourceMappingURL=(\S+)\s*$/gm)];
+    const url = annotations.at(-1)?.[1];
+    if (!url || url.startsWith('data:')) continue;
+    const mapRel = posix.normalize(posix.join(posix.dirname(file), url));
+    if (!shippedSet.has(mapRel)) {
+      problems.push({
+        subpath,
+        why: `"${file}" ends with sourceMappingURL=${url}, but the tarball does not contain "${mapRel}"`,
+      });
+    }
+  }
+  return problems;
+}
+
 // ---------------------------------------------------------------- self-test
 
 /**
@@ -291,8 +391,54 @@ function selfTest() {
     console.error('       nothing and its verdict carries no information.\n');
   }
 
+  // SETUP-MODULE controls (#856). Same shape: the only difference between the
+  // two fixtures is whether the map the setup module's annotation names ships.
+  for (const shipMap of [false, true]) {
+    const dir = setupFixture(shipMap);
+    const problems = inspectSetupModules(dir, ['./testing/setup']);
+    const shipped = inspect(dir);
+    rmSync(dir, { recursive: true, force: true });
+    const label = shipMap ? 'NEGATIVE control (setup module, its map ALSO shipped)' : 'POSITIVE control (setup module, its map NOT shipped)';
+    console.log(`${label}: annotation problems=${problems.length}, shipped-map dangling=${shipped.dangling.length}`);
+    const want = shipMap ? 0 : 1;
+    if (problems.length !== want || shipped.dangling.length !== 0) {
+      failed = true;
+      console.error(`\nERROR: SETUP-MODULE CONTROL FAILED — expected ${want} annotation problem(s) and 0 dangling, got ${problems.length} and ${shipped.dangling.length}.`);
+      for (const p of problems) console.error(`         ${p.subpath}: ${p.why}`);
+    }
+  }
+
   if (failed) process.exit(1);
-  console.log('\nOK: both controls behaved — the checker reports 1 on a case that must be non-zero, 0 on one that must not.');
+  console.log('\nOK: every control behaved — each check reports 1 on a case that must be non-zero, 0 on one that must not.');
+}
+
+/**
+ * A throwaway package exporting `./testing/setup` whose dist file ends with a
+ * relative annotation. `shipMap` decides whether that map is in `files`; the
+ * map inlines its source, so shipping it cannot create a dangling `sources`.
+ */
+function setupFixture(shipMap) {
+  const dir = mkdtempSync(join(tmpdir(), 'civitai-856-selftest-'));
+  mkdirSync(join(dir, 'dist', 'testing'), { recursive: true });
+  writeFileSync(join(dir, 'dist', 'testing', 'setup.js'), 'globalThis.x = 1;\n//# sourceMappingURL=setup.js.map\n');
+  writeFileSync(
+    join(dir, 'dist', 'testing', 'setup.js.map'),
+    JSON.stringify({ version: 3, file: 'setup.js', sources: ['../../src/testing/setup.ts'], sourcesContent: ['globalThis.x = 1;\n'], names: [], mappings: 'AAAA' }),
+  );
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'civitai-856-selftest-fixture',
+        version: '0.0.0',
+        exports: { './testing/setup': { import: './dist/testing/setup.js' } },
+        files: shipMap ? ['dist', '!dist/**/*.map', 'dist/testing/setup.js.map'] : ['dist', '!dist/**/*.map'],
+      },
+      null,
+      2,
+    ),
+  );
+  return dir;
 }
 
 // -------------------------------------------------------------------- main
@@ -379,6 +525,54 @@ function main() {
     console.error('       `declarationMap` were turned off ON PURPOSE, lower MIN_MAPS_INSPECTED in');
     console.error(`       ${relative(REPO_ROOT, join(HERE, 'check-shipped-sourcemaps.mjs'))} in the SAME`);
     console.error('       commit, so the drop is reviewed rather than silent.');
+    console.error('');
+  }
+
+  // Setup modules (#856). The floor is the positive control: the repo documents
+  // at least one, so a scan that finds none is the regex or the file list
+  // failing, not a clean tree.
+  const setupSpecs = documentedSetupSpecifiers();
+  const byName = new Map(rows.map((r) => [r.name, r.dir]));
+  const setupProblems = [];
+  const setupBySpec = new Map(); // pkg dir -> subpaths
+  for (const [spec, where] of setupSpecs) {
+    const m = spec.match(/^(@civitai\/[^/]+)(\/.*)?$/);
+    const pkgDir = m && byName.get(m[1]);
+    if (!pkgDir) {
+      setupProblems.push({ spec, where, why: 'names no published package under packages/' });
+      continue;
+    }
+    const subpath = m[2] ? `.${m[2]}` : '.';
+    if (!setupBySpec.has(pkgDir)) setupBySpec.set(pkgDir, []);
+    setupBySpec.get(pkgDir).push({ spec, where, subpath });
+  }
+  for (const [pkgDir, entries] of setupBySpec) {
+    const problems = inspectSetupModules(pkgDir, entries.map((e) => e.subpath));
+    for (const p of problems) {
+      const e = entries.find((x) => x.subpath === p.subpath);
+      setupProblems.push({ spec: e.spec, where: e.where, why: p.why });
+    }
+  }
+  console.log(
+    `${setupProblems.length === 0 ? 'OK  ' : 'FAIL'} setup modules: ${setupSpecs.size} \`setupFiles\` specifier(s) found in tracked configs/docs, ` +
+      `${setupProblems.length} with a dangling sourceMappingURL`,
+  );
+  if (setupSpecs.size < 1) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: no `@civitai/*` setupFiles specifier found. The repo documents at least one');
+    console.error('       (`@civitai/components/testing/happy-dom`), so the scan itself is broken.');
+  }
+  if (setupProblems.length > 0) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: A DOCUMENTED VITEST SETUP MODULE NAMES A SOURCEMAP ITS TARBALL DOES NOT SHIP (#856).');
+    console.error('       Vite transforms setup files even from node_modules and prints');
+    console.error('       "Failed to load source map … ENOENT" on every test run.');
+    for (const p of setupProblems) console.error(`    ${p.spec} (named in ${p.where}): ${p.why}`);
+    console.error('');
+    console.error('  Fix: ship a self-contained map for that module (`"inlineSources": true` plus');
+    console.error('  re-including that one `.js.map` in `files`), or emit it without the annotation.');
     console.error('');
   }
 
