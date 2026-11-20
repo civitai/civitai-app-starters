@@ -70,6 +70,9 @@ export function manifestMajor(manifest, pkg) {
   return m ? Number(m[1]) : undefined;
 }
 
+/** A literal string as a RegExp source: every metacharacter escaped. */
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+
 /** Every version statement in `text`, with 1-based line numbers. */
 export function versionStatements(text) {
   const out = [];
@@ -121,7 +124,7 @@ export function audit(tree) {
       let first;
       let at = Infinity;
       for (const n of names) {
-        const m = new RegExp(`(?<![\\w-])${n.replace(/[-]/g, '\\-')}(?![\\w-])`).exec(s.lineText);
+        const m = new RegExp(`(?<![\\w-])${escapeRegExp(n)}(?![\\w-])`).exec(s.lineText);
         if (m && m.index < at) {
           at = m.index;
           first = n;
