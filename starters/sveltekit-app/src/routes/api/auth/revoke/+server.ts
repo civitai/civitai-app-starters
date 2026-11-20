@@ -26,8 +26,11 @@ export const POST: RequestHandler = async ({ cookies }) => {
   // cookie was still cleared. The stored refresh token is the one Civitai
   // still honours.
   const tokens = parseSession(cookies)?.tokens;
+  // End the session BEFORE the upstream round trips: clearSession() forgets
+  // its remembered refreshes, so a request another tab has waiting on one is
+  // signed out instead of being handed the tokens while revoke is waiting.
+  clearSession(cookies, !dev);
   await tryRevoke(tokens?.access_token);
   await tryRevoke(tokens?.refresh_token);
-  clearSession(cookies, !dev);
   return json({ ok: true });
 };
