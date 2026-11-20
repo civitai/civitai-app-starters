@@ -43,6 +43,7 @@ src/
     ├── env.ts              # validated env access
     ├── session-cookie.ts   # cookie names + pure parse/expiry helpers (no next/headers)
     ├── session.ts          # read the sealed session cookie; write it from routes only
+    ├── estimate.ts         # pure Buzz-estimate decisions (cost or null, quote per prompt, stale replies)
     └── civitai.ts          # @civitai/app-sdk wiring (createOrchestratorClient, fetchMe, etc.)
 ```
 
@@ -52,7 +53,7 @@ src/
 - **Session = sealed cookie.** Read via `getSession()` in `src/lib/session.ts`. If `null`, the user is logged out. Don't reach into the cookie store directly elsewhere.
 - 🔴 **`getSession()` is READ-ONLY, and must stay that way.** Next.js allows cookie writes in Route Handlers, Server Actions and `proxy.ts` — **not** in a Server Component, which is `getSession()`'s primary caller. It used to refresh in place; both arms (`setSession` on success, `clearSession` on failure) called `cookies().set()`, so an expired session threw `Cookies can only be modified in a Server Action or Route Handler` and took the whole page render down. Refresh lives in `src/proxy.ts` now. If you add a write to `getSession()`, `pnpm probe:expired-session` will catch it.
 - **All Civitai API calls happen in route handlers**, not React server components. RSCs can trigger route handlers via `fetch('/api/…')` or read session via `getSession()` and call helpers in `lib/civitai.ts` directly.
-- **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend.
+- **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend. The estimate belongs to the exact prompt it priced: Generate stays disabled until the current prompt has an estimate with a numeric cost, and an absent cost is `null` ("Estimate unavailable"), never `0` — see `src/lib/estimate.ts`.
 
 ## Patterns to avoid
 
@@ -77,8 +78,8 @@ src/
 
 1. Logged out → `<LoginButton>` → `POST /api/auth/login` → 302 to Civitai → user consents → `GET /api/auth/callback/civitai` → session sealed → 302 to `/`.
 2. Logged in → `getSession()` on server → `getMe()` (username) **and** `getBuzzBalance()` (balance — a separate endpoint, `null` without `BuzzRead`) → render the profile card, scope summary, prompt form.
-3. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost → user confirms.
-4. Client `POST /api/generate` → returns workflow ID → client polls `GET /api/workflow/[id]` every 2s.
+3. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt → user confirms with **Generate**. Generate is disabled until the current prompt has an estimate; editing the prompt or Reset discards it, a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
+4. Client `POST /api/generate` → returns workflow ID → client long-polls `GET /api/workflow/[id]?wait=…` (the server holds each request open) until the workflow is done.
 5. On terminal status → display image(s) or error.
 
 ## Verifying changes
@@ -88,6 +89,7 @@ After any meaningful change, run the matching check before declaring done:
 | You touched | Run |
 |---|---|
 | Anything in `src/` | `pnpm typecheck` |
+| `src/lib/estimate.ts`, `GenerateForm.tsx`, the estimate route | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` module with Node's built-in type stripping, which is newer than the README's minimum for running the app) |
 | `next.config.mjs`, env wiring, security headers | `pnpm build` |
 | `src/lib/session.ts`, `src/proxy.ts`, anything touching the session cookie | `pnpm probe:expired-session` |
 | Auth flow (`src/app/api/auth/**`), session helpers | `pnpm test:e2e -- auth-flow` |
