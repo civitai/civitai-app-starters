@@ -27,6 +27,8 @@
  *     simply shadow the server).
  *  3. A 503, a 429 and a network error leave the cookie byte-for-byte intact.
  *  4. A 400 `invalid_grant` and a 401 clear it.
+ *  5. `refreshSession()` leaves a fresh session alone (no fetch, no write),
+ *     and clears an expired one that has no refresh token without a fetch.
  *
  * WATCHED TO FAIL against the pre-fix recipe (origin/main @ 75036eca), with
  * the refresh entry point temporarily resolved as `refreshSession ??
@@ -194,6 +196,30 @@ describe('PORTING.md Step 4 — readSession is a pure read (#805)', () => {
   });
 });
 
+describe('PORTING.md Step 4 — refreshSession only acts on an expiring session', () => {
+  it('leaves a fresh session alone: no network, no cookie write', async () => {
+    seed(60 * 60 * 1000);
+    const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
+    await recipe.refreshSession();
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(jar.writes).toEqual([]);
+  });
+
+  it('clears an expired session that has no refresh token, without a network call', async () => {
+    jar.store.set(
+      COOKIE,
+      sealCookie(
+        JSON.stringify({ tokens: { access_token: 'fixture-old', expires_at: Date.now() - 60_000, scope: PRIOR_SCOPE } }),
+        SECRET,
+      ),
+    );
+    const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
+    await recipe.refreshSession();
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(jar.store.has(COOKIE)).toBe(false);
+  });
+});
+
 describe('PORTING.md Step 4 — refreshSession keeps the granted scope (#807)', () => {
   it('a response that omits scope keeps the stored 65537', async () => {
     seed(-60 * 60 * 1000);
@@ -221,8 +247,9 @@ describe('PORTING.md Step 4 — only a definite rejection clears the session (#8
     ['a network error', () => Promise.reject(new TypeError('fetch failed'))],
   ])('%s keeps the cookie byte-for-byte so the next request retries', async (_label, impl) => {
     const sealed = seed(-60 * 60 * 1000);
-    stubFetch(impl);
+    const fetchFn = stubFetch(impl);
     await recipe.refreshSession();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(jar.writes.filter((w) => w.op === 'delete')).toEqual([]);
     expect(jar.store.get(COOKIE)).toBe(sealed);
   });

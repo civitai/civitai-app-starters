@@ -317,11 +317,11 @@ export async function refreshSession(): Promise<void> {
 
 Call `refreshSession()` from a hook that runs before your handlers and may set response cookies, then read with `readSession()` everywhere else:
 
-- **Next.js** → refresh in `proxy.ts` (Next.js 16's name for `middleware.ts`), never in a Server Component. There, the cookie functions are the request's and response's cookies: a refresh must update **both** `request.cookies` (what this render reads) and the response's cookies (what the browser keeps). [`starters/next-app/src/proxy.ts`](./starters/next-app/src/proxy.ts) is the complete version. Server Components and route handlers then call `readSession()`. `cookies()` is async in Next.js 16, so resolve the store first (`const jar = await cookies()`) and back `getCookie` with `jar.get(name)?.value`, or make your read helper async the way `getSession()` in [`starters/next-app/src/lib/session.ts`](./starters/next-app/src/lib/session.ts) is.
-- **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies`, then set `event.locals.session = readSession()` ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts)).
+- **Next.js** → refresh in `proxy.ts` (Next.js 16's name for `middleware.ts`), never in a Server Component. There, the cookie functions are the request's and response's cookies: a refresh must update **both** `request.cookies` (what this render reads) and the response's cookies (what the browser keeps). [`starters/next-app/src/proxy.ts`](./starters/next-app/src/proxy.ts) shows that request-and-response pairing in full. Server Components and route handlers then call `readSession()`. `cookies()` is async in Next.js 16, so resolve the store first (`const jar = await cookies()`) and back `getCookie` with `jar.get(name)?.value`, or make your read helper async the way `getSession()` in [`starters/next-app/src/lib/session.ts`](./starters/next-app/src/lib/session.ts) is.
+- **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies`, then set `event.locals.session = readSession()`. ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts) does both in one call, `readSession(event.cookies, …)`, which refreshes in place; that is legal there because `handle` may set cookies.)
 - **Hono / Express** → a middleware that refreshes first, then sets `c.set('session', …)` / `req.session`.
 
-See the starter for your framework for the exact wiring.
+See the starter for your framework for the exact cookie wiring. ⚠ The starters' own refresh code still clears the session on **any** refresh failure, transient ones included. Follow the recipe above for which failures sign the user out, not the starters.
 
 ### Mode A note (additive auth)
 
