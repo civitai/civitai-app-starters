@@ -283,7 +283,13 @@ function documentedSetupSpecifiers() {
 function exportTarget(pkgJson, subpath) {
   const entry = pkgJson.exports?.[subpath];
   if (typeof entry === 'string') return entry;
-  if (entry && typeof entry === 'object') return entry.import ?? entry.default ?? null;
+  if (entry && typeof entry === 'object') {
+    const target = entry.import ?? entry.default ?? null;
+    // A nested condition object (`import: { types, default }`) is resolved one
+    // level down; anything still not a string is reported as unresolvable.
+    if (target && typeof target === 'object') return exportTarget({ exports: { x: target } }, 'x');
+    return typeof target === 'string' ? target : null;
+  }
   return null;
 }
 
@@ -307,7 +313,9 @@ function inspectSetupModules(pkgDir, subpaths) {
       continue;
     }
     const text = readFileSync(join(pkgDir, file), 'utf8');
-    const annotations = [...text.matchAll(/^\/\/# sourceMappingURL=(\S+)\s*$/gm)];
+    // Every form a source-map loader honours, not just the one tsc writes:
+    // `//# …`, the legacy `//@ …`, and the block form `/*# … */`.
+    const annotations = [...text.matchAll(/^\s*(?:\/\/|\/\*)[#@]\s*sourceMappingURL=([^\s*]+)\s*(?:\*\/)?\s*$/gm)];
     const url = annotations.at(-1)?.[1];
     if (!url || url.startsWith('data:')) continue;
     const mapRel = posix.normalize(posix.join(posix.dirname(file), url));
