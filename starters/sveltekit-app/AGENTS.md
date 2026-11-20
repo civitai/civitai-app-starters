@@ -31,6 +31,8 @@ src/
 │   ├── env.ts              # validated env config
 │   ├── scopes.ts           # REQUESTED_SCOPES bitmask
 │   ├── session.ts          # readSession / writeSession / OAuth state cookie
+│   ├── refresh-tokens.ts   # which refresh failures sign out; single-flight refresh (shared file)
+│   ├── estimate.ts         # pure Buzz-estimate decisions (cost or null, quote per prompt; shared file)
 │   ├── civitai.ts          # server-only orchestrator helpers (re-exports SDK types)
 │   └── components/
 │       ├── GenerateForm.svelte
@@ -55,8 +57,9 @@ src/
 
 - **OAuth + tokens stay server-side.** Never expose `access_token`, `refresh_token`, or `CIVITAI_CLIENT_SECRET` to the browser. The client sees only the opaque `civ_session` cookie.
 - **Read session via `event.locals.session`**, set by `hooks.server.ts`. Don't reach into `cookies` directly in route handlers — that's the hooks' job.
+- 🔴 **Only a definite rejection signs the user out.** When the refresh in `readSession()` (`src/lib/session.ts`, called from `hooks.server.ts`) fails, the cookie is cleared only for an `OAuthError` whose body says `invalid_grant` (`isDefiniteRejection` in `src/lib/refresh-tokens.ts`). A 5xx, a 429, a network error or a refused client secret (`invalid_client`) keeps the browser's cookie so a later request retries (after a 5 s per-session backoff, since the token endpoint is rate-limited); that one request is signed out. A request waits at most 10 s for a refresh. Concurrent requests with the same refresh token share one refresh call, and a success is reused for 60 s so a straggling request with the old cookie does not replay a rotated-away refresh token; signing out (`clearSession`) forgets that reuse at once. That dedupe is **per server process**: several instances can still race, which needs a shared store or a replay grace period on the auth server. The module is the same file in every standalone starter; `pnpm test` and `pnpm probe:expired-session` cover it.
 - **All Civitai API calls happen in `+server.ts` handlers**, not in components. `+page.server.ts` is fine for fetching during page load.
-- **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend.
+- **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend. The estimate belongs to the exact prompt it priced: Generate stays disabled until the current prompt has an estimate with a numeric cost, and an absent cost is `null` ("Estimate unavailable"), never `0` — see `src/lib/estimate.ts`.
 
 ## Patterns to avoid
 
@@ -81,7 +84,7 @@ src/
 1. Logged out → `<form action="/api/auth/login">` posts → `POST /api/auth/login` → PKCE + state seal + 303 to Civitai.
 2. Civitai redirects back with `code` + `state` → `GET /api/auth/callback/civitai` exchanges → session sealed → 303 home.
 3. Logged in → `+page.server.ts` calls `getMe()` (username) **and** `getBuzzBalance()` (a separate endpoint — `buzz.getUserAccount`, needs `BuzzRead`, `null` without it; 🔴 the balance is NOT on `/api/v1/me`) and passes both plus scopes to `+page.svelte`.
-4. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost.
+4. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt or Reset discards it, a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
 
@@ -93,6 +96,8 @@ After any meaningful change, run the matching check before declaring done:
 |---|---|
 | Anything in `src/` | `pnpm typecheck` (`svelte-check` + svelte-kit sync) |
 | `svelte.config.js`, env wiring, security headers | `pnpm build` |
+| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/lib/session.ts`, `hooks.server.ts`, the estimate route, the sign-out routes | `pnpm build && PROBE_SKIP_BUILD=1 pnpm probe:expired-session` (no Civitai needed: a stand-in runs in the probe) |
 | Auth flow (`src/routes/api/auth/**`, `hooks.server.ts`, `$lib/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`src/routes/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |
 

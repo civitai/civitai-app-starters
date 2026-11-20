@@ -1,12 +1,8 @@
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import {
-  refreshToken as oauthRefresh,
-  sealCookie,
-  unsealCookie,
-  type OAuthTokens,
-} from '@civitai/app-sdk';
+import { sealCookie, unsealCookie, type OAuthTokens } from '@civitai/app-sdk';
 import { env } from './env.js';
+import { forgetRefreshesFor, isDefiniteRejection, refreshTokensOnce } from './refresh-tokens.js';
 
 const SESSION_COOKIE = 'civ_session';
 const OAUTH_STATE_COOKIE = 'civ_oauth_state';
@@ -33,24 +29,44 @@ const cookieOpts = (production: boolean) =>
     sameSite: 'Lax' as const,
   });
 
-export async function readSession(c: Context, production: boolean): Promise<Session | null> {
+/** Unseal + parse the session cookie. `null` for absent, tampered or malformed. */
+function parseSession(c: Context): Session | null {
   const sealed = getCookie(c, SESSION_COOKIE);
   if (!sealed) return null;
   const raw = unsealCookie(sealed, env.SESSION_SECRET);
   if (!raw) return null;
-
-  let session: Session;
   try {
-    session = JSON.parse(raw);
+    const session = JSON.parse(raw) as Session;
+    return session?.tokens?.access_token ? session : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The session for this request, refreshing an expiring access token in place.
+ *
+ * 🔴 ONLY `invalid_grant` SIGNS THE USER OUT. A refresh that fails any other
+ * way (a 5xx, a 429, a network error, a refused client secret) returns `null`
+ * for THIS request but leaves the browser's cookie alone, so the next request
+ * tries again. Clearing on those turned a blip at the auth service into a
+ * forced sign-in (#855). Which failures count is decided in one place,
+ * `isDefiniteRejection` in `server/refresh-tokens.ts`.
+ *
+ * The refresh goes through `refreshTokensOnce`: the SPA's concurrent requests
+ * with one cookie share one call to the token endpoint, and a straggler with
+ * the old cookie reuses the rotation for 60 s instead of replaying a spent
+ * refresh token (#804). That is per server process.
+ */
+export async function readSession(c: Context, production: boolean): Promise<Session | null> {
+  const session = parseSession(c);
+  if (!session) return null;
 
   if (session.tokens.expires_at > Date.now() + 30_000) return session;
 
   if (!session.tokens.refresh_token) return null;
   try {
-    const fresh = await oauthRefresh({
+    const fresh = await refreshTokensOnce({
       baseUrl: env.CIVITAI_AUTH_URL,
       clientId: env.CIVITAI_CLIENT_ID,
       clientSecret: env.CIVITAI_CLIENT_SECRET,
@@ -63,8 +79,17 @@ export async function readSession(c: Context, production: boolean): Promise<Sess
     const next: Session = { ...session, tokens: fresh };
     writeSession(c, next, production);
     return next;
-  } catch {
-    clearSession(c, production);
+  } catch (err) {
+    if (!isDefiniteRejection(err)) {
+      // Not a verdict on the refresh token: keep the cookie for a retry.
+      console.warn(
+        '[session] refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    }
+    // `invalid_grant`: the refresh token is unknown, expired, revoked or spent.
+    deleteCookie(c, SESSION_COOKIE, cookieOpts(production));
     return null;
   }
 }
@@ -77,7 +102,13 @@ export function writeSession(c: Context, session: Session, production: boolean):
   });
 }
 
+/**
+ * Sign out: forget this session's remembered refreshes, then clear the cookie.
+ * Without the first half, a request carrying the pre-rotation cookie inside the
+ * 60 s reuse window would be handed this session's tokens again.
+ */
 export function clearSession(c: Context, production: boolean): void {
+  forgetRefreshesFor(parseSession(c)?.tokens);
   deleteCookie(c, SESSION_COOKIE, cookieOpts(production));
 }
 

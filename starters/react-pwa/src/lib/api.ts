@@ -24,7 +24,8 @@ export async function getMe(): Promise<Me> {
   return json;
 }
 
-export async function estimateCost(input: GenerateInput): Promise<{ cost: number }> {
+/** `cost` is `null` when the estimate carried no cost: show "Estimate unavailable", never 0. */
+export async function estimateCost(input: GenerateInput): Promise<{ cost: number | null }> {
   const res = await fetch('/api/generate/estimate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -305,13 +305,25 @@ export async function refreshSession(): Promise<void> {
     });
     writeSession({ ...session, tokens });
   } catch (err) {
-    // Clear only when the auth server definitely rejected the refresh token.
-    // A 5xx, a 429 or a network error says nothing about the credential: keep
-    // the cookie so the next request retries.
-    if (err instanceof OAuthError && (err.status === 400 || err.status === 401)) {
-      deleteCookie(SESSION_COOKIE);
-    }
+    // Clear only when the auth server rejected the REFRESH TOKEN itself: an
+    // RFC 6749 error body whose `error` is `invalid_grant` (unknown, expired,
+    // revoked or already spent). Read the body, not the status. A 5xx, a 429 or
+    // a network error says nothing about the credential, and `invalid_client`
+    // (a 400 or a 401) means YOUR client id or secret was refused, which would
+    // sign out every user at once. Keep the cookie for all of those so the next
+    // request retries.
+    if (isDefiniteRejection(err)) deleteCookie(SESSION_COOKIE);
   }
+}
+
+/** True only for an `invalid_grant` answer from the token endpoint. */
+function isDefiniteRejection(err: unknown): boolean {
+  return (
+    err instanceof OAuthError &&
+    typeof err.body === 'object' &&
+    err.body !== null &&
+    (err.body as { error?: unknown }).error === 'invalid_grant'
+  );
 }
 ```
 
@@ -321,7 +333,14 @@ Call `refreshSession()` from a hook that runs before your handlers and may set r
 - **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies`, then set `event.locals.session = readSession()`. ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts) does both in one call, `readSession(event.cookies, …)`, which refreshes in place; that is legal there because `handle` may set cookies.)
 - **Hono / Express** → a middleware that refreshes first, then sets `c.set('session', …)` / `req.session`.
 
-See the starter for your framework for the exact cookie wiring. ⚠ The starters' own refresh code still clears the session on **any** refresh failure, transient ones included. Follow the recipe above for which failures sign the user out, not the starters.
+See the starter for your framework for the exact cookie wiring. The four standalone starters (`next-app`, `sveltekit-app`, `react-pwa`, `svelte-pwa`) follow the same rule, and add what the recipe above leaves out. Each carries the same `refresh-tokens.ts` (`src/lib/` in next-app and sveltekit-app, `server/` in the PWAs), which adds four things:
+
+- **Single flight.** Concurrent requests with one cookie share one refresh call.
+- **A 60 s reuse window.** A request that still carries the pre-rotation cookie gets the rotated tokens instead of replaying a refresh token the server already spent. Signing out forgets it (`forgetRefreshesFor`).
+- **A 5 s backoff.** After a failure that keeps the cookie, the rate-limited token endpoint is not called on every request.
+- **A 10 s cap** on how long a request waits for a refresh.
+
+If your auth server rotates refresh tokens and your pages make parallel requests, copy that file rather than calling `refreshToken()` directly. It dedupes within one server process only; several instances can still race, and closing that needs a shared store or a replay grace period on the auth server.
 
 ### Mode A note (additive auth)
 
@@ -341,7 +360,7 @@ const sealed = await loadUser(id).then(u => u.civitai_tokens);
 const session: Session = JSON.parse(unsealCookie(sealed, SESSION_SECRET));
 ```
 
-Refresh the same way as `refreshSession()` above (pass `fallbackScope`, clear only on a 400/401 `OAuthError`), but write the refreshed blob back to the DB instead of setting a cookie. A DB write is not a cookie write, so this one may run wherever you load the user.
+Refresh the same way as `refreshSession()` above (pass `fallbackScope`, clear only on an `invalid_grant` `OAuthError`), but write the refreshed blob back to the DB instead of setting a cookie. A DB write is not a cookie write, so this one may run wherever you load the user.
 
 ---
 
@@ -478,7 +497,7 @@ Replicating this flow against your dev OAuth app and a live `https://orchestrati
 - **Long-poll timeouts on serverless.** Vercel + Cloudflare have hard request budgets. Cap `pollWorkflow`'s `timeoutMs` below the platform limit (10–25s is safe), and let the *client* poll a `GET /api/workflow/[id]` endpoint until terminal.
 - **State-mismatch errors on first login.** Usually `secure: true` on the OAuth-state cookie in a non-HTTPS dev environment — the browser silently drops the cookie. Set `secure: false` in dev.
 - **`expires_at` math.** The SDK stores `expires_at` as a JS millisecond timestamp (`Date.now() + expires_in * 1000`). Don't compare against `Date.now() / 1000` like a Unix timestamp.
-- **Refreshing dead tokens.** If `refresh_token` itself has been revoked or expired, `refreshToken()` throws an `OAuthError` with status 400 (`invalid_grant`) or 401. Clear the session and re-prompt the user to sign in. Any other failure (a 5xx, a 429, a network error) is transient: keep the session so the next request retries. Step 4's `refreshSession()` does exactly this.
+- **Refreshing dead tokens.** If `refresh_token` itself has been revoked, expired or already spent, `refreshToken()` throws an `OAuthError` whose `body.error` is `invalid_grant`. Clear the session and re-prompt the user to sign in. Nothing else signs the user out. A 5xx, a 429 or a network error is transient: keep the session so the next request retries. An `invalid_client` (as a 400 or a 401) means your app's client id or secret was refused. That is a deploy fault, so fix the credentials; clearing on it would sign out every user, for good. Step 4's `refreshSession()` does exactly this, keyed on the body rather than the status.
 - **Mode A: forgetting to encrypt the per-user token blob.** Storing raw `OAuthTokens` JSON in your DB is the same mistake as storing it in localStorage — if your DB leaks, every user's Civitai account is exposed. Always seal with `sealCookie` before persisting; unseal on read.
 
 ---

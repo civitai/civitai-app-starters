@@ -5,6 +5,13 @@
     type WorkflowSnapshot,
   } from '@civitai/app-sdk/orchestrator';
   import { onDestroy } from 'svelte';
+  import {
+    canGenerate,
+    costOrNull,
+    createEstimateSequencer,
+    quoteFor,
+    type Quote,
+  } from '$lib/estimate';
 
   /**
    * The user's Buzz balance, or `null`/`undefined` when this app could not read
@@ -29,7 +36,12 @@
   let prompt = $state('A close-up oil painting of a mossy stone fox, dappled forest light');
   let phase = $state<Phase>('idle');
   let error = $state<string | null>(null);
-  let previewCost = $state<number | null>(null);
+  // The last estimate, together with the prompt it priced. It is shown, and
+  // unlocks Generate, only while the prompt is still exactly that prompt.
+  let quote = $state<Quote | null>(null);
+  // Orders estimate requests so a reply that arrives after Reset, or after a
+  // newer estimate started, is dropped instead of pricing the current prompt.
+  const sequencer = createEstimateSequencer();
   let workflowId = $state<string | null>(null);
   let snapshot = $state<WorkflowSnapshot | null>(null);
 
@@ -37,20 +49,25 @@
   onDestroy(() => abort?.abort());
 
   async function estimate() {
+    const ticket = sequencer.begin(prompt);
     phase = 'estimating';
     error = null;
-    previewCost = null;
+    quote = null;
     try {
       const res = await fetch('/api/generate/estimate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: ticket.prompt }),
       });
       const json = await res.json();
+      if (!sequencer.isCurrent(ticket)) return;
       if (!res.ok) throw new Error(JSON.stringify(json));
-      previewCost = json.cost;
+      // `null` when the estimate came back without a cost: shown as
+      // "Estimate unavailable" and Generate stays disabled.
+      quote = { prompt: ticket.prompt, cost: costOrNull(json.cost) };
       phase = 'previewed';
     } catch (err) {
+      if (!sequencer.isCurrent(ticket)) return;
       error = err instanceof Error ? err.message : 'unknown error';
       phase = 'error';
     }
@@ -107,9 +124,10 @@
 
   function reset() {
     abort?.abort();
+    sequencer.invalidate();
     phase = 'idle';
     error = null;
-    previewCost = null;
+    quote = null;
     workflowId = null;
     snapshot = null;
   }
@@ -117,6 +135,8 @@
   const imageUrls = $derived(extractImageUrls(snapshot));
 
   const busy = $derived(phase === 'estimating' || phase === 'submitting' || phase === 'polling');
+  const currentQuote = $derived(quoteFor(quote, prompt));
+  const currentCost = $derived(currentQuote?.cost ?? null);
 </script>
 
 <section class="flex flex-col gap-4">
@@ -145,14 +165,14 @@
     <button
       type="button"
       onclick={submit}
-      disabled={busy || !prompt.trim()}
+      disabled={!canGenerate({ busy, prompt, quote })}
       class="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
     >
       {phase === 'submitting'
         ? 'Submitting…'
         : phase === 'polling'
           ? 'Generating…'
-          : `Generate${previewCost != null ? ` (≈ ${previewCost} Buzz)` : ''}`}
+          : `Generate${currentCost != null ? ` (≈ ${currentCost} Buzz)` : ''}`}
     </button>
     {#if phase !== 'idle'}
       <button
@@ -165,9 +185,22 @@
     {/if}
   </div>
 
-  {#if previewCost != null && phase === 'previewed'}
+  {#if currentQuote && currentCost == null && phase === 'previewed'}
+    <p role="status" class="text-sm text-amber-700 dark:text-amber-400">
+      Estimate unavailable: the Buzz cost for this prompt could not be
+      determined, so Generate is disabled.
+    </p>
+  {/if}
+
+  {#if !currentQuote && !busy && prompt.trim() !== ''}
+    <p class="text-xs text-zinc-500">
+      Preview the Buzz cost of this prompt to enable Generate.
+    </p>
+  {/if}
+
+  {#if currentCost != null && phase === 'previewed'}
     <p class="text-sm text-zinc-600 dark:text-zinc-400">
-      This will cost <strong>{previewCost}</strong> Buzz.
+      This will cost <strong>{currentCost}</strong> Buzz.
       {#if initialBalance != null}
         <span class="ml-1">Your balance: {initialBalance} Buzz.</span>
       {/if}

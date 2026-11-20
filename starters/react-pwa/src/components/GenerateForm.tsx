@@ -5,6 +5,13 @@ import {
   extractImageUrls,
   type WorkflowSnapshot,
 } from '@civitai/app-sdk/orchestrator';
+import {
+  canGenerate,
+  costOrNull,
+  createEstimateSequencer,
+  quoteFor,
+  type Quote,
+} from '../lib/estimate';
 
 type Phase = 'idle' | 'estimating' | 'previewed' | 'submitting' | 'polling' | 'done' | 'error';
 
@@ -30,7 +37,12 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
   );
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [previewCost, setPreviewCost] = useState<number | null>(null);
+  // The last estimate, together with the prompt it priced. It is shown, and
+  // unlocks Generate, only while the prompt is still exactly that prompt.
+  const [quote, setQuote] = useState<Quote | null>(null);
+  // Orders estimate requests so a reply that arrives after Reset, or after a
+  // newer estimate started, is dropped instead of pricing the current prompt.
+  const [sequencer] = useState(createEstimateSequencer);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -43,18 +55,23 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
   );
 
   const estimate = useCallback(async () => {
+    const ticket = sequencer.begin(prompt);
     setPhase('estimating');
     setError(null);
-    setPreviewCost(null);
+    setQuote(null);
     try {
-      const res = await estimateCost({ prompt });
-      setPreviewCost(res.cost);
+      const res = await estimateCost({ prompt: ticket.prompt });
+      if (!sequencer.isCurrent(ticket)) return;
+      // `null` when the estimate came back without a cost: shown as
+      // "Estimate unavailable" and Generate stays disabled.
+      setQuote({ prompt: ticket.prompt, cost: costOrNull(res.cost) });
       setPhase('previewed');
     } catch (err) {
+      if (!sequencer.isCurrent(ticket)) return;
       setError(err instanceof Error ? err.message : 'unknown');
       setPhase('error');
     }
-  }, [prompt]);
+  }, [prompt, sequencer]);
 
   const longPollUntilDone = useCallback(async (id: string) => {
     abortRef.current?.abort();
@@ -96,16 +113,19 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    sequencer.invalidate();
     setPhase('idle');
     setError(null);
-    setPreviewCost(null);
+    setQuote(null);
     setWorkflowId(null);
     setSnapshot(null);
-  }, []);
+  }, [sequencer]);
 
   const imageUrls = extractImageUrls(snapshot);
 
   const busy = phase === 'estimating' || phase === 'submitting' || phase === 'polling';
+  const currentQuote = quoteFor(quote, prompt);
+  const currentCost = currentQuote?.cost ?? null;
 
   return (
     <section className="flex flex-col gap-4">
@@ -135,14 +155,14 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
         <button
           type="button"
           onClick={submit}
-          disabled={busy || !prompt.trim()}
+          disabled={!canGenerate({ busy, prompt, quote })}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
           {phase === 'submitting'
             ? 'Submitting…'
             : phase === 'polling'
               ? 'Generating…'
-              : `Generate${previewCost != null ? ` (≈ ${previewCost} Buzz)` : ''}`}
+              : `Generate${currentCost != null ? ` (≈ ${currentCost} Buzz)` : ''}`}
         </button>
         {phase !== 'idle' && (
           <button
@@ -155,9 +175,22 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
         )}
       </div>
 
-      {previewCost != null && phase === 'previewed' && (
+      {currentQuote && currentCost == null && phase === 'previewed' && (
+        <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+          Estimate unavailable: the Buzz cost for this prompt could not be
+          determined, so Generate is disabled.
+        </p>
+      )}
+
+      {!currentQuote && !busy && prompt.trim() !== '' && (
+        <p className="text-xs text-zinc-500">
+          Preview the Buzz cost of this prompt to enable Generate.
+        </p>
+      )}
+
+      {currentCost != null && phase === 'previewed' && (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          This will cost <strong>{previewCost}</strong> Buzz.
+          This will cost <strong>{currentCost}</strong> Buzz.
           {initialBalance != null && (
             <span className="ml-1">Your balance: {initialBalance} Buzz.</span>
           )}

@@ -1,9 +1,15 @@
 /**
- * Session refresh: which failures end a session, and how concurrent refreshes
- * of one refresh token share a single call. Used only by `src/proxy.ts`.
+ * Session refresh: which failures end a session, how concurrent refreshes of
+ * one refresh token share a single call, and how signing out forgets them.
  *
- * No `next/headers` and no `server-only` here, for the same reason as
- * `session-cookie.ts`: this is imported from the proxy.
+ * 🔴 THE SAME FILE IN EVERY STANDALONE STARTER. next-app, sveltekit-app,
+ * react-pwa and svelte-pwa each carry a byte-identical copy (a starter is
+ * copied out on its own by `npx tiged`, so it cannot import a sibling), and
+ * the repo guard `tests/guards/starter-shared-modules-parity.test.mjs` fails
+ * when one copy changes alone. Its only imports are `node:crypto` and
+ * `@civitai/app-sdk`: no framework, no `server-only`, no env, so it runs in a
+ * Next.js proxy, a SvelteKit hook, a Hono route and under plain `node --test`.
+ * Each starter's `AGENTS.md` names the file that calls it.
  */
 import { createHash } from 'node:crypto';
 import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civitai/app-sdk';
@@ -32,8 +38,8 @@ import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civ
  *   request, which no amount of signing the user out fixes.
  *
  * The cost of being wrong in this direction is a dead cookie that is retried
- * on each request until the user signs in again (`getSession()` already treats
- * the render as signed out), never a lost session.
+ * on each request until the user signs in again (the session reader already
+ * treats that request as signed out), never a lost session.
  */
 export function isDefiniteRejection(err: unknown): boolean {
   if (!(err instanceof OAuthError)) return false;
@@ -65,8 +71,9 @@ export const REFRESH_RETRY_BACKOFF_MS = 5_000;
 /**
  * The longest one request waits for a refresh. The SDK call has no timeout of
  * its own, so a token endpoint that accepts the connection and never answers
- * would otherwise hold the page for as long as `fetch` itself waits (minutes).
- * Past this, the request carries on as a failure that keeps the cookie.
+ * would otherwise hold the request for as long as `fetch` itself waits
+ * (minutes). Past this, the request carries on as a failure that keeps the
+ * cookie.
  */
 export const REFRESH_WAIT_MS = 10_000;
 
@@ -77,6 +84,8 @@ interface Flight {
   promise: Promise<OAuthTokens>;
   /** Set once the call succeeds. */
   doneAt?: number;
+  /** Set once the call succeeds: the key of the refresh token it returned. */
+  resultKey?: string;
   /** Set once the call fails with an error that keeps the cookie. */
   failedAt?: number;
 }
@@ -97,13 +106,14 @@ export class RefreshWaitTimeoutError extends Error {
  * real trade: for {@link REFRESH_GRACE_MS} after a rotation, a COPY of the old
  * cookie still yields a working session, where strict rotation would have
  * refused it. That is the same trade a server-side replay grace period makes,
- * kept short for that reason.
+ * kept short for that reason, and signing out ends it at once
+ * ({@link forgetRefreshesFor}).
  *
  * On `globalThis` so a module that is evaluated more than once in one process
  * (dev-mode recompiles) still shares one map.
  */
 const flights: Map<string, Flight> = ((globalThis as Record<symbol, unknown>)[
-  Symbol.for('civitai-next-app.refresh-flights')
+  Symbol.for('civitai-app-starters.refresh-flights')
 ] ??= new Map<string, Flight>()) as Map<string, Flight>;
 
 function keyFor(refreshToken: string): string {
@@ -150,7 +160,8 @@ export interface RefreshOpts {
  * `refreshToken()` with single-flight (#804): every concurrent caller holding
  * the same refresh token shares ONE call to the token endpoint.
  *
- * - A success is reused for {@link REFRESH_GRACE_MS}.
+ * - A success is reused for {@link REFRESH_GRACE_MS}, until the session it
+ *   produced signs out ({@link forgetRefreshesFor}).
  * - A failure that keeps the cookie (see {@link isDefiniteRejection}) is
  *   reused for {@link REFRESH_RETRY_BACKOFF_MS}, then the next request makes a
  *   fresh attempt. An `invalid_grant` is forgotten at once; the cookie is
@@ -160,6 +171,8 @@ export interface RefreshOpts {
  *   second call with the same refresh token while the first may still succeed
  *   is exactly the race this exists to prevent. If the slow call succeeds, its
  *   tokens land in the grace window for the next request.
+ * - At most {@link REFRESH_CACHE_MAX} refresh tokens are remembered; past
+ *   that, expired entries go first and then the oldest.
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -180,6 +193,7 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
     promise: oauthRefresh(opts).then(
       (tokens) => {
         flight.doneAt = Date.now();
+        if (tokens.refresh_token) flight.resultKey = keyFor(tokens.refresh_token);
         return tokens;
       },
       (err: unknown) => {
@@ -198,4 +212,41 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
   flight.promise.catch(() => {});
   flights.set(key, flight);
   return waitAtMost(flight.promise, REFRESH_WAIT_MS);
+}
+
+/**
+ * Forget every remembered refresh that belongs to this session. Call it when
+ * the session ends (sign-out, revoke), BEFORE clearing the cookie.
+ *
+ * Without it, signing out left the grace window open: the entry keyed by the
+ * PREVIOUS refresh token still held this session's tokens, so for up to
+ * {@link REFRESH_GRACE_MS} a request carrying the pre-rotation cookie (another
+ * tab, a copy of it) was handed a working session again after the user had
+ * signed out.
+ *
+ * The cookie being cleared holds the NEWEST refresh token, while that entry is
+ * keyed by an OLDER one, so this follows the chain: an entry goes when its own
+ * key or the key of the refresh token it returned is one already forgotten,
+ * repeated until nothing changes. That covers several rotations inside one
+ * window, and a sign-out that arrives with a pre-rotation cookie. Unrelated
+ * sessions are untouched. An in-flight refresh of this session is dropped from
+ * the map, so no later request can join it; callers already waiting on it
+ * still get its answer.
+ */
+export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | null | undefined): void {
+  const refreshToken = tokens?.refresh_token;
+  if (!refreshToken) return;
+  const gone = new Set([keyFor(refreshToken)]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, flight] of flights) {
+      if (gone.has(key) || (flight.resultKey !== undefined && gone.has(flight.resultKey))) {
+        flights.delete(key);
+        gone.add(key);
+        if (flight.resultKey !== undefined) gone.add(flight.resultKey);
+        changed = true;
+      }
+    }
+  }
 }
