@@ -2,7 +2,7 @@ import { dev } from '$app/environment';
 import { json } from '@sveltejs/kit';
 import { revokeToken } from '@civitai/app-sdk';
 import { config } from '$lib/env';
-import { clearSession } from '$lib/session';
+import { clearSession, parseSession } from '$lib/session';
 import type { RequestHandler } from './$types';
 
 async function tryRevoke(token: string | undefined) {
@@ -19,8 +19,13 @@ async function tryRevoke(token: string | undefined) {
   }
 }
 
-export const POST: RequestHandler = async ({ cookies, locals }) => {
-  const tokens = locals.session?.tokens;
+export const POST: RequestHandler = async ({ cookies }) => {
+  // The stored cookie, not `locals.session`: a sign-out does not refresh
+  // (`SIGN_OUT_PATHS`), and a refresh that failed without `invalid_grant`
+  // leaves `locals.session` null, which skipped the upstream revoke while the
+  // cookie was still cleared. The stored refresh token is the one Civitai
+  // still honours.
+  const tokens = parseSession(cookies)?.tokens;
   await tryRevoke(tokens?.access_token);
   await tryRevoke(tokens?.refresh_token);
   clearSession(cookies, !dev);

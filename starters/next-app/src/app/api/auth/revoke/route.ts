@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { revokeToken } from '@civitai/app-sdk';
 import { env } from '@/lib/env';
-import { clearSession, getSession } from '@/lib/session';
+import { clearSession, getStoredSession } from '@/lib/session';
 
 export async function POST() {
-  const session = await getSession();
+  // The stored cookie, not `getSession()`, which is null for a token that
+  // needs a refresh: the proxy does not refresh sign-out routes, and the
+  // stored refresh token is the one Civitai still honours.
+  const session = await getStoredSession();
   // Best-effort revoke at Civitai — either token may already be invalid,
   // and we still want to clear our own cookie either way.
   const tryRevoke = async (token: string) => {

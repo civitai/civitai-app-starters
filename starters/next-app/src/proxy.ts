@@ -7,6 +7,7 @@ import {
   parseSession,
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
+  SIGN_OUT_PATHS,
 } from '@/lib/session-cookie';
 
 /**
@@ -68,6 +69,9 @@ function sessionCookieOptions(maxAge: number) {
 }
 
 export async function proxy(request: NextRequest) {
+  // Sign-out routes read the stored cookie themselves; never refresh for them.
+  if (SIGN_OUT_PATHS.has(request.nextUrl.pathname)) return NextResponse.next();
+
   const sealed = request.cookies.get(SESSION_COOKIE)?.value;
   const session = parseSession(sealed, env.SESSION_SECRET);
 

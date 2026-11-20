@@ -1,6 +1,6 @@
 import { dev } from '$app/environment';
 import { config } from '$lib/env';
-import { readSession } from '$lib/session';
+import { readSession, SIGN_OUT_PATHS } from '$lib/session';
 import type { Handle } from '@sveltejs/kit';
 
 /**
@@ -61,9 +61,13 @@ const SECURITY_HEADERS: Array<[string, string]> = [
 /**
  * Populate `event.locals.session` for every request. `+page.server.ts` /
  * `+server.ts` handlers should read this instead of reaching for cookies.
+ * The sign-out routes are the exception: no refresh, and they read the stored
+ * cookie themselves (see `SIGN_OUT_PATHS`).
  */
 export const handle: Handle = async ({ event, resolve }) => {
-  event.locals.session = await readSession(event.cookies, !dev);
+  event.locals.session = SIGN_OUT_PATHS.has(event.url.pathname)
+    ? null
+    : await readSession(event.cookies, !dev);
   const response = await resolve(event);
   for (const [name, value] of SECURITY_HEADERS) response.headers.set(name, value);
   return response;
