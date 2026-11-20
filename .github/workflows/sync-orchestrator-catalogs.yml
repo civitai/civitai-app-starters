@@ -257,10 +257,13 @@ jobs:
                The bot appends rather than guessing a section.
             3. Rewrite the changeset's last paragraph to say what the new
                entries actually are.
-            4. Leave the `CatalogStepTypesWithoutAGeneratedType` entries alone
-               unless you have checked npm: each one says the orchestrator
-               accepts that step type and `@civitai/client` has no generated
-               template for it yet. Once a republished client carries one, add
+            4. Leave the `CatalogStepTypesWithoutAGeneratedType` entries alone:
+               each one says the orchestrator accepts that step type and
+               `@civitai/client` has no generated template for it. That
+               package is a frozen optional peer (deprecated in favour of
+               `@civitai/orchestration-client`, no further releases), so an
+               entry leaves only when the SDK's step types move to a source
+               that has the template. Then add
                its key to the `StepTemplateMap` rows in
                `src/orchestrator/steps.ts` and run `pnpm sync:catalogs`, which
                drops it from the ledger, its pin and the prose in one go.

@@ -111,8 +111,9 @@ export const CLAIMS = [
    * used to argue totality, the map is partial, and the three uncovered
    * `$type`s were undocumented. Pinned identically in both files so neither can
    * drift from the other, and every number in it is derived — including the
-   * NAMES, so a client republish that closes one third of the gap fails here
-   * until the prose says so.
+   * NAMES. The gap will not close through a `@civitai/client` release (that
+   * package is frozen); if a change of `steps.ts`'s types source closes part
+   * of it, this fails until the prose says so.
    */
   {
     id: 'gap',

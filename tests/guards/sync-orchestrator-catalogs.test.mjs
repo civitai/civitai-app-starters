@@ -882,8 +882,9 @@ test('REAL FILES: a new untyped step type restates the gap in the prose, the led
 });
 
 test('REAL FILES: a $type that gains a StepTemplateMap row leaves the gap everywhere, with no catalog drift', async (t) => {
-  // The REMOVAL direction. A human adds the row once `@civitai/client`
-  // republishes with the template; re-running the sync must drop that `$type`
+  // The REMOVAL direction. A human adds the row once the types source has the
+  // template (not through a `@civitai/client` release: that peer is frozen);
+  // re-running the sync must drop that `$type`
   // from the ledger, the pins and the prose, and write no catalog/changeset
   // change, because the spec did not move.
   const before = realFixture().workflowStepTypes;

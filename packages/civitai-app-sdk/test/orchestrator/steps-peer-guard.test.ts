@@ -464,11 +464,15 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
     // the NodeNext arm reported ONE diagnostic — the planted control — with the
     // peer correctly installed.
     //
-    // 🔴 THIS ARM ASSERTS A DEFECT IN A PACKAGE WE DO NOT OWN, SO IT CAN GO RED
-    // WITHOUT ANYTHING HERE CHANGING. If `@civitai/client` republishes with an
-    // `exports` map (or with extensions on those relative re-exports), Node's
-    // ESM resolution starts working, the guard correctly stays silent, and this
-    // arm fails on `reportingExports(…)` being empty — which reads like a
+    // 🔴 THIS ARM ASSERTS A DEFECT IN A PACKAGE WE DO NOT OWN. `@civitai/client`
+    // is a frozen optional peer (deprecated in favour of
+    // `@civitai/orchestration-client`; `0.2.0-beta.98` is its last release), so
+    // no new release will fix it. The arm can still go red without anything
+    // here changing if the INSTALLED client ever differs from that release
+    // (a different pin, a patched or vendored copy) and carries an `exports`
+    // map or extensions on those relative re-exports: Node's ESM resolution
+    // then starts working, the guard correctly stays silent, and this arm
+    // fails on `reportingExports(…)` being empty — which reads like a
     // regression in this repo and is the opposite of one.
     //
     // WHAT TO DO THEN: check the installed client's `package.json` for an
