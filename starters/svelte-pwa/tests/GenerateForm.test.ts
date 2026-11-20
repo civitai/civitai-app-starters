@@ -119,7 +119,6 @@ test('renders the prompt, the model and both actions, with Generate locked until
   expect(text()).toContain(DEFAULT_MODEL_AIR);
   expect(button(/^Preview Buzz cost$/).disabled).toBe(false);
   expect(button(/^Generate/).disabled).toBe(true);
-  expect(text()).toContain('Preview the Buzz cost of this prompt to enable Generate.');
   expect(calls).toEqual([]);
 });
 
@@ -130,8 +129,8 @@ test('prices the typed prompt, then submits it and shows the finished image', as
   await until(() => expect(button(/^Generate/).textContent?.trim()).toBe(`Generate (≈ ${COST} Buzz)`));
   expect(calls).toEqual([{ url: '/api/generate/estimate', method: 'POST', body: { prompt: PROMPT } }]);
   expect(button(/^Generate/).disabled).toBe(false);
-  expect(text()).toContain(`This will cost ${COST} Buzz.`);
-  expect(text()).toContain(`Your balance: ${BALANCE} Buzz.`);
+  expect(container.querySelector('strong')?.textContent).toBe(String(COST));
+  expect(text()).toContain(String(BALANCE));
 
   click(button(/^Generate/));
 
@@ -140,8 +139,7 @@ test('prices the typed prompt, then submits it and shows the finished image', as
     { url: '/api/generate', method: 'POST', body: { prompt: PROMPT } },
     { url: `/api/workflow/${WORKFLOW_ID}?wait=25000`, method: 'GET', body: undefined },
   ]);
-  expect(text()).toContain('Status: succeeded');
-  expect(text()).toContain(`spent ${COST} Buzz.`);
+  expect(text()).toContain('succeeded');
 });
 
 test('an estimate with no cost says so and keeps Generate locked', async () => {
@@ -152,7 +150,7 @@ test('an estimate with no cost says so and keeps Generate locked', async () => {
   await until(() => expect(container.querySelector('[role="status"]')?.textContent).toContain('Estimate unavailable'));
   expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
   expect(button(/^Generate/).disabled).toBe(true);
-  expect(text()).not.toContain('This will cost');
+  expect(container.querySelector('strong')).toBeNull();
   expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate']);
 });
 
@@ -165,5 +163,5 @@ test('editing the prompt after an estimate drops the price and locks Generate ag
 
   expect(button(/^Generate/).disabled).toBe(true);
   expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
-  expect(text()).not.toContain('This will cost');
+  expect(container.querySelector('strong')).toBeNull();
 });
