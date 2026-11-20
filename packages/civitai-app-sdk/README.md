@@ -887,6 +887,16 @@ console.log(`Hi ${me.username}`);
 > explicit `baseUrl` to each call only when targeting a local / self-hosted
 > instance (e.g. a dev auth hub vs a dev main app).
 
+> **Failed orchestrator calls are logged, and you choose where.** Before it
+> throws `OrchestratorError`, `callOrchestrator` (which `estimateWorkflow`,
+> `submitWorkflow`, `getWorkflow` and `pollWorkflow` all use) logs one line
+> with the method, path, status and up to 500 bytes of the raw response body.
+> That body can echo what you submitted, such as the user's prompt. By default
+> the line goes to `console.error`. Pass `logger: { error: (...args) => … }` to
+> `createOrchestratorClient` to send it to your own logger, or `logger: null`
+> to keep it out of your logs entirely. The thrown error still carries `status`
+> and `body` either way.
+
 > **`fallbackScope`, and what happens to a `scope` we cannot read.** Civitai's
 > token endpoint returns `scope` as a decimal bitmask in a JSON *string*
 > (`"scope": "114689"` — see the

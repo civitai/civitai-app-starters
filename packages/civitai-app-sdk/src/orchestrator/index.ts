@@ -435,7 +435,13 @@ export interface CreateOrchestratorClientOptions {
   accessToken: string;
   /** Orchestrator base URL. Defaults to Civitai's prod orchestrator. */
   baseUrl?: string;
-  /** Optional logger for SDK diagnostics. Defaults to console; set null to silence. */
+  /**
+   * Where {@link callOrchestrator} logs a failed response before it throws:
+   * method, path, status and up to 500 bytes of the raw response body, which
+   * can echo the submitted input (a prompt, for example). Omit it to keep
+   * `console.error`; pass `null` to log nothing. This covers the orchestrator
+   * client only, not the OAuth helpers.
+   */
   logger?: OrchestratorLogger | null;
 }
 
