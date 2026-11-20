@@ -288,8 +288,9 @@ async function main() {
         `.toHaveLength(N)\` and its imageGen twin — which read off the fixture above,\n` +
         `so changing the fixture alone turns that assertion red. The fourth is the\n` +
         `\`CatalogStepTypesWithoutAGeneratedType\` ledger: a new step type widens\n` +
-        `\`WorkflowStepType\`, and until \`@civitai/client\` republishes with a generated\n` +
-        `template for it, it belongs in that ledger or the SDK type test fails.\n` +
+        `\`WorkflowStepType\`, and the frozen \`@civitai/client\` peer (no further releases)\n` +
+        `has no generated template for it, so it belongs in that ledger or the SDK\n` +
+        `type test fails.\n` +
         `\`pnpm sync:catalogs\` writes all of them plus a changeset — and, on a\n` +
         `step-type run, the ledger's \`@ts-expect-error\` pins and the step-count\n` +
         `prose in src/orchestrator/steps.ts and the package README, which\n` +

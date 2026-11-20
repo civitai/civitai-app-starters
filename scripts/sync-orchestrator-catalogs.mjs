@@ -75,9 +75,11 @@
  * WorkflowStepTemplates` as a SUBSET of `WorkflowStepType`, so a key that was
  * absent from the catalog until this run cannot have been in the map either.
  * Clearing an entry still starts with a human: they add the `StepTemplateMap`
- * row once a republished `@civitai/client` has the template (this script never
- * reads the client), and the next run drops the entry, its pin and its names in
- * the prose together.
+ * row once the types source has the template (this script never reads the
+ * client), and the next run drops the entry, its pin and its names in the
+ * prose together. `@civitai/client` is a frozen optional peer that gets no
+ * further releases, so that needs a change of `steps.ts`'s types source, not
+ * a client release.
  *
  * 🔴 IT NEVER INVENTS A DESCRIPTION. The catalog's whole job is the one-line
  * description a developer reads when picking a step, so a fabricated one is
@@ -469,7 +471,8 @@ function appendToCatalog(src, constName, entries, date) {
  * 🔴 IT IS DERIVED, AND THAT IS NOT THE SCRIPT DECIDING A TYPE EXISTS. An
  * entry leaves the gap only when a human adds that `$type`'s row to
  * `interface StepTemplateMap` in `src/orchestrator/steps.ts` (which needs a
- * republished `@civitai/client` to compile) or when it leaves the catalog. The
+ * generated template in its types source to compile, and the frozen
+ * `@civitai/client` will not gain one) or when it leaves the catalog. The
  * script never reads the client; it reads the map a human edited. Until
  * 2026-10-24 this only ever GREW the list, which left the README/steps.ts prose
  * and the `@ts-expect-error` pins for a human to move by hand in step — the
