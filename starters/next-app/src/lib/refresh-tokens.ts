@@ -53,13 +53,40 @@ export function isDefiniteRejection(err: unknown): boolean {
  */
 export const REFRESH_GRACE_MS = 60_000;
 
+/**
+ * How long a failure that KEEPS the cookie is remembered for that refresh
+ * token. Requests inside the window get the same failure without calling the
+ * token endpoint. Civitai rate-limits that endpoint per client, so retrying on
+ * every request while it is failing would keep it failing. This bounds each
+ * session to one attempt per window; it does not bound the app's total.
+ */
+export const REFRESH_RETRY_BACKOFF_MS = 5_000;
+
+/**
+ * The longest one request waits for a refresh. The SDK call has no timeout of
+ * its own, so a token endpoint that accepts the connection and never answers
+ * would otherwise hold the page for as long as `fetch` itself waits (minutes).
+ * Past this, the request carries on as a failure that keeps the cookie.
+ */
+export const REFRESH_WAIT_MS = 10_000;
+
 /** Bound on remembered refreshes, so the map cannot grow without limit. */
 export const REFRESH_CACHE_MAX = 1_000;
 
 interface Flight {
   promise: Promise<OAuthTokens>;
-  /** `undefined` while the call is in flight; set once it succeeds. */
+  /** Set once the call succeeds. */
   doneAt?: number;
+  /** Set once the call fails with an error that keeps the cookie. */
+  failedAt?: number;
+}
+
+/** What a caller sees when the refresh outlives {@link REFRESH_WAIT_MS}. */
+export class RefreshWaitTimeoutError extends Error {
+  override readonly name = 'RefreshWaitTimeoutError';
+  constructor(ms: number) {
+    super(`session refresh did not answer within ${ms} ms`);
+  }
 }
 
 /**
@@ -84,7 +111,9 @@ function keyFor(refreshToken: string): string {
 }
 
 function isLive(flight: Flight, now: number): boolean {
-  return flight.doneAt === undefined || now - flight.doneAt < REFRESH_GRACE_MS;
+  if (flight.doneAt !== undefined) return now - flight.doneAt < REFRESH_GRACE_MS;
+  if (flight.failedAt !== undefined) return now - flight.failedAt < REFRESH_RETRY_BACKOFF_MS;
+  return true; // still in flight
 }
 
 function makeRoom(now: number): void {
@@ -100,6 +129,15 @@ function makeRoom(now: number): void {
   }
 }
 
+/** `promise`, or a {@link RefreshWaitTimeoutError} after `ms` — whichever is first. */
+function waitAtMost<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new RefreshWaitTimeoutError(ms)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export interface RefreshOpts {
   baseUrl: string;
   clientId: string;
@@ -110,9 +148,18 @@ export interface RefreshOpts {
 
 /**
  * `refreshToken()` with single-flight (#804): every concurrent caller holding
- * the same refresh token shares ONE call to the token endpoint, and a success
- * is reused for {@link REFRESH_GRACE_MS}. A failure is forgotten at once, so
- * the next request makes a fresh attempt.
+ * the same refresh token shares ONE call to the token endpoint.
+ *
+ * - A success is reused for {@link REFRESH_GRACE_MS}.
+ * - A failure that keeps the cookie (see {@link isDefiniteRejection}) is
+ *   reused for {@link REFRESH_RETRY_BACKOFF_MS}, then the next request makes a
+ *   fresh attempt. An `invalid_grant` is forgotten at once; the cookie is
+ *   cleared anyway.
+ * - Each CALLER waits at most {@link REFRESH_WAIT_MS}. The call itself is NOT
+ *   abandoned and NOT retried while it is still in flight: with rotation, a
+ *   second call with the same refresh token while the first may still succeed
+ *   is exactly the race this exists to prevent. If the slow call succeeds, its
+ *   tokens land in the grace window for the next request.
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -125,7 +172,7 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
   const key = keyFor(opts.refreshToken);
   const now = Date.now();
   const existing = flights.get(key);
-  if (existing && isLive(existing, now)) return existing.promise;
+  if (existing && isLive(existing, now)) return waitAtMost(existing.promise, REFRESH_WAIT_MS);
   if (existing) flights.delete(key);
 
   makeRoom(now);
@@ -136,12 +183,19 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
         return tokens;
       },
       (err: unknown) => {
-        // Only remove OUR entry: a later caller may already have replaced it.
-        if (flights.get(key) === flight) flights.delete(key);
+        if (isDefiniteRejection(err)) {
+          // Only remove OUR entry: a later caller may already have replaced it.
+          if (flights.get(key) === flight) flights.delete(key);
+        } else {
+          flight.failedAt = Date.now();
+        }
         throw err;
       },
     ),
   };
+  // Every caller may have stopped waiting by the time this settles; the
+  // rejection is still observed, so it is never reported as unhandled.
+  flight.promise.catch(() => {});
   flights.set(key, flight);
-  return flight.promise;
+  return waitAtMost(flight.promise, REFRESH_WAIT_MS);
 }
