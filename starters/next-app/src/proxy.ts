@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { refreshToken as oauthRefresh, sealCookie } from '@civitai/app-sdk';
+import { sealCookie } from '@civitai/app-sdk';
 import { env } from '@/lib/env';
+import { isDefiniteRejection, refreshTokensOnce } from '@/lib/refresh-tokens';
 import {
   needsRefresh,
   parseSession,
@@ -36,6 +37,12 @@ import {
  *
  * Changing only the response would leave this render still holding the dead
  * cookie; changing only the request would make the browser re-send it forever.
+ *
+ * ONE DELIBERATE EXCEPTION: a TRANSIENT refresh failure (5xx, 429, network
+ * error) edits only the request. There the browser re-sending the cookie is
+ * the point — the refresh token is still good, and the next request retries.
+ * Which failures count as definite is decided in one place,
+ * `isDefiniteRejection` in `src/lib/refresh-tokens.ts`.
  */
 
 export const config = {
@@ -73,7 +80,11 @@ export async function proxy(request: NextRequest) {
 
   if (session.tokens.refresh_token) {
     try {
-      const tokens = await oauthRefresh({
+      // Single-flight: concurrent requests with this cookie share one call,
+      // and a request with the old cookie shortly after reuses the rotation
+      // rather than replaying a spent refresh token (#804). In-process only —
+      // see `refreshTokensOnce`.
+      const tokens = await refreshTokensOnce({
         baseUrl: env.CIVITAI_AUTH_URL,
         clientId: env.CIVITAI_CLIENT_ID,
         clientSecret: env.CIVITAI_CLIENT_SECRET,
@@ -96,8 +107,24 @@ export async function proxy(request: NextRequest) {
         sessionCookieOptions(SESSION_MAX_AGE_SECONDS),
       );
       return response;
-    } catch {
-      // Refresh token revoked or itself expired — fall through and clear.
+    } catch (err) {
+      if (!isDefiniteRejection(err)) {
+        // The auth service could not answer right now (5xx, 429, network
+        // error) — NOT a verdict on the credential (#855). Only ONE of the two
+        // edits: strip the cookie from the REQUEST, so this render sees a
+        // logged-out viewer instead of an expired token (which `getSession()`
+        // would reject anyway), and leave the BROWSER's cookie untouched, so
+        // the next request retries the refresh and the user stays signed in
+        // once the service is back.
+        console.warn(
+          '[proxy] session refresh failed transiently; keeping the cookie for a retry:',
+          err instanceof Error ? err.message : err,
+        );
+        request.cookies.delete(SESSION_COOKIE);
+        return NextResponse.next({ request });
+      }
+      // Refresh token revoked, expired or spent, or the client was refused —
+      // fall through and clear.
     }
   }
 
