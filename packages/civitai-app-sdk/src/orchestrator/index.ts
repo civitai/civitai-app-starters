@@ -437,7 +437,7 @@ export interface CreateOrchestratorClientOptions {
   baseUrl?: string;
   /**
    * Where {@link callOrchestrator} logs a failed response before it throws:
-   * method, path, status and up to 500 bytes of the raw response body, which
+   * method, path, status text and the first 500 characters of the raw response body, which
    * can echo the submitted input (a prompt, for example). Omit it to keep
    * `console.error`; pass `null` to log nothing. This covers the orchestrator
    * client only, not the OAuth helpers.
@@ -497,10 +497,22 @@ export async function callOrchestrator(
   }
   if (!res.ok) {
     const logger = client.logger === undefined ? console : client.logger;
-    logger?.error(
-      `[orchestrator] ${init.method ?? 'GET'} ${path} -> ${res.status} ${res.statusText}\n` +
-        `  raw body: ${text.length ? text.slice(0, 500) : '(empty)'}`,
-    );
+    // A caller-supplied logger must never change what this function throws:
+    // callers branch on `instanceof OrchestratorError` to pass the status on.
+    // So a logger that throws is swallowed, and one that returns a rejected
+    // promise (an async log sink that is down) is caught rather than left as
+    // an unhandled rejection that would crash a Node process.
+    try {
+      const logged: unknown = logger?.error(
+        `[orchestrator] ${init.method ?? 'GET'} ${path} -> ${res.status} ${res.statusText}\n` +
+          `  raw body: ${text.length ? text.slice(0, 500) : '(empty)'}`,
+      );
+      if (logged && typeof (logged as PromiseLike<unknown>).then === 'function') {
+        Promise.resolve(logged).catch(() => {});
+      }
+    } catch {
+      // Logging is best-effort; the OrchestratorError below is the contract.
+    }
     throw new OrchestratorError(`HTTP ${res.status}`, res.status, body);
   }
   return body;

@@ -890,7 +890,7 @@ console.log(`Hi ${me.username}`);
 > **Failed orchestrator calls are logged, and you choose where.** Before it
 > throws `OrchestratorError`, `callOrchestrator` (which `estimateWorkflow`,
 > `submitWorkflow`, `getWorkflow` and `pollWorkflow` all use) logs one line
-> with the method, path, status and up to 500 bytes of the raw response body.
+> with the method, path, status text and the first 500 characters of the raw response body.
 > That body can echo what you submitted, such as the user's prompt. By default
 > the line goes to `console.error`. Pass `logger: { error: (...args) => … }` to
 > `createOrchestratorClient` to send it to your own logger, or `logger: null`
