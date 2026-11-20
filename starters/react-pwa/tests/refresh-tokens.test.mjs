@@ -199,7 +199,7 @@ test('forgetRefreshesFor ignores a session without a refresh token', () => {
 // --- the 1000-entry cap -----------------------------------------------------
 // Last on purpose: it fills the process-wide map.
 
-test('at most 1000 refresh tokens are remembered; the oldest goes first', async () => {
+test('at most 1000 refresh tokens are remembered, and a live one is never evicted', async () => {
   // Far past every earlier test's window, so their entries are dead and swept.
   const T = T0 + 3_600_000;
   mock.timers.setTime(T);
@@ -212,11 +212,20 @@ test('at most 1000 refresh tokens are remembered; the oldest goes first', async 
   await refresh('cap-999');
   assert.equal(calls.length, 1000, 'the cap must hold 1000 entries, not fewer');
 
-  // The 1001st pushes out the oldest.
+  // The 1001st is refreshed but NOT remembered: the map is full of live
+  // entries, and evicting one would send its straggler back to the hub with a
+  // spent refresh token (invalid_grant, and the cookie cleared).
   await refresh('cap-1000');
   assert.equal(calls.length, 1001);
-  await refresh('cap-999');
-  assert.equal(calls.length, 1001, 'a recent entry must survive');
+  await refresh('cap-1000');
+  assert.equal(calls.length, 1002, 'past the cap a new refresh token must not be remembered');
   await refresh('cap-0');
-  assert.equal(calls.length, 1002, 'the oldest entry must have been dropped');
+  await refresh('cap-999');
+  assert.equal(calls.length, 1002, 'no live entry may be evicted, oldest or newest');
+
+  // Once the window has passed, the dead entries make room again.
+  mock.timers.setTime(T + 61_000);
+  await refresh('cap-1000');
+  await refresh('cap-1000');
+  assert.equal(calls.length, 1003, 'with the dead entries swept, a new refresh is remembered');
 });

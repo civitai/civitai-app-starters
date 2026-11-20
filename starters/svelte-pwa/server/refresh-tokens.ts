@@ -126,17 +126,23 @@ function isLive(flight: Flight, now: number): boolean {
   return true; // still in flight
 }
 
-function makeRoom(now: number): void {
+/**
+ * Drop every entry that is no longer live, then say whether there is room for
+ * one more.
+ *
+ * 🔴 A LIVE ENTRY IS NEVER EVICTED. Dropping one is not just a lost dedupe:
+ * an entry inside its grace window is what answers a straggler holding the
+ * pre-rotation cookie, so evicting it sends that spent refresh token back to
+ * the hub, which answers `invalid_grant`, and the starter then clears the
+ * browser's cookie: the #804 sign-out, back under load. So when the map is full
+ * of live entries the new refresh is simply not remembered (see
+ * {@link refreshTokensOnce}).
+ */
+function makeRoom(now: number): boolean {
   for (const [key, flight] of flights) {
     if (!isLive(flight, now)) flights.delete(key);
   }
-  // Still full: drop the oldest. Losing an entry costs only the dedupe for
-  // that token, never correctness of the refresh itself.
-  while (flights.size >= REFRESH_CACHE_MAX) {
-    const oldest = flights.keys().next().value;
-    if (oldest === undefined) break;
-    flights.delete(oldest);
-  }
+  return flights.size < REFRESH_CACHE_MAX;
 }
 
 /** `promise`, or a {@link RefreshWaitTimeoutError} after `ms` — whichever is first. */
@@ -171,8 +177,10 @@ export interface RefreshOpts {
  *   second call with the same refresh token while the first may still succeed
  *   is exactly the race this exists to prevent. If the slow call succeeds, its
  *   tokens land in the grace window for the next request.
- * - At most {@link REFRESH_CACHE_MAX} refresh tokens are remembered; past
- *   that, expired entries go first and then the oldest.
+ * - At most {@link REFRESH_CACHE_MAX} refresh tokens are remembered. Expired
+ *   entries make room; a live one is never evicted, so while the map is full
+ *   of live entries a new refresh goes straight to the token endpoint and is
+ *   not remembered (no dedupe for that token, nothing else lost).
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -188,7 +196,11 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
   if (existing && isLive(existing, now)) return waitAtMost(existing.promise, REFRESH_WAIT_MS);
   if (existing) flights.delete(key);
 
-  makeRoom(now);
+  if (!makeRoom(now)) {
+    const direct = oauthRefresh(opts);
+    direct.catch(() => {});
+    return waitAtMost(direct, REFRESH_WAIT_MS);
+  }
   const flight: Flight = {
     promise: oauthRefresh(opts).then(
       (tokens) => {
