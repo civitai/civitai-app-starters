@@ -50,7 +50,11 @@
  *       connection, `invalid_client` as a 400 and as a 401) -> NO clearing
  *       Set-Cookie, and the next request with the SAME cookie refreshes and
  *       renders signed-in. The probe carries the cookie forward only if the
- *       first response did not clear it, i.e. it behaves like a browser.
+ *       first response did not clear it, i.e. it behaves like a browser. An
+ *       immediate second load in between must NOT call the token endpoint
+ *       again: the proxy backs off per refresh token after such a failure.
+ *   H.  the token call HANGS -> the page still answers promptly with the
+ *       cookie kept, and recovers once the hung call is released.
  *   G.  N concurrent requests with the same expired cookie against a hub that
  *       ROTATES refresh tokens and rejects a spent one -> exactly ONE refresh
  *       call, zero clears, every response carries the rotated session; then a
@@ -147,6 +151,8 @@ process.on('SIGINT', () => {
  *                  the user's refresh token, so NOT a reason to clear
  *   'status503' / 'status429' -> a transient server answer
  *   'reset'     -> the connection is destroyed: a network error, no status
+ *   'hang'      -> the request is accepted and never answered; its response
+ *                  is parked in `hung` until the probe releases it
  *   'rotate'    -> real rotation: a refresh token in `rotatingValid` is
  *                  accepted ONCE (and removed at ARRIVAL, before the delay, so
  *                  concurrent replays of it are rejected); anything else is a
@@ -158,6 +164,15 @@ let refreshAttempts = 0;
 const rotatingValid = new Set();
 const ROTATE_DELAY_MS = 1500;
 const ROTATED_ACCESS_TOKEN = 'rotated-access-token-5821';
+/** Responses parked by `'hang'` mode, released by destroying their sockets. */
+const hung = [];
+/**
+ * How long the F arms wait before the recovery load. The proxy backs off for
+ * 5 s per refresh token after a failure that keeps the cookie; this overshoots
+ * it. A literal on purpose: importing the proxy's constant would let the two
+ * move together.
+ */
+const RETRY_WAIT_MS = 5_500;
 /** `'grant'` -> 200 + a balance; `'deny'` -> 403, i.e. `BuzzRead` not granted. */
 let buzzMode = 'grant';
 let buzzAttempts = 0;
@@ -190,6 +205,10 @@ const authHub = createServer(async (req, res) => {
     }
     if (refreshMode === 'reset') {
       req.socket.destroy();
+      return;
+    }
+    if (refreshMode === 'hang') {
+      hung.push(res);
       return;
     }
     if (refreshMode === 'status503' || refreshMode === 'status429') {
@@ -380,10 +399,11 @@ function carriedAccessToken(sessionLine) {
 }
 
 /** One page load, optionally carrying a `civ_session` cookie. */
-async function loadPage(cookie) {
+async function loadPage(cookie, { timeoutMs } = {}) {
   const r = await fetch(`http://127.0.0.1:${APP_PORT}/`, {
     headers: cookie ? { cookie: `civ_session=${cookie}` } : {},
     redirect: 'manual',
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   const body = await r.text();
   return { status: r.status, body, cookies: sessionSetCookie(r.headers) };
@@ -651,9 +671,14 @@ async function main() {
   // invalid_grant, so only a predicate that reads the error BODY passes both —
   // and as a 401.
   //
-  // Step 2 behaves like a browser: it sends the cookie again ONLY if step 1
-  // did not clear it. So a clearing step 1 fails BOTH steps — the clear
-  // itself, and the recovery that the clear made impossible.
+  // Step 1b is an immediate second load with the same cookie, as a page's
+  // follow-up requests would be: it must NOT call the hub again. The token
+  // endpoint is rate-limited per client, so retrying on every request while
+  // the hub is failing would keep it failing.
+  //
+  // Step 2, after RETRY_WAIT_MS, behaves like a browser: it sends the cookie
+  // again ONLY if step 1 did not clear it. So a clearing step 1 fails BOTH
+  // steps — the clear itself, and the recovery that the clear made impossible.
   for (const [label, mode] of [
     ['F503', 'status503'],
     ['F429', 'status429'],
@@ -670,6 +695,11 @@ async function main() {
     const firstClears = isClearing(first.cookies.session);
 
     const jar = firstClears ? null : cookie;
+    const burst = await loadPage(jar);
+    const burstAttempts = refreshAttempts - firstAttempts;
+    const burstClears = isClearing(burst.cookies.session);
+
+    await sleep(RETRY_WAIT_MS);
     refreshMode = 'accept';
     refreshAttempts = 0;
     const second = await loadPage(jar);
@@ -682,6 +712,8 @@ async function main() {
     console.log('1 refresh attempts:', firstAttempts, '(want 1)');
     console.log('1 Set-Cookie      :', JSON.stringify(first.cookies.all), '(want no civ_session)');
     console.log('1 clears          :', firstClears, '(want false)');
+    console.log('1b extra attempts :', burstAttempts, '(want 0 — backing off)');
+    console.log('1b clears         :', burstClears, '(want false)');
     console.log('2 sent cookie     :', jar !== null, '(want true)');
     console.log('2 refresh attempts:', secondAttempts, '(want 1)');
     console.log('2 cookie carries  :', secondToken, `(want ${NEW_ACCESS_TOKEN})`);
@@ -700,6 +732,13 @@ async function main() {
       `a refresh failure that is not invalid_grant (${mode}) wrote civ_session: ${first.cookies.session}`,
     );
     check(label, !firstClears, `a refresh failure that is not invalid_grant (${mode}) cleared civ_session`);
+    check(
+      label,
+      burstAttempts === 0,
+      `an immediate second load called the token endpoint again (${burstAttempts}) instead of ` +
+        `backing off after the failure`,
+    );
+    check(label, !burstClears, `the immediate second load cleared civ_session`);
     check(
       label,
       secondAttempts === 1,
@@ -770,6 +809,64 @@ async function main() {
       'G',
       lateToken === ROTATED_ACCESS_TOKEN,
       `the straggler did not get the rotated session (cookie carries ${lateToken})`,
+    );
+  }
+
+  // ---- H: a token call that HANGS must not hang the page -----------------
+  //
+  // The hub accepts the request and never answers. The page must still come
+  // back promptly, signed out for that render, with the cookie kept. Then the
+  // hung call is released (its socket destroyed, so it fails as a network
+  // error) and, after the backoff, the next load recovers.
+  {
+    const cookie = expiredSessionCookie('refresh-H');
+    refreshMode = 'hang';
+    refreshAttempts = 0;
+    const t0 = Date.now();
+    let first = null;
+    let firstError = null;
+    try {
+      first = await loadPage(cookie, { timeoutMs: 25_000 });
+    } catch (err) {
+      firstError = err;
+    }
+    const elapsed = Date.now() - t0;
+    const firstAttempts = refreshAttempts;
+    const firstClears = Boolean(first && isClearing(first.cookies.session));
+
+    for (const r of hung.splice(0)) r.socket?.destroy();
+    await sleep(RETRY_WAIT_MS);
+    refreshMode = 'accept';
+    refreshAttempts = 0;
+    const second = await loadPage(firstClears ? null : cookie);
+    const secondAttempts = refreshAttempts;
+    const secondToken = carriedAccessToken(second.cookies.session);
+
+    console.log('\n--- H: the token call HANGS, then is released ---');
+    console.log('1 answered        :', first !== null, `(want true; error: ${firstError?.name ?? 'none'})`);
+    console.log('1 elapsed ms      :', elapsed, '(want < 20000)');
+    console.log('1 refresh attempts:', firstAttempts, '(want 1)');
+    console.log('1 Set-Cookie      :', JSON.stringify(first?.cookies.all ?? null), '(want no civ_session)');
+    console.log('2 refresh attempts:', secondAttempts, '(want 1)');
+    console.log('2 cookie carries  :', secondToken, `(want ${NEW_ACCESS_TOKEN})`);
+
+    check(
+      'H',
+      first !== null && first.status === 200,
+      `the page did not answer within 25 s while the token call hung (${firstError?.name ?? first?.status})`,
+    );
+    check('H', elapsed < 20_000, `the page took ${elapsed} ms while the token call hung`);
+    check('H', firstAttempts === 1, `expected 1 refresh attempt, got ${firstAttempts}`);
+    check(
+      'H',
+      first !== null && first.cookies.session === undefined,
+      `a hung token call wrote civ_session: ${first?.cookies.session}`,
+    );
+    check('H', secondAttempts === 1, `expected the load after release to retry once, got ${secondAttempts}`);
+    check(
+      'H',
+      secondToken === NEW_ACCESS_TOKEN,
+      `the load after release did not recover the session (cookie carries ${secondToken})`,
     );
   }
 
