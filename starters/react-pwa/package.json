@@ -33,7 +33,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "check:env": "node scripts/check-env.mjs",
     "preview": "vite preview",
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test \"tests/**/*.test.mjs\" && vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps chromium",
@@ -98,9 +98,11 @@
     "@types/react-dom": "^19.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^6.0.2",
+    "happy-dom": "^20.9.0",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
-    "vite-plugin-pwa": "^1.1.0"
+    "vite-plugin-pwa": "^1.1.0",
+    "vitest": "^4.1.11"
   }
 }

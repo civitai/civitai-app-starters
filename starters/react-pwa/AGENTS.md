@@ -102,7 +102,8 @@ After any meaningful change, run the matching check before declaring done:
 | `server/index.ts`, static serving, the SPA fallback | `pnpm probe:static-serving` |
 | `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `server/session.ts`, `server/refresh-tokens.ts`, the estimate or sign-out routes in `server/app.ts` | `pnpm probe:expired-session` (no Civitai needed: a stand-in runs in the probe) |
-| `src/lib/estimate.ts`, `server/refresh-tokens.ts`, `GenerateForm` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/lib/estimate.ts`, `server/refresh-tokens.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/components/GenerateForm.tsx` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `vite.config.ts`, env wiring, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, workflow polling) | `pnpm test:e2e -- generation` |
