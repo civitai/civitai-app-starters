@@ -41,6 +41,23 @@
  * the bug. At HEAD: C 1 request + the value present, D 1 request + no row + no
  * dash + no banner, E 0 requests + no row.
  *
+ * AND THE REFRESH-FAILURE SCENARIOS (#855, #804). Only a DEFINITE rejection of
+ * the credential may sign the browser out; everything else must leave the
+ * cookie where it is so the next request can try again:
+ *
+ *   A2. refresh rejected with 401 -> cleared, like A's 400. An INVARIANT GUARD
+ *       (base already clears on every failure); it pins the predicate's second
+ *       status so a narrowing to 400-only goes red.
+ *   F.  refresh fails TRANSIENTLY (503, 429, a reset connection) -> NO clearing
+ *       Set-Cookie, and the next request with the SAME cookie refreshes and
+ *       renders signed-in. The probe carries the cookie forward only if the
+ *       first response did not clear it, i.e. it behaves like a browser.
+ *   G.  N concurrent requests with the same expired cookie against a hub that
+ *       ROTATES refresh tokens and rejects a spent one -> exactly ONE refresh
+ *       call, zero clears, every response carries the rotated session; then a
+ *       straggler with the OLD cookie inside the grace window reuses the rotated
+ *       tokens without a second call.
+ *
  *   node scripts/probe-expired-session.mjs
  *   PROBE_SKIP_BUILD=1 node scripts/probe-expired-session.mjs   # reuse .next
  *
@@ -123,15 +140,69 @@ process.on('SIGINT', () => {
  * reporting zero attempts never exercised the refresh path at all, and its
  * result would say nothing.
  */
+/**
+ * `refreshMode`:
+ *   'accept'    -> 200 + NEW_ACCESS_TOKEN
+ *   'reject'    -> 400 invalid_grant (a definite rejection)
+ *   'reject401' -> 401 invalid_client (also definite)
+ *   'status503' / 'status429' -> a transient server answer
+ *   'reset'     -> the connection is destroyed: a network error, no status
+ *   'rotate'    -> real rotation: a refresh token in `rotatingValid` is
+ *                  accepted ONCE (and removed at ARRIVAL, before the delay, so
+ *                  concurrent replays of it are rejected); anything else is a
+ *                  400 invalid_grant. Both answers wait ROTATE_DELAY_MS so
+ *                  concurrent requests are all in flight together.
+ */
 let refreshMode = 'reject';
 let refreshAttempts = 0;
+const rotatingValid = new Set();
+const ROTATE_DELAY_MS = 1500;
+const ROTATED_ACCESS_TOKEN = 'rotated-access-token-5821';
 /** `'grant'` -> 200 + a balance; `'deny'` -> 403, i.e. `BuzzRead` not granted. */
 let buzzMode = 'grant';
 let buzzAttempts = 0;
 
-const authHub = createServer((req, res) => {
+const authHub = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url?.startsWith('/api/auth/oauth/token')) {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const presented = new URLSearchParams(raw).get('refresh_token');
     refreshAttempts += 1;
+    if (refreshMode === 'rotate') {
+      const fresh = rotatingValid.delete(presented);
+      await sleep(ROTATE_DELAY_MS);
+      if (!fresh) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_grant' }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          access_token: ROTATED_ACCESS_TOKEN,
+          refresh_token: `${presented}-rotated`,
+          expires_in: 3600,
+          scope: 65537,
+          token_type: 'Bearer',
+        }),
+      );
+      return;
+    }
+    if (refreshMode === 'reset') {
+      req.socket.destroy();
+      return;
+    }
+    if (refreshMode === 'status503' || refreshMode === 'status429') {
+      const status = refreshMode === 'status503' ? 503 : 429;
+      res.writeHead(status, { 'content-type': 'text/plain' });
+      res.end(status === 503 ? 'Service Unavailable' : 'Too Many Requests');
+      return;
+    }
+    if (refreshMode === 'reject401') {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_client' }));
+      return;
+    }
     if (refreshMode === 'accept') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
@@ -235,13 +306,21 @@ async function waitForHttp(url, timeoutMs) {
   throw new Error(`timed out waiting for ${url}`);
 }
 
-/** An access token that expired an hour ago, plus a refresh token. */
-function expiredSessionCookie() {
+/**
+ * An access token that expired an hour ago, plus a refresh token.
+ *
+ * 🔴 EVERY SCENARIO PASSES ITS OWN `refreshToken`. The proxy keeps a successful
+ * refresh for a short grace window, keyed by the refresh token, so a scenario
+ * reusing another's token would be answered from that cache and never reach
+ * the hub — its counters would then describe the cache, not its own path.
+ */
+function expiredSessionCookie(refreshToken) {
+  if (!refreshToken) throw new Error('expiredSessionCookie needs a per-scenario refresh token');
   return sealCookie(
     JSON.stringify({
       tokens: {
         access_token: 'stale-access-token',
-        refresh_token: 'some-refresh-token',
+        refresh_token: refreshToken,
         expires_at: Date.now() - 3_600_000,
         scope: 65537,
       },
@@ -277,6 +356,35 @@ function liveSessionCookie(scope = 65537) {
 function sessionSetCookie(headers) {
   const all = headers.getSetCookie?.() ?? [];
   return { all, session: all.find((c) => c.startsWith('civ_session=')) };
+}
+
+/** `true` when a `civ_session` Set-Cookie line empties the cookie. */
+function isClearing(sessionLine) {
+  return Boolean(sessionLine && /^civ_session=;/.test(sessionLine));
+}
+
+/** Unseal a `civ_session` Set-Cookie line and read its access token, or null. */
+function carriedAccessToken(sessionLine) {
+  if (!sessionLine || isClearing(sessionLine)) return null;
+  // Next percent-encodes cookie values on write and decodes them on read.
+  const value = decodeURIComponent(sessionLine.slice('civ_session='.length).split(';')[0]);
+  const raw = unsealCookie(value, SESSION_SECRET);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw)?.tokens?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** One page load, optionally carrying a `civ_session` cookie. */
+async function loadPage(cookie) {
+  const r = await fetch(`http://127.0.0.1:${APP_PORT}/`, {
+    headers: cookie ? { cookie: `civ_session=${cookie}` } : {},
+    redirect: 'manual',
+  });
+  const body = await r.text();
+  return { status: r.status, body, cookies: sessionSetCookie(r.headers) };
 }
 
 const failures = [];
@@ -354,7 +462,7 @@ async function main() {
   refreshMode = 'reject';
   refreshAttempts = 0;
   let res = await fetch(`http://127.0.0.1:${APP_PORT}/`, {
-    headers: { cookie: `civ_session=${expiredSessionCookie()}` },
+    headers: { cookie: `civ_session=${expiredSessionCookie('refresh-A')}` },
     redirect: 'manual',
   });
   let body = await res.text();
@@ -374,11 +482,31 @@ async function main() {
   check('A', loggedOut, 'response does not render the logged-out page');
   check('A', clears, 'response does not Set-Cookie clearing civ_session');
 
+  // ---- Scenario A2: refresh rejected with 401 ----------------------------
+  // Invariant guard (see the header): the second status of the definite-
+  // rejection predicate. A 401 from the token endpoint means the client
+  // credentials were refused, which no retry of this cookie can fix.
+  refreshMode = 'reject401';
+  refreshAttempts = 0;
+  {
+    const out = await loadPage(expiredSessionCookie('refresh-A2'));
+    const a2Clears = isClearing(out.cookies.session);
+    console.log('\n--- A2: refresh REJECTED (401) ---');
+    console.log('status            :', out.status);
+    console.log('refresh attempts  :', refreshAttempts, '(want 1)');
+    console.log('renders logged-out:', out.body.includes(LOGGED_OUT_MARKER), '(want true)');
+    console.log('clears civ_session:', a2Clears, '(want true)');
+    check('A2', out.status === 200, `expected 200, got ${out.status}`);
+    check('A2', refreshAttempts === 1, `expected 1 refresh attempt, got ${refreshAttempts}`);
+    check('A2', out.body.includes(LOGGED_OUT_MARKER), 'a 401 did not render logged out');
+    check('A2', a2Clears, 'a definite 401 rejection did not clear civ_session');
+  }
+
   // ---- Scenario B: refresh accepted --------------------------------------
   refreshMode = 'accept';
   refreshAttempts = 0;
   res = await fetch(`http://127.0.0.1:${APP_PORT}/`, {
-    headers: { cookie: `civ_session=${expiredSessionCookie()}` },
+    headers: { cookie: `civ_session=${expiredSessionCookie('refresh-B')}` },
     redirect: 'manual',
   });
   body = await res.text();
@@ -530,6 +658,133 @@ async function main() {
       `token — that request can only 403`,
   );
   check('E', !eHasRow, 'the balance row is rendered for a token that cannot read a balance');
+
+  // ---- F: a TRANSIENT refresh failure keeps the browser's cookie (#855) ---
+  //
+  // Three shapes of "the auth hub could not answer right now": a 503, a 429
+  // (a 4xx that is NOT a credential verdict — it catches a predicate widened
+  // to "any 4xx"), and a reset connection (no HTTP status at all, so the SDK
+  // throws a TypeError rather than an OAuthError).
+  //
+  // Step 2 behaves like a browser: it sends the cookie again ONLY if step 1
+  // did not clear it. So a clearing step 1 fails BOTH steps — the clear
+  // itself, and the recovery that the clear made impossible.
+  for (const [label, mode] of [
+    ['F503', 'status503'],
+    ['F429', 'status429'],
+    ['Fnet', 'reset'],
+  ]) {
+    const cookie = expiredSessionCookie(`refresh-${label}`);
+
+    refreshMode = mode;
+    refreshAttempts = 0;
+    const first = await loadPage(cookie);
+    const firstAttempts = refreshAttempts;
+    const firstClears = isClearing(first.cookies.session);
+
+    const jar = firstClears ? null : cookie;
+    refreshMode = 'accept';
+    refreshAttempts = 0;
+    const second = await loadPage(jar);
+    const secondAttempts = refreshAttempts;
+    const secondToken = carriedAccessToken(second.cookies.session);
+    const secondSignedIn = second.body.includes(SIGNED_IN_MARKER);
+
+    console.log(`\n--- ${label}: refresh fails TRANSIENTLY (${mode}), then recovers ---`);
+    console.log('1 status          :', first.status);
+    console.log('1 refresh attempts:', firstAttempts, '(want 1)');
+    console.log('1 Set-Cookie      :', JSON.stringify(first.cookies.all), '(want no civ_session)');
+    console.log('1 clears          :', firstClears, '(want false)');
+    console.log('2 sent cookie     :', jar !== null, '(want true)');
+    console.log('2 refresh attempts:', secondAttempts, '(want 1)');
+    console.log('2 cookie carries  :', secondToken, `(want ${NEW_ACCESS_TOKEN})`);
+    console.log('2 renders signedin:', secondSignedIn, '(want true)');
+
+    check(label, first.status === 200, `a transient refresh failure broke the page (${first.status})`);
+    check(
+      label,
+      firstAttempts === 1,
+      `expected 1 refresh attempt on the failing load, got ${firstAttempts} — with 0 the ` +
+        `transient path was never exercised`,
+    );
+    check(
+      label,
+      first.cookies.session === undefined,
+      `a transient refresh failure (${mode}) wrote civ_session: ${first.cookies.session}`,
+    );
+    check(label, !firstClears, `a transient refresh failure (${mode}) cleared civ_session`);
+    check(
+      label,
+      secondAttempts === 1,
+      `expected the next load to retry the refresh once, got ${secondAttempts}`,
+    );
+    check(
+      label,
+      secondToken === NEW_ACCESS_TOKEN,
+      `the next load did not recover the session (cookie carries ${secondToken})`,
+    );
+    check(label, secondSignedIn, 'the next load did not render signed-in');
+  }
+
+  // ---- G: concurrent refreshes of ONE rotating refresh token (#804) -------
+  //
+  // The hub accepts `refresh-G` exactly once and 400s every replay. Without
+  // single-flight, each of the N concurrent requests presents `refresh-G`,
+  // one wins and N-1 get invalid_grant and CLEAR the cookie — and whichever
+  // Set-Cookie the browser applies last decides whether the user stays
+  // signed in. ROTATE_DELAY_MS keeps all N in flight at once.
+  {
+    const N = 6;
+    rotatingValid.clear();
+    rotatingValid.add('refresh-G');
+    refreshMode = 'rotate';
+    refreshAttempts = 0;
+    const cookie = expiredSessionCookie('refresh-G');
+    const outs = await Promise.all(Array.from({ length: N }, () => loadPage(cookie)));
+    const concurrentAttempts = refreshAttempts;
+    const tokens = outs.map((o) => carriedAccessToken(o.cookies.session));
+    const cleared = outs.filter((o) => isClearing(o.cookies.session)).length;
+    const rotated = tokens.filter((t) => t === ROTATED_ACCESS_TOKEN).length;
+    const signedIn = outs.filter((o) => o.body.includes(SIGNED_IN_MARKER)).length;
+
+    // A straggler: the OLD cookie again, after the rotation finished, as a tab
+    // that had not yet received the new Set-Cookie would send it.
+    const late = await loadPage(cookie);
+    const lateAttempts = refreshAttempts - concurrentAttempts;
+    const lateToken = carriedAccessToken(late.cookies.session);
+
+    console.log(`\n--- G: ${N} CONCURRENT refreshes of one rotating refresh token ---`);
+    console.log('statuses          :', JSON.stringify(outs.map((o) => o.status)));
+    console.log('refresh calls     :', concurrentAttempts, '(want 1)');
+    console.log('cleared responses :', cleared, '(want 0)');
+    console.log('rotated responses :', rotated, `(want ${N})`);
+    console.log('signed-in renders :', signedIn, `(want ${N})`);
+    console.log('late extra calls  :', lateAttempts, '(want 0 — grace window)');
+    console.log('late carries      :', lateToken, `(want ${ROTATED_ACCESS_TOKEN})`);
+
+    check('G', outs.every((o) => o.status === 200), 'a concurrent load did not return 200');
+    check(
+      'G',
+      concurrentAttempts === 1,
+      `expected exactly 1 refresh call for ${N} concurrent loads, got ${concurrentAttempts}. ` +
+        `0 means the refresh path never ran; more than 1 means the spent refresh token ` +
+        `was replayed`,
+    );
+    check('G', cleared === 0, `${cleared} of ${N} concurrent responses cleared civ_session`);
+    check('G', rotated === N, `only ${rotated} of ${N} responses carry the rotated session`);
+    check('G', signedIn === N, `only ${signedIn} of ${N} concurrent loads rendered signed-in`);
+    check(
+      'G',
+      lateAttempts === 0,
+      `a straggler with the old cookie made ${lateAttempts} more refresh call(s) — the ` +
+        `spent refresh token was replayed instead of reusing the rotation`,
+    );
+    check(
+      'G',
+      lateToken === ROTATED_ACCESS_TOKEN,
+      `the straggler did not get the rotated session (cookie carries ${lateToken})`,
+    );
+  }
 
   if (failures.length || process.env.PROBE_DUMP_BODY) {
     console.log('\n--- server log tail ---');
