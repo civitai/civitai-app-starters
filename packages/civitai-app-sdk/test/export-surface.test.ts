@@ -179,7 +179,7 @@ const ROOT_SURFACE = [
   'DEFAULT_ORCHESTRATOR_BASE_URL', 'DEFAULT_POLL_WAIT_SECONDS', 'ExchangeCodeOpts',
   'FetchBuzzAccountOpts', 'GenerateInput', 'GetWorkflowOptions', 'IMAGE_GEN_ENGINES',
   'ImageGenEngine', 'ImageGenInput', 'OAuthClientConfig', 'OAuthError', 'OAuthTokenResponse',
-  'OAuthTokens', 'OrchestratorClient', 'OrchestratorError', 'OrchestratorWorkflowStatus',
+  'OAuthTokens', 'OrchestratorClient', 'OrchestratorError', 'OrchestratorLogger', 'OrchestratorWorkflowStatus',
   'Pkce', 'PollWorkflowOptions', 'RefreshTokenOpts', 'RevokeTokenOpts', 'TERMINAL_STATUSES',
   'TerminalStatus', 'TokenScope', 'TokenScopeKey', 'TokenScopePresetKey', 'TokenScopePresets',
   'TokenScopeValue', 'WORKFLOW_STEP_TYPES', 'WorkflowSnapshot', 'WorkflowStepType',

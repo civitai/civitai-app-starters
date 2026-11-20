@@ -410,6 +410,11 @@ export interface WorkflowSnapshot {
 export interface OrchestratorClient {
   baseUrl: string;
   accessToken: string;
+  logger?: OrchestratorLogger | null;
+}
+
+export interface OrchestratorLogger {
+  error: (...args: unknown[]) => void;
 }
 
 export class OrchestratorError extends Error {
@@ -430,6 +435,14 @@ export interface CreateOrchestratorClientOptions {
   accessToken: string;
   /** Orchestrator base URL. Defaults to Civitai's prod orchestrator. */
   baseUrl?: string;
+  /**
+   * Where {@link callOrchestrator} logs a failed response before it throws:
+   * method, path, status text and the first 500 characters of the raw response body, which
+   * can echo the submitted input (a prompt, for example). Omit it to keep
+   * `console.error`; pass `null` to log nothing. This covers the orchestrator
+   * client only, not the OAuth helpers.
+   */
+  logger?: OrchestratorLogger | null;
 }
 
 /**
@@ -446,18 +459,20 @@ export interface CreateOrchestratorClientOptions {
 export function createOrchestratorClient(
   opts: CreateOrchestratorClientOptions,
 ): OrchestratorClient {
-  return {
+  const client: OrchestratorClient = {
     baseUrl: opts.baseUrl ?? DEFAULT_ORCHESTRATOR_BASE_URL,
     accessToken: opts.accessToken,
   };
+  if (opts.logger !== undefined) client.logger = opts.logger;
+  return client;
 }
 
 // ---------- Raw HTTP --------------------------------------------------------
 
 /**
- * Internal raw-fetch helper. Logs the failing response to console.error and
- * throws {@link OrchestratorError} on non-2xx. Exported so callers can build
- * their own orchestrator routes without duplicating this code.
+ * Internal raw-fetch helper. Logs the failing response to the configured logger
+ * and throws {@link OrchestratorError} on non-2xx. Exported so callers can
+ * build their own orchestrator routes without duplicating this code.
  */
 export async function callOrchestrator(
   client: OrchestratorClient,
@@ -481,10 +496,23 @@ export async function callOrchestrator(
     body = text;
   }
   if (!res.ok) {
-    console.error(
-      `[orchestrator] ${init.method ?? 'GET'} ${path} -> ${res.status} ${res.statusText}\n` +
-        `  raw body: ${text.length ? text.slice(0, 500) : '(empty)'}`,
-    );
+    const logger = client.logger === undefined ? console : client.logger;
+    // A caller-supplied logger must never change what this function throws:
+    // callers branch on `instanceof OrchestratorError` to pass the status on.
+    // So a logger that throws is swallowed, and one that returns a rejected
+    // promise (an async log sink that is down) is caught rather than left as
+    // an unhandled rejection that would crash a Node process.
+    try {
+      const logged: unknown = logger?.error(
+        `[orchestrator] ${init.method ?? 'GET'} ${path} -> ${res.status} ${res.statusText}\n` +
+          `  raw body: ${text.length ? text.slice(0, 500) : '(empty)'}`,
+      );
+      if (logged && typeof (logged as PromiseLike<unknown>).then === 'function') {
+        Promise.resolve(logged).catch(() => {});
+      }
+    } catch {
+      // Logging is best-effort; the OrchestratorError below is the contract.
+    }
     throw new OrchestratorError(`HTTP ${res.status}`, res.status, body);
   }
   return body;
