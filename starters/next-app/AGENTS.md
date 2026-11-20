@@ -1,20 +1,20 @@
 # Agent Guide — `next-app`
 
-> **If you only read one thing:** this is a Next.js 15 App Router app whose
+> **If you only read one thing:** this is a Next.js 16 App Router app whose
 > only persistent state is an encrypted session cookie. OAuth tokens never
 > leave the server. The demo: login → balance + scopes → cost preview →
 > submit one generation → display.
 
-You're inside the Next.js 15 App Router starter for Civitai apps. The user
+You're inside the Next.js 16 App Router starter for Civitai apps. The user
 cloned this via `npx tiged` to bootstrap their own app — there is **no
 monorepo around you**; `@civitai/app-sdk` is an npm dependency, not a
 sibling workspace. Help them extend it.
 
 ## Stack
 
-- Next.js 15, App Router, TypeScript strict
+- Next.js 16, App Router, TypeScript strict
 - React 19
-- Tailwind 3.4
+- Tailwind 4 (via `@tailwindcss/postcss`)
 - `@civitai/app-sdk` for all OAuth + orchestrator glue
 - No DB, no Redis, no external session store — encrypted-cookie sessions only
 

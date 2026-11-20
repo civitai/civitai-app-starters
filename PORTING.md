@@ -118,8 +118,8 @@ The example below is pseudocode. See the starter for your framework for the real
 |---|---|
 | Next.js App Router | [`starters/next-app/src/app/api/auth/**`](./starters/next-app/src/app/api/auth) |
 | SvelteKit | [`starters/sveltekit-app/src/routes/api/auth/**`](./starters/sveltekit-app/src/routes/api/auth) |
-| Vite + React (Hono BFF) | [`starters/react-pwa/src/server/**`](./starters/react-pwa/src/server) |
-| Vite + Svelte (Hono BFF) | [`starters/svelte-pwa/src/server/**`](./starters/svelte-pwa/src/server) |
+| Vite + React (Hono BFF) | [`starters/react-pwa/server/**`](./starters/react-pwa/server) |
+| Vite + Svelte (Hono BFF) | [`starters/svelte-pwa/server/**`](./starters/svelte-pwa/server) |
 
 ### 3a. `POST /api/auth/login` — kick off
 
@@ -214,8 +214,21 @@ return json({ ok: true });
 
 The encrypted-cookie pattern is the *only* thing every starter does for sessions. No Redis, no Postgres-session-table, no JWT-with-your-own-secret.
 
+The session has two halves, and they run in different places:
+
+- **`readSession()` only reads.** It never sets or deletes a cookie, so it is safe anywhere — including a Next.js Server Component, where any cookie write throws.
+- **`refreshSession()` refreshes an expiring access token and writes the result.** It sets or deletes the cookie, so run it only where your framework lets you write response cookies, once per request, before anything calls `readSession()`.
+
+`getCookie` / `setCookie` / `deleteCookie` stand for your framework's cookie functions.
+
 ```ts
-import { sealCookie, unsealCookie, refreshToken as oauthRefresh, type OAuthTokens } from '@civitai/app-sdk';
+import {
+  sealCookie,
+  unsealCookie,
+  refreshToken as oauthRefresh,
+  OAuthError,
+  type OAuthTokens,
+} from '@civitai/app-sdk';
 
 interface Session {
   tokens: OAuthTokens;
@@ -236,42 +249,79 @@ export function writeSession(session: Session) {
   });
 }
 
-export async function readSession(): Promise<Session | null> {
+/** Decode the cookie. Null if absent, tampered, sealed with another key, or not JSON. */
+function parseSession(): Session | null {
   const sealed = getCookie(SESSION_COOKIE);
   if (!sealed) return null;
-
   const raw = unsealCookie(sealed, process.env.SESSION_SECRET!);
-  if (!raw) return null;          // Tamper / wrong key / bad payload
-  const session: Session = JSON.parse(raw);
-
-  // Refresh if the token is within 30s of expiring.
-  if (session.tokens.expires_at > Date.now() + 30_000) return session;
-
-  if (!session.tokens.refresh_token) return null;
+  if (!raw) return null;
   try {
-    const fresh = await oauthRefresh({
+    return JSON.parse(raw) as Session;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the access token is within 30s of expiring. */
+function needsRefresh(session: Session): boolean {
+  return session.tokens.expires_at <= Date.now() + 30_000;
+}
+
+/**
+ * READ-ONLY: never writes a cookie, never calls the network. Returns null when
+ * signed out, or when the token still needs a refresh that `refreshSession()`
+ * did not complete (treat that as signed out for this request).
+ */
+export function readSession(): Session | null {
+  const session = parseSession();
+  if (!session || needsRefresh(session)) return null;
+  return session;
+}
+
+/**
+ * WRITES COOKIES. Call only where response cookies may be set (see the wiring
+ * list below), before any `readSession()` in the same request.
+ */
+export async function refreshSession(): Promise<void> {
+  const session = parseSession();
+  // Nothing to refresh. An unreadable cookie is left alone on purpose, so a
+  // secret rotation does not emit a Set-Cookie on every request.
+  if (!session || !needsRefresh(session)) return;
+
+  if (!session.tokens.refresh_token) {
+    deleteCookie(SESSION_COOKIE); // expired, and nothing can renew it
+    return;
+  }
+
+  try {
+    const tokens = await oauthRefresh({
       baseUrl: process.env.CIVITAI_AUTH_URL,
       clientId: process.env.CIVITAI_CLIENT_ID!,
       clientSecret: process.env.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,
+      // The refreshed tokens REPLACE the stored ones. A token response may omit
+      // `scope` (RFC 6749 §6), and without this it would be stored as 0.
+      fallbackScope: session.tokens.scope,
     });
-    const next: Session = { ...session, tokens: fresh };
-    writeSession(next);
-    return next;
-  } catch {
-    deleteCookie(SESSION_COOKIE);
-    return null;
+    writeSession({ ...session, tokens });
+  } catch (err) {
+    // Clear only when the auth server definitely rejected the refresh token.
+    // A 5xx, a 429 or a network error says nothing about the credential: keep
+    // the cookie so the next request retries.
+    if (err instanceof OAuthError && (err.status === 400 || err.status === 401)) {
+      deleteCookie(SESSION_COOKIE);
+    }
   }
 }
 ```
 
-Wire `readSession` into your framework's request-lifecycle hook so route handlers can read `request.session` (or equivalent) without re-deriving:
+Call `refreshSession()` from a hook that runs before your handlers and may set response cookies, then read with `readSession()` everywhere else:
 
-- **Next.js** → use `cookies()` inside route handlers / server components (no global hook).
-- **SvelteKit** → `hooks.server.ts` populating `event.locals.session`.
-- **Hono / Express** → middleware that sets `c.set('session', …)` / `req.session`.
+- **Next.js** → refresh in `proxy.ts` (Next.js 16's name for `middleware.ts`), never in a Server Component. There, the cookie functions are the request's and response's cookies: a refresh must update **both** `request.cookies` (what this render reads) and the response's cookies (what the browser keeps). [`starters/next-app/src/proxy.ts`](./starters/next-app/src/proxy.ts) shows that request-and-response pairing in full. Server Components and route handlers then call `readSession()`. `cookies()` is async in Next.js 16, so resolve the store first (`const jar = await cookies()`) and back `getCookie` with `jar.get(name)?.value`, or make your read helper async the way `getSession()` in [`starters/next-app/src/lib/session.ts`](./starters/next-app/src/lib/session.ts) is.
+- **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies`, then set `event.locals.session = readSession()`. ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts) does both in one call, `readSession(event.cookies, …)`, which refreshes in place; that is legal there because `handle` may set cookies.)
+- **Hono / Express** → a middleware that refreshes first, then sets `c.set('session', …)` / `req.session`.
 
-See the starter for your framework for the exact wiring.
+See the starter for your framework for the exact cookie wiring. ⚠ The starters' own refresh code still clears the session on **any** refresh failure, transient ones included. Follow the recipe above for which failures sign the user out, not the starters.
 
 ### Mode A note (additive auth)
 
@@ -291,7 +341,7 @@ const sealed = await loadUser(id).then(u => u.civitai_tokens);
 const session: Session = JSON.parse(unsealCookie(sealed, SESSION_SECRET));
 ```
 
-Refresh-on-read still works — write the refreshed blob back to the DB instead of re-setting the cookie.
+Refresh the same way as `refreshSession()` above (pass `fallbackScope`, clear only on a 400/401 `OAuthError`), but write the refreshed blob back to the DB instead of setting a cookie. A DB write is not a cookie write, so this one may run wherever you load the user.
 
 ---
 
@@ -382,7 +432,7 @@ When your app submits an orchestrator workflow with a user's OAuth access token,
 2. **Show cost before spending.** Always call `estimateWorkflow` first.
 3. **Show the running balance — from the BUZZ endpoint, not `/api/v1/me`.** 🔴 `/api/v1/me` does **not** return a balance and never has; reading `balance` off it yields `undefined`, which is exactly how all four starters shipped a permanent `Buzz balance: —`. Use the SDK's `fetchBuzzAccount()` (`buzz.getUserAccount`, needs `BuzzRead`) **server-side** — that tRPC route sets no CORS headers, so a browser fetch cannot reach it. And note the decoy: `/api/v1/me` *does* return `buzzLimit`, but that is the per-token **spend cap** chosen at consent, **not** a balance. 🔴 `BuzzRead` is not guaranteed to a third-party client: treat a **403 as an ordinary outcome** and hide the balance row entirely — never a dash, never an error banner. Don't surprise users.
 4. **Handle the cap-denial case.** Per-app spending caps (set by the user at consent and again at Account → Connected Apps) can cause a successful `whatif` to be rejected at real submit time with a generic `BAD_REQUEST`. Treat that as "insufficient or denied" in your UI — surface clearly, link the user to their connected-apps page.
-5. **Don't hoard tokens.** Refresh-on-read (Step 4) keeps the user's session warm without you treating their access_token like a resource to optimize. Revoke on disconnect.
+5. **Don't hoard tokens.** Refreshing once per request in a hook (Step 4's `refreshSession()`) keeps the user's session warm without you treating their access_token like a resource to optimize. Revoke on disconnect.
 
 ---
 
@@ -428,7 +478,7 @@ Replicating this flow against your dev OAuth app and a live `https://orchestrati
 - **Long-poll timeouts on serverless.** Vercel + Cloudflare have hard request budgets. Cap `pollWorkflow`'s `timeoutMs` below the platform limit (10–25s is safe), and let the *client* poll a `GET /api/workflow/[id]` endpoint until terminal.
 - **State-mismatch errors on first login.** Usually `secure: true` on the OAuth-state cookie in a non-HTTPS dev environment — the browser silently drops the cookie. Set `secure: false` in dev.
 - **`expires_at` math.** The SDK stores `expires_at` as a JS millisecond timestamp (`Date.now() + expires_in * 1000`). Don't compare against `Date.now() / 1000` like a Unix timestamp.
-- **Refreshing dead tokens.** If `refresh_token` itself has been revoked or expired, `refreshToken()` throws `OAuthError(401)`. Clear the session and re-prompt the user to sign in.
+- **Refreshing dead tokens.** If `refresh_token` itself has been revoked or expired, `refreshToken()` throws an `OAuthError` with status 400 (`invalid_grant`) or 401. Clear the session and re-prompt the user to sign in. Any other failure (a 5xx, a 429, a network error) is transient: keep the session so the next request retries. Step 4's `refreshSession()` does exactly this.
 - **Mode A: forgetting to encrypt the per-user token blob.** Storing raw `OAuthTokens` JSON in your DB is the same mistake as storing it in localStorage — if your DB leaks, every user's Civitai account is exposed. Always seal with `sealCookie` before persisting; unseal on read.
 
 ---
