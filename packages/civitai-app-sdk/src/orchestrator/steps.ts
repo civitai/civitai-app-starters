@@ -6,8 +6,12 @@
  * (`WORKFLOW_STEP_TYPES` — 58 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
- * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
- * codegen instead of by hand.
+ * per-step input shapes, generated from the orchestrator's OpenAPI spec by
+ * codegen instead of written by hand. 🔴 `@civitai/client` is FROZEN: it was
+ * renamed `@civitai/orchestration-client`, npm marks it deprecated, and
+ * `0.2.0-beta.98` is its last release. This module still imports the name
+ * `@civitai/client` on purpose, so the renamed package alone does not satisfy
+ * it (see "Why this is a separate deep entry point" below).
  *
  * What this module adds on top of `@civitai/client` is the `$type` → template
  * MAP (`WorkflowStepTemplates`) and the lookups derived from it. The generated
@@ -106,9 +110,10 @@
  *
  * That gap is EXPECTED and is not a defect in either surface. The catalog
  * tracks the LIVE orchestrator spec (`pnpm check:catalogs` and the daily
- * `sync-orchestrator-catalogs` automation keep it there); these types track
- * whatever `@civitai/client` was last published from. The catalog syncs ahead;
- * the client catches up later. What is NOT optional is that the gap stays
+ * `sync-orchestrator-catalogs` automation keep it there); these types come
+ * from `@civitai/client`, which is frozen and will receive no further
+ * releases. So the gap does not close through a client release; it changes
+ * only if this module's types source does. What is NOT optional is that the gap stays
  * stated: it is spelled as a `never` ledger in
  * `test/orchestrator/step-templates.test-d.ts` (which also pins the compile
  * error above, one `@ts-expect-error` per gap `$type`), and the sentence naming
@@ -132,6 +137,11 @@
  * ```sh
  * pnpm add -D @civitai/client@beta
  * ```
+ *
+ * That is the frozen package's last release, and it stays this module's peer:
+ * installing only the renamed `@civitai/orchestration-client` leaves the
+ * `@civitai/client` import unresolved, which the guard below reports exactly as
+ * a missing peer.
  *
  * 🔴 **WITHOUT A GUARD, FORGETTING THE PEER IS SILENT UNDER
  * `skipLibCheck: true`, WHICH IS THE DEFAULT.** The unresolved
@@ -423,10 +433,11 @@ interface StepTemplateMap {
  *    catalog nor the pinned client knows about. That is the catalog's own
  *    drift check's job (`pnpm check:catalogs`, which re-fetches the LIVE spec).
  *
- * The two can legitimately disagree for a while: the catalog tracks the live
- * spec, while these types track whatever `@civitai/client` was last published
- * from. When the catalog syncs ahead, name the not-yet-typed step types in the
- * test's ledger in the same PR, and clear them when the client republishes.
+ * The two can legitimately disagree: the catalog tracks the live spec, while
+ * these types come from the frozen `@civitai/client`. When the catalog syncs
+ * ahead, name the not-yet-typed step types in the test's ledger in the same
+ * PR. No client republish will clear them; only a change of this module's
+ * types source can.
  */
 export type WorkflowStepTemplates = {
   [K in keyof StepTemplateMap]: GuardPeer<StepTemplateMap[K]>;

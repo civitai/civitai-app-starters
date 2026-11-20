@@ -94,7 +94,13 @@
     "and MISSING MOST STEP TYPES, with no error. The range below deliberately",
     "excludes 0.1.x: verify with",
     "`semver.satisfies('0.1.1-beta.0', '^0.2.0-beta.98')` === false.",
-    "Install with the tag: `pnpm add -D @civitai/client@beta`."
+    "Install with the tag: `pnpm add -D @civitai/client@beta`.",
+    "",
+    "🔴 @civitai/client IS FROZEN. It was renamed @civitai/orchestration-client;",
+    "npm marks it deprecated and 0.2.0-beta.98 is its last release, so the",
+    "catalog/type gap will not close through a @civitai/client release. The",
+    "peer stays @civitai/client on purpose: the renamed package alone does not",
+    "satisfy `./orchestrator/steps` (the README's \"Installing the peer\")."
   ],
   "comment-peerDependencies-ajv-vite": [
     "ajv and vite are OPTIONAL peers of the NODE-ONLY subpaths added when #330",
