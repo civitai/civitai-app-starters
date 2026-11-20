@@ -28,8 +28,25 @@ const sessionCookieOpts = (production: boolean) =>
     sameSite: 'lax' as const,
   });
 
-/** Unseal + parse the session cookie. `null` for absent, tampered or malformed. */
-function parseSession(cookies: Cookies): Session | null {
+/**
+ * The sign-out routes. `hooks.server.ts` does not refresh for them: they end
+ * the session, so a refresh there would mint tokens only to throw them away,
+ * and a sign-out from a second tab would WAIT on the refresh the first tab has
+ * in flight, the one the sign-out is about to end. They read the stored
+ * cookie instead ({@link parseSession}).
+ */
+export const SIGN_OUT_PATHS: ReadonlySet<string> = new Set(['/api/auth/logout', '/api/auth/revoke']);
+
+/**
+ * Unseal + parse the session cookie. `null` for absent, tampered or malformed.
+ *
+ * The cookie AS STORED: no expiry check and no refresh. The revoke route reads
+ * the tokens it sends upstream from here, not from `locals.session`, which is
+ * `null` whenever a refresh fails without `invalid_grant` (a 503, a timeout):
+ * reading those tokens from it skipped the upstream revoke while the cookie
+ * was still cleared, leaving a live refresh token at Civitai.
+ */
+export function parseSession(cookies: Cookies): Session | null {
   const sealed = cookies.get(SESSION_COOKIE);
   if (!sealed) return null;
   const raw = unsealCookie(sealed, config.SESSION_SECRET);

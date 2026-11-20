@@ -29,8 +29,16 @@ const cookieOpts = (production: boolean) =>
     sameSite: 'Lax' as const,
   });
 
-/** Unseal + parse the session cookie. `null` for absent, tampered or malformed. */
-function parseSession(c: Context): Session | null {
+/**
+ * Unseal + parse the session cookie. `null` for absent, tampered or malformed.
+ *
+ * The cookie AS STORED: no expiry check and no refresh. The revoke route reads
+ * the tokens it sends upstream from here, not from `readSession()`, which
+ * answers `null` whenever a refresh fails without `invalid_grant` (a 503, a
+ * timeout): reading those tokens through it skipped the upstream revoke while
+ * the cookie was still cleared, leaving a live refresh token at Civitai.
+ */
+export function parseSession(c: Context): Session | null {
   const sealed = getCookie(c, SESSION_COOKIE);
   if (!sealed) return null;
   const raw = unsealCookie(sealed, env.SESSION_SECRET);

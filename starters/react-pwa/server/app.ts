@@ -14,6 +14,7 @@ import { REQUESTED_SCOPES } from './scopes.js';
 import {
   clearSession,
   consumeOAuthState,
+  parseSession,
   readSession,
   writeOAuthState,
   writeSession,
@@ -195,7 +196,15 @@ app.post('/api/auth/logout', (c) => {
 });
 
 app.post('/api/auth/revoke', async (c) => {
-  const session = await readSession(c, production);
+  // The stored cookie, not `readSession()`: a sign-out must not refresh, and
+  // when a refresh fails without `invalid_grant` `readSession()` answers null,
+  // which skipped the upstream revoke while the cookie was still cleared. The
+  // stored refresh token is the one Civitai still honours.
+  const session = parseSession(c);
+  // End the session BEFORE the upstream round trips: clearSession() forgets
+  // its remembered refreshes, so a request another tab has waiting on one is
+  // signed out instead of being handed the tokens while revoke is waiting.
+  clearSession(c, production);
   const tokens = [session?.tokens.access_token, session?.tokens.refresh_token].filter(
     (t): t is string => typeof t === 'string' && t.length > 0,
   );
@@ -209,7 +218,6 @@ app.post('/api/auth/revoke', async (c) => {
       });
     } catch {}
   }
-  clearSession(c, production);
   return c.json({ ok: true });
 });
 

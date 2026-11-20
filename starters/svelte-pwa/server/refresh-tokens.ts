@@ -40,6 +40,7 @@ import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civ
  * The cost of being wrong in this direction is a dead cookie that is retried
  * on each request until the user signs in again (the session reader already
  * treats that request as signed out), never a lost session.
+
  */
 export function isDefiniteRejection(err: unknown): boolean {
   if (!(err instanceof OAuthError)) return false;
@@ -88,6 +89,26 @@ interface Flight {
   resultKey?: string;
   /** Set once the call fails with an error that keeps the cookie. */
   failedAt?: number;
+  /** Set when the session signed out while this was remembered (forgetRefreshesFor). */
+  ended?: boolean;
+}
+
+/**
+ * What a caller sees when its session signed out ({@link forgetRefreshesFor})
+ * while it was waiting on the refresh, whatever the refresh itself returned.
+ *
+ * Deliberately NOT a {@link isDefiniteRejection}: the caller treats it like a
+ * transient failure, so that request is signed out and its response leaves
+ * the browser's cookie alone. The sign-out response already cleared it, and a
+ * clearing `Set-Cookie` from this request, which can land up to
+ * {@link REFRESH_WAIT_MS} later, would wipe a session the user had signed in
+ * to again in the meantime.
+ */
+export class SessionEndedError extends Error {
+  override readonly name = 'SessionEndedError';
+  constructor() {
+    super('the session signed out while this request was waiting on its refresh');
+  }
 }
 
 /** What a caller sees when the refresh outlives {@link REFRESH_WAIT_MS}. */
@@ -145,6 +166,23 @@ function makeRoom(now: number): boolean {
   return flights.size < REFRESH_CACHE_MAX;
 }
 
+/**
+ * What one caller of a remembered refresh gets: its answer, unless the session
+ * signed out first. Checked when the call SETTLES, not when the caller joined,
+ * so a caller that joined before the sign-out is covered too.
+ */
+function answerOf(flight: Flight): Promise<OAuthTokens> {
+  return flight.promise.then(
+    (tokens) => {
+      if (flight.ended) throw new SessionEndedError();
+      return tokens;
+    },
+    (err: unknown) => {
+      throw flight.ended ? new SessionEndedError() : err;
+    },
+  );
+}
+
 /** `promise`, or a {@link RefreshWaitTimeoutError} after `ms` — whichever is first. */
 function waitAtMost<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -180,7 +218,11 @@ export interface RefreshOpts {
  * - At most {@link REFRESH_CACHE_MAX} refresh tokens are remembered. Expired
  *   entries make room; a live one is never evicted, so while the map is full
  *   of live entries a new refresh goes straight to the token endpoint and is
- *   not remembered (no dedupe for that token, nothing else lost).
+ *   not remembered (no dedupe for that token, nothing else lost). Such a
+ *   refresh is also out of reach of {@link forgetRefreshesFor}: a sign-out
+ *   cannot end it, and its caller gets its tokens.
+ * - A caller whose session signs out while it waits gets a
+ *   {@link SessionEndedError}, never the tokens (see {@link forgetRefreshesFor}).
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -193,7 +235,7 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
   const key = keyFor(opts.refreshToken);
   const now = Date.now();
   const existing = flights.get(key);
-  if (existing && isLive(existing, now)) return waitAtMost(existing.promise, REFRESH_WAIT_MS);
+  if (existing && isLive(existing, now)) return waitAtMost(answerOf(existing), REFRESH_WAIT_MS);
   if (existing) flights.delete(key);
 
   if (!makeRoom(now)) {
@@ -223,7 +265,7 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
   // rejection is still observed, so it is never reported as unhandled.
   flight.promise.catch(() => {});
   flights.set(key, flight);
-  return waitAtMost(flight.promise, REFRESH_WAIT_MS);
+  return waitAtMost(answerOf(flight), REFRESH_WAIT_MS);
 }
 
 /**
@@ -242,8 +284,11 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
  * repeated until nothing changes. That covers several rotations inside one
  * window, and a sign-out that arrives with a pre-rotation cookie. Unrelated
  * sessions are untouched. An in-flight refresh of this session is dropped from
- * the map, so no later request can join it; callers already waiting on it
- * still get its answer.
+ * the map, so no later request can join it, and callers already waiting on it
+ * get a {@link SessionEndedError} instead of its answer: otherwise a request
+ * another tab sent just before the sign-out would set the refreshed session
+ * cookie after it, signing the browser back in. That request is signed out
+ * and writes no cookie at all.
  */
 export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | null | undefined): void {
   const refreshToken = tokens?.refresh_token;
@@ -254,6 +299,7 @@ export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | n
     changed = false;
     for (const [key, flight] of flights) {
       if (gone.has(key) || (flight.resultKey !== undefined && gone.has(flight.resultKey))) {
+        flight.ended = true;
         flights.delete(key);
         gone.add(key);
         if (flight.resultKey !== undefined) gone.add(flight.resultKey);

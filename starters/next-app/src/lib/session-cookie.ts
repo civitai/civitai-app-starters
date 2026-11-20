@@ -24,6 +24,17 @@ export const OAUTH_STATE_MAX_AGE_SECONDS = 60 * 10;
  */
 export const REFRESH_SKEW_MS = 30_000;
 
+/**
+ * The sign-out routes. `src/proxy.ts` does not refresh for them: they end the
+ * session, so a refresh there would mint tokens only to throw them away, and a
+ * sign-out from a second tab would WAIT on the refresh the first tab has in
+ * flight, the one the sign-out is about to end. A refresh that failed without
+ * `invalid_grant` would also strip the cookie from the request, leaving the
+ * route nothing to revoke or forget. They read the stored cookie instead
+ * (`getStoredSession()` in `session.ts`).
+ */
+export const SIGN_OUT_PATHS: ReadonlySet<string> = new Set(['/api/auth/logout', '/api/auth/revoke']);
+
 export interface Session {
   tokens: OAuthTokens;
   /** Cached user info from /api/v1/me — refreshed lazily. */

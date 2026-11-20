@@ -198,7 +198,8 @@ This only clears the local cookie. The Civitai token is still valid until it exp
 ```ts
 import { revokeToken } from '@civitai/app-sdk';
 
-const session = readSession();
+// The cookie AS STORED: Step 4's `parseSession()` (no expiry check, no refresh).
+const session = parseSession();
 if (session?.tokens) {
   // Best-effort: revoke both. If revoke fails, we still clear locally.
   await revokeToken({ ...civitaiOpts, token: session.tokens.access_token }).catch(() => {});
@@ -207,6 +208,8 @@ if (session?.tokens) {
 deleteCookie('civ_session');
 return json({ ok: true });
 ```
+
+Read the tokens from the stored cookie, not from the session reader that refreshes (Step 4). That reader answers "signed out" for a request whose refresh failed for a transient reason, so revoking what it returns skips the upstream revoke while the cookie is still cleared, and the refresh token stays live at Civitai. Do not refresh on the sign-out routes at all: a refresh there mints tokens only to throw them away. The starters skip them in the code that refreshes (`SIGN_OUT_PATHS`).
 
 ---
 
@@ -336,7 +339,7 @@ Call `refreshSession()` from a hook that runs before your handlers and may set r
 See the starter for your framework for the exact cookie wiring. The four standalone starters (`next-app`, `sveltekit-app`, `react-pwa`, `svelte-pwa`) follow the same rule, and add what the recipe above leaves out. Each carries the same `refresh-tokens.ts` (`src/lib/` in next-app and sveltekit-app, `server/` in the PWAs), which adds four things:
 
 - **Single flight.** Concurrent requests with one cookie share one refresh call.
-- **A 60 s reuse window.** A request that still carries the pre-rotation cookie gets the rotated tokens instead of replaying a refresh token the server already spent. Signing out forgets it (`forgetRefreshesFor`).
+- **A 60 s reuse window.** A request that still carries the pre-rotation cookie gets the rotated tokens instead of replaying a refresh token the server already spent. Signing out forgets it (`forgetRefreshesFor`), and a request still waiting on a refresh when its session signs out gets a `SessionEndedError` instead of the refreshed tokens: it is signed out and writes no cookie (the sign-out already cleared it).
 - **A 5 s backoff.** After a failure that keeps the cookie, the rate-limited token endpoint is not called on every request.
 - **A 10 s cap** on how long a request waits for a refresh.
 

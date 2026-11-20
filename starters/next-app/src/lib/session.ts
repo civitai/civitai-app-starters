@@ -52,6 +52,21 @@ export async function getSession(): Promise<Session | null> {
   return session;
 }
 
+/**
+ * The session cookie AS STORED: no expiry check, and (on the sign-out routes,
+ * which `src/proxy.ts` skips) no refresh. For sign-out only.
+ *
+ * The revoke route reads the tokens it sends upstream from here, not from
+ * `getSession()`, which answers `null` for a token that needs a refresh. When
+ * that refresh failed without `invalid_grant` (a 503, a timeout), revoke
+ * skipped the upstream revoke and still cleared the cookie, leaving a live
+ * refresh token at Civitai.
+ */
+export async function getStoredSession(): Promise<Session | null> {
+  const jar = await cookies();
+  return parseSession(jar.get(SESSION_COOKIE)?.value, env.SESSION_SECRET);
+}
+
 /** Shared cookie attrs — httpOnly + lax + secure-in-prod for every cookie we set. */
 async function writeCookie(name: string, value: string, maxAge: number): Promise<void> {
   const jar = await cookies();
@@ -87,8 +102,7 @@ export async function setSession(session: Session): Promise<void> {
  * returns `null` for a token that needs a refresh.
  */
 export async function clearSession(): Promise<void> {
-  const jar = await cookies();
-  forgetRefreshesFor(parseSession(jar.get(SESSION_COOKIE)?.value, env.SESSION_SECRET)?.tokens);
+  forgetRefreshesFor((await getStoredSession())?.tokens);
   await writeCookie(SESSION_COOKIE, '', 0);
 }
 

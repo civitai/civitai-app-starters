@@ -60,11 +60,21 @@
  *       call, zero clears, every response carries the rotated session; then a
  *       straggler with the OLD cookie inside the grace window reuses the rotated
  *       tokens without a second call.
+ *   S.  a load is WAITING on a refresh when another tab signs out with the
+ *       same cookie, then the refresh succeeds -> the sign-out answers at once
+ *       (the proxy does not refresh sign-out routes, so it does not join the
+ *       wait), and the waiting load renders signed out and writes NO session
+ *       cookie: neither the refreshed session, nor a clear that could wipe a
+ *       session signed in to again while it waited.
  *   L/R. sign out (`/api/auth/logout`, then `/api/auth/revoke`) right after a
  *       rotation, then load with the PRE-rotation cookie inside the 60 s
  *       window -> NOT signed in: the old refresh token goes back to the hub,
  *       which refuses it, instead of being answered from the remembered
- *       rotation of a session that has signed out.
+ *       rotation of a session that has signed out. R also pins that revoke
+ *       sends the session's refresh token upstream.
+ *   RT. revoke while the refresh is failing (503) -> the session's refresh
+ *       token is STILL revoked upstream (read from the stored cookie, with no
+ *       refresh attempt), and the cookie is cleared.
  *
  *   node scripts/probe-expired-session.mjs
  *   PROBE_SKIP_BUILD=1 node scripts/probe-expired-session.mjs   # reuse .next
@@ -171,6 +181,8 @@ const ROTATE_DELAY_MS = 1500;
 const ROTATED_ACCESS_TOKEN = 'rotated-access-token-5821';
 /** Responses parked by `'hang'` mode, released by destroying their sockets. */
 const hung = [];
+/** Every `token` the revocation endpoint was sent, in order. */
+const revoked = [];
 /**
  * How long the F arms wait before the recovery load. The proxy backs off for
  * 5 s per refresh token after a failure that keeps the cookie; this overshoots
@@ -244,6 +256,16 @@ const authHub = createServer(async (req, res) => {
     }
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid_grant' }));
+    return;
+  }
+  // Revocation: record the token, then refuse it, which the starter treats as
+  // best-effort anyway.
+  if (req.method === 'POST' && req.url?.startsWith('/api/auth/oauth/revoke')) {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    revoked.push(new URLSearchParams(raw).get('token'));
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{}');
     return;
   }
   // /api/v1/me — the signed-in page calls it. Answer so the render reaches its
@@ -875,6 +897,69 @@ async function main() {
     );
   }
 
+  // ---- S: a load waiting on the refresh when another tab signs out ---------
+  {
+    const cookie = expiredSessionCookie('refresh-S');
+    refreshMode = 'hang';
+    refreshAttempts = 0;
+    const waiting = loadPage(cookie, { timeoutMs: 25_000 });
+    const until = Date.now() + 5_000;
+    while (refreshAttempts === 0 && Date.now() < until) await sleep(20);
+    const waitingAttempts = refreshAttempts;
+
+    const t0 = Date.now();
+    let outClears = false;
+    let outError = null;
+    try {
+      const outRes = await fetch(`http://127.0.0.1:${APP_PORT}/api/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: `civ_session=${cookie}` },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8_000),
+      });
+      await outRes.text();
+      outClears = isClearing(sessionSetCookie(outRes.headers).session);
+    } catch (err) {
+      outError = err;
+    }
+    const outMs = Date.now() - t0;
+    const outAttempts = refreshAttempts - waitingAttempts;
+    // The refresh the waiting load started now SUCCEEDS.
+    for (const r of hung.splice(0)) {
+      r.writeHead(200, { 'content-type': 'application/json' });
+      r.end(
+        JSON.stringify({
+          access_token: NEW_ACCESS_TOKEN,
+          refresh_token: 'refresh-S-rotated',
+          expires_in: 3600,
+          scope: 65537,
+          token_type: 'Bearer',
+        }),
+      );
+    }
+    const late = await waiting;
+    const lateToken = carriedAccessToken(late.cookies.session);
+    const lateWrote = late.cookies.session;
+    const lateSignedIn = late.body.includes(SIGNED_IN_MARKER);
+
+    console.log('\n--- S: a load waits on the refresh, another tab signs out, the refresh succeeds ---');
+    console.log('waiting refreshes :', waitingAttempts, '(want 1)');
+    console.log('sign-out ms       :', outMs, `(want < 5000; ${outError?.name ?? 'answered'})`);
+    console.log('sign-out refreshes:', outAttempts, '(want 0)');
+    console.log('sign-out clears   :', outClears, '(want true)');
+    console.log('waiter Set-Cookie :', JSON.stringify(lateWrote ?? null), '(want null)');
+    console.log('waiter carries    :', lateToken, '(want null)');
+    console.log('waiter signed in  :', lateSignedIn, '(want false)');
+
+    check('S', waitingAttempts === 1, `expected the waiting load to start 1 refresh, got ${waitingAttempts}`);
+    check('S', !outError && outMs < 5_000, `the sign-out took ${outMs} ms (${outError?.name ?? 'answered'})`);
+    check('S', outAttempts === 0, `the sign-out made ${outAttempts} refresh calls; a sign-out must not refresh`);
+    check('S', outClears, 'the sign-out did not clear civ_session');
+    check('S', lateToken === null, `the waiting load set the refreshed session after the sign-out (${lateToken})`);
+    check('S', lateWrote === undefined, `the waiting load wrote civ_session (${lateWrote})`);
+    check('S', !lateSignedIn, 'the waiting load rendered signed-in after the sign-out');
+  }
+
   // ---- L / R: signing out ends the reuse window ---------------------------
   //
   // A rotation is remembered for 60 s so a straggler with the OLD cookie gets
@@ -896,6 +981,7 @@ async function main() {
 
     // Sign out the way the browser would: with the cookie it now holds.
     const held = first.cookies.session?.slice('civ_session='.length).split(';')[0] ?? '';
+    revoked.length = 0;
     const outRes = await fetch(`http://127.0.0.1:${APP_PORT}${path}`, {
       method: 'POST',
       headers: { cookie: `civ_session=${held}` },
@@ -903,6 +989,7 @@ async function main() {
     });
     await outRes.text();
     const outClears = isClearing(sessionSetCookie(outRes.headers).session);
+    const outRevoked = [...revoked];
     const before = refreshAttempts;
     const late = await loadPage(old);
     const lateAttempts = refreshAttempts - before;
@@ -926,6 +1013,40 @@ async function main() {
     );
     check(label, lateToken === null, `after ${path}, the pre-rotation cookie was handed a session (${lateToken})`);
     check(label, !lateSignedIn, `after ${path}, the pre-rotation cookie rendered signed-in`);
+    if (label === 'R') {
+      console.log('revoked upstream  :', JSON.stringify(outRevoked), '(want it to include refresh-R-rotated)');
+      check('R', outRevoked.includes('refresh-R-rotated'), `revoke did not send the refresh token upstream (${outRevoked})`);
+    }
+  }
+
+  // ---- RT: revoke while the refresh is failing still revokes upstream -----
+  {
+    const cookie = expiredSessionCookie('refresh-RT');
+    refreshMode = 'status503';
+    refreshAttempts = 0;
+    revoked.length = 0;
+    const outRes = await fetch(`http://127.0.0.1:${APP_PORT}/api/auth/revoke`, {
+      method: 'POST',
+      headers: { cookie: `civ_session=${cookie}` },
+      redirect: 'manual',
+    });
+    await outRes.text();
+    const outClears = isClearing(sessionSetCookie(outRes.headers).session);
+
+    console.log('\n--- RT: revoke while the token endpoint answers 503 ---');
+    console.log('status            :', outRes.status, '(want 200)');
+    console.log('refresh attempts  :', refreshAttempts, '(want 0 — a sign-out does not refresh)');
+    console.log('revoked upstream  :', JSON.stringify(revoked), '(want it to include refresh-RT)');
+    console.log('clears            :', outClears, '(want true)');
+
+    check('RT', outRes.status === 200, `revoke answered ${outRes.status}`);
+    check('RT', refreshAttempts === 0, `revoke made ${refreshAttempts} refresh calls; a sign-out must not refresh`);
+    check(
+      'RT',
+      revoked.includes('refresh-RT'),
+      `the refresh token was not revoked upstream while the refresh was failing (${JSON.stringify(revoked)})`,
+    );
+    check('RT', outClears, 'revoke did not clear civ_session');
   }
 
   if (failures.length || process.env.PROBE_DUMP_BODY) {
