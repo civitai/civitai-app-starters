@@ -56,7 +56,7 @@ auth hub (`.env.example` has the details).
 - `GET /api/auth/callback/civitai` — exchanges code, seals session cookie.
 - `POST /api/auth/logout` — clears session.
 - `POST /api/auth/revoke` — revokes tokens at Civitai then clears session.
-- `POST /api/generate/estimate` — calls `whatif=true` to preview Buzz cost.
+- `POST /api/generate/estimate` — calls `whatif=true` to preview Buzz cost. Returns `cost: null` (not `0`) when the estimate carries no cost; the form then shows "Estimate unavailable" and keeps **Generate** disabled. **Generate** is enabled only once the current prompt has been previewed.
 - `POST /api/generate` — submits the workflow and debits the user's Buzz.
 - `GET /api/workflow/[id]` — fetches a workflow snapshot (client polls this).
 
